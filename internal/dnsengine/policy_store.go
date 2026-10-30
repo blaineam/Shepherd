@@ -9,7 +9,6 @@ import (
 	"maps"
 	"net/url"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -113,6 +112,9 @@ type PolicyOptions struct {
 	Catalog        *CatalogSet   // nil means the shipped catalog
 	Legacy         *LegacyConfig // nil means a fresh install
 	ExtraProtected []string      // extra apex domains inline lists may not contain
+	// NoRecommended leaves the catalog's recommended items off when the file
+	// is first created. A migrated install keeps exactly the lists it had.
+	NoRecommended bool
 }
 
 // PolicyStore owns the scoped configuration: it validates edits, persists
@@ -194,6 +196,15 @@ func addDomain(list []string, d string) []string {
 	return list
 }
 
+// withoutRecommended returns a copy of the catalog with nothing recommended.
+func (c *CatalogSet) withoutRecommended() *CatalogSet {
+	out := &CatalogSet{entries: slices.Clone(c.entries), byID: c.byID}
+	for i := range out.entries {
+		out.entries[i].Recommended = false
+	}
+	return out
+}
+
 func (c *CatalogSet) listByURL(u string) (string, bool) {
 	for _, e := range c.entries {
 		if e.Kind == KindList && len(e.Sources) == 1 && e.Sources[0].URL == u {
@@ -256,9 +267,13 @@ func OpenPolicyStore(path string, f *Filter, opts PolicyOptions) (*PolicyStore, 
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 	case errors.Is(err, os.ErrNotExist):
-		s.data = freshPolicy(cat)
+		seed := cat
+		if opts.NoRecommended {
+			seed = cat.withoutRecommended()
+		}
+		s.data = freshPolicy(seed)
 		if opts.Legacy != nil {
-			if s.data, err = MigrateLegacy(cat, *opts.Legacy); err != nil {
+			if s.data, err = MigrateLegacy(seed, *opts.Legacy); err != nil {
 				return nil, err
 			}
 		}
@@ -303,26 +318,7 @@ func writePolicyFile(path string, d PolicyData) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(b)
-	if err == nil {
-		err = f.Sync()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, path)
+	return writeAtomic(path, b)
 }
 
 // OnChange registers fn to run after every successful edit, outside the

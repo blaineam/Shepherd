@@ -366,6 +366,23 @@ func (u *Upstream) probe(ctx context.Context, timeout time.Duration) {
 	u.record(answered(resp, err), rtt, err)
 }
 
+// Errors a caller can test with errors.Is to tell a conflict from a bad
+// address (Pool.Add, Pool.Remove).
+var (
+	ErrDuplicateUpstream = errors.New("duplicate upstream")
+	ErrUnknownUpstream   = errors.New("unknown upstream")
+	ErrLastUpstream      = errors.New("last upstream")
+)
+
+// poolError keeps the readable message while matching a sentinel.
+type poolError struct {
+	kind error
+	msg  string
+}
+
+func (e *poolError) Error() string        { return e.msg }
+func (e *poolError) Is(target error) bool { return target == e.kind }
+
 // PoolOption configures NewPool.
 type PoolOption func(*Pool) error
 
@@ -470,7 +487,7 @@ func (p *Pool) Add(addr string) error {
 	for _, e := range p.ups {
 		if e.key() == u.key() {
 			p.mu.Unlock()
-			return fmt.Errorf("upstream %q is already configured as %q", u.Addr, e.Addr)
+			return &poolError{ErrDuplicateUpstream, fmt.Sprintf("upstream %q is already configured as %q", u.Addr, e.Addr)}
 		}
 	}
 	p.ups = append(append([]*Upstream(nil), p.ups...), u)
@@ -492,11 +509,11 @@ func (p *Pool) Remove(addr string) error {
 	}
 	if idx < 0 {
 		p.mu.Unlock()
-		return fmt.Errorf("upstream %q is not configured", addr)
+		return &poolError{ErrUnknownUpstream, fmt.Sprintf("upstream %q is not configured", addr)}
 	}
 	if len(p.ups) == 1 {
 		p.mu.Unlock()
-		return errors.New("cannot remove the last upstream")
+		return &poolError{ErrLastUpstream, "cannot remove the last upstream"}
 	}
 	gone := p.ups[idx]
 	next := make([]*Upstream, 0, len(p.ups)-1)
@@ -510,7 +527,19 @@ func (p *Pool) Remove(addr string) error {
 
 // SetBootstrap replaces the bootstrap resolvers (IP addresses, optional port).
 func (p *Pool) SetBootstrap(servers []string) error {
-	return p.env.boot.setServers(servers)
+	if err := p.env.boot.setServers(servers); err != nil {
+		return err
+	}
+	p.wake() // encrypted upstreams that could not resolve may work now
+	return nil
+}
+
+// Bootstrap returns the bootstrap resolvers as configured.
+func (p *Pool) Bootstrap() []string {
+	b := p.env.boot
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.raw...)
 }
 
 // snapshot returns the current upstream list; callers must not modify it.

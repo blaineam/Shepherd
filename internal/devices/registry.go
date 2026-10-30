@@ -41,6 +41,9 @@ type Options struct {
 	Vendor func(mac string) string // MAC -> vendor; default the embedded OUI table
 	NewID  func() string           // device ID source for IP-only devices; default random
 	Codec  Codec                   // persistence codec; default plain JSON
+	// AllowLoopback lets loopback addresses become devices. Only tests and
+	// local development need it; a real network never has loopback clients.
+	AllowLoopback bool
 }
 
 // Registry is the device registry. It is safe for concurrent use.
@@ -51,6 +54,7 @@ type Registry struct {
 	vendorOf func(string) string
 	newID    func() string
 	codec    Codec
+	loopback bool
 
 	clock   HLC
 	devices map[string]*Device // live devices and tombstones
@@ -74,6 +78,7 @@ func New(opts Options) *Registry {
 		vendorOf: opts.Vendor,
 		newID:    opts.NewID,
 		codec:    opts.Codec,
+		loopback: opts.AllowLoopback,
 		devices:  map[string]*Device{},
 		groups:   map[string]*Group{},
 		byMAC:    map[string]*Device{},
@@ -153,13 +158,15 @@ func (r *Registry) Observe(o Observation) string {
 	return id
 }
 
-func parseIP(s string) (netip.Addr, bool) {
+func parseIP(s string) (netip.Addr, bool) { return parseIPOpt(s, false) }
+
+func parseIPOpt(s string, allowLoopback bool) (netip.Addr, bool) {
 	a, err := netip.ParseAddr(strings.TrimSpace(s))
 	if err != nil {
 		return netip.Addr{}, false
 	}
 	a = a.Unmap().WithZone("")
-	if a.IsUnspecified() || a.IsMulticast() || a.IsLoopback() {
+	if a.IsUnspecified() || a.IsMulticast() || (a.IsLoopback() && !allowLoopback) {
 		return netip.Addr{}, false
 	}
 	return a, true
@@ -167,7 +174,7 @@ func parseIP(s string) (netip.Addr, bool) {
 
 func (r *Registry) observeLocked(o Observation) (string, []Event) {
 	mac, _ := NormalizeMAC(o.MAC)
-	ip, hasIP := parseIP(o.IP)
+	ip, hasIP := parseIPOpt(o.IP, r.loopback)
 	if mac == "" && !hasIP {
 		return "", nil
 	}

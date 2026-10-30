@@ -46,6 +46,7 @@ func newUpstreamEnv() *upstreamEnv {
 type bootstrap struct {
 	mu       sync.Mutex
 	servers  []string // host:port
+	raw      []string // as configured, for display and persistence
 	cache    map[string]*bootEntry
 	inflight map[string]*bootCall
 	now      func() time.Time
@@ -76,15 +77,18 @@ func (b *bootstrap) setServers(servers []string) error {
 		return errors.New("bootstrap: at least one resolver is required")
 	}
 	out := make([]string, 0, len(servers))
+	raw := make([]string, 0, len(servers))
 	for _, s := range servers {
 		u, err := parseUpstream(s)
 		if err != nil || (u.kind != KindUDP) {
 			return fmt.Errorf("bootstrap resolver %q must be an IP address with an optional port", s)
 		}
 		out = append(out, u.hostport)
+		raw = append(raw, u.Addr)
 	}
 	b.mu.Lock()
 	b.servers = out
+	b.raw = raw
 	b.mu.Unlock()
 	return nil
 }

@@ -38,6 +38,14 @@ type Snapshot struct {
 	Groups  []*Group  `json:"groups"`
 }
 
+// Clock returns the registry's latest change stamp. It moves whenever a record
+// is written, so a saver can skip a write when it has not moved.
+func (r *Registry) Clock() HLC {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.clock
+}
+
 // Export returns a deep copy of every record for persistence or sync.
 func (r *Registry) Export() Snapshot {
 	r.mu.RLock()
