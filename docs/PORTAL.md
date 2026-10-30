@@ -15,7 +15,7 @@ or the file `portal-token` in the data directory).
 - **Replay.** The timeline at the bottom switches between **LIVE** and any retained period. Pause, and play at 1x, 10x, 60x or 300x. With encrypted history enabled, replay reaches as far back as you keep history; otherwise it covers what is in memory.
 - **Details.** The earlier dashboard (live table, upstream and list health, rules, the Private Relay switch, top devices) is one tab away. It also states plainly that Watch mode is a planned feature not yet available in this build (see the roadmap's step 11) — everything shown is from DNS-only Guard mode, so the portal never leaves that silently ambiguous.
 
-It needs WebGL for the globe and falls back to the Details view without it. It respects reduced motion (no auto-rotate, calmer pulses).
+Without WebGL (Safari in Lockdown Mode, for one) the globe is replaced by a flat 2D map drawn on a canvas: the same dot-matrix land, home-to-destination arcs, comets, pulses, day/night shading, drag-to-pan and scroll or pinch to zoom, with click, hover and Set home working the same way. Only if canvas is also missing does the HUD fall back to the Details view. It respects reduced motion (no auto-rotate, calmer pulses).
 
 ## Mobile
 
@@ -33,7 +33,7 @@ the top instead of mixed alphabetically into (for a real network) dozens of othe
 
 `/?demo=1` shows a realistic synthetic stream generated in the browser, with no API calls, for screenshots and
 trying the interface. Options: `rate=N` events per second (default 5), `demo=bytes` to see byte-weighted lanes,
-`rotate=0` to stop the auto-rotate, `nogl=1` to test the fallback, `debug=1` to expose `window.__hud` for measuring.
+`rotate=0` to stop the auto-rotate, `nogl=1` to force the 2D map, `debug=1` to expose `window.__hud` for measuring.
 
 The portal is also locked behind demo data by default until you sign in with the token or a PIN, and relocks itself
 after you are idle. See [LOCKING.md](LOCKING.md).

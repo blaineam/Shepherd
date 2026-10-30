@@ -600,10 +600,31 @@ async function bootData() {
   startLive();
 }
 
+// The 3D globe where WebGL works, otherwise the 2D map (Safari in Lockdown
+// Mode, for one, has no WebGL). Both take the same calls.
 async function initGlobe() {
-  const { Globe, webglAvailable } = await import('./js/globe.js');
-  if (!webglAvailable() || params.get('nogl') === '1') throw new Error('webgl');
-  globe = new Globe($('#stage'), { reducedMotion: reduced, onPick, onHover, onGlobeClick: saveHome });
+  const opts = { reducedMotion: reduced, onPick, onHover, onGlobeClick: saveHome };
+  let map = null;
+  if (params.get('nogl') !== '1') {
+    try {
+      const { Globe, webglAvailable } = await import('./js/globe.js');
+      if (webglAvailable()) map = new Globe($('#stage'), opts);
+    } catch (err) {
+      if (DEBUG) console.warn('3d globe unavailable:', err && err.message);
+    }
+  }
+  const flat = !map;
+  if (flat) {
+    const { FlatMap, canvas2dAvailable } = await import('./js/flatmap.js');
+    if (!canvas2dAvailable()) throw new Error('no canvas');
+    map = new FlatMap($('#stage'), opts);
+    document.body.classList.add('flatmap');
+    $('#btn-rotate').textContent = 'Auto-pan';
+    $('#btn-recenter').textContent = 'Recenter';
+    $('#home-banner').textContent = 'Click the map to place home. Esc to cancel.';
+    $('#no-home span').textContent = 'Arcs start from your home. Choose Set home, then click the map.';
+  }
+  globe = map;
   globe.setLanes(model.lanes);
   globe.setHome(home);
   if (params.get('rotate') === '0') { globe.setAutoRotate(false); $('#btn-rotate').setAttribute('aria-pressed', 'false'); }
@@ -634,7 +655,7 @@ async function main() {
     $('#no-gl').hidden = false;
     for (const id of ['#tilebar', '#toolbar', '#timeline', '#rail-right']) $(id).hidden = true;
     const b = $('#details-banner');
-    b.textContent = 'The globe needs WebGL, which is not available in this browser. Everything else works here.';
+    b.textContent = 'The map needs WebGL or canvas, and neither is available in this browser. Everything else works here.';
     b.hidden = false;
     if (location.hash !== '#hud' && !VIEWS.includes(location.hash.slice(1))) showView('details');
     if (DEBUG) console.warn('globe disabled:', err && err.message);
