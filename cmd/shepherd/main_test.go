@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -40,6 +41,8 @@ upstreams = ["192.0.2.53"]
 block_private_relay = true
 [portal]
 listen = "127.0.0.1:%d"
+[map]
+enabled = false
 %s`, filepath.Join(dir, "data"), dnsPort, portalPort, extra)
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -179,4 +182,180 @@ func TestRunRejectsBadSetup(t *testing.T) {
 	if err := run(context.Background(), cfg, false, os.Stdout); err == nil || !strings.Contains(err.Error(), "rules.json") {
 		t.Errorf("corrupt rules.json: err = %v", err)
 	}
+}
+
+// running starts the binary's run loop and returns helpers bound to it.
+type running struct {
+	t          *testing.T
+	dnsAddr    string
+	portalBase string
+	token      string
+	stop       func()
+}
+
+func start(t *testing.T, cfg string) *running {
+	t.Helper()
+	body, _ := os.ReadFile(cfg)
+	var dnsPort, portalPort int
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.HasPrefix(line, "listen = [\"127.0.0.1:") {
+			fmt.Sscanf(line, "listen = [\"127.0.0.1:%d", &dnsPort)
+		}
+		if strings.HasPrefix(line, "listen = \"127.0.0.1:") {
+			fmt.Sscanf(line, "listen = \"127.0.0.1:%d", &portalPort)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, cfg, false, os.Stdout) }()
+	r := &running{t: t, dnsAddr: fmt.Sprintf("127.0.0.1:%d", dnsPort), portalBase: fmt.Sprintf("http://127.0.0.1:%d", portalPort)}
+	r.stop = func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("run returned %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("run did not stop")
+		}
+	}
+	// wait until DNS answers, then read the token the server created
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		q := new(dns.Msg)
+		q.SetQuestion("warmup.example.com.", dns.TypeA)
+		if _, _, err := (&dns.Client{Timeout: 300 * time.Millisecond}).Exchange(q, r.dnsAddr); err == nil {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(cfg), "data", "portal-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.token = strings.TrimSpace(string(b))
+	return r
+}
+
+func (r *running) relayLookup() {
+	r.t.Helper()
+	q := new(dns.Msg)
+	q.SetQuestion("mask.icloud.com.", dns.TypeA)
+	resp, _, err := (&dns.Client{Timeout: time.Second}).Exchange(q, r.dnsAddr)
+	if err != nil || resp.Rcode != dns.RcodeNameError {
+		r.t.Fatalf("relay lookup: %v %v", err, resp)
+	}
+}
+
+func (r *running) api(method, path, body string) (int, string) {
+	r.t.Helper()
+	req, _ := http.NewRequest(method, r.portalBase+path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+r.token)
+	req.Header.Set("X-Shepherd", "1")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	return res.StatusCode, string(b)
+}
+
+func TestEncryptedHistorySurvivesARestart(t *testing.T) {
+	dns1, portal1 := freePort(t), freePort(t)
+	keyFile := filepath.Join(t.TempDir(), "history.key")
+	cfg := writeConfig(t, dns1, portal1, fmt.Sprintf("[history]\nmode = \"encrypted\"\nkey_file = %q\n", keyFile))
+
+	first := start(t, cfg)
+	first.relayLookup()
+	first.stop() // shutting down flushes to disk
+
+	second := start(t, cfg) // a fresh process, same data directory
+	defer second.stop()
+	code, body := second.api("GET", "/api/history?q=mask", "")
+	if code != 200 || !strings.Contains(body, "mask.icloud.com") || !strings.Contains(body, `"source":"encrypted"`) {
+		t.Fatalf("history after restart = %d %s", code, body)
+	}
+	// The live view was repopulated from the past, so the feed is not empty after a restart.
+	if code, body := second.api("GET", "/api/queries?limit=50", ""); code != 200 || !strings.Contains(body, "mask.icloud.com") {
+		t.Errorf("the live ring should be preloaded from history: %d %s", code, body)
+	}
+	// Nothing on disk is readable.
+	filepath.Walk(filepath.Join(filepath.Dir(cfg), "data", "history"), func(p string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			if b, _ := os.ReadFile(p); bytes.Contains(b, []byte("mask.icloud.com")) {
+				t.Errorf("%s holds plaintext", p)
+			}
+		}
+		return nil
+	})
+}
+
+func TestPassphraseHistoryStartsLockedAndUnlocksThroughThePortal(t *testing.T) {
+	cfg := writeConfig(t, freePort(t), freePort(t), "[history]\nmode = \"encrypted\"\nkey_source = \"passphrase\"\n")
+	r := start(t, cfg)
+	defer r.stop()
+	r.relayLookup() // recorded in memory while locked
+
+	if code, body := r.api("GET", "/api/history", ""); code != http.StatusLocked || !strings.Contains(body, `"locked":true`) {
+		t.Fatalf("locked history = %d %s", code, body)
+	}
+	if code, _ := r.api("POST", "/api/history/unlock", `{"passphrase":""}`); code != http.StatusUnauthorized {
+		t.Errorf("empty passphrase = %d", code)
+	}
+	if code, _ := r.api("POST", "/api/history/unlock", `{"passphrase":"first passphrase"}`); code != 200 {
+		t.Fatalf("first unlock (creates the passphrase) = %d", code)
+	}
+	if code, body := r.api("GET", "/api/history?q=mask", ""); code != 200 || !strings.Contains(body, "mask.icloud.com") {
+		t.Errorf("entries recorded while locked must appear after unlock: %d %s", code, body)
+	}
+	if code, body := r.api("GET", "/api/settings", ""); code != 200 || !strings.Contains(body, `"locked":false`) {
+		t.Errorf("settings = %d %s", code, body)
+	}
+}
+
+func TestPassphraseFromTheEnvironmentUnlocksAtStartup(t *testing.T) {
+	t.Setenv("SHEPHERD_HISTORY_PASSPHRASE", "an unattended passphrase")
+	cfg := writeConfig(t, freePort(t), freePort(t), "[history]\nmode = \"encrypted\"\nkey_source = \"passphrase\"\n")
+	r := start(t, cfg)
+	defer r.stop()
+	if code, _ := r.api("GET", "/api/history", ""); code != 200 {
+		t.Errorf("an environment passphrase must unlock at startup, got %d", code)
+	}
+}
+
+func TestWrongEnvironmentPassphraseLeavesHistoryLocked(t *testing.T) {
+	cfg := writeConfig(t, freePort(t), freePort(t), "[history]\nmode = \"encrypted\"\nkey_source = \"passphrase\"\n")
+	t.Setenv("SHEPHERD_HISTORY_PASSPHRASE", "the right one")
+	first := start(t, cfg)
+	first.stop()
+	t.Setenv("SHEPHERD_HISTORY_PASSPHRASE", "the wrong one")
+	second := start(t, cfg)
+	defer second.stop()
+	if code, _ := second.api("GET", "/api/history", ""); code != http.StatusLocked {
+		t.Errorf("a wrong passphrase must leave the history locked (and DNS running), got %d", code)
+	}
+}
+
+func TestBadHistoryKeyFileStopsStartup(t *testing.T) {
+	keyFile := filepath.Join(t.TempDir(), "bad.key")
+	os.WriteFile(keyFile, []byte("not a key"), 0o600)
+	cfg := writeConfig(t, freePort(t), freePort(t), fmt.Sprintf("[history]\nmode = \"encrypted\"\nkey_file = %q\n", keyFile))
+	if err := run(context.Background(), cfg, false, os.Stdout); err == nil || !strings.Contains(err.Error(), "key") {
+		t.Errorf("a broken key file must stop startup rather than run unprotected: %v", err)
+	}
+}
+
+func TestMapAndAutoHomeStartWhenEnabled(t *testing.T) {
+	cfgPath := writeConfig(t, freePort(t), freePort(t), "")
+	body, _ := os.ReadFile(cfgPath)
+	// enable the map but point nothing at the network: the geo manager and auto-home
+	// loops must start and stop cleanly without the real database being available.
+	os.WriteFile(cfgPath, []byte(strings.Replace(string(body), "[map]\nenabled = false", "[map]\nenabled = true\nauto_home = true\ndatabase_url = \"http://127.0.0.1:1\"", 1)), 0o600)
+	r := start(t, cfgPath)
+	if code, body := r.api("GET", "/api/settings", ""); code != 200 || !strings.Contains(body, `"auto_home":true`) || !strings.Contains(body, `"enabled":true`) {
+		t.Errorf("settings with the map enabled = %d %s", code, body)
+	}
+	r.stop()
 }

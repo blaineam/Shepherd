@@ -19,7 +19,10 @@ import (
 
 	"shepherd/internal/config"
 	"shepherd/internal/dnsengine"
+	"shepherd/internal/geo"
+	"shepherd/internal/history"
 	"shepherd/internal/portal"
+	"shepherd/internal/settings"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -98,7 +101,47 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	go pool.Probe(ctx, time.Duration(cfg.DNS.ProbeIntervalSeconds)*time.Second)
 	go listMgr.Run(ctx, 24*time.Hour)
 
-	srv := portal.New(portal.Deps{Engine: engine, Lists: listMgr, Rules: rules, Token: token, Version: version})
+	prefs, err := settings.Open(filepath.Join(cfg.DataDir, "settings.json"))
+	if err != nil {
+		return err
+	}
+	deps := portal.Deps{Engine: engine, Lists: listMgr, Rules: rules, Token: token, Version: version, Settings: prefs}
+
+	if cfg.Map.Enabled {
+		var locator geo.Locator
+		engine.Geo = &locator
+		mgr := geo.NewManager(&locator, cfg.DataDir)
+		mgr.BaseURL = cfg.Map.DatabaseURL
+		deps.Geo = mgr
+		go mgr.Run(ctx)
+		if cfg.Map.AutoHome {
+			auto := &geo.AutoHome{Detector: geo.NewWANDetector(), Placer: &locator, Store: prefs}
+			deps.DetectHome = auto.Once
+			go auto.Run(ctx)
+		}
+	}
+
+	if cfg.History.Mode == "encrypted" {
+		store, err := openHistory(cfg)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		if pass := os.Getenv("SHEPHERD_HISTORY_PASSPHRASE"); pass != "" && store.Locked() {
+			if err := store.Unlock(pass); err != nil {
+				log.Printf("history: unlocking from SHEPHERD_HISTORY_PASSPHRASE: %v", err)
+			}
+		}
+		if !store.Locked() { // bring the recent past back into the live view after a restart
+			past, _, _ := store.Query(dnsengine.HistoryQuery{Limit: cfg.DNS.LogSize})
+			engine.Log.Preload(past)
+		}
+		engine.Log.SetSink(store.Append)
+		go store.Run(ctx)
+		deps.History = store
+	}
+
+	srv := portal.New(deps)
 	httpSrv := &http.Server{Addr: cfg.Portal.Listen, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	portalErr := make(chan error, 1)
 	go func() {
@@ -120,4 +163,23 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	default:
 		return nil
 	}
+}
+
+// openHistory opens the encrypted history with the configured key source.
+func openHistory(cfg config.Config) (*history.Store, error) {
+	dir := filepath.Join(cfg.DataDir, "history")
+	var keys history.KeySource
+	if cfg.History.KeySource == "passphrase" {
+		keys = &history.PassphraseKey{Dir: filepath.Join(dir, "keys")}
+	} else {
+		path := cfg.History.KeyFile
+		if path == "" {
+			path = filepath.Join(dir, "history.key")
+		}
+		keys = &history.FileKey{Path: path}
+	}
+	return history.Open(history.Options{
+		Dir: filepath.Join(dir, "store"), Keys: keys,
+		RetentionDays: cfg.History.RetentionDays, MaxBytes: int64(cfg.History.MaxMB) << 20,
+	})
 }

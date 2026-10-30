@@ -3,11 +3,26 @@
 package dnsengine
 
 import (
+	"net"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// Dest is a geolocated address a query resolved to.
+type Dest struct {
+	IP      string  `json:"ip"`
+	Lat     float64 `json:"lat"`
+	Lon     float64 `json:"lon"`
+	City    string  `json:"city,omitempty"`
+	Country string  `json:"country,omitempty"` // ISO 3166-1 alpha-2
+}
+
+// Geo places an address on the globe. It returns false when it cannot.
+type Geo interface {
+	Locate(ip net.IP) (Dest, bool)
+}
 
 // Entry is one answered query.
 type Entry struct {
@@ -21,20 +36,84 @@ type Entry struct {
 	Upstream string    `json:"upstream,omitempty"`
 	Ms       float64   `json:"ms"`
 	Rcode    string    `json:"rcode"`
+	// Dests are the geolocated addresses the answer pointed at (allowed and
+	// cached queries only).
+	Dests []Dest `json:"dests,omitempty"`
 }
 
-// QueryLog is a fixed-size in-memory ring. Entries are never written to disk.
+// QueryLog is a fixed-size in-memory ring. It never writes to disk itself; a
+// sink (the encrypted history) can be attached to persist entries.
 type QueryLog struct {
 	mu   sync.Mutex
 	buf  []Entry
 	next uint64
+	subs map[chan Entry]struct{}
+	sink func(Entry)
 }
 
 func NewQueryLog(size int) *QueryLog {
 	if size < 1 {
 		size = 1000
 	}
-	return &QueryLog{buf: make([]Entry, size), next: 1}
+	return &QueryLog{buf: make([]Entry, size), next: 1, subs: map[chan Entry]struct{}{}}
+}
+
+// SetSink attaches f, called synchronously with every new entry (after it has
+// its ID). f must be fast and must not call back into the log.
+func (l *QueryLog) SetSink(f func(Entry)) {
+	l.mu.Lock()
+	l.sink = f
+	l.mu.Unlock()
+}
+
+// Subscribe returns a channel of new entries and a cancel function. A slow
+// subscriber drops entries instead of blocking DNS. The channel is never
+// closed; stop reading after cancel.
+func (l *QueryLog) Subscribe(buffer int) (<-chan Entry, func()) {
+	if buffer < 1 {
+		buffer = 1
+	}
+	ch := make(chan Entry, buffer)
+	l.mu.Lock()
+	l.subs[ch] = struct{}{}
+	l.mu.Unlock()
+	return ch, func() {
+		l.mu.Lock()
+		delete(l.subs, ch)
+		l.mu.Unlock()
+	}
+}
+
+// Preload fills the ring with past entries (oldest first), for example from the
+// encrypted history after a restart. It does not notify subscribers or the sink.
+func (l *QueryLog) Preload(es []Entry) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, e := range es {
+		e.ID = l.next
+		l.buf[(l.next-1)%uint64(len(l.buf))] = e
+		l.next++
+	}
+}
+
+// All returns every retained entry, oldest first.
+func (l *QueryLog) All() []Entry {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	latest := l.next - 1
+	if latest == 0 {
+		return nil
+	}
+	size := uint64(len(l.buf))
+	first := uint64(1)
+	if latest > size {
+		first = latest - size + 1
+	}
+	out := make([]Entry, 0, latest-first+1)
+	for i := first; i <= latest; i++ {
+		out = append(out, l.buf[(i-1)%size])
+	}
+	return out
 }
 
 func (l *QueryLog) Add(e Entry) {
@@ -42,7 +121,21 @@ func (l *QueryLog) Add(e Entry) {
 	e.ID = l.next
 	l.buf[(l.next-1)%uint64(len(l.buf))] = e
 	l.next++
+	subs := make([]chan Entry, 0, len(l.subs))
+	for c := range l.subs {
+		subs = append(subs, c)
+	}
+	sink := l.sink
 	l.mu.Unlock()
+	for _, c := range subs {
+		select {
+		case c <- e:
+		default: // never let a slow reader stall DNS
+		}
+	}
+	if sink != nil {
+		sink(e)
+	}
 }
 
 // After returns up to limit entries newer than id, oldest first, and the id of

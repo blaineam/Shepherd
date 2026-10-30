@@ -29,6 +29,25 @@ protected_domains = []
 # here. Set false to allow it. After first run, change it from the portal.
 block_private_relay = true
 
+[history]
+# What is remembered after the fact. "memory" (default) keeps recent queries in RAM
+# only. "encrypted" keeps a searchable, AES-256-GCM encrypted record on disk: see
+# docs/HISTORY.md for where the key lives and what it protects against.
+mode = "memory"
+retention_days = 30
+max_mb = 2048
+key_source = "file"    # "file" or "passphrase"
+key_file = ""          # default <data_dir>/history/history.key
+
+[map]
+# The globe's location data: a free GeoIP database, downloaded once a month and
+# used entirely on this machine.
+enabled = true
+# Work out "home" from the network's public address (a DNS "who am I" query to
+# public resolvers). Choosing your own home in the portal always wins.
+auto_home = true
+# database_url = ""    # a mirror for offline or air-gapped installs
+
 [portal]
 listen = "127.0.0.1:8787"
 

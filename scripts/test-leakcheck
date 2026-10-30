@@ -28,6 +28,8 @@ put a.txt 'gua 2606:4700:4700::1111'; check "IPv6 global" 1 "IPv6 global"; reset
 put a.txt 'node my-box.tailnet-name.ts.net'; check "tailnet name" 1 "tailnet hostname"; reset  # leakcheck:allow self-test fixture
 put a.txt 'key tskey-auth-abcdef123456'; check "tailscale key" 1 "access key"; reset  # leakcheck:allow self-test fixture
 put a.txt 'path /Users/jane/Documents'; check "personal path" 1 "personal path"; reset  # leakcheck:allow self-test fixture
+put a.txt 'api POST /api/settings/home/detect and /api/settings/home'; check "URL paths are not home directories" 0; reset
+put a.txt 'at "/home/jane/.ssh"'; check "quoted home path" 1 "personal path"; reset  # leakcheck:allow self-test fixture
 put a.txt 'mail jane@corp.org'; check "email" 1 "email address"; reset  # leakcheck:allow self-test fixture
 put .env 'X=1'; check "env file" 1 "runtime or private file"; reset
 put a.txt 'ok 10.9.9.9 leakcheck:allow because test'; check "allow marker" 0; reset

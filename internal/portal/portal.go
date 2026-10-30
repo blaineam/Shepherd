@@ -5,6 +5,7 @@
 package portal
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
@@ -17,9 +18,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"shepherd/internal/dnsengine"
+	"shepherd/internal/geo"
+	"shepherd/internal/settings"
 )
 
 //go:embed web
@@ -27,18 +31,35 @@ var webFS embed.FS
 
 const cookieName = "shepherd_session"
 
+// GeoStatus reports the state of the map data.
+type GeoStatus interface{ Status() geo.Status }
+
 type Deps struct {
 	Engine  *dnsengine.Engine
 	Lists   *dnsengine.ListManager
 	Rules   *dnsengine.Rules
 	Token   string
 	Version string
+
+	// History serves past entries. Nil means the in-memory ring.
+	History dnsengine.HistorySource
+	// Settings stores the home location. Nil keeps it in memory only.
+	Settings *settings.Store
+	// Geo reports map data status. Nil means the map is disabled.
+	Geo GeoStatus
+	// DetectHome re-detects the automatic home now (nil when automatic home is off).
+	DetectHome func(ctx context.Context) error
+	// Heartbeat is how often the live stream sends a keep-alive (default 15s).
+	Heartbeat time.Duration
 }
 
 type Server struct {
 	Deps
 	started time.Time
 	mux     *http.ServeMux
+
+	mu      sync.Mutex
+	memHome *settings.Home // used when no settings store is configured
 }
 
 // LoadOrCreateToken returns the portal access token stored in dir, creating a
@@ -61,6 +82,12 @@ func LoadOrCreateToken(dir string) (string, error) {
 }
 
 func New(d Deps) *Server {
+	if d.History == nil {
+		d.History = dnsengine.MemoryHistory{Log: d.Engine.Log}
+	}
+	if d.Heartbeat <= 0 {
+		d.Heartbeat = 15 * time.Second
+	}
 	s := &Server{Deps: d, started: time.Now(), mux: http.NewServeMux()}
 	sub, _ := fs.Sub(webFS, "web")
 	s.mux.Handle("GET /", http.FileServerFS(sub))
@@ -72,6 +99,13 @@ func New(d Deps) *Server {
 	s.mux.Handle("DELETE /api/rules", s.auth(s.delRule))
 	s.mux.Handle("POST /api/policies", s.auth(s.setPolicy))
 	s.mux.Handle("POST /api/lists/refresh", s.auth(s.refreshLists))
+	s.mux.Handle("GET /api/stream", s.auth(s.stream))
+	s.mux.Handle("GET /api/history", s.auth(s.historyQuery))
+	s.mux.Handle("POST /api/history/unlock", s.auth(s.historyUnlock))
+	s.mux.Handle("GET /api/settings", s.auth(s.getSettings))
+	s.mux.Handle("POST /api/settings/home", s.auth(s.setHome))
+	s.mux.Handle("DELETE /api/settings/home", s.auth(s.resetHome))
+	s.mux.Handle("POST /api/settings/home/detect", s.auth(s.detectHome))
 	return s
 }
 

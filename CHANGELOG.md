@@ -30,6 +30,14 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 - Optional Docker packaging in `deploy/docker/` (Dockerfile and compose file) that runs the same static binary under a restart policy with a read-only filesystem and minimal capabilities, plus docs for supervising Shepherd and cutting over from another resolver.
 
+- **Encrypted history (opt-in):** a searchable record of past queries on disk, sealed with AES-256-GCM in immutable, individually keyed segments with an encrypted index, retention by age and size, tamper detection, and a key file or passphrase (Argon2id) unlock. In-memory only remains the default. See docs/HISTORY.md.
+- **Live event stream and history API:** `GET /api/stream` (Server-Sent Events with resume), `GET /api/history`, `POST /api/history/unlock`.
+- **Geolocated destinations:** query entries carry the places their answers point to, using a free GeoIP database (DB-IP Lite, CC BY 4.0) downloaded monthly, validated before use and kept if an update fails.
+- **Automatic home:** the globe's home point is found from the network's public address with a DNS "who am I" query and placed with the local database; only the place is stored. Choose your own home and it always wins, with reset and re-detect. Turn off with `map.auto_home = false`.
+- Settings API (`GET /api/settings`, `POST/DELETE /api/settings/home`, `POST /api/settings/home/detect`).
+- `[history]` and `[map]` configuration sections, including a database mirror URL.
+- Roadmap and design for the reverse proxy with wildcard certificates and tunnels, port and exposure management, and inbound monitoring and protection.
+
 ### Fixed
 - The portal kept polling the API every second while signed out, flooding the console with 401 errors. It now stops until you sign in.
 - The example config's blocklist URL returned HTTP 404. It now points at a working list, and a weekly CI job (`scripts/check-list-urls`) fails if any example blocklist URL stops resolving.
@@ -37,4 +45,5 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ### Changed
 - **Protection is on by default; you opt out, not in.** A fresh install now ships with a blocklist and blocks Apple iCloud Private Relay (devices see a notice that it is unavailable on the network). Opt out with `block_private_relay = false` or `no_default_lists = true`, or from the portal. Lists you define always replace the built-in one. Watch mode will follow the same rule (default-on with automatic exclusions and a fail-open watchdog); see the design doc.
 - Licensed AGPL-3.0-or-later.
+- The in-memory query log now keeps 20,000 entries by default (was 5,000) so replay reaches further back.
 - Direction: a native single binary with a Go control plane and a Rust data plane (Wave 6), instead of containers.

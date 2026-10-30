@@ -123,7 +123,7 @@ grep -E 'tskey-[A-Za-z0-9-]+|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]+
 grep -iE '(token|secret|password|passwd|api[_-]?key)[A-Za-z_]*[ ]*[:=][ ]*["'\'']?[A-Za-z0-9+/=_-]{24,}' "$scan" | emit "credential-looking value"
 
 # Personal paths and email addresses.
-grep -E '/(Users|home)/[A-Za-z0-9._-]+' "$scan" | grep -vE '/(Users|home)/(you|user|runner|example|name|username)([^A-Za-z0-9._-]|$)' | emit "personal path"
+grep -E '(^|[^A-Za-z0-9_./-])/(Users|home)/[A-Za-z0-9._-]+' "$scan" | grep -vE '(^|[^A-Za-z0-9_./-])/(Users|home)/(you|user|runner|example|name|username)([^A-Za-z0-9._-]|$)' | emit "personal path"
 grep -E '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$scan" | grep -viE '@(users\.noreply\.github\.com|example\.(com|org|net)|anthropic\.com)' | emit "email address"
 
 # Your own identifiers.

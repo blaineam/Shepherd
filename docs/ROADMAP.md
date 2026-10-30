@@ -1,18 +1,24 @@
 # Roadmap
 
-Each wave ends with something you can deploy and test on a real network.
+Work ships in tested increments that are deployed to a real network as they land.
 
-| Wave | Theme | You can test |
+| Step | Theme | State |
 |---|---|---|
-| **1** | Validate on the real network (Docker testbed) | DNS through the router, per-device attribution, Tailscale migrated in, Thread/IPv6 unaffected |
-| **2** | **Shepherd core (Go, one native binary)** | Own DNS engine (guarded list updates, upstream probing with automatic failover, per-client logs), portal v0, single config file, cross-compiled binary. Replaces the AdGuard container. Embedded Tailscale (`tsnet`) for portal access follows in the same wave |
-| **3** | Devices and alarms | Persistent local store (SQLite, sync-ready records), query history, passive ARP/mDNS/DHCP discovery, device registry and groups, alarm engine v1 (dedupe, severity, mute/snooze, batch actions, ntfy), new-device and ARP-spoof alarms |
-| **4** | Mesh v0 | Dataset sync across instances (rules, devices, alarms, history; convergent, encrypted, opt-in history), active-active DNS, cold-to-warm standby promotion |
-| **5** | Self-maintenance | Signed self-update with rollback, retention budgets, digests, speed tests, uptime monitoring |
-| **6** | Watch mode (ARP interception) | On by default for every device with per-device opt-out and automatic exclusion of infrastructure. Linux first, macOS second, Windows research. Rust data plane for packet inspection. Flows, bandwidth, pause, geo-blocking, DNS-bypass enforcement, warm-standby takeover with fencing |
-| **7** | Portal: map and inspector | The HUD: interactive globe with live traffic arcs weighted by bytes, replay with a timeline scrubber, click-to-control, domain inspector (Whois/RDAP) |
-| **8** | Scans and threat feeds | Scheduled scans, keyless threat intel, optional external Zeek/Suricata adapters |
-| **9** | Local AI | Baselines, anomaly triage, explanations, expiring auto-blocks |
-| **10** | Packaging | macOS and Windows installers, a setup wizard that turns protection on for the whole network, release channels, optional Docker image |
+| 1 | Docker testbed, preflight, Tailscale migration | done |
+| 2 | **Core:** DNS engine, self-healing upstreams, guarded lists, portal, Private Relay policy | done, live on the NAS |
+| 3 | **History, map and stream:** encrypted searchable history, geolocated destinations, live event stream, automatic home | built and tested, deploying |
+| 4 | **Policy:** a catalog of lists, apps and categories, custom lists, scopes (network, group, device) | built, merging |
+| 5 | **Upstreams:** plain, DoT and DoH with bootstrap, presets, test before adding | built, merging |
+| 6 | **Devices:** registry, names from mDNS and the neighbor table, vendors, groups, search, bulk edit | built, merging |
+| 7 | **Portal:** the globe HUD (arcs weighted by volume, replay, click to control) and management screens for the above | in progress |
+| 8 | **Alarms:** engine with dedupe, severity, mute and snooze, batch actions, ntfy | next |
+| 9 | **Ports and exposure:** scheduled scans, per-device open ports, router port forwards, change alarms | planned |
+| 10 | **Access:** reverse proxy, wildcard certificates on Cloudflare DNS, private service names, Cloudflare Tunnel | planned |
+| 11 | **Watch mode:** ARP interception, flows and bytes, per-device pause, geo-blocking, inbound visibility, warm standby | planned |
+| 12 | **Inbound protection:** logging, rate limits and blocking at the proxy and tunnel, exposure alarms, host-level inbound tracking | planned |
+| 13 | **Mesh:** dataset sync, active-active DNS, standbys | planned |
+| 14 | **Self-maintenance:** signed self-update with rollback, retention budgets, digests | planned |
+| 15 | **Threat feeds and local AI** | planned |
+| 16 | **Packaging:** installers, setup wizard, release channels | planned |
 
-Research items (not scheduled): passive IPv6 observation, in-path IPv6, Gateway profile, NAT state sync for seamless failover.
+Research items: passive IPv6 observation, in-path IPv6, a Gateway profile, NAT state sync for seamless failover.

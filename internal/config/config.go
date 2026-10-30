@@ -21,6 +21,32 @@ type Config struct {
 	Lists          []List  `toml:"lists"`
 	Portal         Portal  `toml:"portal"`
 	Privacy        Privacy `toml:"privacy"`
+	History        History `toml:"history"`
+	Map            Map     `toml:"map"`
+}
+
+// History controls what is remembered after the fact. "memory" (the default)
+// keeps recent queries in RAM only and writes nothing to disk. "encrypted"
+// keeps a searchable, AES-256-GCM encrypted record on disk.
+type History struct {
+	Mode          string `toml:"mode"`           // "memory" or "encrypted"
+	RetentionDays int    `toml:"retention_days"` // 0 keeps everything
+	MaxMB         int    `toml:"max_mb"`         // 0 means no size cap
+	KeySource     string `toml:"key_source"`     // "file" or "passphrase"
+	KeyFile       string `toml:"key_file"`       // default <data_dir>/history/history.key
+}
+
+// Map controls the globe's location data, a free GeoIP database downloaded
+// once a month and used entirely on this machine.
+type Map struct {
+	Enabled bool `toml:"enabled"`
+	// AutoHome places "home" on the globe from the network's public address (a
+	// DNS "who am I" query to public resolvers). Choosing your own home in the
+	// portal always wins, and then nothing is looked up.
+	AutoHome bool `toml:"auto_home"`
+	// DatabaseURL overrides where the GeoIP database is downloaded from, for a
+	// local mirror or an offline install. Empty uses the default.
+	DatabaseURL string `toml:"database_url"`
 }
 
 // Privacy holds initial policy switches. Protections are on by default; after
@@ -65,6 +91,8 @@ func Default() Config {
 	return Config{
 		Lists:   []List{defaultList},
 		Privacy: Privacy{BlockPrivateRelay: true},
+		History: History{Mode: "memory", RetentionDays: 30, MaxMB: 2048, KeySource: "file"},
+		Map:     Map{Enabled: true, AutoHome: true},
 		DataDir: "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
@@ -72,7 +100,7 @@ func Default() Config {
 			BlockMode:            "null",
 			ProbeIntervalSeconds: 15,
 			CacheSize:            20000,
-			LogSize:              5000,
+			LogSize:              20000,
 		},
 		Portal: Portal{Listen: "127.0.0.1:8787"},
 	}
@@ -110,6 +138,15 @@ func (c Config) Validate() error {
 	}
 	if c.DNS.ProbeIntervalSeconds < 1 {
 		return errors.New("dns.probe_interval_seconds must be at least 1")
+	}
+	if c.History.Mode != "memory" && c.History.Mode != "encrypted" {
+		return fmt.Errorf("history.mode must be \"memory\" or \"encrypted\", got %q", c.History.Mode)
+	}
+	if c.History.KeySource != "file" && c.History.KeySource != "passphrase" {
+		return fmt.Errorf("history.key_source must be \"file\" or \"passphrase\", got %q", c.History.KeySource)
+	}
+	if c.History.RetentionDays < 0 || c.History.MaxMB < 0 {
+		return errors.New("history.retention_days and history.max_mb must not be negative")
 	}
 	seen := map[string]bool{}
 	for _, l := range c.Lists {

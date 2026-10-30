@@ -19,6 +19,8 @@ type Engine struct {
 	Log           *QueryLog
 	Stats         *Stats
 	BlockNXDOMAIN bool
+	// Geo places answer addresses on the globe. Nil disables geolocation.
+	Geo Geo
 }
 
 func clientIP(a net.Addr) string {
@@ -72,6 +74,51 @@ func (e *Engine) sinkhole(r *dns.Msg, q dns.Question, nxdomain bool) *dns.Msg {
 	return m // other types: NOERROR with no answer
 }
 
+// publicIP reports whether ip is a routable address worth placing on a map.
+func publicIP(ip net.IP) bool {
+	if ip == nil || ip.IsPrivate() || ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsMulticast() {
+		return false
+	}
+	if v4 := ip.To4(); v4 != nil && v4[0] == 100 && v4[1]&0xC0 == 64 { // 100.64.0.0/10
+		return false
+	}
+	return true
+}
+
+// PublicIP reports whether ip is a routable address (not private, loopback,
+// link-local, multicast or carrier-grade NAT).
+func PublicIP(ip net.IP) bool { return publicIP(ip) }
+
+// destsOf geolocates up to three distinct public addresses in resp.
+func (e *Engine) destsOf(resp *dns.Msg) []Dest {
+	if e.Geo == nil || resp == nil {
+		return nil
+	}
+	var out []Dest
+	seen := map[string]bool{}
+	for _, rr := range resp.Answer {
+		var ip net.IP
+		switch v := rr.(type) {
+		case *dns.A:
+			ip = v.A
+		case *dns.AAAA:
+			ip = v.AAAA
+		}
+		if !publicIP(ip) || seen[ip.String()] {
+			continue
+		}
+		seen[ip.String()] = true
+		if d, ok := e.Geo.Locate(ip); ok {
+			d.IP = ip.String()
+			out = append(out, d)
+		}
+		if len(out) == 3 {
+			break
+		}
+	}
+	return out
+}
+
 func (e *Engine) done(entry Entry, start time.Time) {
 	entry.Ms = float64(time.Since(start).Microseconds()) / 1000
 	e.Log.Add(entry)
@@ -108,6 +155,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	if resp, ok := e.Cache.Get(r); ok {
 		entry.Action, entry.Rcode = "cached", dns.RcodeToString[resp.Rcode]
+		entry.Dests = e.destsOf(resp)
 		e.write(w, r, resp)
 		e.done(entry, start)
 		return
@@ -126,6 +174,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 	e.Cache.Put(r, resp)
 	entry.Action, entry.Upstream, entry.Rcode = "allowed", up.Addr, dns.RcodeToString[resp.Rcode]
+	entry.Dests = e.destsOf(resp)
 	e.write(w, r, resp)
 	e.done(entry, start)
 }

@@ -198,7 +198,39 @@ Defaults that exist today: a blocklist is active out of the box, and Apple iClou
 (devices see a notice that it is unavailable on this network; set `block_private_relay = false` or use the
 portal switch to allow it). Both can be opted out of in `shepherd.toml` or the portal.
 
+## Access: reverse proxy, certificates and tunnels
+
+Planned, all managed from the portal (this replaces a hand-maintained proxy manager).
+
+- **Friendly names for private services.** Map a service that only exists on your Tailscale network, such as `nas.home.example.com`, to its address. Shepherd's resolver answers that name with the proxy's tailnet address for devices on the tailnet and the LAN, so nothing about it is public.
+- **Valid HTTPS everywhere.** Wildcard certificates from Let's Encrypt using the DNS challenge on Cloudflare DNS, so a private service gets a real certificate without being reachable from the internet. Certificates renew themselves. The Cloudflare API token is stored encrypted with the same key machinery as the history.
+- **Reverse proxy built in.** One in-process proxy with per-host routes, WebSocket support and an access log, instead of a separate proxy manager to maintain. Existing proxy-manager hosts can be imported.
+- **Public access through Cloudflare Tunnel.** Expose chosen services without opening a port: Shepherd configures and supervises the tunnel connector, and every request that arrives through it passes through the same proxy, so it is logged, rate limited and can be blocked by country or reputation.
+
+## Ports and exposure
+
+Planned: see what is open on your network. Scheduled, polite TCP scans of known devices (by device, group or the whole network), results kept per device with history, and alarms when a new port opens or a risky service appears. The router's own forwarded ports are listed too (through UPnP or NAT-PMP where the router supports them), with one-click removal. The host Shepherd runs on reports its own listening ports.
+
+## Inbound traffic: what can be seen and protected
+
+Shepherd sits inside the network, and a home router drops unsolicited inbound connections at the edge, so most internet scans never reach it. What it can do, honestly:
+
+- **Everything that enters through Shepherd's own front doors.** Requests arriving through the reverse proxy, a Cloudflare Tunnel or Tailscale are fully visible and controllable: logged per request, rate limited, blocked by country, network or reputation, and shown on the globe as inbound arcs.
+- **Exposure monitoring.** Alarms when a new port forward appears on the router, when a device starts listening on a new port, or when a service is reachable that should not be. This is the most useful protection, because a closed port is the best defence.
+- **Watch mode.** Connections to a steered device that arrive through a port forward can be seen and filtered. Seeing the router-to-device direction needs two-sided interception or Gateway mode; the one-sided ARP method only steers a device's outgoing traffic.
+- **The host itself.** Inbound connections to the machine running Shepherd can be tracked at the host level on Linux.
+- **What it cannot see.** Scans and attacks the router drops before they reach the LAN, unless the router exposes logs.
+
+## Encrypted history
+
+Past queries can be kept, searchable, after the fact. See [HISTORY.md](HISTORY.md). The default stays in memory only; encrypted persistence is a setting, and the setup wizard will offer it.
+
+## Where home is
+
+The globe's "home" point is worked out automatically from the network's public address with a DNS "who am I" query to well-known public resolvers (no web service), placed with the local GeoIP database. Only the resulting place is kept, never the address. Choosing your own home in the portal always wins, and then nothing is looked up. Turn it off with `map.auto_home = false`.
+
 ## Decision log
 
+- **2026-10-30:** Persistence, the globe HUD, device naming and groups, scoped app and category blocking, configurable upstreams with DoH, the reverse proxy with certificates and tunnels, port management and inbound protection were all pulled into the near roadmap. Work proceeds in tested increments that are deployed to the NAS as they land.
 - **2026-10-30:** Protection is opt-out, not opt-in. Defaults are on (blocklist, Private Relay policy), and Watch mode will be default-on after setup with automatic exclusions, health gating and a fail-open watchdog. This replaces the earlier "everything in the data path is opt-in" stance.
 - **2026-10-29:** Licensed AGPL-3.0-or-later (after weighing MIT and MIT/Apache-2.0). Self-hosted network software is exactly what closed hosted or appliance forks would target, and AGPL requires those to share their changes. Keeping copyright with the author preserves the option to relicense or dual-license later. A Rust-only core was replaced by a Go control plane plus a Rust data plane, so Tailscale's `tsnet` can be embedded while the speed-critical packet work still gets Rust. The Wave 1 claim that Rust's safety edge mattered for the whole core was overstated: Go is memory-safe too, and the control plane is not on the packet fast path.
