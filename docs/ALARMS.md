@@ -324,3 +324,142 @@ eng.Undo(res.Handle)
   `Summary()` returns counts by state, counts by severity of the new alarms (the badge numbers), the highest
   new severity, the active rule count and the drop counter in one call.
 - Large batches (over 100 alarms) emit one `ChangeBulk` instead of one change per alarm.
+
+## Delivery
+
+`NewRouter` consumes the engine's change stream (`eng.Subscribe(rt.Handle)`) and delivers alarms the engine
+decided to notify about.
+
+**Which alarms go where.** A type that is switched off (`Preferences.Types[id].Off`, or `OffForClasses` for the
+alarm's device class) is not delivered. Otherwise a channel carries the alarm when it is enabled, listed in
+the type's channels (overridable per type) and the alarm's severity is at least the channel's minimum.
+
+**When.** Severity at or above `ImmediateMin` (default `high`) is delivered at once. Lower severities go into
+a digest (when enabled): one summary notification sent `Every` (default 6 hours) after its first alarm was
+queued, or at a set time of day (`Digest.At`, in the preferences' time zone). A digest with one alarm is sent
+as that alarm. Alarms held by quiet hours are delivered when the window ends. With the digest off, everything
+is immediate.
+
+**Fallback.** Per alarm: Web Push is tried first, to every subscribed device. ntfy is used instead when push
+could not deliver:
+
+| Push result | ntfy |
+|---|---|
+| Delivered to at least one device | not used |
+| No subscriptions | sends |
+| Every subscription gone (404/410, retired) | sends |
+| Every attempt failed or errored | sends at once; push keeps retrying |
+| Push not applicable (disabled, or below its minimum) | sends if it passes its own minimum |
+| `NtfyAlways` on | sends **in addition**, independently of push |
+
+**Retries.** A failed delivery is retried with backoff (30 seconds, 2 minutes, 10 minutes by default), then
+recorded as `failed`. A permanent error (gone endpoints, bad ntfy credentials) is not retried. A retry resends
+the same notification; devices collapse repeats by the notification tag (the dedupe key).
+
+**Delivery log.** `Router.Log(channel, limit)` returns per-delivery records (status `ok`, `retrying`,
+`failed`, `skipped`; attempts; error; detail such as `2 of 3 delivered, 1 gone`), updated in place across
+retries and bounded (500 records, 14 days). `Router.Status()` returns, per channel, whether it is configured,
+`LastOK`, `LastError`, `LastErrorAt` and counts: show the error when `LastErrorAt` is after `LastOK`.
+
+**Payload.** Web Push gets `{title, body, url, tag, severity, id}` as JSON, well under 1 KB (text is bounded
+and control characters are stripped), with `tag` set to the dedupe key and `url` a portal path. ntfy gets the
+same title and body, a priority and tags from the severity, and `Click` set to `PortalURL` plus the route when
+`Preferences.PortalURL` is set.
+
+## Preferences
+
+`Preferences` (JSON, durations as strings like `"6h"`) holds the per-channel `Enabled` and `MinSeverity`
+(defaults: push and ntfy both on, `low` and above), `NtfyAlways`, `ImmediateMin`, `Digest`, `Quiet`,
+`Learning`, per-type switches (`Types`), `Timezone` (an IANA name, `UTC`, or empty for the server's local
+zone), `MorningHour` and `PortalURL`. `Validate` rejects bad values, so `SetPreferences` never stores a bad
+setting. A container image without time zone data must import `time/tzdata` to use named zones.
+
+## Persistence
+
+With `Options.Dir` set, the engine keeps `alarms.json` (alarms and rules, tombstones included),
+`alarm-prefs.json` (preferences, the install time and the device first-seen times) and, with
+`RouterOptions.Path`, `deliveries.json` (the log, channel status, pending retries and the digest queue). Files
+are JSON, written atomically with mode 0600 through a `Codec` (same interface as the device registry, so
+encryption can be plugged in), loaded on start and saved at most every 5 seconds and on `Close`. A corrupt or
+unsupported file stops startup with an error; it is never silently discarded. Retention is bounded: resolved,
+acknowledged and muted alarms last 30 days, new ones twice that, the store is capped at 5000 alarms (resolved
+go first), tombstones are purged after 30 days, the delivery log keeps 500 records.
+
+Records carry HLC stamps, so `Export` and `Import` already merge by last-writer-wins and converge in any
+order (property-tested); imports are silent so a synced replica does not re-announce.
+
+## Go API for wiring
+
+```go
+// Engine
+eng, err := alarms.New(alarms.Options{Dir: stateDir, Node: nodeID /* Codec, Clock, Queue, DedupeWindow, ... */})
+defer eng.Close()
+eng.Raise(ev) bool;  eng.RaiseSync(ev) (Alarm, error);  eng.Drain();  eng.Dropped() uint64
+eng.Subscribe(func(alarms.Change)) (unsubscribe func());  eng.Events(buffer) (<-chan Change, cancel func())
+eng.List(Query) Page;  eng.Get(id);  eng.Children(id);  eng.Summary() Summary
+eng.Acknowledge / Resolve / Delete(Selector) (BatchResult, error)
+eng.Mute(Selector, MuteRequest);  eng.Snooze(id, MuteSpec);  eng.Undo(handle)
+eng.CreateRule(RuleSpec);  eng.ListRules(includeInactive);  eng.RemoveRule(id)
+eng.Preferences();  eng.SetPreferences(p);  eng.LearningUntil();  eng.NoteDeviceSeen(id, at)
+eng.Register(AlarmType);  eng.Types();  eng.Type(id)
+eng.Export() Snapshot;  eng.Import(Snapshot) int;  eng.Save() error;  eng.Prune() PruneResult;  eng.Tick()
+
+// Delivery
+store := webpush.NewStore(webpush.StoreOptions{NodeID: nodeID});  store.Load(path)
+keys, _, _ := webpush.LoadOrCreateVAPIDKeys(vapidPath)
+sender, _ := webpush.NewSender(keys, "mailto:admin@example.com")
+push := alarms.NewWebPushPusher(&webpush.Broadcaster{Store: store, Sender: sender})
+nt := alarms.NewNtfyPublisher(&ntfy.Client{Server: url, Token: tok}, "shepherd-alarms")
+rt := alarms.NewRouter(alarms.RouterOptions{Source: eng, Pusher: push, Ntfy: nt, Path: alarms.DefaultRouterPath(stateDir)})
+rt.Load();  eng.Subscribe(rt.Handle);  go rt.Run(ctx)
+rt.Status() []ChannelStatus;  rt.Log(channel, limit) []DeliveryRecord;  rt.Pending() (retries, digest int)
+```
+
+Pass `nil` for `Pusher` or `Ntfy` when a channel is not set up. For tests of your own wiring,
+`alarms.NewFakeClock` is a manually advanced `Clock`, and `Pusher`, `NtfyPublisher` and `Source` are small
+interfaces to fake.
+
+For the portal's live updates, stream `eng.Events(n)`: every `Change` has a `Kind` (`raised`, `updated`,
+`escalated`, `state`, `deleted`, `bulk`, `rule`, `prefs`) and the affected alarm. A full buffer drops changes
+rather than blocking the engine, so re-fetch with `List` after a `bulk` change or a reconnect.
+
+# Web Push in the browser
+
+Web Push is not something the server can do alone; the portal side is still to be built, and these are the
+constraints it must respect.
+
+- **HTTPS is required.** Browsers expose the Push API only in a secure context. The portal must be served
+  over HTTPS with a valid certificate (the tailnet's automatic HTTPS, or the planned reverse proxy with
+  Let's Encrypt). Plain HTTP, even on the LAN, cannot subscribe.
+- **A service worker is required.** The page registers a service worker, calls
+  `registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey})` with the VAPID public
+  key, and posts the resulting `PushSubscription.toJSON()` to the server (`Store.Add`). The worker's `push`
+  handler must always show a notification (iOS revokes a subscription whose pushes show nothing), and its
+  `notificationclick` handler should open only same-origin paths from the payload's `url`.
+- **iOS needs a home-screen web app.** Safari on iOS 16.4 and later delivers Web Push only to a web app that
+  was added to the Home Screen (Share, then Add to Home Screen) and opened from there; a plain Safari tab
+  cannot subscribe. The permission prompt must follow a tap inside that app. Android Chrome and desktop
+  browsers need no install.
+- **Lockdown Mode silently drops Web Push.** An iPhone in Apple's Lockdown Mode never receives the
+  notification, and the push service still answers success, so Shepherd cannot see the failure. That is the
+  main reason ntfy exists: set `NtfyAlways` for a household with a Lockdown Mode phone, or have that phone
+  use the ntfy app. The same applies to browsers that block notifications or have Focus modes that hide them.
+- Subscriptions expire or are revoked when the user clears site data, uninstalls the app or reinstalls the
+  OS; the push service then answers 404 or 410 and the subscription is retired automatically.
+
+# Not built yet
+
+- **Portal API and UI.** No HTTP handlers exist for listing alarms, batch actions, mute rules, preferences,
+  push subscribe and unsubscribe, the delivery log or "send a test notification" (`TypeTest` and `RaiseSync`
+  are ready for it). The alarm list, badge, mute and snooze controls and settings screens do not exist.
+- **Service worker and manifest.** The `push` and `notificationclick` handlers, the subscribe flow and the
+  home-screen web app manifest are not written.
+- **Wiring into `cmd/shepherd`.** Nothing raises alarms yet, the Router is not started and the VAPID keys,
+  subscriptions and ntfy settings have no config or portal home.
+- **Mesh sync.** Records carry HLC stamps and `Export`/`Import` merge by last-writer-wins, but there is no
+  transport, no high-water-mark exchange, and no audit log of mutes and rule changes. A pending retry or
+  digest queue lives on one node only. Replicas should also agree on which node delivers, or each will notify.
+- **Encryption at rest.** The `Codec` seam exists; the encrypted implementation (shared with encrypted
+  history) does not.
+- **A real-device check.** Everything is tested against fakes and loopback servers. Nothing here has been
+  sent to a real push service or ntfy server.
