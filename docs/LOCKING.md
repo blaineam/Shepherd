@@ -18,6 +18,22 @@ The lock is enforced on the server, not just hidden in the page:
 - The bearer token still works for scripts and the command line, and is not affected by idle locking.
 - Failed unlock attempts are slowed and rate limited.
 
-## Settings
+## Settings: auto-lock is optional
 
-`portal.idle_lock_minutes` in the configuration (and the portal's settings screen) controls the idle time. A passcode can be set or cleared from the settings screen while unlocked.
+Auto-lock is on by default but you can change or turn it off, in the configuration or from the portal's settings screen (a change in the portal is saved and wins over the configuration file):
+
+| Setting | Choices | Behavior |
+|---|---|---|
+| Auto-lock after idle | **Never**, 5, 10 (default), 30, 60 minutes, or a custom number | **Never** keeps you unlocked until you press Lock or sign out. |
+| Passcode | none, or one you choose | Faster than pasting the token. Set or clear it while unlocked. |
+
+```toml
+[portal]
+idle_lock_minutes = 10   # 0 = never auto-lock
+```
+
+With auto-lock off the session still ends if the server restarts, and a session cookie is never valid for more than 30 days.
+The locked-by-default demo view still applies to anyone who has not unlocked: turning off auto-lock only stops the
+portal from locking *you* out while you are using it.
+
+Changing these settings needs an unlocked session, so someone looking at the demo view cannot turn the lock off.
