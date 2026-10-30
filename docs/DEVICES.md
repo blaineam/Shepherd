@@ -51,6 +51,15 @@ internet.
 The device **type** (phone, tablet, laptop, tv, speaker, camera, printer, game console, smart-home hub, router) is a guess from the
 vendor, name and announced services, with the reason shown. Set it yourself to keep it.
 
+## Needs attention
+
+Above the main list, a "Needs attention" panel pulls out devices worth a glance before anything else:
+newly quarantined, wandering, or excluded — in that priority order, ties broken by most recently seen.
+On a network with dozens of otherwise near-identical devices these states are easy to miss mixed into an
+alphabetical or recency-sorted list; a chip's click opens straight into that device's drawer. It does not
+replace the search filters below (`wandering:true`, `excluded:true`, `group:Quarantine` still work and
+show everything, not just the first several).
+
 ## Search
 
 The search box takes free text and filters. A `-` in front negates a term; quote values with spaces.

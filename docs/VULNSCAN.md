@@ -206,3 +206,13 @@ sweep of ~40 ports). Run a portscan "scan now" first if you want the very latest
 a manual vulnerability scan.
 
 History is kept at `<data_dir>/vulnscan.json` (mode 0600) and saved after every scan, scheduled or manual.
+
+## Portal
+
+A dedicated **Vulnerabilities** tab lists every finding across every scanned device in one place, worst
+severity first, filterable by minimum severity, active/resolved and free text, with a "Scan all" button
+(`POST /api/vulnscan/scan` with no `device_id`). Clicking a row opens that device's drawer rather than
+repeating the finding detail a second time. The device drawer itself (Devices screen) still has its own
+smaller Vulnerabilities panel — a quick, per-device summary with its own "Scan now" — for when you are
+already looking at one device and do not need the cross-network view. See
+`internal/portal/web/js/vulnscanview.js`.

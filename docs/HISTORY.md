@@ -34,6 +34,11 @@ The portal's history view and `GET /api/history` take a time range, a device, an
 search, and return the newest matches. The globe's replay uses the same data. After a restart the live
 view is repopulated from the last entries.
 
+A blocked row also offers "Allow" next to Replay: a one-click, domain-specific allow rule (`POST
+/api/rules`), the same mechanism and endpoint the HUD inspector's own block/allow buttons use. It only
+overrides that one domain going forward, not the list or rule that matched — a deliberately narrower,
+safer action than disabling a whole blocklist from here.
+
 ## Not covered yet
 
 Syncing history between Shepherds (planned, opt-in per node), encryption of the allow and block rule
