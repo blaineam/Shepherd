@@ -205,6 +205,12 @@ unit-tested without any real network) decides this from the Sample stream alone:
 - Recovery is immediate: the very next healthy sample after a raised alarm resolves it. Good news does
   not need the same "wait and see" discipline bad news does — this mirrors `internal/vulnscan`'s own
   resolve-the-moment-it-clears behavior, and `wireUpstreamAlarms`'s own instant `upstream-recovered` alarm.
+- Unlike `vulnerability-found`, `network-degraded` **is** suppressed during the install learning period
+  (`LearningSuppresses: true`): a freshly installed Shepherd, still learning what "normal" looks like on
+  this specific network, raising a degradation alarm in its first hour would be exactly the noise learning
+  mode exists to prevent — there is no equivalent to a vulnerability finding's "this is worth knowing about
+  even on day one" urgency here, since a slow or lossy network on day one is far more likely to just be
+  what this network's baseline already looks like.
 - There is deliberately no separate "network recovered" alarm type, for the same reason
   [VULNSCAN.md](VULNSCAN.md) gives for not adding a "vulnerability resolved" type: `internal/alarms`
   already has the right primitive (`Resolve`), and a second type would just be two ways of saying the same

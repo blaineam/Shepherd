@@ -36,6 +36,7 @@ const (
 	TypeThreatMatch        = "threat-match"         // for threat intelligence
 	TypeSelfUpdate         = "self-update"          // for self-update
 	TypeVulnerabilityFound = "vulnerability-found"  // internal/vulnscan
+	TypeNetworkDegraded    = "network-degraded"     // internal/nethealth
 	TypeTest               = "test"
 )
 
@@ -88,6 +89,7 @@ func BuiltinTypes() []AlarmType {
 		all(TypeThreatMatch, "Threat match", "A device contacted an address or name on a threat list.", SeverityCritical, false, false),
 		all(TypeSelfUpdate, "Shepherd update", "Shepherd updated itself, or an update needs attention.", SeverityLow, false, false),
 		all(TypeVulnerabilityFound, "Vulnerability found", "internal/vulnscan matched a device's open port against a known vulnerability signature.", SeverityHigh, false, false),
+		all(TypeNetworkDegraded, "Network degraded", "Latency, packet loss or reachability has been sustained bad for several probe cycles in a row.", SeverityMedium, true, false),
 		func() AlarmType {
 			t := all(TypeTest, "Test notification", "Sent on request to check that notifications arrive.", SeverityHigh, false, false)
 			t.Bypass = true

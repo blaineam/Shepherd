@@ -37,6 +37,7 @@ type Config struct {
 	Accountability Accountability `toml:"accountability"`
 	Portscan       Portscan       `toml:"portscan"`
 	Vulnscan       Vulnscan       `toml:"vulnscan"`
+	Nethealth      Nethealth      `toml:"nethealth"`
 }
 
 // ARP controls the passive ARP monitor (docs/ARP.md): a read-only listener
@@ -188,6 +189,32 @@ type Vulnscan struct {
 	IntervalSeconds int `toml:"interval_seconds"`
 }
 
+// Nethealth schedules internal/nethealth's periodic latency, jitter,
+// packet-loss and reachability probes against the configured DNS
+// upstreams plus a couple of well-known public resolvers, and its
+// separate, much less frequent bufferbloat check (docs/NETHEALTH.md).
+// Unlike Portscan and Vulnscan, Enabled's own default (true) and
+// BufferbloatEnabled's default (false) are deliberately different: the
+// probe itself only ever opens tiny, gentle TCP connections (no heavier
+// than internal/portscan's own connect scans), but bufferbloat generates
+// real, deliberate load against the maintainer's own uplink and reaches
+// one external endpoint this project has not verified end to end — see
+// docs/NETHEALTH.md's "Should this be on by default?" section for the
+// full reasoning on both halves of that decision.
+type Nethealth struct {
+	Enabled bool `toml:"enabled"`
+	// IntervalSeconds is how often the latency/jitter/loss/reachability
+	// probe runs. Minutes, not hours: each cycle is cheap, and the whole
+	// point of this feature is a trend line dense enough to be useful.
+	IntervalSeconds int `toml:"interval_seconds"`
+	// BufferbloatEnabled turns on the separate, far less frequent
+	// bufferbloat check, which actually generates load. Off by default.
+	BufferbloatEnabled bool `toml:"bufferbloat_enabled"`
+	// BufferbloatIntervalSeconds is how often the bufferbloat check runs,
+	// when enabled.
+	BufferbloatIntervalSeconds int `toml:"bufferbloat_interval_seconds"`
+}
+
 // History controls what is remembered after the fact. "memory" (the default)
 // keeps recent queries in RAM only and writes nothing to disk. "encrypted"
 // keeps a searchable, AES-256-GCM encrypted record on disk.
@@ -271,6 +298,7 @@ func Default() Config {
 		Accountability: Accountability{Enabled: true, SMTP: AccountabilitySMTP{Port: 587, TLS: "starttls"}},
 		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600},
 		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600},
+		Nethealth:      Nethealth{Enabled: true, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
 		DataDir:        "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
@@ -368,6 +396,12 @@ func (c Config) Validate() error {
 	}
 	if c.Vulnscan.IntervalSeconds < 300 {
 		return errors.New("vulnscan.interval_seconds must be at least 300")
+	}
+	if c.Nethealth.Enabled && c.Nethealth.IntervalSeconds < 60 {
+		return errors.New("nethealth.interval_seconds must be at least 60")
+	}
+	if c.Nethealth.BufferbloatEnabled && c.Nethealth.BufferbloatIntervalSeconds < 600 {
+		return errors.New("nethealth.bufferbloat_interval_seconds must be at least 600")
 	}
 	if s := c.Devices.ReverseDNSServer; s != "" {
 		host := s

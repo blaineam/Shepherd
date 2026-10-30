@@ -403,6 +403,61 @@ func TestExampleConfigShowsTheVulnscanDefaults(t *testing.T) {
 	}
 }
 
+func TestNethealthDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Nethealth.Enabled || cfg.Nethealth.IntervalSeconds != 120 {
+		t.Errorf("nethealth defaults = %+v", cfg.Nethealth)
+	}
+	if cfg.Nethealth.BufferbloatEnabled || cfg.Nethealth.BufferbloatIntervalSeconds != 3600 {
+		t.Errorf("nethealth bufferbloat defaults = %+v", cfg.Nethealth)
+	}
+}
+
+func TestNethealthOverridesAndValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "n.toml")
+	os.WriteFile(path, []byte("[nethealth]\nenabled = false\ninterval_seconds = 300\nbufferbloat_enabled = true\nbufferbloat_interval_seconds = 1800\n"), 0o600)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Nethealth.Enabled || cfg.Nethealth.IntervalSeconds != 300 {
+		t.Errorf("nethealth overrides = %+v", cfg.Nethealth)
+	}
+	if !cfg.Nethealth.BufferbloatEnabled || cfg.Nethealth.BufferbloatIntervalSeconds != 1800 {
+		t.Errorf("nethealth bufferbloat overrides = %+v", cfg.Nethealth)
+	}
+
+	os.WriteFile(path, []byte("[nethealth]\ninterval_seconds = 59\n"), 0o600)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "interval_seconds must be at least 60") {
+		t.Errorf("too-short interval: %v", err)
+	}
+
+	os.WriteFile(path, []byte("[nethealth]\nbufferbloat_enabled = true\nbufferbloat_interval_seconds = 599\n"), 0o600)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "bufferbloat_interval_seconds must be at least 600") {
+		t.Errorf("too-short bufferbloat interval: %v", err)
+	}
+
+	// The same too-short bufferbloat interval is fine while bufferbloat
+	// stays disabled: Validate only cares once it would actually run.
+	os.WriteFile(path, []byte("[nethealth]\nbufferbloat_interval_seconds = 599\n"), 0o600)
+	if _, err := Load(path); err != nil {
+		t.Errorf("disabled bufferbloat should not validate its interval: %v", err)
+	}
+}
+
+func TestExampleConfigShowsTheNethealthDefaults(t *testing.T) {
+	ex, err := Load("../../shepherd.example.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.Nethealth != Default().Nethealth {
+		t.Errorf("example %+v differs from the defaults %+v", ex.Nethealth, Default().Nethealth)
+	}
+}
+
 func TestQuarantineCanBeOptedOut(t *testing.T) {
 	cfg := writeCfg(t, "[devices]\nquarantine_new_devices = false\n")
 	if cfg.Devices.QuarantineNewDevices || !cfg.Devices.Enabled {
