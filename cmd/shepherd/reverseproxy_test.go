@@ -272,6 +272,7 @@ func TestStartReverseProxyReportsAServeFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitForCert(t, rp) // nothing may still be writing into the temp dir when the test ends
 	// Pull the listener out from under the server: Serve returns an error
 	// that is not ErrServerClosed, which run must hear about.
 	rp.ln.Close()

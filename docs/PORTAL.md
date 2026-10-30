@@ -50,7 +50,7 @@ as text, never HTML.
 The portal's management screens use these endpoints (all behind the token; every change needs the `X-Shepherd: 1` header; bodies are JSON and size limited):
 devices, groups, bulk edit and merge in [DEVICES.md](DEVICES.md); the catalog, scopes, rules, switches and custom lists in [POLICY.md](POLICY.md); per-scope
 country blocking in [GEOBLOCK.md](GEOBLOCK.md); the upstream list, presets and bootstrap in [UPSTREAMS.md](UPSTREAMS.md); alarms in [ALARMS.md](ALARMS.md); and
-vulnerability findings and manual scans in [VULNSCAN.md](VULNSCAN.md). `GET /api/status` also reports
+vulnerability findings and manual scans in [VULNSCAN.md](VULNSCAN.md); and proxied hosts (the Proxy tab) in [REVERSEPROXY.md](REVERSEPROXY.md). `GET /api/status` also reports
 `device_count`, `group_count`, `catalog_count`, `custom_list_count` and `network_item_count`. Query entries carry `device` and `device_id` when the device is known.
 A blocked History row also offers a one-click "Allow" action (the same `POST /api/rules` the HUD inspector's own block/allow buttons use), an explicit
 per-domain override — narrower and safer than disabling whatever list or rule matched.

@@ -13,17 +13,39 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
-- **Reverse proxy (`[reverseproxy]`, `internal/reverseproxy`):** routing HTTPS requests for other
-  self-hosted services through Shepherd by Host header, the main remaining piece of
-  [ROADMAP.md](docs/ROADMAP.md) step 18. `internal/reverseproxy` holds the proxied hosts (`Store`,
-  persisted to `<data_dir>/reverseproxy.json`) and forwards with `httputil.ReverseProxy`, WebSocket
-  upgrades included. `internal/tlscert.Obtainer` is proven to issue a wildcard (`*.example.com`) end to
-  end. `cmd/shepherd/reverseproxy.go` serves the hosts on `reverseproxy.listen` behind that one wildcard
-  certificate (kept in `<data_dir>/reverseproxy/tls`, apart from `[tls]`'s), and the portal edits them
-  over `GET/POST /api/reverseproxy/hosts` and `PUT/DELETE /api/reverseproxy/hosts/{id}`, with the
-  listener and certificate state on `GET /api/reverseproxy`. A new Proxy tab
-  (`internal/portal/web/js/reverseproxyview.js`) adds, edits, toggles and removes hosts from the browser,
-  and flags a name the wildcard cannot cover or a backend whose certificate is not verified. Off by default.
+- **Reverse proxy (`[reverseproxy]`, `internal/reverseproxy`):** the main remaining piece of
+  [ROADMAP.md](docs/ROADMAP.md) step 18 ("Access") — Shepherd can now do what a separate reverse-proxy
+  manager does: own an HTTPS listener, terminate TLS for every configured hostname, and forward each
+  request by its `Host` header to that host's `http://` or `https://` backend, path, query, body and
+  headers untouched, with `X-Forwarded-For`/`X-Real-IP` set to the client's own address (set, never
+  appended to a client-supplied chain: this is the edge), `X-Forwarded-Proto`/`X-Forwarded-Host`, and the
+  public `Host` passed through the way such managers do. A name with no enabled host gets a plain 404 from
+  the proxy itself, never the portal; a host pointed back at the proxy is answered 508 instead of looping.
+  Forwarding is `httputil.ReverseProxy`, and **WebSocket upgrades are proven end to end, not assumed**:
+  `internal/reverseproxy/websocket_test.go` hand-rolls RFC 6455 on both sides with only the standard
+  library (zero new module dependencies) — a hijacking backend that pushes a message first and echoes, and
+  a raw TLS client negotiating `http/1.1` like a browser — and checks the 101 handshake, the unprompted
+  backend-to-client frame, echoes, a 70 KB frame each way and the close handshake, for both `http` and
+  `https` backends; `cmd/shepherd`'s tests repeat it through the real listener started by `run()`.
+  **One wildcard certificate** (`*.<domain>`) covers every host, issued over the same Cloudflare DNS-01
+  flow as `[tls]` (now shared as `startCertManager`; `[tls]` behaves exactly as before) but kept in its
+  own `<data_dir>/reverseproxy/tls/`; `tlscert.Obtainer` was already wildcard-capable and a test now
+  proves the CSR and challenge naming. Backend certificates are verified by default, with an explicit
+  per-host "accept any backend certificate" switch for self-signed backends (a typical manager never
+  verified them at all). Hosts live in `<data_dir>/reverseproxy.json` (0600), managed only from the
+  portal — never seeded from `shepherd.toml`, nothing written until the first edit, editable while the
+  listener is off so everything can be lined up first — over `GET/POST /api/reverseproxy/hosts`,
+  `PUT/DELETE /api/reverseproxy/hosts/{id}` and `GET /api/reverseproxy` (listener and certificate state),
+  and a new **Proxy** tab (`js/reverseproxyview.js`, pure logic in `js/reverseproxy.js` with its own
+  tests) that badges any name the wildcard cannot cover and any backend left unverified. New config:
+  `[reverseproxy]`'s `enabled` (**false by default**), `listen` (`:8443` by default, never 443: moving
+  the standard port over is the owner's deliberate cutover), `domain`, `email` and
+  `cloudflare_api_token`/`cloudflare_api_token_file` (same rules as `[tls]`). A taken listen port stops
+  startup with a clear error; obtaining the certificate never blocks it. Not yet: per-host access control
+  of any kind, custom per-host config, an HTTP-to-HTTPS redirect listener, an access log, or import from
+  an existing manager — a straight migration can lose per-host features a manager had. Every test runs
+  against fakes and loopback; a real wildcard issuance and real application traffic have not been tried.
+  See docs/REVERSEPROXY.md, including its "Before you point real traffic at this" checklist.
 - **Marketing site (`site/`):** a public, vanilla-HTML/CSS/JS landing page — hero, the real shipped feature
   set (DNS filtering and the 95-list catalog, devices, the globe HUD, alarms, port and vulnerability
   scanning, geo-block, portal locking, self-healing upstreams and more), an honest "what's coming" section

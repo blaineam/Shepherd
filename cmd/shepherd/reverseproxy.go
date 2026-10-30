@@ -52,6 +52,13 @@ func startReverseProxy(ctx context.Context, cfg config.Config, store *reversepro
 	if !rp.Enabled {
 		return nil, nil
 	}
+	// Bind before anything starts in the background, so a refused port
+	// leaves nothing behind (no renewal loop writing into the data
+	// directory of a Shepherd that is about to exit).
+	ln, err := net.Listen("tcp", rp.Listen)
+	if err != nil {
+		return nil, fmt.Errorf("reverseproxy: %w", err)
+	}
 	mgr, err := startCertManager(ctx, certSpec{
 		logPrefix: "reverseproxy",
 		dir:       filepath.Join(cfg.DataDir, "reverseproxy", "tls"),
@@ -67,11 +74,7 @@ func startReverseProxy(ctx context.Context, cfg config.Config, store *reversepro
 		every:     rproxyEvery,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("reverseproxy: %w", err)
-	}
-
-	ln, err := net.Listen("tcp", rp.Listen)
-	if err != nil {
+		ln.Close()
 		return nil, fmt.Errorf("reverseproxy: %w", err)
 	}
 	proxy := reverseproxy.New(reverseproxy.Options{
