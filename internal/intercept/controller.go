@@ -62,12 +62,30 @@ type SteerOptions struct {
 
 // SteeredDevice is a snapshot of one currently steered device.
 type SteeredDevice struct {
-	MAC          arp.MAC
-	IP           netip.Addr
-	Since        time.Time
-	Healthy      bool
-	BytesRelayed uint64
-	LastVerified time.Time // zero if no traffic has been relayed yet
+	MAC            arp.MAC
+	IP             netip.Addr
+	Since          time.Time
+	Healthy        bool
+	BytesRelayed   uint64
+	PacketsRelayed uint64
+	LastVerified   time.Time // zero if no traffic has been relayed yet
+}
+
+// ControllerStats is a cumulative, global packet-rate snapshot: every
+// frame any Relay sharing this Controller's state (the Controller's own,
+// and every one returned by NewRelay — ParallelRelay's workers included)
+// has ever been given, regardless of which device it belonged to or
+// whether that device is still steered. Status() answers "how is this
+// device doing"; Stats() answers "how much traffic is actually moving
+// through Shepherd" — sample it periodically (e.g. every few seconds, as
+// cmd/intercept-trial does) and diff consecutive snapshots to get
+// frames/bytes per second. See docs/INTERCEPT.md's "Throughput" section.
+type ControllerStats struct {
+	FramesExamined       uint64 // every frame HandleFrame was ever given, matched or not
+	BytesExamined        uint64 // their total wire length
+	FramesNotForShepherd uint64 // subset discarded because dst != ShepherdMAC (see OnFrameNotForShepherd)
+	FramesRelayed        uint64 // subset actually relayed
+	BytesRelayed         uint64 // their total wire length
 }
 
 // UnsteerRecord is one entry in the Controller's unsteer history: what
@@ -144,11 +162,12 @@ func usableDeviceIP(ip netip.Addr) bool {
 }
 
 type deviceState struct {
-	ip           netip.Addr
-	since        time.Time
-	bytesRelayed uint64
-	lastVerified time.Time
-	healthy      bool
+	ip             netip.Addr
+	since          time.Time
+	bytesRelayed   uint64
+	packetsRelayed uint64
+	lastVerified   time.Time
+	healthy        bool
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -175,6 +194,16 @@ type Controller struct {
 	history  []UnsteerRecord
 
 	steered atomic.Pointer[map[arp.MAC]netip.Addr]
+
+	// Packet-rate diagnostics (ControllerStats), updated from every Relay's
+	// hot path without taking mu: a lock-free counter bump is cheap enough
+	// to leave on unconditionally, unlike the per-device bookkeeping in
+	// recordRelayed, which needs mu to find the right deviceState anyway.
+	framesExamined       atomic.Uint64
+	bytesExamined        atomic.Uint64
+	framesNotForShepherd atomic.Uint64
+	framesRelayed        atomic.Uint64
+	bytesRelayedTotal    atomic.Uint64
 
 	// afterHealthCheck is a test-only hook, called at the end of every
 	// health-check tick the background loop runs, after the next tick has
@@ -210,14 +239,16 @@ func NewController(cfg ControllerConfig) (*Controller, error) {
 	c.steered.Store(&empty)
 
 	c.relay = &Relay{
-		Sender:       cfg.Sender,
-		ShepherdMAC:  cfg.ShepherdMAC,
-		GatewayMAC:   cfg.GatewayMAC,
-		SendTimeout:  cfg.SendTimeout,
-		Lookup:       c.lookupSteered,
-		OnRelayed:    c.recordRelayed,
-		OnRelayError: c.recordRelayError,
-		Now:          cfg.Clock.Now,
+		Sender:                cfg.Sender,
+		ShepherdMAC:           cfg.ShepherdMAC,
+		GatewayMAC:            cfg.GatewayMAC,
+		SendTimeout:           cfg.SendTimeout,
+		Lookup:                c.lookupSteered,
+		OnRelayed:             c.recordRelayed,
+		OnRelayError:          c.recordRelayError,
+		OnFrameExamined:       c.recordFrameExamined,
+		OnFrameNotForShepherd: c.recordFrameNotForShepherd,
+		Now:                   cfg.Clock.Now,
 	}
 
 	first := cfg.Clock.After(cfg.HealthInterval)
@@ -251,14 +282,16 @@ func (c *Controller) HandleFrame(raw []byte) (bool, error) {
 // version of exactly this.
 func (c *Controller) NewRelay(sender Sender) *Relay {
 	return &Relay{
-		Sender:       sender,
-		ShepherdMAC:  c.cfg.ShepherdMAC,
-		GatewayMAC:   c.cfg.GatewayMAC,
-		SendTimeout:  c.cfg.SendTimeout,
-		Lookup:       c.lookupSteered,
-		OnRelayed:    c.recordRelayed,
-		OnRelayError: c.recordRelayError,
-		Now:          c.cfg.Clock.Now,
+		Sender:                sender,
+		ShepherdMAC:           c.cfg.ShepherdMAC,
+		GatewayMAC:            c.cfg.GatewayMAC,
+		SendTimeout:           c.cfg.SendTimeout,
+		Lookup:                c.lookupSteered,
+		OnRelayed:             c.recordRelayed,
+		OnRelayError:          c.recordRelayError,
+		OnFrameExamined:       c.recordFrameExamined,
+		OnFrameNotForShepherd: c.recordFrameNotForShepherd,
+		Now:                   c.cfg.Clock.Now,
 	}
 }
 
@@ -272,13 +305,29 @@ func (c *Controller) lookupSteered(mac arp.MAC) (netip.Addr, bool) {
 }
 
 func (c *Controller) recordRelayed(mac arp.MAC, n int, now time.Time) {
+	c.framesRelayed.Add(1)
+	c.bytesRelayedTotal.Add(uint64(n))
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if ds, ok := c.devices[mac]; ok {
 		ds.bytesRelayed += uint64(n)
+		ds.packetsRelayed++
 		ds.lastVerified = now
 		ds.healthy = true
 	}
+}
+
+// recordFrameExamined and recordFrameNotForShepherd are Relay's
+// OnFrameExamined/OnFrameNotForShepherd hooks: diagnostics only, so they
+// run lock-free and never touch c.devices. See ControllerStats.
+func (c *Controller) recordFrameExamined(n int) {
+	c.framesExamined.Add(1)
+	c.bytesExamined.Add(uint64(n))
+}
+
+func (c *Controller) recordFrameNotForShepherd(int) {
+	c.framesNotForShepherd.Add(1)
 }
 
 // recordRelayError is the Relay's error hook: a send failure while
@@ -536,11 +585,24 @@ func (c *Controller) Status() []SteeredDevice {
 	for mac, ds := range c.devices {
 		out = append(out, SteeredDevice{
 			MAC: mac, IP: ds.ip, Since: ds.since, Healthy: ds.healthy,
-			BytesRelayed: ds.bytesRelayed, LastVerified: ds.lastVerified,
+			BytesRelayed: ds.bytesRelayed, PacketsRelayed: ds.packetsRelayed,
+			LastVerified: ds.lastVerified,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].MAC.String() < out[j].MAC.String() })
 	return out
+}
+
+// Stats returns a snapshot of this Controller's cumulative packet-rate
+// counters. See ControllerStats.
+func (c *Controller) Stats() ControllerStats {
+	return ControllerStats{
+		FramesExamined:       c.framesExamined.Load(),
+		BytesExamined:        c.bytesExamined.Load(),
+		FramesNotForShepherd: c.framesNotForShepherd.Load(),
+		FramesRelayed:        c.framesRelayed.Load(),
+		BytesRelayed:         c.bytesRelayedTotal.Load(),
+	}
 }
 
 // History returns a snapshot of the most recent unsteer events (bounded

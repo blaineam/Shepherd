@@ -157,6 +157,70 @@ func TestRelayReportsSendErrorAndDoesNotCountAsRelayed(t *testing.T) {
 	}
 }
 
+func TestRelayOnFrameExaminedFiresForEveryFrameRegardlessOfOutcome(t *testing.T) {
+	sender := NewFakeSender()
+	var examined []int
+	r := &Relay{
+		Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC,
+		Lookup:          steeredLookup(devMAC, devIP),
+		OnFrameExamined: func(n int) { examined = append(examined, n) },
+	}
+	matched := ethFrame(shepherdMAC, devMAC, 0x0800, []byte("x"))
+	notShepherd := ethFrame(gwMAC, devMAC, 0x0800, []byte("yy"))
+	tooShort := make([]byte, 3)
+
+	for _, f := range [][]byte{matched, notShepherd, tooShort} {
+		if _, err := r.HandleFrame(f); err != nil {
+			t.Fatalf("HandleFrame: %v", err)
+		}
+	}
+	want := []int{len(matched), len(notShepherd), len(tooShort)}
+	if len(examined) != len(want) {
+		t.Fatalf("OnFrameExamined fired %d times, want %d", len(examined), len(want))
+	}
+	for i, n := range want {
+		if examined[i] != n {
+			t.Fatalf("examined[%d] = %d, want %d", i, examined[i], n)
+		}
+	}
+}
+
+func TestRelayOnFrameNotForShepherdFiresOnlyForWrongDestination(t *testing.T) {
+	sender := NewFakeSender()
+	var notForShepherd int
+	r := &Relay{
+		Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC,
+		Lookup:                steeredLookup(devMAC, devIP),
+		OnFrameNotForShepherd: func(int) { notForShepherd++ },
+	}
+	// Addressed to Shepherd: must not count, no matter how it is then
+	// filtered (ARP, unmatched device, or actually relayed).
+	for _, f := range [][]byte{
+		ethFrame(shepherdMAC, devMAC, 0x0800, []byte("relayed")),
+		ethFrame(shepherdMAC, devMAC, 0x0806, []byte("arp")),
+		ethFrame(shepherdMAC, rndMAC(77), 0x0800, []byte("unmatched")),
+	} {
+		if _, err := r.HandleFrame(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if notForShepherd != 0 {
+		t.Fatalf("OnFrameNotForShepherd fired %d times for Shepherd-addressed frames, want 0", notForShepherd)
+	}
+
+	// This is the case that matters: a loopback copy of a frame Shepherd
+	// itself just relayed (dst rewritten to the gateway, not Shepherd).
+	if _, err := r.HandleFrame(ethFrame(gwMAC, devMAC, 0x0800, []byte("looped back"))); err != nil {
+		t.Fatal(err)
+	}
+	if notForShepherd != 1 {
+		t.Fatalf("OnFrameNotForShepherd = %d, want 1", notForShepherd)
+	}
+	if len(sender.Frames()) != 1 {
+		t.Fatal("only the one genuinely matched frame should ever be sent")
+	}
+}
+
 // Fuzz/property test: no random or adversarial byte sequence ever gets
 // relayed when its ethertype is IPv6, and HandleFrame never panics.
 // Mirrors internal/arp's FuzzParseFrame pattern (seed corpus of valid and

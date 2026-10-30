@@ -200,6 +200,9 @@ func TestSteerRelayFlowIncreasesByteCountersAndStaysHealthy(t *testing.T) {
 	if st[0].BytesRelayed != want {
 		t.Fatalf("BytesRelayed = %d, want %d", st[0].BytesRelayed, want)
 	}
+	if st[0].PacketsRelayed != 2 {
+		t.Fatalf("PacketsRelayed = %d, want 2", st[0].PacketsRelayed)
+	}
 	if !st[0].Healthy {
 		t.Fatal("device should be healthy after relayed traffic")
 	}
@@ -211,6 +214,72 @@ func TestSteerRelayFlowIncreasesByteCountersAndStaysHealthy(t *testing.T) {
 	case r := <-unsteerCh:
 		t.Fatalf("device was unsteered unexpectedly: %+v", r)
 	default:
+	}
+}
+
+// TestControllerStatsCountsExaminedRelayedAndForeignFrames exercises
+// Stats() the way cmd/intercept-trial samples it: a mix of frames that
+// match and relay, frames addressed elsewhere (what PACKET_IGNORE_OUTGOING
+// in capture_linux.go now asks the kernel to not even deliver), and a
+// frame from a device that is not steered — every one of which must still
+// count as "examined", since Stats() is meant to measure the real capture
+// rate regardless of what matched.
+func TestControllerStatsCountsExaminedRelayedAndForeignFrames(t *testing.T) {
+	c, _, _ := newTestController(t, nil)
+	if err := c.Steer(DeviceRef{MAC: devMAC, IP: devIP}, SteerOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	relayed := ethFrame(shepherdMAC, devMAC, 0x0800, []byte("hello"))
+	foreign := ethFrame(gwMAC, devMAC, 0x0800, []byte("not for shepherd")) // e.g. Shepherd's own TX looping back
+	unmatched := ethFrame(shepherdMAC, rndMAC(77), 0x0800, []byte("other device"))
+
+	for _, f := range []Frame{relayed, foreign, unmatched} {
+		if _, err := c.HandleFrame(f); err != nil {
+			t.Fatalf("HandleFrame(%q): %v", f, err)
+		}
+	}
+
+	st := c.Stats()
+	if st.FramesExamined != 3 {
+		t.Fatalf("FramesExamined = %d, want 3", st.FramesExamined)
+	}
+	wantBytes := uint64(len(relayed) + len(foreign) + len(unmatched))
+	if st.BytesExamined != wantBytes {
+		t.Fatalf("BytesExamined = %d, want %d", st.BytesExamined, wantBytes)
+	}
+	if st.FramesNotForShepherd != 1 {
+		t.Fatalf("FramesNotForShepherd = %d, want 1", st.FramesNotForShepherd)
+	}
+	if st.FramesRelayed != 1 {
+		t.Fatalf("FramesRelayed = %d, want 1", st.FramesRelayed)
+	}
+	if st.BytesRelayed != uint64(len(relayed)) {
+		t.Fatalf("BytesRelayed = %d, want %d", st.BytesRelayed, len(relayed))
+	}
+}
+
+// TestControllerStatsAccumulatesAcrossParallelRelays mirrors
+// TestNewRelaySharesControllerStateAcrossSeparateSenders: ParallelRelay
+// builds one Relay per capture worker, each on its own Sender, and
+// Stats() must still see every one of them as a single global total.
+func TestControllerStatsAccumulatesAcrossParallelRelays(t *testing.T) {
+	c, _, _ := newTestController(t, nil)
+	if err := c.Steer(DeviceRef{MAC: devMAC, IP: devIP}, SteerOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	other := c.NewRelay(NewFakeSender())
+
+	if _, err := c.HandleFrame(ethFrame(shepherdMAC, devMAC, 0x0800, []byte("a"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.HandleFrame(ethFrame(shepherdMAC, devMAC, 0x0800, []byte("bb"))); err != nil {
+		t.Fatal(err)
+	}
+
+	st := c.Stats()
+	if st.FramesExamined != 2 || st.FramesRelayed != 2 {
+		t.Fatalf("Stats() = %+v, want FramesExamined=2 FramesRelayed=2", st)
 	}
 }
 

@@ -41,6 +41,22 @@ type Relay struct {
 	// OnRelayError is called when a matched frame fails to send. Optional.
 	OnRelayError func(mac arp.MAC, err error)
 
+	// OnFrameExamined, when set, is called once for every frame passed to
+	// HandleFrame, before any filtering, with its wire length. It exists
+	// purely for packet-rate diagnostics (bytes and frames per second,
+	// independent of how many frames go on to match); nil, the default,
+	// costs nothing. Optional.
+	OnFrameExamined func(n int)
+	// OnFrameNotForShepherd, when set, is called for every frame
+	// HandleFrame discards because its destination MAC is not
+	// ShepherdMAC's. A non-promiscuous capture socket otherwise only ever
+	// sees frames addressed to this host, so in practice this is almost
+	// always a loopback copy of a frame Shepherd itself just transmitted
+	// on the same interface — see PACKET_IGNORE_OUTGOING in
+	// capture_linux.go and docs/INTERCEPT.md's "Throughput" section.
+	// Optional, diagnostic only.
+	OnFrameNotForShepherd func(n int)
+
 	Now func() time.Time // default time.Now
 }
 
@@ -72,6 +88,9 @@ func (r *Relay) timeout() time.Duration {
 // MAC; the source MAC, the source IP, and everything else in the frame is
 // untouched, so this is a pure Ethernet-layer relay, not NAT.
 func (r *Relay) HandleFrame(raw []byte) (bool, error) {
+	if r.OnFrameExamined != nil {
+		r.OnFrameExamined(len(raw))
+	}
 	if len(raw) < ethHeaderLen {
 		return false, nil
 	}
@@ -81,6 +100,9 @@ func (r *Relay) HandleFrame(raw []byte) (bool, error) {
 	etherType := binary.BigEndian.Uint16(raw[12:14])
 
 	if dst != r.ShepherdMAC {
+		if r.OnFrameNotForShepherd != nil {
+			r.OnFrameNotForShepherd(len(raw))
+		}
 		return false, nil
 	}
 	if etherType == etherTypeARP || etherType == etherTypeIPv6 {
