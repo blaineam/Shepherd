@@ -13,6 +13,9 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **2D map fallback for the HUD:** browsers without WebGL, notably Safari in Lockdown Mode, now get a
+  flat canvas map (`js/flatmap.js`) with the same arcs, comets, pulses, picking, Set home and panning and
+  zooming, plus day/night shading, instead of a "needs WebGL" notice. `?nogl=1` forces it.
 - **Reverse proxy (`[reverseproxy]`, `internal/reverseproxy`):** the main remaining piece of
   [ROADMAP.md](docs/ROADMAP.md) step 18 ("Access") — Shepherd can now do what a separate reverse-proxy
   manager does: own an HTTPS listener, terminate TLS for every configured hostname, and forward each
