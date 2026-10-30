@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Shepherd — Live Demo</title>
+  <meta name="description" content="Shepherd's real portal UI, running entirely in your browser with synthetic data. No backend, no network calls, nothing leaves this page.">
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* Marketing-site-only: a small "this is a demo" wayfinding bar above the
+       real portal chrome. Nothing below this line changes the portal itself. */
+    .demo-banner {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      padding: 8px 14px; background: #0a2e2e; border-bottom: 1px solid #1d4d4d;
+      font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #bfe9e4;
+    }
+    .demo-banner a { color: #5eead4; text-decoration: none; font-weight: 600; }
+    .demo-banner a:hover { text-decoration: underline; }
+    .demo-banner strong { color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="demo-banner">
+    <a href="../index.html">&larr; Shepherd</a>
+    <span><strong>Live demo.</strong> This is the real portal UI, generating synthetic traffic entirely in your browser. No backend, no account, nothing leaves this page.</span>
+  </div>
+  <header class="top">
+    <img src="icon.png" alt="" class="logo">
+    <h1 class="wordmark">SHEPHERD</h1>
+    <span class="pill live" id="live" role="status">connecting</span>
+    <nav class="tabs" role="tablist" aria-label="View">
+      <button type="button" role="tab" id="tab-hud" aria-selected="true" aria-controls="view-hud">HUD</button>
+      <button type="button" role="tab" id="tab-devices" aria-selected="false" aria-controls="view-devices">Devices</button>
+      <button type="button" role="tab" id="tab-blocking" aria-selected="false" aria-controls="view-blocking">Blocking</button>
+      <button type="button" role="tab" id="tab-alarms" aria-selected="false" aria-controls="view-alarms">Alarms</button>
+      <button type="button" role="tab" id="tab-upstreams" aria-selected="false" aria-controls="view-upstreams">Upstreams</button>
+      <button type="button" role="tab" id="tab-history" aria-selected="false" aria-controls="view-history">History</button>
+      <button type="button" role="tab" id="tab-accountability" aria-selected="false" aria-controls="view-accountability">Accountability</button>
+      <button type="button" role="tab" id="tab-locking" aria-selected="false" aria-controls="view-locking">Locking</button>
+      <button type="button" role="tab" id="tab-details" aria-selected="false" aria-controls="view-details">Details</button>
+    </nav>
+    <span class="spacer"></span>
+    <span class="clock mono" id="clock" aria-label="Clock"></span>
+    <button type="button" class="tbtn" id="btn-lock" title="Lock the portal now" hidden>Lock</button>
+    <label class="switch demo-switch" title="Synthetic data generated in your browser. Makes no API calls."><input type="checkbox" id="demo-toggle" checked disabled><span>Demo data</span></label>
+    <span class="muted mono small hide-sm" id="version"></span>
+    <span class="muted mono small hide-sm" id="uptime"></span>
+  </header>
+
+  <main id="view-hud" class="hud" role="tabpanel" aria-labelledby="tab-hud">
+    <div id="stage" class="stage"></div>
+    <div class="vignette" aria-hidden="true"></div>
+
+    <div class="labels" aria-hidden="true">
+      <div class="tag tag-home" id="lbl-home" hidden>HOME</div>
+      <div class="tag tag-sel" id="lbl-sel" hidden></div>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+
+    <section class="tilebar" id="tilebar" aria-label="Totals">
+      <div class="tile"><span class="k">Queries</span><span class="v" id="t-total">0</span></div>
+      <div class="tile"><span class="k">Blocked</span><span class="v red" id="t-blockedpct">0%</span></div>
+      <div class="tile"><span class="k">Cached</span><span class="v blue" id="t-cached">0</span></div>
+      <div class="tile"><span class="k">Errors</span><span class="v amber" id="t-errors">0</span></div>
+      <div class="tile"><span class="k">Devices</span><span class="v" id="t-devices">0</span></div>
+    </section>
+
+    <div class="toolbar" id="toolbar">
+      <button type="button" class="tbtn" id="btn-home" aria-pressed="false">Set home</button>
+      <button type="button" class="tbtn" id="btn-rotate" aria-pressed="true">Auto-rotate</button>
+      <button type="button" class="tbtn" id="btn-recenter">Recenter</button>
+      <button type="button" class="tbtn only-sm" id="btn-feed" aria-pressed="false">Feed</button>
+      <button type="button" class="tbtn only-sm" id="btn-filters" aria-pressed="false">Filters</button>
+    </div>
+
+    <aside class="rail left" id="rail-left">
+      <section class="panel" id="panel-filters" aria-label="Filters">
+        <h2 class="ph">Filters</h2>
+        <div class="filters">
+          <label class="fl"><span>Device</span><select id="f-device"><option value="">All devices</option></select></label>
+          <div class="fl"><span>Action</span>
+            <div class="chips" id="f-actions">
+              <button type="button" class="chip allowed" data-action="allowed" aria-pressed="true">allowed</button>
+              <button type="button" class="chip cached" data-action="cached" aria-pressed="true">cached</button>
+              <button type="button" class="chip blocked" data-action="blocked" aria-pressed="true">blocked</button>
+              <button type="button" class="chip error" data-action="error" aria-pressed="true">error</button>
+            </div>
+          </div>
+          <div class="fl"><span>Unfiltered</span>
+            <div class="chips">
+              <button type="button" class="chip wander" id="f-wander" aria-pressed="false" title="Only devices in wandering mode: not filtered, still watched">wandering only</button>
+              <button type="button" class="chip shadow" id="f-shadow" aria-pressed="false" title="Only queries that filtering would have blocked">would have blocked</button>
+            </div>
+          </div>
+          <label class="fl"><span>Domain</span><input id="f-search" type="search" placeholder="Search domains" autocomplete="off" spellcheck="false"></label>
+        </div>
+      </section>
+      <section class="panel feedpanel" id="panel-feed" aria-label="Live feed">
+        <h2 class="ph">Live feed <span class="ph-sub mono" id="feed-count"></span></h2>
+        <ul class="feed" id="feed"></ul>
+      </section>
+    </aside>
+
+    <aside class="rail right" id="rail-right">
+      <section class="panel" id="inspector" aria-label="Inspector">
+        <h2 class="ph">Inspector <button type="button" class="x" id="insp-close" aria-label="Close inspector" hidden>x</button></h2>
+        <p class="insp-empty muted small" id="insp-empty">Click an arc, destination or feed row to inspect it and take control.</p>
+        <div class="insp" id="insp" hidden>
+          <div class="insp-head">
+            <span class="act" id="i-action"></span>
+            <span class="insp-place" id="i-place"></span>
+          </div>
+          <dl class="kv">
+            <dt>Device</dt><dd class="mono" id="i-device"></dd>
+            <dt id="i-mode-k" hidden>Mode</dt><dd id="i-mode" hidden><span class="wbadge">Wandering</span> <span class="muted small">not filtered, still watched</span></dd>
+            <dt>Domain</dt><dd class="mono" id="i-domain"></dd>
+            <dt id="i-shadow-k" hidden>Shadow</dt><dd class="small shadow-note" id="i-shadow" hidden></dd>
+            <dt>Location</dt><dd id="i-loc"></dd>
+            <dt id="i-count-k">Lookups</dt><dd class="mono" id="i-count"></dd>
+            <dt>Last seen</dt><dd id="i-last"></dd>
+          </dl>
+          <div class="insp-domains" id="i-domains" hidden></div>
+          <div class="insp-actions">
+            <button type="button" class="btn red" id="i-block">Block domain</button>
+            <button type="button" class="btn teal" id="i-allow">Allow domain</button>
+          </div>
+          <span class="tip-wrap" title="Blocking a whole country needs Watch mode, which sees the actual connections. DNS-only Guard mode cannot do this reliably.">
+            <button type="button" class="btn ghost" id="i-country" disabled>Block country (needs Watch mode)</button>
+          </span>
+          <p class="insp-fb small" id="i-fb" role="status" aria-live="polite" hidden>
+            <span id="i-fb-text"></span> <button type="button" class="linkbtn" id="i-undo">Undo</button>
+          </p>
+        </div>
+      </section>
+      <section class="panel" id="legend" aria-label="Legend">
+        <h2 class="ph">Legend <span class="ph-sub mono" id="lane-count"></span></h2>
+        <ul class="leg">
+          <li><i class="sw allowed"></i>allowed</li>
+          <li><i class="sw cached"></i>cached</li>
+          <li><i class="sw blocked"></i>blocked</li>
+          <li><i class="sw error"></i>error</li>
+        </ul>
+        <div class="thick" id="thick"></div>
+        <p class="muted small" id="legend-text"></p>
+        <p class="muted small">Locations: <a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">IP geolocation by DB-IP</a> (CC BY 4.0). Land: Natural Earth.</p>
+        <p class="muted small legend-note">Blocked queries have no destination, so a red shield ring pulses at home instead.</p>
+      </section>
+    </aside>
+
+    <div class="notice" id="no-map" hidden>
+      <strong>Map data is not available yet</strong>
+      <span>Queries are arriving, but none carry a location. The Details view has everything meanwhile.</span>
+    </div>
+    <div class="notice prompt" id="no-home" hidden>
+      <strong>Where is home?</strong>
+      <span>Arcs start from your home. Choose Set home, then click the globe.</span>
+      <button type="button" class="btn teal" id="prompt-home">Set home</button>
+    </div>
+    <div class="notice" id="no-gl" hidden>
+      <strong>WebGL is not available</strong>
+      <span>The globe needs WebGL. The Details view works without it.</span>
+    </div>
+    <div class="homebanner" id="home-banner" hidden>Click the globe to place home. Esc to cancel.</div>
+
+    <footer class="timeline" id="timeline" aria-label="Timeline">
+      <button type="button" class="live-btn on" id="tl-live" aria-pressed="true">LIVE</button>
+      <button type="button" class="tl-btn" id="tl-play" aria-label="Pause">Pause</button>
+      <div class="speeds" id="tl-speeds" role="group" aria-label="Replay speed">
+        <button type="button" data-speed="1" aria-pressed="true">1x</button>
+        <button type="button" data-speed="10" aria-pressed="false">10x</button>
+        <button type="button" data-speed="60" aria-pressed="false">60x</button>
+        <button type="button" data-speed="300" aria-pressed="false">300x</button>
+      </div>
+      <div class="scrub">
+        <input type="range" id="tl-range" min="0" max="1000" value="1000" step="1" aria-label="Replay position">
+        <div class="scrub-ends mono small"><span id="tl-start"></span><span id="tl-end">now</span></div>
+      </div>
+      <span class="tl-time mono" id="tl-time"></span>
+    </footer>
+  </main>
+
+  <main id="view-devices" class="page page-fill" role="tabpanel" aria-labelledby="tab-devices" hidden></main>
+  <main id="view-blocking" class="page" role="tabpanel" aria-labelledby="tab-blocking" hidden></main>
+  <main id="view-alarms" class="page page-fill" role="tabpanel" aria-labelledby="tab-alarms" hidden></main>
+  <main id="view-upstreams" class="page" role="tabpanel" aria-labelledby="tab-upstreams" hidden></main>
+  <main id="view-history" class="page" role="tabpanel" aria-labelledby="tab-history" hidden></main>
+  <main id="view-accountability" class="page" role="tabpanel" aria-labelledby="tab-accountability" hidden></main>
+  <main id="view-locking" class="page" role="tabpanel" aria-labelledby="tab-locking" hidden></main>
+
+  <main id="view-details" role="tabpanel" aria-labelledby="tab-details" hidden>
+    <p class="banner" id="details-banner" hidden></p>
+    <section class="tiles">
+      <div class="tile"><span class="k">Queries</span><span class="v" id="d-total">0</span></div>
+      <div class="tile"><span class="k">Blocked</span><span class="v" id="d-blocked">0</span><span class="sub" id="d-pct"></span></div>
+      <div class="tile"><span class="k">Cached</span><span class="v" id="d-cached">0</span></div>
+      <div class="tile"><span class="k">Errors</span><span class="v" id="d-errors">0</span></div>
+      <div class="tile"><span class="k">Listed domains</span><span class="v" id="d-listed">0</span></div>
+    </section>
+
+    <section class="grid">
+      <div class="card wide">
+        <div class="card-h">
+          <h2>Live queries</h2>
+          <input id="filter" type="search" placeholder="Filter by device, domain or action" autocomplete="off">
+        </div>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Time</th><th>Device</th><th>Domain</th><th>Type</th><th>Result</th><th>Via</th><th>ms</th><th></th></tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Upstreams</h2>
+        <ul class="list" id="upstreams"></ul>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h2>Blocklists</h2><button id="refresh" class="ghost">Refresh now</button></div>
+        <ul class="list" id="lists"></ul>
+      </div>
+
+      <div class="card">
+        <h2>Privacy policy</h2>
+        <label class="switch"><input type="checkbox" id="p-relay"><span>Block Apple iCloud Private Relay</span></label>
+        <p class="muted small">Answers NXDOMAIN for the relay hostnames so Apple devices report the relay is unavailable on this network. Attempts appear in the query list.</p>
+      </div>
+
+      <div class="card">
+        <h2>Your rules</h2>
+        <form id="rule-form" class="inline">
+          <input id="rule-domain" placeholder="example.com" required autocomplete="off">
+          <select id="rule-kind"><option value="block">Block</option><option value="allow">Allow</option></select>
+          <button>Add</button>
+        </form>
+        <ul class="list" id="rules"></ul>
+      </div>
+
+      <div class="card">
+        <h2>Top devices</h2>
+        <ul class="list" id="top-clients"></ul>
+      </div>
+
+      <div class="card">
+        <h2>Top blocked</h2>
+        <ul class="list" id="top-blocked"></ul>
+      </div>
+    </section>
+    <p class="muted small attrib-foot">Locations: <a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">IP geolocation by DB-IP</a> (CC BY 4.0). Land: Natural Earth.</p>
+  </main>
+
+  <div id="toasts" class="toasts" role="status" aria-live="polite" hidden></div>
+
+  <div id="login" class="overlay" hidden>
+    <div class="modal">
+      <img src="icon.png" alt="" class="logo big">
+      <h2>Locked</h2>
+      <p class="muted small">Shepherd is showing synthetic demo data, made up in your browser. Unlock to see your real network.</p>
+      <form id="pin-form">
+        <input id="pin" type="password" inputmode="numeric" placeholder="PIN" autocomplete="off">
+        <button>Unlock with PIN</button>
+      </form>
+      <p class="err" id="pin-err"></p>
+      <hr>
+      <form id="login-form">
+        <input id="token" type="password" placeholder="Portal token" autocomplete="current-password">
+        <button>Unlock with token</button>
+      </form>
+      <p class="muted small">The token is in the data directory, or run <code>shepherd -print-token</code>.</p>
+      <p class="err" id="login-err"></p>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

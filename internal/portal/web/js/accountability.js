@@ -5,7 +5,7 @@
 // computes blocking-policy "effective" status, which has no meaning for a
 // subscription) rather than a mismatched reuse of it.
 import { el } from './dom.js';
-import { button, iconButton, toggle, emptyState, confirmDialog, unavailableCard } from './ui.js';
+import { button, iconButton, toggle, emptyState, confirmDialog } from './ui.js';
 import { unavailable } from './mgmt.js';
 
 const DETAILS = [['summary', 'Summary — category and roughly when, never a domain'], ['detailed', 'Detailed — also names the exact domain']];
@@ -45,7 +45,15 @@ export function createAccountability({ root, mgmt, notify, getGroups }) {
   function paint() {
     content.replaceChildren();
     if (loadError) {
-      content.append(unavailable(loadError) ? unavailableCard('Accountability') : emptyState('Could not load accountability settings', loadError.message, button('Try again', 'ghost', () => load(true))));
+      // A 404 here almost always means the feature exists but is not
+      // configured (no SMTP relay set in shepherd.toml), not that the
+      // server predates it — api_accountability.go says so explicitly in
+      // the response body. Show that real reason instead of the generic
+      // "update the server" copy unavailableCard would give, which reads
+      // as broken/stuck rather than "needs configuration."
+      content.append(unavailable(loadError)
+        ? emptyState('Accountability is not available', loadError.message || 'This Shepherd does not have that part of the API yet.')
+        : emptyState('Could not load accountability settings', loadError.message, button('Try again', 'ghost', () => load(true))));
       return;
     }
     content.append(contactForm());
