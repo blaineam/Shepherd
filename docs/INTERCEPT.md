@@ -208,7 +208,7 @@ this result does not point at a syscall-rate ceiling in Shepherd's own relay, it
 
 This is a software relay, not a hardware switch, so steering a device will never be perfectly free —
 but a drop this large, confirmed unchanged across three real fixes, is not ordinary relay overhead.
-Watch mode stays a trial-only tool, not something left on indefinitely, until this is understood.
+(It was not: see "The cause the evidence points at" below, measured and closed.)
 
 ### A real, separate bug found via the planned `tcpdump` — not the throughput-ceiling cause, but fixed
 
@@ -265,11 +265,17 @@ but the flapping MAC-table entry is protocol-agnostic, so the IPv6 download was 
 gateway's MAC, source to Shepherd's own. The device's MAC is then only ever seen on its own port and
 Shepherd's only on Shepherd's; nothing flaps. The IP packet inside is still untouched (the gateway
 sees the device's own source IP and answers to it through its own, never spoofed, ARP entry), so
-this is still a pure Ethernet-layer relay with no NAT, and the one-sided scope is unchanged. Like
-every fix before it, **this has not yet been re-measured live**; unlike every fix before it, it is
-the first one that explains all of the evidence rather than part of it. The planned MAC-filtered
-`tcpdump` ("Next, in order", above) confirms it in a minute: before the fix, the burst frames'
-destination MAC is the phone's.
+this is still a pure Ethernet-layer relay with no NAT, and the one-sided scope is unchanged.
+
+**Measured live, 2026-10-30, and it is the fix.** Same NAS (12-core x86_64, Debian 12, kernel 6.18),
+same eero, same phone, 2-minute trial through `ParallelRelay` with this fix, the kernel-side capture
+filter and the lock-free counters below: the maintainer reported *"no perceivable slow down, reaching
+full 1 gig Wi-Fi speeds"*. The relay's own `rate:` line during the speed test peaked at **167,000
+relayed frames/s and 207 MB/s (about 1.6 Gbit/s)** of the phone's outbound traffic — the upload
+half of the test, every byte of which crossed the relay — with 5.39 GB relayed over the trial, zero
+send errors, the device healthy on every tick, `not_for_shepherd` at zero throughout, and a clean
+auto-revert with GRO restored. Against the ~300–400 Mbps that every earlier run measured on this
+exact path, that closes the investigation: the ceiling was the switch's MAC table, not the relay.
 
 Two more cost-only changes went in alongside it, both on the relay's per-frame path:
 
@@ -302,6 +308,14 @@ without the frame ever becoming an skb, let alone crossing into userspace. Every
 it, minus the frames that were going to be relayed. Nothing is ever dropped. It runs in native
 (driver) mode where the NIC driver supports it and falls back to generic mode otherwise, which is
 slower but still skips userspace entirely.
+
+**Measured live, 2026-10-30, immediately after the userspace run above**, `-xdp auto` attached in
+native mode on the NAS's NIC and relayed the same phone's speed test at a peak of **180,000 frames/s
+and 221 MB/s (about 1.77 Gbit/s)**, 3.02 GB over the test, healthy throughout, with nothing but
+one-second counter reads crossing into userspace. One thing to know: the NIC driver took about eight
+seconds after the native attach before the program saw its first frame (the ring is torn down and
+rebuilt on attach), during which `examined` read zero; the device stayed inside `StartupGrace` and
+relaying began on its own. Generic mode has no such gap.
 
 Its decision rules are `HandleFrame`'s, plus one the Go relay gets for free from `AF_PACKET`'s
 copy semantics and the XDP program must do itself: a frame whose destination IPv4 address is one of

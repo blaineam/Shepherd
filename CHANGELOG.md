@@ -57,7 +57,10 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   steered; the program only consults a map kept in step with it. Native (driver) mode with a
   generic-mode fallback. `cmd/intercept-trial -xdp auto` uses it in place of `ParallelRelay`. The
   program is compiled by `go generate` (needs a clang with the BPF backend); the generated objects
-  are committed so `go build` needs nothing new. See docs/INTERCEPT.md, "Beyond userspace".
+  are committed so `go build` needs nothing new. Verified against a real kernel's verifier and
+  `BPF_PROG_TEST_RUN` and end to end on a veth pair (`make test-xdp`), then live on the NAS in native
+  mode: 180k frames/s and ~1.77 Gbit/s relayed during a phone's speed test, healthy throughout. See
+  docs/INTERCEPT.md, "Beyond userspace".
 - **Marketing site (`site/`):** a public, vanilla-HTML/CSS/JS landing page — hero, the real shipped feature
   set (DNS filtering and the 95-list catalog, devices, the globe HUD, alarms, port and vulnerability
   scanning, geo-block, portal locking, self-healing upstreams and more), an honest "what's coming" section
@@ -309,8 +312,10 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   device's *inbound* traffic there until its next frame flipped the entry back. This is the first
   explanation that fits every live measurement of the ~300 Mbps ceiling while steered (near-zero
   relayed packets, loss-shaped slowdown, the `not_for_shepherd` burst). Relayed frames now carry
-  Shepherd's MAC as source; the IP packet inside is untouched. Not yet re-measured live. See
-  docs/INTERCEPT.md, "The cause the evidence points at".
+  Shepherd's MAC as source; the IP packet inside is untouched. **Measured live on the NAS against the
+  maintainer's phone: full gigabit Wi-Fi speed with no perceivable slowdown while steered**, the relay
+  peaking at 167k frames/s and ~1.6 Gbit/s outbound with zero errors, where every earlier run on the
+  same path measured 300–400 Mbps. See docs/INTERCEPT.md, "The cause the evidence points at".
 - **Watch mode's Relay let VLAN-tagged frames through.** It filtered by denylist (not ARP, not IPv6),
   and a VLAN tag hides the real ethertype one header in, so it could wrap IPv6. `Relay.HandleFrame`
   now positively matches plain IPv4 only. Found by the new capture-filter agreement test.
