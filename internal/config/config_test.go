@@ -331,6 +331,42 @@ func TestExampleConfigShowsTheARPDefaults(t *testing.T) {
 	}
 }
 
+func TestPortscanDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Portscan.Enabled || cfg.Portscan.IntervalSeconds != 21600 {
+		t.Errorf("portscan defaults = %+v", cfg.Portscan)
+	}
+}
+
+func TestPortscanOverridesAndValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "p.toml")
+	os.WriteFile(path, []byte("[portscan]\nenabled = false\ninterval_seconds = 3600\n"), 0o600)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Portscan.Enabled || cfg.Portscan.IntervalSeconds != 3600 {
+		t.Errorf("portscan overrides = %+v", cfg.Portscan)
+	}
+	os.WriteFile(path, []byte("[portscan]\ninterval_seconds = 299\n"), 0o600)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "at least 300") {
+		t.Errorf("too-short interval: %v", err)
+	}
+}
+
+func TestExampleConfigShowsThePortscanDefaults(t *testing.T) {
+	ex, err := Load("../../shepherd.example.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.Portscan != Default().Portscan {
+		t.Errorf("example %+v differs from the defaults %+v", ex.Portscan, Default().Portscan)
+	}
+}
+
 func TestQuarantineCanBeOptedOut(t *testing.T) {
 	cfg := writeCfg(t, "[devices]\nquarantine_new_devices = false\n")
 	if cfg.Devices.QuarantineNewDevices || !cfg.Devices.Enabled {

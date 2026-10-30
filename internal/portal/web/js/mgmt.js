@@ -66,5 +66,10 @@ export function createMgmt(api) {
     alarmRules: (all) => api('/api/alarms/rules' + Q({ all: all ? '1' : '' })),
     createAlarmRule: (body) => post('/api/alarms/rules', body),
     deleteAlarmRule: (id) => api('/api/alarms/rules/' + encodeURIComponent(id), { method: 'DELETE' }),
+
+    portscanStatus: () => api('/api/portscan'),
+    portscanDevices: () => api('/api/portscan/devices'),
+    portscanDevice: (id) => api('/api/portscan/devices/' + encodeURIComponent(id)),
+    scanPorts: (deviceId) => post('/api/portscan/scan', deviceId ? { device_id: deviceId } : {}),
   };
 }

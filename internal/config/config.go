@@ -35,6 +35,7 @@ type Config struct {
 	ARP            ARP            `toml:"arp"`
 	Alarms         Alarms         `toml:"alarms"`
 	Accountability Accountability `toml:"accountability"`
+	Portscan       Portscan       `toml:"portscan"`
 }
 
 // ARP controls the passive ARP monitor (docs/ARP.md): a read-only listener
@@ -150,6 +151,24 @@ type AccountabilitySMTP struct {
 	TLS string `toml:"tls"`
 }
 
+// Portscan schedules gentle TCP connect scans of every known device's common
+// ports, to flag exposure the owner might not expect (an open Telnet port, an
+// exposed SMB share...). Enabled defaults true: unlike most of Shepherd's
+// passive, listen-only sources, this one actively opens connections to every
+// known device, but it is engineered to be gentle enough (plain connect
+// scans, a short port list, bounded concurrency) that withholding it by
+// default would just mean most owners never learn about exposure they did
+// not know they had, which defeats the point of the feature. See
+// docs/PORTSCAN.md, including what it does not do (router port-forwarding
+// discovery).
+type Portscan struct {
+	Enabled bool `toml:"enabled"`
+	// IntervalSeconds is how often every known device is rescanned. Hours,
+	// not seconds: scanning is cheap and gentle, but there is no reason to
+	// repeat it constantly.
+	IntervalSeconds int `toml:"interval_seconds"`
+}
+
 // History controls what is remembered after the fact. "memory" (the default)
 // keeps recent queries in RAM only and writes nothing to disk. "encrypted"
 // keeps a searchable, AES-256-GCM encrypted record on disk.
@@ -226,6 +245,7 @@ func Default() Config {
 		ARP:            ARP{Enabled: true},
 		Alarms:         Alarms{Enabled: true, Ntfy: AlarmsNtfy{Topic: "shepherd-alarms"}},
 		Accountability: Accountability{Enabled: true, SMTP: AccountabilitySMTP{Port: 587, TLS: "starttls"}},
+		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600},
 		DataDir:        "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
@@ -314,6 +334,9 @@ func (c Config) Validate() error {
 		if smtp.Password != "" && smtp.PasswordFile != "" {
 			return errors.New("accountability.smtp.password and accountability.smtp.password_file must not both be set")
 		}
+	}
+	if c.Portscan.IntervalSeconds < 300 {
+		return errors.New("portscan.interval_seconds must be at least 300")
 	}
 	if s := c.Devices.ReverseDNSServer; s != "" {
 		host := s

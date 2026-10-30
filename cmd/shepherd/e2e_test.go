@@ -418,12 +418,22 @@ func TestExcludedDeviceIsNotFiltered(t *testing.T) {
 	if got := resolve(t, r.dnsAddr, "x.ads.example."); got != "192.0.2.99" {
 		t.Errorf("an excluded device must not be filtered, got %q", got)
 	}
+	// ServeDNS writes the client's DNS response before it logs the query
+	// (see dnsengine.Engine.done), so the log entry for the resolve above
+	// can still be landing when this request fires; poll briefly rather
+	// than assuming it is already there.
 	var reason string
-	for _, e := range r.json("GET", "/api/queries?limit=50", "", 200)["entries"].([]any) {
-		if em := e.(map[string]any); em["name"] == "x.ads.example" && em["action"] == "allowed" {
-			reason, _ = em["reason"].(string)
+	waitUntil(t, "the allowed query to be logged", func() bool {
+		for _, e := range r.json("GET", "/api/queries?limit=50", "", 200)["entries"].([]any) {
+			if em := e.(map[string]any); em["name"] == "x.ads.example" && em["action"] == "allowed" {
+				reason, _ = em["reason"].(string)
+				if reason == "excluded" {
+					return true
+				}
+			}
 		}
-	}
+		return false
+	})
 	if reason != "excluded" {
 		t.Errorf("entry reason = %q", reason)
 	}
@@ -452,12 +462,17 @@ func TestWanderingDeviceIsWatchedButNotFiltered(t *testing.T) {
 	if got := resolve(t, r.dnsAddr, "x.ads.example."); got != "192.0.2.99" {
 		t.Errorf("a wandering device must not be filtered, got %q", got)
 	}
+	// See the matching comment in TestExcludedDeviceIsNotFiltered: the log
+	// entry for the resolve above can still be landing when this fires.
 	var found map[string]any
-	for _, e := range r.json("GET", "/api/queries?limit=50", "", 200)["entries"].([]any) {
-		if em := e.(map[string]any); em["name"] == "x.ads.example" && em["action"] == "allowed" {
-			found = em
+	waitUntil(t, "the allowed query to be logged", func() bool {
+		for _, e := range r.json("GET", "/api/queries?limit=50", "", 200)["entries"].([]any) {
+			if em := e.(map[string]any); em["name"] == "x.ads.example" && em["action"] == "allowed" {
+				found = em
+			}
 		}
-	}
+		return found != nil
+	})
 	if found == nil || found["reason"] != "wandering" || found["wandering"] != true || found["shadow"] == nil {
 		t.Errorf("the request must be logged as wandering with a shadow result: %v", found)
 	}

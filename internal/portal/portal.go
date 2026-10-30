@@ -28,6 +28,7 @@ import (
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/geo"
 	"shepherd/internal/importers"
+	"shepherd/internal/portscan"
 	"shepherd/internal/settings"
 )
 
@@ -91,6 +92,15 @@ type Deps struct {
 	// wired up (see cmd/shepherd's startAccountability): the API answers 404
 	// for every /api/accountability/... route instead of panicking.
 	Accountability *accountability.Engine
+
+	// Portscan runs and remembers the gentle TCP port scans of known devices
+	// (docs/PORTSCAN.md). Nil gives a scanner that works (a manual scan is
+	// still possible) but is never run on a schedule and persists nothing.
+	Portscan *portscan.Scanner
+	// PortscanEnabled reports whether cmd/shepherd started Portscan's
+	// scheduled scan, for the status endpoint; it carries no behavior of its
+	// own here.
+	PortscanEnabled bool
 }
 
 type Server struct {
@@ -132,6 +142,9 @@ func New(d Deps) *Server {
 	}
 	if d.Upstreams == nil {
 		d.Upstreams = dnsengine.OpenUpstreamStore("", d.Engine.Pool)
+	}
+	if d.Portscan == nil {
+		d.Portscan = portscan.New(portscan.Options{})
 	}
 	if d.Heartbeat <= 0 {
 		d.Heartbeat = 15 * time.Second
@@ -391,4 +404,9 @@ func (s *Server) routes() {
 	h("PATCH /api/alarms/{id}", s.patchAlarm)
 	h("DELETE /api/alarms/{id}", s.deleteAlarm)
 	h("POST /api/alarms/{id}/mute", s.muteAlarm)
+
+	h("GET /api/portscan", s.getPortscan)
+	h("GET /api/portscan/devices", s.listPortscanDevices)
+	h("GET /api/portscan/devices/{id}", s.getPortscanDevice)
+	h("POST /api/portscan/scan", s.scanNow)
 }

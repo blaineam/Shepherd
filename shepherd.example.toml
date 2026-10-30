@@ -128,6 +128,15 @@ password_file = ""      # e.g. "/etc/shepherd/accountability-smtp-password"
 from = ""               # e.g. "shepherd@example.com"
 tls = "starttls"        # "starttls" (port 587 convention), "tls" (port 465) or "none"
 
+[portscan]
+# Scans every known device for open TCP ports on a short, common-port list,
+# so you can see exposure you did not expect (docs/PORTSCAN.md). Unlike the
+# passive sources above, this one actively opens connections to your own
+# devices; it is kept deliberately gentle (plain connect scans, a short port
+# list, bounded concurrency). It knows nothing about router port forwarding.
+enabled = true
+interval_seconds = 21600         # 6 hours; the port list itself is built in
+
 [portal]
 listen = "127.0.0.1:8787"
 

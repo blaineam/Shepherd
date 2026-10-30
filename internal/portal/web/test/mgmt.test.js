@@ -147,3 +147,17 @@ test('alarm endpoints build the documented requests', async () => {
   await m.deleteAlarmRule('r 1');
   assert.deepEqual([calls[12][0], calls[12][1].method], ['/api/alarms/rules/r%201', 'DELETE']);
 });
+
+test('portscan endpoints', async () => {
+  const { calls, m } = rig();
+  await m.portscanStatus();
+  assert.equal(calls[0][0], '/api/portscan');
+  await m.portscanDevices();
+  assert.equal(calls[1][0], '/api/portscan/devices');
+  await m.portscanDevice('d 1');
+  assert.equal(calls[2][0], '/api/portscan/devices/d%201');
+  await m.scanPorts();
+  assert.deepEqual([calls[3][0], calls[3][1].method, calls[3][1].body], ['/api/portscan/scan', 'POST', '{}']);
+  await m.scanPorts('d1');
+  assert.equal(calls[4][1].body, '{"device_id":"d1"}');
+});
