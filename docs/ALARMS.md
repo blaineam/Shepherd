@@ -512,14 +512,21 @@ pool's own existing failover/health state.
 
 **Portal API**, under `/api/alarms`, follows the same conventions as `/api/devices`: `GET /api/alarms`
 (filters as query params: `types`, `severities`, `min_severity`, `states`, `device_id`, `group_id`,
-`since`/`until` as RFC3339, `text`, `include_children`, plus `sort`/`asc`/`offset`/`limit`), `GET
-/api/alarms/{id}` (with `children` when it is a storm bundle), `PATCH /api/alarms/{id}` (`{"state":
-"acknowledged"|"resolved"}`), `DELETE /api/alarms/{id}`, `POST /api/alarms/{id}/mute` (a `MuteSpec`
+`since`/`until` as RFC3339, `text`, `include_children`, `include_archived`, plus
+`sort`/`asc`/`offset`/`limit`; archived alarms are excluded unless `include_archived=1` is given — this is
+the one query parameter that changes the *default* response, which is the point: the default view gets
+quieter without anyone having to opt in), `GET /api/alarms/{id}` (with `children` when it is a storm
+bundle; its JSON carries `archived`/`archived_at` like any other field), `PATCH /api/alarms/{id}`
+(`{"state": "acknowledged"|"resolved"}`; archiving deliberately has no single-alarm endpoint of its own —
+see the bulk endpoint below), `DELETE /api/alarms/{id}`, `POST /api/alarms/{id}/mute` (a `MuteSpec`
 body, snoozes just that alarm), `POST /api/alarms/bulk` (`{ids|filter|all, op: "acknowledge"|"resolve"|
-"delete"|"mute", mute: {by, duration, reason}}`, mirroring `/api/devices/bulk`'s op-based shape), `POST
-/api/alarms/undo` (`{"handle": "..."}`), `GET /api/alarms/summary`, `GET /api/alarms/types`, and rules
-CRUD at `GET`/`POST /api/alarms/rules` and `DELETE /api/alarms/rules/{id}`. Every handler goes through
-the same token-and-CSRF-header `auth` middleware as the rest of the portal.
+"delete"|"mute"|"archive"|"unarchive", mute: {by, duration, reason}}`, mirroring `/api/devices/bulk`'s
+op-based shape — a single alarm is archived by sending `{"ids":["<id>"],"op":"archive"}` here rather than
+through a dedicated route, the same way the portal UI's own per-row archive button works), `POST
+/api/alarms/undo` (`{"handle": "..."}`), `GET /api/alarms/summary` (excludes archived alarms from every
+count, so an archived alarm cannot keep contributing to a badge number elsewhere in the portal), `GET
+/api/alarms/types`, and rules CRUD at `GET`/`POST /api/alarms/rules` and `DELETE /api/alarms/rules/{id}`.
+Every handler goes through the same token-and-CSRF-header `auth` middleware as the rest of the portal.
 
 **Portal UI.** A new Alarms tab (`internal/portal/web/js/alarmsview.js`, pure helpers in `js/alarms.js`)
 matches the Devices tab's structure: a `pg-head` with a severity/state filter and search box, a

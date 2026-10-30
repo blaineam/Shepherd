@@ -78,6 +78,7 @@ func parseAlarmQuery(r *http.Request) (alarms.Query, error) {
 	q.GroupID = v.Get("group_id")
 	q.Text = v.Get("text")
 	q.IncludeChildren = parseBool(v.Get("include_children"))
+	q.IncludeArchived = parseBool(v.Get("include_archived"))
 	if s := v.Get("since"); s != "" {
 		t, err := time.Parse(time.RFC3339, s)
 		if err != nil {
@@ -230,8 +231,12 @@ func (s *Server) alarmsBulk(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		res, err = s.Alarms.Mute(b.Selector, alarms.MuteRequest{By: b.Mute.By, Duration: b.Mute.Duration, Reason: b.Mute.Reason})
+	case "archive":
+		res, err = s.Alarms.Archive(b.Selector)
+	case "unarchive":
+		res, err = s.Alarms.Unarchive(b.Selector)
 	default:
-		bad(w, `op must be "acknowledge", "resolve", "delete" or "mute"`)
+		bad(w, `op must be "acknowledge", "resolve", "delete", "mute", "archive" or "unarchive"`)
 		return
 	}
 	if err != nil {
