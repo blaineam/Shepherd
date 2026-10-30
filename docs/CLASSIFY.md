@@ -35,3 +35,5 @@ The device registry gained what this feature needs, all additive:
   `Device.TypeConfidence` records how sure it was. `Registry.SetGuessedType` writes a guess and does
   nothing for a device whose type the user set (`TypeUser`). `Registry.ClearGuessedType` withdraws
   a guess. `SetType` (the user) always wins, clears the guess and survives every later guess.
+- **One service table.** `devices.ServiceTypeRules()` exports the mDNS service-type table that
+  `GuessType` uses, so the classifier and the registry never disagree about what `_ipp` means.

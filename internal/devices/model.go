@@ -23,12 +23,23 @@ const (
 	TypeGameConsole DeviceType = "game console"
 	TypeSmartHome   DeviceType = "smart-home hub"
 	TypeRouter      DeviceType = "router/infrastructure"
+
+	// Finer classes the automatic classifier (internal/classify) can tell
+	// apart from the original set.
+	TypeStreamingBox DeviceType = "streaming box"
+	TypeSmartPlug    DeviceType = "smart plug/sensor"
+	TypeDoorbell     DeviceType = "doorbell"
+	TypeThermostat   DeviceType = "thermostat"
+	TypeEReader      DeviceType = "e-reader"
+	TypeWearable     DeviceType = "wearable"
+	TypeNAS          DeviceType = "NAS/server"
 )
 
 // AllTypes lists every device type, for pickers.
 func AllTypes() []DeviceType {
-	return []DeviceType{TypePhone, TypeTablet, TypeLaptop, TypeTV, TypeSpeaker, TypeCamera,
-		TypePrinter, TypeGameConsole, TypeSmartHome, TypeRouter, TypeUnknown}
+	return []DeviceType{TypePhone, TypeTablet, TypeLaptop, TypeTV, TypeStreamingBox, TypeSpeaker, TypeCamera,
+		TypeDoorbell, TypePrinter, TypeGameConsole, TypeSmartHome, TypeSmartPlug, TypeThermostat, TypeEReader,
+		TypeWearable, TypeNAS, TypeRouter, TypeUnknown}
 }
 
 // ParseType maps user input ("camera", "game_console", "Smart Home") to a
@@ -49,6 +60,20 @@ func ParseType(s string) (DeviceType, bool) {
 		return TypeGameConsole, true
 	case "computer", "pc", "desktop", "mac":
 		return TypeLaptop, true
+	case "plug", "smartplug", "sensor", "smartsensor":
+		return TypeSmartPlug, true
+	case "nas", "server", "storage":
+		return TypeNAS, true
+	case "stream", "streamer", "streamingdevice", "firestick":
+		return TypeStreamingBox, true
+	case "thermo":
+		return TypeThermostat, true
+	case "ebook", "ebookreader":
+		return TypeEReader, true
+	case "watch", "smartwatch", "fitnesstracker":
+		return TypeWearable, true
+	case "videodoorbell":
+		return TypeDoorbell, true
 	}
 	return "", false
 }
@@ -98,8 +123,13 @@ type Device struct {
 	Type       DeviceType `json:"type,omitempty"`
 	TypeReason string     `json:"type_reason,omitempty"`
 	TypeUser   bool       `json:"type_user,omitempty"` // type set by the user, never overwritten by guesses
-	Services   []string   `json:"services,omitempty"`  // mDNS service types seen
-	Hints      []string   `json:"hints,omitempty"`     // model strings and friendly names
+	// TypeAuto marks a type chosen by the automatic classifier (see
+	// SetGuessedType); TypeConfidence is how sure it was, 0 to 1. Both are
+	// cleared when the user sets a type and ignored while TypeUser is set.
+	TypeAuto       bool     `json:"type_auto,omitempty"`
+	TypeConfidence float64  `json:"type_confidence,omitempty"`
+	Services       []string `json:"services,omitempty"` // mDNS service types seen
+	Hints          []string `json:"hints,omitempty"`    // model strings and friendly names
 
 	FirstSeen time.Time `json:"first_seen"`
 	LastSeen  time.Time `json:"last_seen"`

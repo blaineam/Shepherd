@@ -505,8 +505,8 @@ func normServices(in []string) []string {
 
 // retype refreshes the guessed type unless the user set one.
 func (r *Registry) retype(d *Device) bool {
-	if d.TypeUser {
-		return false
+	if d.TypeUser || d.TypeAuto {
+		return false // the user's choice, or the classifier's, stands
 	}
 	t, reason := GuessType(Evidence{
 		Vendor: d.Vendor, Services: d.Services, Hints: d.Hints,

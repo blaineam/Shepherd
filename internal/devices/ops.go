@@ -3,6 +3,7 @@
 package devices
 
 import (
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -191,17 +192,74 @@ func (r *Registry) SetType(id string, typ string) error {
 	return r.single(id, func() BulkResult {
 		return r.bulk([]string{id}, EventUpdated, "", func(d *Device) bool {
 			if auto {
-				was := d.TypeUser
-				d.TypeUser = false
+				was := d.TypeUser || d.TypeAuto
+				d.TypeUser, d.TypeAuto, d.TypeConfidence = false, false, 0
 				return r.retype(d) || was
 			}
 			if d.TypeUser && d.Type == t {
 				return false
 			}
 			d.Type, d.TypeUser, d.TypeReason = t, true, "set by you"
+			d.TypeAuto, d.TypeConfidence = false, 0
 			return true
 		})
 	})
+}
+
+// confidenceStep is the smallest change in a guess's confidence worth
+// recording; smaller moves would only churn the sync log.
+const confidenceStep = 0.05
+
+// SetGuessedType records the automatic classifier's guess: a type, a short
+// plain-language reason and a confidence from 0 to 1. A type the user set
+// always wins: for such a device this does nothing and reports false, and a
+// later guess can never replace it. It reports whether anything changed, so
+// calling it again with the same answer is a cheap no-op.
+func (r *Registry) SetGuessedType(id string, typ DeviceType, reason string, confidence float64) (bool, error) {
+	if _, ok := ParseType(string(typ)); !ok || typ == TypeUnknown {
+		return false, ErrInvalid
+	}
+	confidence = math.Round(math.Min(math.Max(confidence, 0), 1)*100) / 100
+	reason = strings.TrimSpace(reason)
+	if len(reason) > 256 {
+		reason = reason[:256]
+	}
+	changed := false
+	err := r.single(id, func() BulkResult {
+		return r.bulk([]string{id}, EventUpdated, "", func(d *Device) bool {
+			if d.TypeUser {
+				return false
+			}
+			if d.TypeAuto && d.Type == typ && d.TypeReason == reason &&
+				math.Abs(d.TypeConfidence-confidence) < confidenceStep {
+				return false
+			}
+			d.Type, d.TypeReason, d.TypeConfidence, d.TypeAuto = typ, reason, confidence, true
+			changed = true
+			return true
+		})
+	})
+	return changed, err
+}
+
+// ClearGuessedType withdraws the classifier's guess and returns the device to
+// the registry's own guess from its vendor, services and names. It does
+// nothing for a device whose type the user set. It reports whether anything
+// changed.
+func (r *Registry) ClearGuessedType(id string) (bool, error) {
+	changed := false
+	err := r.single(id, func() BulkResult {
+		return r.bulk([]string{id}, EventUpdated, "", func(d *Device) bool {
+			if d.TypeUser || !d.TypeAuto {
+				return false
+			}
+			d.TypeAuto, d.TypeConfidence = false, 0
+			r.retype(d)
+			changed = true
+			return true
+		})
+	})
+	return changed, err
 }
 
 // SetExcluded opts one device in or out of protection and traffic steering.
