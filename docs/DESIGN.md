@@ -13,7 +13,7 @@ much traffic reaches it:
 | Profile | How | Capabilities | Risk if Shepherd is down |
 |---|---|---|---|
 | **Guard** (default) | Router hands out Shepherd as DNS | DNS filtering, categories, allow/block lists, Tailscale-wide protection, remote access, uptime and speed tests | DNS fallback only; no path risk |
-| **Watch** (opt-in, per device) | Shepherd steers chosen devices' IPv4 traffic through itself (see methods below) | Flows, per-device bandwidth, geo-blocking, real pause, IDS on selected devices | Selected devices lose IPv4 internet until they recover |
+| **Watch** (on by default once enabled, opt out per device) | Shepherd steers chosen devices' IPv4 traffic through itself (see methods below) | Flows, per-device bandwidth, geo-blocking, real pause, IDS on selected devices | Selected devices lose IPv4 internet until they recover |
 | **Gateway** (future, optional) | Shepherd as router | Everything | Total outage |
 
 Watch mode is IPv4 only. See [IPV6.md](IPV6.md).
@@ -38,7 +38,7 @@ ARP and DHCP only affect IPv4. Shepherd never spoofs NDP or touches RAs.
 - **Free and keyless.** Defaults use only keyless data sources. Paid or keyed services are optional plugins.
 - **Self-maintaining.** List updates are guarded (size-change limits, top-sites allowlist). Image updates are staged, health-checked and rolled back on failure. Storage has budgets and downsampling. Notifications are digests, not floods.
 - **Few moving parts.** A small core: AdGuard Home, the DHCP/forwarding layer, and one agent that handles ingest, rules and the portal API. State in SQLite/DuckDB.
-- **Safe by default, per-device opt-in for anything in the data path.**
+- **Protected by default, reversible by design.** Once set up, every protection is on and each one is switched off per device, group or feature: opt-out, never opt-in. Guard rails (below) are what make default-on safe.
 - **Private.** Local-only, no telemetry, each household owns its own instance.
 - **Honest claims.** Shepherd reduces risk and adds visibility. It guarantees nothing.
 
@@ -69,7 +69,7 @@ notification. Two-week learning mode before any automatic action.
 
 Planned for family and friends: guided setup wizard, signed releases, staged channels
 (dogfood, family, public), debug-report button, optional time-limited remote help over Tailscale.
-The default install is the Guard profile.
+The setup wizard turns on Guard and, where the router path allows it, Watch for every device, excluding infrastructure automatically. People opt out, not in.
 
 ## Architecture direction (decided 2026-10-29)
 
@@ -180,6 +180,25 @@ Instances in a household replicate their dataset, not just their config.
 Test-first development with a coverage floor that only rises (see [TESTING.md](TESTING.md)). Network code is tested against
 fakes on loopback, never a real network. Sync is tested for convergence. The leak guard has its own self-test.
 
+## Protected by default
+
+Protection is on for the whole network as soon as setup finishes, and you opt out per device, group or
+feature. A tool that protects only what you remembered to enable protects very little, and the devices
+nobody thinks about (a TV, a camera, a guest's phone) are the ones that matter most.
+
+Default-on touches real traffic, so it ships with guard rails:
+
+- **Observe first.** A new install watches for a short learning period before it enforces anything in the data path, so it can see what normal looks like and pick what to exclude.
+- **Automatic exclusions.** The gateway, Thread border routers and other infrastructure (discovered from the network), other Shepherds, and anything you mark are never steered. IPv6, Thread, Matter and mDNS are never touched.
+- **Health-gated.** In-path protection is only active while Shepherd has verified that it forwards correctly, and a fail-open watchdog hands devices back to the router within seconds if it stops.
+- **Breakage detection.** If a protected device's connections start failing, Shepherd raises an alarm and offers a one-click exclusion (or applies a temporary one), instead of leaving the device broken.
+- **Visible and reversible.** The first-run summary lists what is protected and what was excluded and why. A global pause and a per-device pause (with timers) are always one click away.
+
+Defaults that exist today: a blocklist is active out of the box, and Apple iCloud Private Relay is blocked
+(devices see a notice that it is unavailable on this network; set `block_private_relay = false` or use the
+portal switch to allow it). Both can be opted out of in `shepherd.toml` or the portal.
+
 ## Decision log
 
+- **2026-10-30:** Protection is opt-out, not opt-in. Defaults are on (blocklist, Private Relay policy), and Watch mode will be default-on after setup with automatic exclusions, health gating and a fail-open watchdog. This replaces the earlier "everything in the data path is opt-in" stance.
 - **2026-10-29:** Licensed AGPL-3.0-or-later (after weighing MIT and MIT/Apache-2.0). Self-hosted network software is exactly what closed hosted or appliance forks would target, and AGPL requires those to share their changes. Keeping copyright with the author preserves the option to relicense or dual-license later. A Rust-only core was replaced by a Go control plane plus a Rust data plane, so Tailscale's `tsnet` can be embedded while the speed-critical packet work still gets Rust. The Wave 1 claim that Rust's safety edge mattered for the whole core was overstated: Go is memory-safe too, and the control plane is not on the packet fast path.

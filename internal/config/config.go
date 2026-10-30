@@ -13,14 +13,18 @@ import (
 )
 
 type Config struct {
-	DataDir string  `toml:"data_dir"`
-	DNS     DNS     `toml:"dns"`
-	Lists   []List  `toml:"lists"`
-	Portal  Portal  `toml:"portal"`
-	Privacy Privacy `toml:"privacy"`
+	DataDir string `toml:"data_dir"`
+	// NoDefaultLists opts out of the blocklist Shepherd ships with. Lists you
+	// define yourself are always kept.
+	NoDefaultLists bool    `toml:"no_default_lists"`
+	DNS            DNS     `toml:"dns"`
+	Lists          []List  `toml:"lists"`
+	Portal         Portal  `toml:"portal"`
+	Privacy        Privacy `toml:"privacy"`
 }
 
-// Privacy holds initial policy switches. After first run the portal owns them.
+// Privacy holds initial policy switches. Protections are on by default; after
+// first run the portal owns them, and each one can be switched off.
 type Privacy struct {
 	BlockPrivateRelay bool `toml:"block_private_relay"`
 }
@@ -48,9 +52,19 @@ type Portal struct {
 	Listen string `toml:"listen"`
 }
 
-// Default returns a configuration that is safe to run on a developer machine.
+// defaultList is the blocklist a fresh install protects with.
+var defaultList = List{
+	Name: "hagezi-pro",
+	URL:  "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt",
+}
+
+// Default returns a configuration that protects out of the box: a blocklist is
+// active and Apple Private Relay is blocked. Everything can be opted out of.
+// Network addresses stay on loopback so it is safe to start on any machine.
 func Default() Config {
 	return Config{
+		Lists:   []List{defaultList},
+		Privacy: Privacy{BlockPrivateRelay: true},
 		DataDir: "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
@@ -69,8 +83,14 @@ var listName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 // Load reads path over the defaults. A missing file yields the defaults.
 func Load(path string) (Config, error) {
 	cfg := Default()
+	// Decoding into the default's existing element would merge a partial user
+	// list with it (a name without a url would inherit the default's url).
+	cfg.Lists = nil
 	if _, err := toml.DecodeFile(path, &cfg); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return cfg, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if len(cfg.Lists) == 0 && !cfg.NoDefaultLists {
+		cfg.Lists = Default().Lists
 	}
 	return cfg, cfg.Validate()
 }

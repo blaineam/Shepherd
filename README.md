@@ -62,6 +62,7 @@ Shepherd is early and built in public. This is real, tested and running on a rea
 - [x] **Self-healing upstreams.** Continuous health probing and instant failover. Born from a real outage, so it never stalls your network on a dead resolver.
 - [x] **Guarded blocklist updates.** A broken or hostile list is rejected and the last good one stays active.
 - [x] **Apple iCloud Private Relay blocking**, the way Apple documents for networks, with every attempt logged by device.
+- [x] **Protected out of the box.** A blocklist and the Private Relay policy are on by default; opt out of either in the config or the portal.
 - [x] **Live portal** with per-device queries, one-click allow and block, upstream health, rules and policy switches.
 - [x] **Tailscale integration** for private remote access, validated on a live exit node and subnet router.
 - [x] **Thread, Matter and IPv6 safe by design**, written down as hard rules ([IPV6.md](docs/IPV6.md)).
@@ -94,9 +95,9 @@ flowchart LR
   R --> I[(Internet)]
 ```
 
-- **Guard** (default): your router hands out Shepherd as DNS. It cannot take your internet down.
-- **Watch** (opt-in, per device): Shepherd steers chosen devices through itself for bytes, flows,
-  geo-blocking and real pause. IPv4 only, never touching IPv6, Thread or Matter.
+- **Guard**: your router hands out Shepherd as DNS, so every device is filtered the moment setup finishes. It cannot take your internet down.
+- **Watch** (on by default once enabled, opt out per device): Shepherd steers devices through itself for bytes, flows,
+  geo-blocking and real pause. IPv4 only, never touching IPv6, Thread or Matter. Infrastructure is excluded automatically.
 - Works with routers that offer nothing, like eero, because it needs no router integration.
 
 ## Principles
@@ -106,7 +107,7 @@ flowchart LR
 - **Never breaks your smart home.** IPv6, Thread, Matter and mDNS are protected by rules in the code, not by luck.
 - **Free and keyless.** No paid APIs. Every data source works without an account.
 - **Self-maintaining.** Lists, upstreams and storage look after themselves, with guardrails and rollback.
-- **Safe by default.** Anything that touches your traffic is opt-in, per device, and reversible.
+- **Protected by default.** Set it up once and every device is covered. You opt out per device or feature, never opt in. Staged rollout, a fail-open watchdog and automatic exclusion of infrastructure keep that safe.
 - **Open and honest.** AGPL, built in public, tested first. This README says what works and what does not.
 
 ## Try it

@@ -32,6 +32,7 @@ func writeConfig(t *testing.T, dnsPort, portalPort int, extra string) string {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "shepherd.toml")
 	body := fmt.Sprintf(`data_dir = %q
+no_default_lists = true
 [dns]
 listen = ["127.0.0.1:%d"]
 upstreams = ["192.0.2.53"]

@@ -44,7 +44,7 @@ Nothing changes on your network until you point your router's DNS at Shepherd.
 
 ## Apple iCloud Private Relay
 
-The policy answers NXDOMAIN for `mask.icloud.com`, `mask-h2.icloud.com` and `mask-api.icloud.com`.
+The policy is **on by default** (opt out with `block_private_relay = false` or the portal switch). It answers NXDOMAIN for `mask.icloud.com`, `mask-h2.icloud.com` and `mask-api.icloud.com`.
 Apple documents NXDOMAIN or an empty answer for those names as the way for a network to signal it
 does not allow the relay. Some reports say devices that use their own DNS, or already hold relay
 addresses, can still connect. Fully enforcing this needs Watch mode (Wave 6), which can also block

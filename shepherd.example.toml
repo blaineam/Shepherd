@@ -1,8 +1,15 @@
 # Copy to shepherd.toml (git-ignored) and edit. Never commit your real config.
 
+# Protection is ON by default: a blocklist is active and Apple Private Relay is
+# blocked. Opt out of anything below. Everything shown here is the default.
+
 # Where Shepherd keeps its state (portal token, rules, cached lists).
 # Keep this OUTSIDE the repository.
 data_dir = "data"
+
+# Set true to run with no built-in blocklist. Lists you define under [[lists]]
+# always replace the built-in one, so this is only needed to run with none.
+no_default_lists = false
 
 [dns]
 # host:port addresses, each served over UDP and TCP. Use your LAN address
@@ -17,13 +24,15 @@ log_size = 5000
 protected_domains = []
 
 [privacy]
-# Initial value for blocking Apple iCloud Private Relay (NXDOMAIN for its
-# hostnames). After first run, change it from the portal.
-block_private_relay = false
+# Blocks Apple iCloud Private Relay (NXDOMAIN for its hostnames), as Apple
+# documents for networks. Devices see a notice that the relay is unavailable
+# here. Set false to allow it. After first run, change it from the portal.
+block_private_relay = true
 
 [portal]
 listen = "127.0.0.1:8787"
 
+# The built-in blocklist. Defining any [[lists]] replaces it.
 [[lists]]
 name = "hagezi-pro"
 url = "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt"

@@ -32,5 +32,6 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - The example config's blocklist URL returned HTTP 404. It now points at a working list, and a weekly CI job (`scripts/check-list-urls`) fails if any example blocklist URL stops resolving.
 
 ### Changed
+- **Protection is on by default; you opt out, not in.** A fresh install now ships with a blocklist and blocks Apple iCloud Private Relay (devices see a notice that it is unavailable on the network). Opt out with `block_private_relay = false` or `no_default_lists = true`, or from the portal. Lists you define always replace the built-in one. Watch mode will follow the same rule (default-on with automatic exclusions and a fail-open watchdog); see the design doc.
 - Licensed AGPL-3.0-or-later.
 - Direction: a native single binary with a Go control plane and a Rust data plane (Wave 6), instead of containers.
