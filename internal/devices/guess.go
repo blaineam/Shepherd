@@ -26,6 +26,18 @@ var serviceTypes = []struct {
 	{"_googlecast", TypeTV}, {"_airplay", TypeTV},
 }
 
+// ServiceTypeRules returns the mDNS service-type table GuessType uses: the
+// first label of a service type ("_ipp") to the type it suggests. It is a
+// copy; the automatic classifier uses it so both agree on what each service
+// means.
+func ServiceTypeRules() map[string]DeviceType {
+	out := make(map[string]DeviceType, len(serviceTypes))
+	for _, st := range serviceTypes {
+		out[st.label] = st.typ
+	}
+	return out
+}
+
 // keyword rules over names and hints, checked in order; first match wins.
 var keywordRules = []struct {
 	typ  DeviceType

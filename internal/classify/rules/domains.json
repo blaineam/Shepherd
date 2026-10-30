@@ -1,0 +1,824 @@
+{
+ "version": 1,
+ "verified": "2026-10-30",
+ "rules": [
+  {
+   "suffix": "netflix.com",
+   "classes": {
+    "tv": 0.25,
+    "streaming box": 0.15
+   },
+   "label": "a streaming service",
+   "vendor": "Netflix",
+   "evidence": "E1 cert O=Netflix"
+  },
+  {
+   "suffix": "nflxso.net",
+   "classes": {
+    "tv": 0.25,
+    "streaming box": 0.15
+   },
+   "label": "a streaming service",
+   "vendor": "Netflix",
+   "evidence": "E2 SOA contact nicadmin.netflix.com"
+  },
+  {
+   "suffix": "nflxext.com",
+   "classes": {
+    "tv": 0.25,
+    "streaming box": 0.15
+   },
+   "label": "a streaming service",
+   "vendor": "Netflix",
+   "evidence": "E5 apex address announced by AS40027 (Netflix)"
+  },
+  {
+   "suffix": "disneyplus.com",
+   "classes": {
+    "tv": 0.25,
+    "streaming box": 0.15
+   },
+   "label": "a streaming service",
+   "vendor": "Disney+",
+   "evidence": "E3 site is Disney+"
+  },
+  {
+   "suffix": "dssott.com",
+   "classes": {
+    "tv": 0.25,
+    "streaming box": 0.15
+   },
+   "label": "a streaming service",
+   "vendor": "Disney Streaming",
+   "evidence": "E2 SOA contact dnsadmin.bamtechmedia.com (BAMTech, Disney Streaming)"
+  },
+  {
+   "suffix": "hulu.com",
+   "classes": {
+    "tv": 0.25,
+    "streaming box": 0.15
+   },
+   "label": "a streaming service",
+   "vendor": "Hulu",
+   "evidence": "E1 cert O=The Walt Disney Company, CN *.hulu.com"
+  },
+  {
+   "suffix": "hulustream.com",
+   "classes": {
+    "tv": 0.25,
+    "streaming box": 0.15
+   },
+   "label": "a streaming service",
+   "vendor": "Hulu",
+   "evidence": "E2 SOA contact dnsadmin.hulu.com"
+  },
+  {
+   "suffix": "hbomax.com",
+   "classes": {
+    "tv": 0.25,
+    "streaming box": 0.15
+   },
+   "label": "a streaming service",
+   "vendor": "HBO Max",
+   "evidence": "E3 site is HBO Max"
+  },
+  {
+   "suffix": "max.com",
+   "classes": {
+    "tv": 0.25,
+    "streaming box": 0.15
+   },
+   "label": "a streaming service",
+   "vendor": "HBO Max",
+   "evidence": "E3 redirects to hbomax.com"
+  },
+  {
+   "suffix": "primevideo.com",
+   "classes": {
+    "tv": 0.25,
+    "streaming box": 0.15
+   },
+   "label": "a streaming service",
+   "vendor": "Prime Video",
+   "evidence": "E6 WHOIS registrant Hostmaster, Amazon Legal Dept."
+  },
+  {
+   "suffix": "peacocktv.com",
+   "classes": {
+    "tv": 0.25,
+    "streaming box": 0.15
+   },
+   "label": "a streaming service",
+   "vendor": "Peacock",
+   "evidence": "E1 cert O=NBCUniversal, LLC"
+  },
+  {
+   "suffix": "paramountplus.com",
+   "classes": {
+    "tv": 0.25,
+    "streaming box": 0.15
+   },
+   "label": "a streaming service",
+   "vendor": "Paramount+",
+   "evidence": "E3 site is Paramount Plus"
+  },
+  {
+   "suffix": "pluto.tv",
+   "classes": {
+    "tv": 0.25,
+    "streaming box": 0.15
+   },
+   "label": "a streaming service",
+   "vendor": "Pluto TV",
+   "evidence": "E1 cert O=Paramount Global"
+  },
+  {
+   "suffix": "sling.com",
+   "classes": {
+    "tv": 0.25,
+    "streaming box": 0.15
+   },
+   "label": "a streaming service",
+   "vendor": "Sling TV",
+   "evidence": "E1 cert O=DISH Network Corporation"
+  },
+  {
+   "suffix": "tubi.tv",
+   "classes": {
+    "tv": 0.25,
+    "streaming box": 0.15
+   },
+   "label": "a streaming service",
+   "vendor": "Tubi",
+   "evidence": "E3 redirects to tubitv.com, free movies and TV"
+  },
+  {
+   "suffix": "plex.tv",
+   "classes": {
+    "tv": 0.3,
+    "streaming box": 0.3,
+    "NAS/server": 0.15
+   },
+   "label": "a media-server service",
+   "vendor": "Plex",
+   "evidence": "E1 cert O=Plex GmbH"
+  },
+  {
+   "suffix": "roku.com",
+   "classes": {
+    "streaming box": 0.85,
+    "tv": 0.3
+   },
+   "label": "Roku's service",
+   "vendor": "Roku",
+   "evidence": "E3 site: Roku streams entertainment to your TV"
+  },
+  {
+   "suffix": "hik-connect.com",
+   "classes": {
+    "camera": 0.9
+   },
+   "label": "a camera cloud service",
+   "vendor": "Hikvision",
+   "evidence": "E1 cert O=Hangzhou Hikvision Digital Technology"
+  },
+  {
+   "suffix": "ezvizlife.com",
+   "classes": {
+    "camera": 0.85,
+    "doorbell": 0.1
+   },
+   "label": "a camera cloud service",
+   "vendor": "EZVIZ",
+   "evidence": "E1 cert O=Hangzhou Ezviz Network"
+  },
+  {
+   "suffix": "ezviz.com",
+   "classes": {
+    "camera": 0.7,
+    "doorbell": 0.1
+   },
+   "label": "a camera cloud service",
+   "vendor": "EZVIZ",
+   "evidence": "E1 cert O=Hangzhou Ezviz Network; E3 site sells security cameras"
+  },
+  {
+   "suffix": "imoulife.com",
+   "classes": {
+    "camera": 0.8,
+    "doorbell": 0.1
+   },
+   "label": "a camera cloud service",
+   "vendor": "Imou",
+   "evidence": "E3 site sells Imou cameras and doorbells"
+  },
+  {
+   "suffix": "reolink.com",
+   "classes": {
+    "camera": 0.6
+   },
+   "label": "a camera cloud service",
+   "vendor": "Reolink",
+   "evidence": "E3 site: Reolink security cameras"
+  },
+  {
+   "suffix": "wyzecam.com",
+   "classes": {
+    "camera": 0.85
+   },
+   "label": "a camera cloud service",
+   "vendor": "Wyze",
+   "evidence": "E1 cert O=WYZE LABS, INC."
+  },
+  {
+   "suffix": "foscam.com",
+   "classes": {
+    "camera": 0.7
+   },
+   "label": "a camera cloud service",
+   "vendor": "Foscam",
+   "evidence": "E3 site: Foscam security and IP cameras"
+  },
+  {
+   "suffix": "arlo.com",
+   "classes": {
+    "camera": 0.7
+   },
+   "label": "a camera cloud service",
+   "vendor": "Arlo",
+   "evidence": "E1 cert O=Arlo Technologies, Inc."
+  },
+  {
+   "suffix": "blinkforhome.com",
+   "classes": {
+    "camera": 0.85,
+    "doorbell": 0.1
+   },
+   "label": "a camera cloud service",
+   "vendor": "Blink",
+   "evidence": "E3 site: Blink Smart Security"
+  },
+  {
+   "suffix": "dropcam.com",
+   "classes": {
+    "camera": 0.8,
+    "doorbell": 0.1
+   },
+   "label": "a camera cloud service",
+   "vendor": "Nest Cam",
+   "evidence": "E3 redirects to Google Store Nest cameras"
+  },
+  {
+   "suffix": "eufylife.com",
+   "classes": {
+    "camera": 0.45,
+    "doorbell": 0.15,
+    "smart plug/sensor": 0.15
+   },
+   "label": "a smart-home camera service",
+   "vendor": "eufy",
+   "evidence": "E3 redirects to eufy.com, home security and smart-home devices"
+  },
+  {
+   "suffix": "ring.com",
+   "classes": {
+    "doorbell": 0.6,
+    "camera": 0.3
+   },
+   "label": "a doorbell cloud service",
+   "vendor": "Ring",
+   "evidence": "E3 site: Ring video doorbells and security cameras"
+  },
+  {
+   "suffix": "simplisafe.com",
+   "classes": {
+    "smart-home hub": 0.5,
+    "camera": 0.3,
+    "doorbell": 0.1
+   },
+   "label": "a home-security service",
+   "vendor": "SimpliSafe",
+   "evidence": "E3 site: SimpliSafe home security systems"
+  },
+  {
+   "suffix": "nest.com",
+   "classes": {
+    "thermostat": 0.35,
+    "camera": 0.3,
+    "smart-home hub": 0.25,
+    "doorbell": 0.1,
+    "speaker": 0.1
+   },
+   "label": "Google Nest",
+   "vendor": "Google Nest",
+   "evidence": "E3 redirects to Google Home and Nest devices"
+  },
+  {
+   "suffix": "tplinkcloud.com",
+   "classes": {
+    "smart plug/sensor": 0.55,
+    "camera": 0.3
+   },
+   "label": "a smart-home cloud service",
+   "vendor": "TP-Link",
+   "evidence": "E1 cert O=TP-Link Systems Inc."
+  },
+  {
+   "suffix": "tapo.com",
+   "classes": {
+    "camera": 0.4,
+    "smart plug/sensor": 0.4
+   },
+   "label": "a smart-home cloud service",
+   "vendor": "TP-Link Tapo",
+   "evidence": "E3 site: Tapo smart devices"
+  },
+  {
+   "suffix": "tuya.com",
+   "classes": {
+    "smart plug/sensor": 0.75,
+    "smart-home hub": 0.1
+   },
+   "label": "a smart-device platform",
+   "vendor": "Tuya",
+   "evidence": "E3 site: Tuya Global AIoT Platform"
+  },
+  {
+   "suffix": "shelly.cloud",
+   "classes": {
+    "smart plug/sensor": 0.85
+   },
+   "label": "a smart-device platform",
+   "vendor": "Shelly",
+   "evidence": "E3 redirects to shelly.com, smart-home automation"
+  },
+  {
+   "suffix": "meross.com",
+   "classes": {
+    "smart plug/sensor": 0.8
+   },
+   "label": "a smart-device platform",
+   "vendor": "Meross",
+   "evidence": "E3 site: Meross smart plugs, sensors and switches"
+  },
+  {
+   "suffix": "meethue.com",
+   "classes": {
+    "smart-home hub": 0.8
+   },
+   "label": "a smart-home platform",
+   "vendor": "Philips Hue",
+   "evidence": "E3 redirects to philips-hue.com"
+  },
+  {
+   "suffix": "ecobee.com",
+   "classes": {
+    "thermostat": 0.85
+   },
+   "label": "a thermostat cloud",
+   "vendor": "ecobee",
+   "evidence": "E3 site: ecobee thermostats, cameras and sensors"
+  },
+  {
+   "suffix": "mytotalconnectcomfort.com",
+   "classes": {
+    "thermostat": 0.8
+   },
+   "label": "a thermostat cloud",
+   "vendor": "Resideo",
+   "evidence": "E1 cert O=Resideo"
+  },
+  {
+   "suffix": "resideo.com",
+   "classes": {
+    "thermostat": 0.5,
+    "smart-home hub": 0.2
+   },
+   "label": "a thermostat cloud",
+   "vendor": "Resideo",
+   "evidence": "E1 cert O=Resideo Technologies; E3 site: smart thermostats"
+  },
+  {
+   "suffix": "smartthings.com",
+   "classes": {
+    "smart-home hub": 0.7
+   },
+   "label": "a smart-home platform",
+   "vendor": "SmartThings",
+   "evidence": "E3 redirects to Samsung SmartThings"
+  },
+  {
+   "suffix": "nabucasa.com",
+   "classes": {
+    "smart-home hub": 0.85
+   },
+   "label": "a smart-home platform",
+   "vendor": "Home Assistant",
+   "evidence": "E3 site: Nabu Casa, official Home Assistant products"
+  },
+  {
+   "suffix": "home-assistant.io",
+   "classes": {
+    "smart-home hub": 0.6,
+    "NAS/server": 0.3
+   },
+   "label": "a smart-home platform",
+   "vendor": "Home Assistant",
+   "evidence": "E3 site: Home Assistant"
+  },
+  {
+   "suffix": "lutron.com",
+   "classes": {
+    "smart-home hub": 0.5
+   },
+   "label": "a smart-home platform",
+   "vendor": "Lutron",
+   "evidence": "E1 cert O=Lutron Electronics Co., Inc."
+  },
+  {
+   "suffix": "sonos.com",
+   "classes": {
+    "speaker": 0.9
+   },
+   "label": "a smart-speaker service",
+   "vendor": "Sonos",
+   "evidence": "E3 site: Sonos soundbars and headphones"
+  },
+  {
+   "suffix": "amazonalexa.com",
+   "classes": {
+    "speaker": 0.5,
+    "smart-home hub": 0.15
+   },
+   "label": "a smart-speaker service",
+   "vendor": "Alexa",
+   "evidence": "E1 cert CN www.stage-business.amazon.com (Amazon)"
+  },
+  {
+   "suffix": "playstation.net",
+   "classes": {
+    "game console": 0.9
+   },
+   "label": "a game network",
+   "vendor": "PlayStation",
+   "evidence": "E4 Sony PS5 network-ports support page lists it"
+  },
+  {
+   "suffix": "sonyentertainmentnetwork.com",
+   "classes": {
+    "game console": 0.9
+   },
+   "label": "a game network",
+   "vendor": "PlayStation",
+   "evidence": "E1 cert O=SONY INTERACTIVE ENTERTAINMENT LLC; E4 Sony support page lists it"
+  },
+  {
+   "suffix": "playstation.com",
+   "classes": {
+    "game console": 0.4
+   },
+   "label": "a game network",
+   "vendor": "PlayStation",
+   "evidence": "E1 cert O=Sony Interactive Entertainment LLC"
+  },
+  {
+   "suffix": "xboxlive.com",
+   "classes": {
+    "game console": 0.85
+   },
+   "label": "a game network",
+   "vendor": "Xbox",
+   "evidence": "E4 Microsoft endpoint documentation lists it"
+  },
+  {
+   "suffix": "xbox.com",
+   "classes": {
+    "game console": 0.4
+   },
+   "label": "a game network",
+   "vendor": "Xbox",
+   "evidence": "E1 cert O=Microsoft Corporation"
+  },
+  {
+   "suffix": "nintendowifi.net",
+   "classes": {
+    "game console": 0.9
+   },
+   "label": "a game network",
+   "vendor": "Nintendo",
+   "evidence": "E5 apex address announced by AS11278 (Nintendo)"
+  },
+  {
+   "suffix": "nintendo.com",
+   "classes": {
+    "game console": 0.4
+   },
+   "label": "a game network",
+   "vendor": "Nintendo",
+   "evidence": "E1 cert O=Nintendo of America Inc."
+  },
+  {
+   "suffix": "steampowered.com",
+   "classes": {
+    "game console": 0.3,
+    "laptop": 0.4
+   },
+   "label": "Steam",
+   "vendor": "Valve",
+   "evidence": "E3 site: Steam"
+  },
+  {
+   "suffix": "steamcontent.com",
+   "classes": {
+    "game console": 0.3,
+    "laptop": 0.4
+   },
+   "label": "Steam",
+   "vendor": "Valve",
+   "evidence": "E2 SOA contact in valvesoftware.com"
+  },
+  {
+   "suffix": "connectivitycheck.gstatic.com",
+   "classes": {
+    "phone": 0.45,
+    "tablet": 0.15,
+    "tv": 0.1
+   },
+   "label": "Android network checks",
+   "vendor": "Android",
+   "evidence": "E4 Android Enterprise network requirements page lists it"
+  },
+  {
+   "suffix": "mtalk.google.com",
+   "classes": {
+    "phone": 0.3,
+    "tablet": 0.1,
+    "laptop": 0.1
+   },
+   "label": "Google push messaging",
+   "vendor": "Android",
+   "evidence": "E4 Android Enterprise network requirements page lists it"
+  },
+  {
+   "suffix": "push.apple.com",
+   "classes": {
+    "phone": 0.2,
+    "laptop": 0.15,
+    "tablet": 0.1
+   },
+   "label": "Apple push notifications",
+   "vendor": "Apple",
+   "evidence": "E4 Apple network-ports support page (101555) lists it"
+  },
+  {
+   "suffix": "icloud.com",
+   "classes": {
+    "phone": 0.15,
+    "laptop": 0.1,
+    "tablet": 0.05
+   },
+   "label": "Apple services",
+   "vendor": "Apple",
+   "evidence": "E1 cert O=Apple Inc."
+  },
+  {
+   "suffix": "apple.com",
+   "classes": {
+    "phone": 0.15,
+    "laptop": 0.1,
+    "tablet": 0.05
+   },
+   "label": "Apple services",
+   "vendor": "Apple",
+   "evidence": "E1 cert O=Apple Inc."
+  },
+  {
+   "suffix": "windowsupdate.com",
+   "classes": {
+    "laptop": 0.5
+   },
+   "label": "Windows Update",
+   "vendor": "Windows",
+   "evidence": "E4 Microsoft Windows endpoint documentation lists it"
+  },
+  {
+   "suffix": "msftconnecttest.com",
+   "classes": {
+    "laptop": 0.45
+   },
+   "label": "Windows network checks",
+   "vendor": "Windows",
+   "evidence": "E4 Microsoft Windows endpoint documentation lists it"
+  },
+  {
+   "suffix": "lgappstv.com",
+   "classes": {
+    "tv": 0.8
+   },
+   "label": "a TV maker's service",
+   "vendor": "LG",
+   "evidence": "E1 cert O=LG Electronics Inc.; function inferred from the service name (LG Apps TV)"
+  },
+  {
+   "suffix": "lgtvsdp.com",
+   "classes": {
+    "tv": 0.8
+   },
+   "label": "a TV maker's service",
+   "vendor": "LG",
+   "evidence": "E2 SOA/NS in lg.co.kr, WHOIS registrant LG Electronics; function inferred from the service name (LG TV SDP)"
+  },
+  {
+   "suffix": "vizio.com",
+   "classes": {
+    "tv": 0.5
+   },
+   "label": "a TV maker's service",
+   "vendor": "Vizio",
+   "evidence": "E3 site: VIZIO smart TVs and soundbars"
+  },
+  {
+   "suffix": "hpeprint.com",
+   "classes": {
+    "printer": 0.7
+   },
+   "label": "a printing service",
+   "vendor": "HP",
+   "evidence": "E1 cert O=HP Inc (HP ePrint)"
+  },
+  {
+   "suffix": "hpconnected.com",
+   "classes": {
+    "printer": 0.5
+   },
+   "label": "a printing service",
+   "vendor": "HP",
+   "evidence": "E1 cert O=HP Inc"
+  },
+  {
+   "suffix": "epsonconnect.com",
+   "classes": {
+    "printer": 0.65
+   },
+   "label": "a printing service",
+   "vendor": "Epson",
+   "evidence": "E1 cert O=SEIKO EPSON CORPORATION (Epson Connect)"
+  },
+  {
+   "suffix": "ui.com",
+   "classes": {
+    "router/infrastructure": 0.6,
+    "camera": 0.15
+   },
+   "label": "a networking vendor's service",
+   "vendor": "Ubiquiti",
+   "evidence": "E3 site: UniFi, Ubiquiti"
+  },
+  {
+   "suffix": "ubnt.com",
+   "classes": {
+    "router/infrastructure": 0.6,
+    "camera": 0.15
+   },
+   "label": "a networking vendor's service",
+   "vendor": "Ubiquiti",
+   "evidence": "E3 redirects to ui.com"
+  },
+  {
+   "suffix": "eero.com",
+   "classes": {
+    "router/infrastructure": 0.8
+   },
+   "label": "a networking vendor's service",
+   "vendor": "eero",
+   "evidence": "E3 site: eero mesh WiFi routers"
+  },
+  {
+   "suffix": "netgear.com",
+   "classes": {
+    "router/infrastructure": 0.5
+   },
+   "label": "a networking vendor's service",
+   "vendor": "Netgear",
+   "evidence": "E3 site: NETGEAR networking products"
+  },
+  {
+   "suffix": "linksys.com",
+   "classes": {
+    "router/infrastructure": 0.5
+   },
+   "label": "a networking vendor's service",
+   "vendor": "Linksys",
+   "evidence": "E3 site: Linksys WiFi solutions"
+  },
+  {
+   "suffix": "mikrotik.com",
+   "classes": {
+    "router/infrastructure": 0.6
+   },
+   "label": "a networking vendor's service",
+   "vendor": "MikroTik",
+   "evidence": "E1 cert O=SIA \"Mikrotikls\"; E3 site: routers"
+  },
+  {
+   "suffix": "tp-link.com",
+   "classes": {
+    "router/infrastructure": 0.45,
+    "smart plug/sensor": 0.1
+   },
+   "label": "a networking vendor's service",
+   "vendor": "TP-Link",
+   "evidence": "E3 site: TP-Link Wi-Fi and smart home"
+  },
+  {
+   "suffix": "zyxel.com",
+   "classes": {
+    "router/infrastructure": 0.5
+   },
+   "label": "a networking vendor's service",
+   "vendor": "Zyxel",
+   "evidence": "E3 site: Zyxel networking"
+  },
+  {
+   "suffix": "synology.com",
+   "classes": {
+    "NAS/server": 0.6
+   },
+   "label": "a NAS vendor's service",
+   "vendor": "Synology",
+   "evidence": "E3 site: Synology data management"
+  },
+  {
+   "suffix": "quickconnect.to",
+   "classes": {
+    "NAS/server": 0.85
+   },
+   "label": "a NAS vendor's service",
+   "vendor": "Synology",
+   "evidence": "E3 site: Synology QuickConnect"
+  },
+  {
+   "suffix": "qnap.com",
+   "classes": {
+    "NAS/server": 0.6
+   },
+   "label": "a NAS vendor's service",
+   "vendor": "QNAP",
+   "evidence": "E3 site: QNAP NAS and storage"
+  },
+  {
+   "suffix": "myqnapcloud.com",
+   "classes": {
+    "NAS/server": 0.85
+   },
+   "label": "a NAS vendor's service",
+   "vendor": "QNAP",
+   "evidence": "E3 site: myQNAPcloud"
+  },
+  {
+   "suffix": "truenas.com",
+   "classes": {
+    "NAS/server": 0.7
+   },
+   "label": "a NAS vendor's service",
+   "vendor": "TrueNAS",
+   "evidence": "E3 site: TrueNAS storage"
+  },
+  {
+   "suffix": "unraid.net",
+   "classes": {
+    "NAS/server": 0.7
+   },
+   "label": "a NAS vendor's service",
+   "vendor": "Unraid",
+   "evidence": "E3 site: Unraid, OS for storage, Docker and VMs"
+  },
+  {
+   "suffix": "fitbit.com",
+   "classes": {
+    "wearable": 0.5
+   },
+   "label": "a wearable maker's service",
+   "vendor": "Fitbit",
+   "evidence": "E3 redirects to Google Fitbit trackers and watches"
+  },
+  {
+   "suffix": "garmin.com",
+   "classes": {
+    "wearable": 0.3
+   },
+   "label": "a wearable maker's service",
+   "vendor": "Garmin",
+   "evidence": "E1 cert CN *.garmin.com; E3 site: GPS-enabled sports and fitness products"
+  },
+  {
+   "suffix": "ouraring.com",
+   "classes": {
+    "wearable": 0.8
+   },
+   "label": "a wearable maker's service",
+   "vendor": "Oura",
+   "evidence": "E3 site: Oura Ring"
+  }
+ ]
+}

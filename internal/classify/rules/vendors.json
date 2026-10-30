@@ -1,0 +1,428 @@
+{
+ "version": 1,
+ "verified": "2026-10-30",
+ "rules": [
+  {
+   "match": "hikvision",
+   "classes": {
+    "camera": 0.85
+   },
+   "known_for": "IP cameras",
+   "evidence": "E1 cert O=Hangzhou Hikvision Digital Technology (hik-connect.com); OUI name 'Hangzhou Hikvision Digital Technology'"
+  },
+  {
+   "match": "dahua",
+   "classes": {
+    "camera": 0.85
+   },
+   "known_for": "IP cameras",
+   "evidence": "E3 dahuasecurity.com: video-centric AIoT provider"
+  },
+  {
+   "match": "reolink",
+   "classes": {
+    "camera": 0.9
+   },
+   "known_for": "security cameras",
+   "evidence": "E3 reolink.com: security cameras and systems"
+  },
+  {
+   "match": "wyze",
+   "classes": {
+    "camera": 0.55,
+    "smart plug/sensor": 0.2
+   },
+   "known_for": "cameras and smart-home gadgets",
+   "evidence": "E3 wyze.com: smart home security cameras and devices"
+  },
+  {
+   "match": "arlo",
+   "classes": {
+    "camera": 0.9
+   },
+   "known_for": "security cameras",
+   "evidence": "E1 cert O=Arlo Technologies, Inc."
+  },
+  {
+   "match": "blink",
+   "classes": {
+    "camera": 0.8,
+    "doorbell": 0.1
+   },
+   "known_for": "security cameras",
+   "evidence": "OUI name 'Blink by Amazon'; E3 blinkforhome.com: Blink Smart Security"
+  },
+  {
+   "match": "sonos",
+   "classes": {
+    "speaker": 0.85
+   },
+   "known_for": "smart speakers",
+   "evidence": "E3 sonos.com: soundbars, speakers, headphones"
+  },
+  {
+   "match": "bose",
+   "classes": {
+    "speaker": 0.55
+   },
+   "known_for": "speakers and headphones",
+   "evidence": "E3 bose.com: headphones, earbuds, speakers, soundbars"
+  },
+  {
+   "match": "roku",
+   "classes": {
+    "streaming box": 0.75,
+    "tv": 0.2
+   },
+   "known_for": "streaming players",
+   "evidence": "E3 roku.com: streaming to your TV"
+  },
+  {
+   "match": "vizio",
+   "classes": {
+    "tv": 0.85
+   },
+   "known_for": "TVs",
+   "evidence": "E3 vizio.com: smart TVs and soundbars"
+  },
+  {
+   "match": "tcl",
+   "classes": {
+    "tv": 0.45,
+    "phone": 0.15
+   },
+   "known_for": "TVs",
+   "evidence": "OUI names 'TCL' and 'Huizhou TCL Communication'; E3 tcl.com"
+  },
+  {
+   "match": "hisense",
+   "classes": {
+    "tv": 0.5
+   },
+   "known_for": "TVs and appliances",
+   "evidence": "E3 hisense.com: TVs, refrigerators, air conditioners"
+  },
+  {
+   "match": "lg electronics",
+   "classes": {
+    "tv": 0.35,
+    "phone": 0.1
+   },
+   "known_for": "TVs and appliances",
+   "evidence": "E3 lg.com: home entertainment and appliances"
+  },
+  {
+   "match": "brother",
+   "classes": {
+    "printer": 0.7
+   },
+   "known_for": "printers",
+   "evidence": "E3 brother-usa.com: printers, sewing machines, label makers"
+  },
+  {
+   "match": "seiko epson",
+   "classes": {
+    "printer": 0.8
+   },
+   "known_for": "printers",
+   "evidence": "E1 cert O=SEIKO EPSON CORPORATION (epsonconnect.com)"
+  },
+  {
+   "match": "lexmark",
+   "classes": {
+    "printer": 0.9
+   },
+   "known_for": "printers",
+   "evidence": "E3 lexmark.com: enterprise printers"
+  },
+  {
+   "match": "xerox",
+   "classes": {
+    "printer": 0.85
+   },
+   "known_for": "printers",
+   "evidence": "E3 xerox.com: digital printing technologies"
+  },
+  {
+   "match": "ricoh",
+   "classes": {
+    "printer": 0.75
+   },
+   "known_for": "printers and copiers",
+   "evidence": "E3 ricoh.com (document technology company; weaker evidence)"
+  },
+  {
+   "match": "hewlett packard enterprise",
+   "neutral": true,
+   "evidence": "neutral on purpose: the enterprise company is not the printer and PC maker, so it must not inherit the broader HP rule"
+  },
+  {
+   "match": "hewlett packard",
+   "classes": {
+    "printer": 0.4,
+    "laptop": 0.3
+   },
+   "known_for": "printers and PCs",
+   "evidence": "E3 hp.com: laptops, desktops, printers"
+  },
+  {
+   "match": "nintendo",
+   "classes": {
+    "game console": 0.9
+   },
+   "known_for": "game consoles",
+   "evidence": "E3 nintendo.com: Switch systems and video games"
+  },
+  {
+   "match": "sony interactive",
+   "classes": {
+    "game console": 0.9
+   },
+   "known_for": "game consoles",
+   "evidence": "E3 playstation.com: Sony Interactive Entertainment, PS5"
+  },
+  {
+   "match": "sony computer entertainment",
+   "classes": {
+    "game console": 0.85
+   },
+   "known_for": "game consoles",
+   "evidence": "OUI name; E3 playstation.com: Sony Interactive Entertainment"
+  },
+  {
+   "match": "valve",
+   "classes": {
+    "game console": 0.6,
+    "laptop": 0.1
+   },
+   "known_for": "Steam game hardware",
+   "evidence": "OUI name 'Valve'; E3 steampowered.com"
+  },
+  {
+   "match": "microsoft",
+   "classes": {
+    "laptop": 0.3,
+    "game console": 0.15
+   },
+   "known_for": "PCs and game consoles",
+   "evidence": "E4 Microsoft endpoint docs cover Windows and Xbox"
+  },
+  {
+   "match": "espressif",
+   "classes": {
+    "smart plug/sensor": 0.45,
+    "smart-home hub": 0.1
+   },
+   "known_for": "chips inside smart plugs and sensors",
+   "evidence": "E3 espressif.com: wireless SoCs for IoT"
+  },
+  {
+   "match": "tuya",
+   "classes": {
+    "smart plug/sensor": 0.7
+   },
+   "known_for": "smart-plug and sensor modules",
+   "evidence": "E3 tuya.com: AIoT platform for smart devices"
+  },
+  {
+   "match": "shelly",
+   "classes": {
+    "smart plug/sensor": 0.8
+   },
+   "known_for": "smart relays and plugs",
+   "evidence": "E3 shelly.com: smart-home automation"
+  },
+  {
+   "match": "meross",
+   "classes": {
+    "smart plug/sensor": 0.8
+   },
+   "known_for": "smart plugs and switches",
+   "evidence": "E3 meross.com: smart plugs, sensors, switches"
+  },
+  {
+   "match": "signify",
+   "classes": {
+    "smart-home hub": 0.65
+   },
+   "known_for": "Philips Hue lighting",
+   "evidence": "E3 signify.com: connected lighting systems"
+  },
+  {
+   "match": "ecobee",
+   "classes": {
+    "thermostat": 0.85
+   },
+   "known_for": "thermostats",
+   "evidence": "E3 ecobee.com: thermostats, cameras, sensors"
+  },
+  {
+   "match": "resideo",
+   "classes": {
+    "thermostat": 0.55,
+    "smart-home hub": 0.15
+   },
+   "known_for": "thermostats",
+   "evidence": "E3 resideo.com: smart thermostats, cameras"
+  },
+  {
+   "match": "lutron",
+   "classes": {
+    "smart-home hub": 0.5
+   },
+   "known_for": "lighting controls",
+   "evidence": "E1 cert O=Lutron Electronics Co., Inc.; function from product knowledge (weaker evidence)"
+  },
+  {
+   "match": "netatmo",
+   "classes": {
+    "thermostat": 0.35,
+    "smart plug/sensor": 0.4
+   },
+   "known_for": "thermostats and weather sensors",
+   "evidence": "E3 netatmo.com: thermostat, cameras, weather station"
+  },
+  {
+   "match": "fitbit",
+   "classes": {
+    "wearable": 0.6
+   },
+   "known_for": "fitness trackers",
+   "evidence": "E3 fitbit.com: fitness trackers and smartwatches"
+  },
+  {
+   "match": "garmin",
+   "classes": {
+    "wearable": 0.5
+   },
+   "known_for": "fitness and GPS watches",
+   "evidence": "E3 garmin.com: sports and fitness products"
+  },
+  {
+   "match": "oura",
+   "classes": {
+    "wearable": 0.85
+   },
+   "known_for": "smart rings",
+   "evidence": "E3 ouraring.com: Oura Ring"
+  },
+  {
+   "match": "eero",
+   "classes": {
+    "router/infrastructure": 0.9
+   },
+   "known_for": "mesh Wi-Fi routers",
+   "evidence": "E3 eero.com: mesh WiFi"
+  },
+  {
+   "match": "ubiquiti",
+   "classes": {
+    "router/infrastructure": 0.6,
+    "camera": 0.1
+   },
+   "known_for": "network gear",
+   "evidence": "E3 ui.com: UniFi networking"
+  },
+  {
+   "match": "netgear",
+   "classes": {
+    "router/infrastructure": 0.7
+   },
+   "known_for": "routers and switches",
+   "evidence": "E3 netgear.com: networking products"
+  },
+  {
+   "match": "tp-link",
+   "classes": {
+    "router/infrastructure": 0.6,
+    "smart plug/sensor": 0.15,
+    "camera": 0.1
+   },
+   "known_for": "routers and smart-home gear",
+   "evidence": "E3 tp-link.com: Wi-Fi and smart home"
+  },
+  {
+   "match": "cisco-linksys",
+   "classes": {
+    "router/infrastructure": 0.8
+   },
+   "known_for": "routers",
+   "evidence": "E3 linksys.com: WiFi solutions"
+  },
+  {
+   "match": "linksys",
+   "classes": {
+    "router/infrastructure": 0.8
+   },
+   "known_for": "routers",
+   "evidence": "E3 linksys.com: WiFi solutions"
+  },
+  {
+   "match": "zyxel",
+   "classes": {
+    "router/infrastructure": 0.8
+   },
+   "known_for": "network gear",
+   "evidence": "E3 zyxel.com: networking"
+  },
+  {
+   "match": "avm",
+   "classes": {
+    "router/infrastructure": 0.85
+   },
+   "known_for": "Fritz!Box routers",
+   "evidence": "E3 avm.de: FRITZ! internet and home-network products"
+  },
+  {
+   "match": "sagemcom",
+   "classes": {
+    "router/infrastructure": 0.6
+   },
+   "known_for": "broadband gateways",
+   "evidence": "E3 sagemcom.com: broadband solutions"
+  },
+  {
+   "match": "cisco meraki",
+   "classes": {
+    "router/infrastructure": 0.85
+   },
+   "known_for": "network gear",
+   "evidence": "OUI name; Cisco Meraki is a networking brand (weaker evidence)"
+  },
+  {
+   "match": "juniper",
+   "classes": {
+    "router/infrastructure": 0.8
+   },
+   "known_for": "network gear",
+   "evidence": "E3 juniper.net: AI-native networking"
+  },
+  {
+   "match": "synology",
+   "classes": {
+    "NAS/server": 0.85
+   },
+   "known_for": "NAS storage",
+   "evidence": "E3 synology.com: data management and storage"
+  },
+  {
+   "match": "qnap",
+   "classes": {
+    "NAS/server": 0.85
+   },
+   "known_for": "NAS storage",
+   "evidence": "E3 qnap.com: NAS and storage"
+  },
+  {
+   "match": "apple",
+   "classes": {
+    "phone": 0.25,
+    "laptop": 0.2,
+    "tablet": 0.1,
+    "tv": 0.05
+   },
+   "known_for": "phones and computers",
+   "evidence": "E1 cert O=Apple Inc.; deliberately weak: Apple makes many device kinds"
+  }
+ ]
+}

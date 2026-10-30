@@ -84,6 +84,16 @@ func (t *ouiTable) lookup(key uint32) string {
 // OUICount reports how many manufacturer prefixes are embedded.
 func OUICount() int { return len(embeddedOUI().keys) }
 
+// KnownVendors lists every manufacturer name in the embedded OUI table, sorted
+// and de-duplicated. The classifier's tests use it to prove each vendor rule
+// matches a name that really occurs.
+func KnownVendors() []string {
+	t := embeddedOUI()
+	out := append([]string(nil), t.vendors...)
+	sort.Strings(out)
+	return out
+}
+
 // LookupVendor returns the registered manufacturer of a MAC address, or ""
 // when the prefix is unknown or the address is locally administered
 // (randomized), in which case the prefix says nothing about the maker.
