@@ -857,3 +857,39 @@ tr.a-error .h-dom { color: var(--amber); }
 .dr-vulns-resolved { margin-top: 10px; }
 .dr-vulns-resolved > summary { cursor: pointer; }
 .dr-vulns-resolved .dr-vulns { margin-top: 8px; }
+
+/* ---------- Vulnerabilities page (one row per device+finding) ---------- */
+.vs-tablewrap { display: flex; flex-direction: column; min-height: 0; min-width: 0; position: relative; }
+.vs-row { display: grid; grid-template-columns: 110px minmax(240px, 2.3fr) minmax(160px, 1.3fr) 150px; align-items: center; column-gap: 14px; padding: 10px 14px; min-width: 0; border-bottom: 1px solid #ffffff0b; }
+.vs-thead { height: 34px; font: 600 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line2); flex: none; padding: 0 14px; }
+.vs-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
+.vs-rows .vs-row { cursor: pointer; background: transparent; width: 100%; border: 0; border-bottom: 1px solid #ffffff0b; text-align: left; font: inherit; color: inherit; }
+.vs-rows .vs-row:hover, .vs-rows .vs-row:focus-visible { background: #ffffff07; outline: none; }
+.vs-rows .vs-row.resolved { opacity: .6; }
+.vs-sev { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.vs-new { color: var(--amber); }
+.vs-find { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vs-find .nm { font-weight: 600; font-size: 13.5px; }
+.vs-find .sub { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vs-dev { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vs-dev .nm { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vs-dev .sub { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vs-state { display: flex; flex-direction: column; gap: 2px; text-align: right; }
+.vs-empty { padding: 48px 16px; text-align: center; }
+.vs-unavail .vs-thead { display: none; }
+@media (max-width: 1100px) {
+  .vs-row { grid-template-columns: 96px minmax(200px, 2fr) minmax(140px, 1.1fr) 130px; }
+}
+/* Below this width .vs-row stops being a 4-column table and reflows into a
+   stacked card, the same technique .al-row (Alarms) and .dv-row (Devices)
+   already use: severity/state on top, the finding on its own line, the
+   device last. The header row (no selection to preserve here) is hidden,
+   matching .h-table's own mobile convention. */
+@media (max-width: 760px) {
+  .vs-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "sev state" "find find" "dev dev"; row-gap: 6px; }
+  .vs-row .vs-sev { grid-area: sev; }
+  .vs-row .vs-state { grid-area: state; }
+  .vs-row .vs-find { grid-area: find; }
+  .vs-row .vs-dev { grid-area: dev; }
+  .vs-thead { display: none; }
+}
