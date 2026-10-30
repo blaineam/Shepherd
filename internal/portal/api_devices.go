@@ -19,24 +19,32 @@ type deviceNames struct {
 }
 
 type deviceJSON struct {
-	ID         string      `json:"id"`
-	Name       string      `json:"name"`
-	Alias      string      `json:"alias"`
-	Names      deviceNames `json:"names"`
-	Vendor     string      `json:"vendor"`
-	Type       string      `json:"type"`
-	TypeReason string      `json:"type_reason"`
-	MACs       []string    `json:"macs"`
-	IPs        []string    `json:"ips"`
-	FirstSeen  time.Time   `json:"first_seen"`
-	LastSeen   time.Time   `json:"last_seen"`
-	Groups     []string    `json:"groups"`
-	Tags       []string    `json:"tags"`
-	Excluded   bool        `json:"excluded"`
-	Notes      string      `json:"notes"`
+	ID             string      `json:"id"`
+	Name           string      `json:"name"`
+	Alias          string      `json:"alias"`
+	Names          deviceNames `json:"names"`
+	Vendor         string      `json:"vendor"`
+	Type           string      `json:"type"`
+	TypeReason     string      `json:"type_reason"`
+	MACs           []string    `json:"macs"`
+	IPs            []string    `json:"ips"`
+	FirstSeen      time.Time   `json:"first_seen"`
+	LastSeen       time.Time   `json:"last_seen"`
+	Groups         []string    `json:"groups"`
+	Tags           []string    `json:"tags"`
+	Excluded       bool        `json:"excluded"`
+	Wandering      bool        `json:"wandering"`
+	WanderingUntil *time.Time  `json:"wandering_until,omitempty"`
+	Notes          string      `json:"notes"`
 }
 
 func toDevice(d devices.Device) deviceJSON {
+	wandering := d.Wandering && (d.WanderingUntil.IsZero() || d.WanderingUntil.After(time.Now()))
+	var until *time.Time
+	if wandering && !d.WanderingUntil.IsZero() {
+		u := d.WanderingUntil
+		until = &u
+	}
 	typ := string(d.Type)
 	if typ == "" {
 		typ = string(devices.TypeUnknown)
@@ -46,7 +54,7 @@ func toDevice(d devices.Device) deviceJSON {
 		Names:  deviceNames{MDNS: d.MDNSName, Hostname: d.Hostname, RDNS: d.ReverseName},
 		Vendor: d.Vendor, Type: typ, TypeReason: d.TypeReason,
 		MACs: orEmpty(d.MACs), IPs: orEmpty(d.IPs), FirstSeen: d.FirstSeen, LastSeen: d.LastSeen,
-		Groups: orEmpty(d.Groups), Tags: orEmpty(d.Tags), Excluded: d.Excluded, Notes: d.Notes,
+		Groups: orEmpty(d.Groups), Tags: orEmpty(d.Tags), Excluded: d.Excluded, Wandering: wandering, WanderingUntil: until, Notes: d.Notes,
 	}
 }
 
@@ -124,11 +132,13 @@ func validTags(tags []string) bool {
 func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var b struct {
-		Alias    *string   `json:"alias"`
-		Notes    *string   `json:"notes"`
-		Type     *string   `json:"type"`
-		Excluded *bool     `json:"excluded"`
-		Tags     *[]string `json:"tags"`
+		Alias            *string   `json:"alias"`
+		Notes            *string   `json:"notes"`
+		Type             *string   `json:"type"`
+		Excluded         *bool     `json:"excluded"`
+		Tags             *[]string `json:"tags"`
+		Wandering        *bool     `json:"wandering"`
+		WanderingMinutes int       `json:"wandering_minutes"`
 	}
 	if !decode(w, r, &b, smallBody) {
 		return
@@ -150,6 +160,9 @@ func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
 	case b.Tags != nil && !validTags(*b.Tags):
 		bad(w, "at most 20 tags of at most 32 characters each")
 		return
+	case b.WanderingMinutes < 0 || b.WanderingMinutes > maxWanderMinutes:
+		bad(w, "wandering_minutes must be between 0 (until turned off) and 43200 (30 days)")
+		return
 	}
 	var err error
 	if b.Alias != nil {
@@ -166,6 +179,9 @@ func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil && b.Tags != nil {
 		err = s.Devices.SetTags(id, *b.Tags)
+	}
+	if err == nil && b.Wandering != nil {
+		err = s.Devices.SetWandering(id, *b.Wandering, wanderUntil(*b.Wandering, b.WanderingMinutes))
 	}
 	if errors.Is(err, devices.ErrNotFound) { // deleted by someone else meanwhile
 		notFound(w, "unknown device")
@@ -208,12 +224,14 @@ func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) bulkDevices(w http.ResponseWriter, r *http.Request) {
 	var b struct {
-		IDs        []string `json:"ids"`
-		Op         string   `json:"op"`
-		GroupID    string   `json:"group_id"`
-		Excluded   *bool    `json:"excluded"`
-		AddTags    []string `json:"add_tags"`
-		RemoveTags []string `json:"remove_tags"`
+		IDs              []string `json:"ids"`
+		Op               string   `json:"op"`
+		GroupID          string   `json:"group_id"`
+		Excluded         *bool    `json:"excluded"`
+		AddTags          []string `json:"add_tags"`
+		RemoveTags       []string `json:"remove_tags"`
+		Wandering        *bool    `json:"wandering"`
+		WanderingMinutes int      `json:"wandering_minutes"`
 	}
 	if !decode(w, r, &b, smallBody) {
 		return
@@ -245,6 +263,16 @@ func (s *Server) bulkDevices(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		res = s.Devices.BulkSetExcluded(b.IDs, *b.Excluded)
+	case "set_wandering":
+		if b.Wandering == nil {
+			bad(w, "wandering is required")
+			return
+		}
+		if b.WanderingMinutes < 0 || b.WanderingMinutes > maxWanderMinutes {
+			bad(w, "wandering_minutes must be between 0 (until turned off) and 43200 (30 days)")
+			return
+		}
+		res = s.Devices.BulkSetWandering(b.IDs, *b.Wandering, wanderUntil(*b.Wandering, b.WanderingMinutes))
 	case "set_tags":
 		if len(b.AddTags)+len(b.RemoveTags) == 0 {
 			bad(w, "give add_tags or remove_tags")
@@ -259,7 +287,7 @@ func (s *Server) bulkDevices(w http.ResponseWriter, r *http.Request) {
 		res = s.Devices.BulkDelete(b.IDs)
 		s.forgetDeviceScopes(b.IDs...)
 	default:
-		bad(w, `op must be "assign_group", "remove_group", "set_excluded", "set_tags" or "delete"`)
+		bad(w, `op must be "assign_group", "remove_group", "set_excluded", "set_wandering", "set_tags" or "delete"`)
 		return
 	}
 	if err != nil {
@@ -392,4 +420,16 @@ func (s *Server) deleteGroup(w http.ResponseWriter, r *http.Request) {
 		_ = s.Policy.DeleteScope(dnsengine.GroupScope(id))
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// maxWanderMinutes caps a wandering timer at 30 days.
+const maxWanderMinutes = 30 * 24 * 60
+
+// wanderUntil turns a requested number of minutes into the end time of wandering
+// mode. Zero minutes means until it is turned off (the zero time).
+func wanderUntil(on bool, minutes int) time.Time {
+	if !on || minutes <= 0 {
+		return time.Time{}
+	}
+	return time.Now().Add(time.Duration(minutes) * time.Minute)
 }

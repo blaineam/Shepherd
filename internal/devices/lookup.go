@@ -48,7 +48,7 @@ func (l *Lookup) rebuild() {
 	devs := l.reg.List()
 	m := make(map[string]dnsengine.DeviceInfo, len(devs))
 	for _, d := range devs {
-		m[d.ID] = dnsengine.DeviceInfo{ID: d.ID, Name: d.DisplayName(), Excluded: d.Excluded}
+		m[d.ID] = dnsengine.DeviceInfo{ID: d.ID, Name: d.DisplayName(), Excluded: d.Excluded, Wandering: d.Wandering, WanderingUntil: d.WanderingUntil}
 	}
 	l.info.Store(&m)
 }

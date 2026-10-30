@@ -583,6 +583,18 @@ func (r *Registry) mergeLocked(dst, src *Device, now time.Time) {
 	}
 	// An explicit opt-out survives a merge.
 	dst.Excluded = dst.Excluded || src.Excluded
+	// Wandering survives a merge, and for the longest time either side asked for;
+	// an open-ended one wins over a timed one.
+	if src.Wandering {
+		switch {
+		case !dst.Wandering:
+			dst.Wandering, dst.WanderingUntil = true, src.WanderingUntil
+		case dst.WanderingUntil.IsZero() || src.WanderingUntil.IsZero():
+			dst.WanderingUntil = time.Time{}
+		case src.WanderingUntil.After(dst.WanderingUntil):
+			dst.WanderingUntil = src.WanderingUntil
+		}
+	}
 	r.retype(dst)
 
 	id := src.ID

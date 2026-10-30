@@ -49,6 +49,8 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - **Excluded devices** are answered without blocking (log reason `excluded`); in Watch mode they will also never be steered through Shepherd.
 - Catalog list licenses and data sources in docs/THIRD-PARTY.md.
 
+- **Wandering mode:** a per-device mode that stops all filtering while still watching every request. Optional timer (15 minutes to 30 days, or until turned off) that the DNS engine honours at query time, a `shadow` field recording what filtering would have blocked, `wandering` flags in the stream and history, a `wandering:true` search filter, and a bulk `set_wandering` operation. It is distinct from Excluded, which leaves a device alone.
+
 ### Fixed
 - `POST /api/lists/refresh` started the refresh with the request's context, which ends as soon as the response is written, so a refresh from the portal could be cancelled immediately. It now runs to completion in the background.
 - The command tests took about 50 seconds because each test's DNS warm-up query went to an unreachable upstream and shutdown waited for it; they now take a few seconds. Passphrase tests also use a cheap Argon2id cost (production keeps the strong defaults).

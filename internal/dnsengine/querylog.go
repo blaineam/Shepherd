@@ -44,6 +44,10 @@ type Entry struct {
 	// Dests are the geolocated addresses the answer pointed at (allowed and
 	// cached queries only).
 	Dests []Dest `json:"dests,omitempty"`
+	// Wandering marks a query from a device in wandering mode (never filtered).
+	// Shadow names what would have blocked it, when something would have.
+	Wandering bool   `json:"wandering,omitempty"`
+	Shadow    string `json:"shadow,omitempty"`
 }
 
 // QueryLog is a fixed-size in-memory ring. It never writes to disk itself; a
