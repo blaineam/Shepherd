@@ -127,12 +127,28 @@ func TestUnreadableDeviceFileIsMovedAsideNotOverwritten(t *testing.T) {
 	// If it cannot even be moved aside, startup stops rather than overwriting it.
 	cfg = writeConfig(t, freePort(t), freePort(t), "")
 	data = filepath.Join(filepath.Dir(cfg), "data")
-	blocked := filepath.Join(data, "devices.json.unreadable")
-	os.MkdirAll(filepath.Join(blocked, "keep"), 0o750)
-	// Deliberately left in a state os.Rename refuses to overwrite (a file
-	// can never replace a non-empty directory), so TempDir's own recursive
-	// cleanup is not relied on to clear it: remove it ourselves first.
-	t.Cleanup(func() { os.RemoveAll(blocked) })
+	os.MkdirAll(filepath.Join(data, "devices.json.unreadable", "keep"), 0o750)
+	// run starts goroutines (the list manager, the upstream probe) before
+	// startDevices is even reached; cancel is deferred early enough to stop
+	// them, but that happens asynchronously, after run already returned
+	// here, so a cache file one of them wrote into data can still land
+	// after this point, and may still be mid-write when this test's
+	// cleanup runs. TempDir's own cleanup cannot be relied on to remove a
+	// directory something might still be writing into, on top of
+	// deliberately leaving devices.json.unreadable as a non-empty
+	// directory (which os.Rename can never replace, let alone which
+	// RemoveAll would need to recurse into). Clean up the whole directory
+	// ourselves, retrying briefly in case a goroutine is still mid-write.
+	t.Cleanup(func() {
+		for i := 0; i < 20; i++ {
+			if os.RemoveAll(data) == nil {
+				if _, err := os.Stat(data); errors.Is(err, os.ErrNotExist) {
+					return
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
 	os.WriteFile(filepath.Join(data, "devices.json"), []byte("{not json"), 0o600)
 	if err := run(context.Background(), cfg, false, os.Stdout); err == nil {
 		t.Error("expected an error when the unreadable file cannot be moved aside")
