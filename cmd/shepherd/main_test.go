@@ -55,6 +55,12 @@ mdns = false
 reverse_dns = false
 [arp]
 enabled = false
+# WAN-exposure checking does real SSDP multicast discovery against whatever
+# router is actually on this machine's network, defaults enabled, so every
+# test using this config disables it explicitly, the same way arp/mdns/map
+# above are disabled: nothing here should ever reach past loopback.
+[portscan.wan_exposure]
+enabled = false
 %s`, filepath.Join(dir, "data"), dnsPort, portalPort, extra)
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)

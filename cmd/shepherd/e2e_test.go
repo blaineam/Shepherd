@@ -125,6 +125,12 @@ mdns = false
 reverse_dns = false
 [arp]
 enabled = false
+# WAN-exposure checking does real SSDP multicast discovery against whatever
+# router is actually on this machine's network, defaults enabled, so it is
+# disabled here too, the same way arp/mdns/map above are: nothing in this
+# file should ever reach past loopback.
+[portscan.wan_exposure]
+enabled = false
 %s
 [[lists]]
 name = "pro"
