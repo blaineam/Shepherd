@@ -157,19 +157,21 @@ func TestFilters(t *testing.T) {
 	e, clk, _ := newTestEngine(t)
 	s := seed(t, e, clk)
 	e.Acknowledge(Selector{IDs: ids(s["nd2"])})
+	e.Archive(Selector{IDs: ids(s["pr"])})
 	cases := []struct {
 		name string
 		f    Filter
 		want []string
 	}{
-		{"all", Filter{}, []string{"nd1", "nd2", "up", "bs", "pr"}},
+		{"all excludes archived by default", Filter{}, []string{"nd1", "nd2", "up", "bs"}},
+		{"include archived", Filter{IncludeArchived: true}, []string{"nd1", "nd2", "up", "bs", "pr"}},
 		{"type", Filter{Types: []string{TypeNewDevice}}, []string{"nd1", "nd2"}},
-		{"severity set", Filter{Severities: []Severity{SeverityLow, SeverityInfo}}, []string{"bs", "pr"}},
+		{"severity set", Filter{Severities: []Severity{SeverityLow, SeverityInfo}}, []string{"bs"}},
 		{"min severity", Filter{MinSeverity: SeverityHigh}, []string{"nd1", "nd2", "up"}},
 		{"state", Filter{States: []State{StateAcknowledged}}, []string{"nd2"}},
 		{"device", Filter{DeviceID: dev(1)}, []string{"nd1", "bs"}},
 		{"group", Filter{GroupID: "kids"}, []string{"nd1"}},
-		{"since", Filter{Since: s["up"].LastSeen}, []string{"up", "bs", "pr"}},
+		{"since", Filter{Since: s["up"].LastSeen}, []string{"up", "bs"}},
 		{"until", Filter{Until: s["nd2"].FirstSeen}, []string{"nd1", "nd2"}},
 		{"range", Filter{Since: s["nd2"].LastSeen, Until: s["bs"].FirstSeen}, []string{"nd2", "up", "bs"}},
 		{"text title", Filter{Text: "TABLET"}, []string{"nd1"}},
@@ -276,6 +278,100 @@ func TestSummary(t *testing.T) {
 	empty, _, _ := newTestEngine(t)
 	if s := empty.Summary(); s.Total != 0 || s.Highest != "" || len(s.ByState) != 4 || len(s.BySeverity) != 5 {
 		t.Fatalf("empty: %+v", s)
+	}
+	// Archiving a new alarm drops it out of Total, ByState and the severity
+	// badge count: an archived alarm must not keep contributing to a number
+	// the maintainer sees elsewhere and wonders why it won't go down.
+	e.Archive(Selector{IDs: ids(s["nd2"])}) // nd2 is new, severity high
+	sum = e.Summary()
+	if sum.Total != 4 || sum.ByState[StateNew] != 1 {
+		t.Fatalf("after archive: %+v", sum)
+	}
+	if sum.BySeverity[SeverityHigh] != 0 {
+		t.Fatalf("archived alarm still counted in badge: %+v", sum)
+	}
+}
+
+func TestArchiveAndUnarchive(t *testing.T) {
+	e, clk, rec := newTestEngine(t)
+	s := seed(t, e, clk)
+	rec.reset()
+	clk.Advance(time.Minute)
+	res, err := e.Archive(Selector{IDs: ids(s["nd1"], s["nd2"])})
+	if err != nil || res.Matched != 2 || res.Changed != 2 || res.Handle == "" {
+		t.Fatalf("%+v %v", res, err)
+	}
+	got, _ := e.Get(s["nd1"].ID)
+	if !got.Archived || got.ArchivedAt.IsZero() || got.State != StateNew {
+		t.Fatalf("nd1 = %+v (archiving must not touch State)", got)
+	}
+	if len(rec.kinds(ChangeState)) != 2 {
+		t.Fatalf("changes = %d", len(rec.kinds(ChangeState)))
+	}
+	// Archiving again changes nothing (and gives no handle).
+	again, _ := e.Archive(Selector{IDs: ids(s["nd1"])})
+	if again.Matched != 1 || again.Changed != 0 || again.Handle != "" {
+		t.Fatalf("again: %+v", again)
+	}
+	// The default filter hides archived alarms; IncludeArchived reveals them.
+	if page := e.List(Query{}); page.Total != 3 {
+		t.Fatalf("default total = %d, want 3", page.Total)
+	}
+	if page := e.List(Query{Filter: Filter{IncludeArchived: true}}); page.Total != 5 {
+		t.Fatalf("include_archived total = %d, want 5", page.Total)
+	}
+	// Unarchive one directly.
+	ur, err := e.Unarchive(Selector{IDs: ids(s["nd1"])})
+	if err != nil || ur.Changed != 1 {
+		t.Fatalf("%+v %v", ur, err)
+	}
+	if got, _ := e.Get(s["nd1"].ID); got.Archived || !got.ArchivedAt.IsZero() {
+		t.Fatalf("nd1 after unarchive: %+v", got)
+	}
+	// Undoing the original archive batch un-archives nd2 (untouched since)
+	// but skips nd1 (already changed by the direct Unarchive above).
+	u, err := e.Undo(res.Handle)
+	if err != nil || u.Changed != 1 || u.Skipped != 1 {
+		t.Fatalf("%+v %v", u, err)
+	}
+	if got, _ := e.Get(s["nd2"].ID); got.Archived {
+		t.Fatalf("nd2 after undo: %+v", got)
+	}
+	// Archive works on an alarm in any state, including resolved ones.
+	e.Resolve(Selector{IDs: ids(s["up"])})
+	if r, err := e.Archive(Selector{IDs: ids(s["up"])}); err != nil || r.Changed != 1 {
+		t.Fatalf("archive resolved: %+v %v", r, err)
+	}
+	if got, _ := e.Get(s["up"].ID); !got.Archived || got.State != StateResolved {
+		t.Fatalf("up = %+v", got)
+	}
+}
+
+func TestArchiveByFilterAndBundle(t *testing.T) {
+	e, clk, _ := newTestEngine(t)
+	seed(t, e, clk)
+	// By filter: archive every new-device alarm.
+	res, err := e.Archive(Selector{Filter: &Filter{Types: []string{TypeNewDevice}}})
+	if err != nil || res.Matched != 2 || res.Changed != 2 {
+		t.Fatalf("%+v %v", res, err)
+	}
+	// Archiving a bundle archives its live members too.
+	for i := 0; i < 8; i++ {
+		clk.Advance(time.Millisecond)
+		mustRaise(t, e, Event{Type: "custom", DeviceID: dev(9), Key: fmt.Sprint(i)})
+	}
+	b := e.List(Query{Filter: Filter{DeviceID: dev(9)}}).Alarms[0]
+	kids := e.Children(b.ID)
+	if len(kids) == 0 {
+		t.Fatal("expected a bundle with members")
+	}
+	if r, err := e.Archive(Selector{IDs: []string{b.ID}}); err != nil || r.Changed != 1 {
+		t.Fatalf("%+v %v", r, err)
+	}
+	for _, k := range kids {
+		if got, _ := e.Get(k.ID); !got.Archived {
+			t.Fatalf("bundle member not archived: %+v", got)
+		}
 	}
 }
 

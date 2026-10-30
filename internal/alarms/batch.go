@@ -38,6 +38,9 @@ type Filter struct {
 	// IncludeChildren also matches storm-bundle members, which lists hide
 	// while their bundle exists.
 	IncludeChildren bool `json:"include_children,omitempty"`
+	// IncludeArchived also matches archived alarms, which the default list
+	// and Summary hide the same way IncludeChildren reveals bundle members.
+	IncludeArchived bool `json:"include_archived,omitempty"`
 }
 
 func (f *Filter) matches(e *Engine, a *Alarm) bool {
@@ -48,6 +51,9 @@ func (f *Filter) matches(e *Engine, a *Alarm) bool {
 		return !e.hidden(a)
 	}
 	if !f.IncludeChildren && e.hidden(a) {
+		return false
+	}
+	if a.Archived && !f.IncludeArchived {
 		return false
 	}
 	if len(f.Types) > 0 && !anyOf(f.Types, func(s string) bool { return s == a.Type }) {
@@ -252,7 +258,7 @@ func (e *Engine) Summary() Summary {
 		s.BySeverity[sv] = 0
 	}
 	for _, a := range e.alarms {
-		if a.Deleted || e.hidden(a) {
+		if a.Deleted || e.hidden(a) || a.Archived {
 			continue
 		}
 		s.Total++
@@ -355,10 +361,12 @@ type stateSnap struct {
 	ResolvedAt time.Time
 	MutedBy    string
 	MutedUntil time.Time
+	Archived   bool
+	ArchivedAt time.Time
 }
 
 func snapOf(a *Alarm) stateSnap {
-	return stateSnap{a.State, a.AckedAt, a.ResolvedAt, a.MutedBy, a.MutedUntil}
+	return stateSnap{a.State, a.AckedAt, a.ResolvedAt, a.MutedBy, a.MutedUntil, a.Archived, a.ArchivedAt}
 }
 
 func newUndo(kind string, now time.Time) *undoEntry {
@@ -475,6 +483,67 @@ func (e *Engine) Acknowledge(sel Selector) (BatchResult, error) {
 // new alarm, the next time its key is raised. Undo reverses it.
 func (e *Engine) Resolve(sel Selector) (BatchResult, error) {
 	return e.simpleBatch(sel, StateResolved, "resolve")
+}
+
+// archiveSetLocked sets Archived on every alarm in sel (and, for a bundle,
+// its live members), skipping those already at that value.
+func (e *Engine) archiveSetLocked(sel []*Alarm, archived bool, now time.Time, u *undoEntry) (changed int, changes []Change) {
+	for _, a := range sel {
+		did := false
+		e.family(a, func(x *Alarm) {
+			if x.Archived == archived {
+				return
+			}
+			u.record(x)
+			x.Archived = archived
+			if archived {
+				x.ArchivedAt = now
+			} else {
+				x.ArchivedAt = time.Time{}
+			}
+			e.touch(x)
+			u.post[x.ID] = snapOf(x)
+			changes = append(changes, Change{Kind: ChangeState, Alarm: x.clone()})
+			if x == a {
+				did = true
+			}
+		})
+		if did {
+			changed++
+		}
+	}
+	return changed, emitBatch(changes)
+}
+
+func (e *Engine) archiveBatch(sel Selector, archived bool, kind string) (BatchResult, error) {
+	var res BatchResult
+	err := e.mutate(func(now time.Time) ([]Change, error) {
+		hits, missing, err := e.selectLocked(sel)
+		if err != nil {
+			return nil, err
+		}
+		u := newUndo(kind, now)
+		changed, changes := e.archiveSetLocked(hits, archived, now, u)
+		res = BatchResult{Matched: len(hits), Changed: changed, Skipped: missing}
+		if changed > 0 {
+			res.Handle = e.keepUndo(u)
+		}
+		return changes, nil
+	})
+	return res, err
+}
+
+// Archive hides the selected alarms from the default list and Summary
+// without changing their State: it can be applied to an alarm in any state,
+// including a New one nobody intends to act on. Undo reverses it.
+func (e *Engine) Archive(sel Selector) (BatchResult, error) {
+	return e.archiveBatch(sel, true, "archive")
+}
+
+// Unarchive returns the selected alarms to the default list. Undo reverses
+// it.
+func (e *Engine) Unarchive(sel Selector) (BatchResult, error) {
+	return e.archiveBatch(sel, false, "unarchive")
 }
 
 // MuteBy says what a batch mute builds its rules from.
@@ -713,6 +782,7 @@ func (e *Engine) Undo(handle string) (BatchResult, error) {
 			}
 			p := u.prev[id]
 			a.State, a.AckedAt, a.ResolvedAt, a.MutedBy, a.MutedUntil = p.State, p.AckedAt, p.ResolvedAt, p.MutedBy, p.MutedUntil
+			a.Archived, a.ArchivedAt = p.Archived, p.ArchivedAt
 			e.touch(a)
 			res.Changed++
 			changes = append(changes, Change{Kind: ChangeState, Alarm: a.clone()})

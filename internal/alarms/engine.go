@@ -675,6 +675,9 @@ func (e *Engine) foldLocked(a *Alarm, ev Event, sev Severity, t AlarmType, now t
 		if a.State == StateAcknowledged {
 			a.State, a.AckedAt = StateNew, time.Time{}
 		}
+		if a.Archived {
+			a.Archived, a.ArchivedAt = false, time.Time{}
+		}
 		kind, n = ChangeEscalated, e.notifyLocked(sev, now)
 		if n.Send {
 			a.Notified = now
