@@ -38,5 +38,10 @@ export function createMgmt(api) {
     history: (params) => api('/api/history' + Q(params)),
     unlock: (passphrase) => api('/api/history/unlock', { method: 'POST', body: J({ passphrase }), keep401: true }),
     settings: () => api('/api/settings'),
+
+    portscanStatus: () => api('/api/portscan'),
+    portscanDevices: () => api('/api/portscan/devices'),
+    portscanDevice: (id) => api('/api/portscan/devices/' + encodeURIComponent(id)),
+    scanPorts: (deviceId) => post('/api/portscan/scan', deviceId ? { device_id: deviceId } : {}),
   };
 }

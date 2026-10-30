@@ -31,6 +31,7 @@ type Config struct {
 	Map            Map      `toml:"map"`
 	Devices        Devices  `toml:"devices"`
 	Classify       Classify `toml:"classify"`
+	Portscan       Portscan `toml:"portscan"`
 }
 
 // ListsAreDefault reports whether [[lists]] is exactly the built-in default,
@@ -70,6 +71,24 @@ type Devices struct {
 type Classify struct {
 	Enabled         bool `toml:"enabled"`
 	IntervalSeconds int  `toml:"interval_seconds"` // how often guesses are reconsidered
+}
+
+// Portscan schedules gentle TCP connect scans of every known device's common
+// ports, to flag exposure the owner might not expect (an open Telnet port, an
+// exposed SMB share...). Enabled defaults true: unlike most of Shepherd's
+// passive, listen-only sources, this one actively opens connections to every
+// known device, but it is engineered to be gentle enough (plain connect
+// scans, a short port list, bounded concurrency) that withholding it by
+// default would just mean most owners never learn about exposure they did
+// not know they had, which defeats the point of the feature. See
+// docs/PORTSCAN.md, including what it does not do (router port-forwarding
+// discovery).
+type Portscan struct {
+	Enabled bool `toml:"enabled"`
+	// IntervalSeconds is how often every known device is rescanned. Hours,
+	// not seconds: scanning is cheap and gentle, but there is no reason to
+	// repeat it constantly.
+	IntervalSeconds int `toml:"interval_seconds"`
 }
 
 // History controls what is remembered after the fact. "memory" (the default)
@@ -145,6 +164,7 @@ func Default() Config {
 		Map:      Map{Enabled: true, AutoHome: true},
 		Devices:  Devices{Enabled: true, DNS: true, Neighbors: true, NeighborIntervalSeconds: 30, MDNS: true, ReverseDNS: true, SaveIntervalSeconds: 60, QuarantineNewDevices: true},
 		Classify: Classify{Enabled: true, IntervalSeconds: 300},
+		Portscan: Portscan{Enabled: true, IntervalSeconds: 6 * 3600},
 		DataDir:  "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
@@ -209,6 +229,9 @@ func (c Config) Validate() error {
 	}
 	if c.Classify.IntervalSeconds < 30 {
 		return errors.New("classify.interval_seconds must be at least 30")
+	}
+	if c.Portscan.IntervalSeconds < 300 {
+		return errors.New("portscan.interval_seconds must be at least 300")
 	}
 	if s := c.Devices.ReverseDNSServer; s != "" {
 		host := s

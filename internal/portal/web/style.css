@@ -732,3 +732,10 @@ tr.a-error .h-dom { color: var(--amber); }
 .feed-row.wand .f-dot { background: transparent; border: 1px dashed var(--wander); box-shadow: none; width: 7px; height: 7px; }
 .feed-row.wand .f-dev { color: var(--wander); }
 .f-shadow { grid-column: 3 / -1; font-size: 10px; color: #b9a8f5; font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: -2px; }
+
+/* ---------- Ports and exposure ---------- */
+.dr-ports-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.port-chip { display: inline-flex; align-items: center; gap: 5px; font: 500 12px var(--mono); color: var(--text); border: 1px solid var(--line2); background: var(--panel2); padding: 3px 9px; border-radius: 3px; }
+.port-chip.risky { color: var(--red); border-color: #f2706b66; background: #f2706b12; }
+.port-chip.new:not(.risky) { color: var(--amber); border-color: #f0b64a66; background: #f0b64a12; }
+.port-flag { font: 700 9px var(--mono); letter-spacing: .1em; color: inherit; opacity: .85; }

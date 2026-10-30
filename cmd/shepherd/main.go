@@ -143,6 +143,14 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		}
 	}
 
+	if cfg.Portscan.Enabled {
+		scanner, err := startPortscan(ctx, cfg, registry)
+		if err != nil {
+			return err
+		}
+		deps.Portscan, deps.PortscanEnabled = scanner, true
+	}
+
 	if cfg.History.Mode == "encrypted" {
 		store, err := openHistory(cfg)
 		if err != nil {

@@ -24,6 +24,7 @@ import (
 	"shepherd/internal/devices"
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/geo"
+	"shepherd/internal/portscan"
 	"shepherd/internal/settings"
 )
 
@@ -64,6 +65,15 @@ type Deps struct {
 	DetectHome func(ctx context.Context) error
 	// Heartbeat is how often the live stream sends a keep-alive (default 15s).
 	Heartbeat time.Duration
+
+	// Portscan runs and remembers the gentle TCP port scans of known devices
+	// (docs/PORTSCAN.md). Nil gives a scanner that works (a manual scan is
+	// still possible) but is never run on a schedule and persists nothing.
+	Portscan *portscan.Scanner
+	// PortscanEnabled reports whether cmd/shepherd started Portscan's
+	// scheduled scan, for the status endpoint; it carries no behavior of its
+	// own here.
+	PortscanEnabled bool
 }
 
 type Server struct {
@@ -103,6 +113,9 @@ func New(d Deps) *Server {
 	}
 	if d.Upstreams == nil {
 		d.Upstreams = dnsengine.OpenUpstreamStore("", d.Engine.Pool)
+	}
+	if d.Portscan == nil {
+		d.Portscan = portscan.New(portscan.Options{})
 	}
 	if d.Heartbeat <= 0 {
 		d.Heartbeat = 15 * time.Second
@@ -330,4 +343,9 @@ func (s *Server) routes() {
 	h("DELETE /api/upstreams", s.deleteUpstream)
 	h("PUT /api/upstreams", s.putUpstreams)
 	h("PUT /api/upstreams/bootstrap", s.putBootstrap)
+
+	h("GET /api/portscan", s.getPortscan)
+	h("GET /api/portscan/devices", s.listPortscanDevices)
+	h("GET /api/portscan/devices/{id}", s.getPortscanDevice)
+	h("POST /api/portscan/scan", s.scanNow)
 }

@@ -13,6 +13,18 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Ports and exposure (`internal/portscan`):** scheduled, gentle TCP connect scans of every known device's
+  common ports (roughly 40, chosen for home-network relevance, not completeness), with per-port history
+  (open/closed, first/last seen), flags for a newly-opened port and for a short built-in list of
+  specifically risky ports (Telnet, RDP, SMB, VNC, rpcbind, NetBIOS, unauthenticated Docker, PPTP, FTP)
+  whenever they are found open at all. Plain connect scans only — no OS/service fingerprinting, no UDP, no
+  stealth scan types — with bounded concurrency and a short per-connection timeout, fully unit-testable
+  through an injectable dial function with zero real sockets in tests. Wired into `cmd/shepherd`
+  (`[portscan]`, enabled by default — see docs/PORTSCAN.md for why) and the portal (`GET /api/portscan`,
+  `GET /api/portscan/devices[/{id}]`, `POST /api/portscan/scan` for a manual scan of one or every device),
+  with a Ports panel in each device's drawer showing its open ports, risky and newly-opened flags, last
+  scan time and a "Scan now" button. Router port-forwarding discovery (what the internet can reach) is
+  explicitly not built: there is no reliable, generic router API for it.
 - **`cmd/intercept-trial`:** a standalone, Linux-only, hand-run CLI for a one-off controlled trial of Watch mode's ARP interception engine against exactly one named device, for a mandatory, capped trial duration, with Ctrl-C wired to a panic stop; disables GRO on the interface for the trial and always restores it on exit (a GRO-coalesced frame can be larger than the wire allows, which the health loop correctly fails open on but which is a capture artifact, not a real fault), needing `CAP_NET_ADMIN` alongside `CAP_NET_RAW`. Not part of `cmd/shepherd`; not run automatically. Run clean against a disposable VM and, with the maintainer's explicit go-ahead, against the maintainer's own phone (confirming the maintainer's eero 7 Max accepts one-sided ARP steering). See docs/INTERCEPT.md.
 - **`Controller.ParallelRelay` and `NewRelay` (`internal/intercept`):** a real, measured throughput problem — a single capture-and-relay goroutine cut a steered device's throughput to roughly a third in a live test — addressed by splitting capture across several `PACKET_FANOUT` workers (`OpenMany` for independent per-worker senders, `NewRelay` for additional `Relay`s sharing one `Controller`'s state), each on its own goroutine. `cmd/intercept-trial` uses it by default (`-workers`). See docs/INTERCEPT.md's "Throughput" section — this alone did not fix the slowdown.
 - **`rawSender`'s kernel-level `SO_SNDTIMEO` and the `selfBounded` fast path (`internal/intercept`):** the real packet-rate cost turned out to be `sendWithTimeout`'s per-packet goroutine and `time.After` timer, there to bound a `Sender.Send` that might hang — unnecessary once the real socket enforces its own send timeout at the kernel level. `sendWithTimeout` now skips its defensive wrapper entirely for a Sender that reports itself `selfBounded`, taking a direct call (still panic-recovered) instead; `FakeSender` does not report it, so every existing wedged/panicking-Sender safety test is unchanged. Root cause found by live-testing each hypothesis in turn (parallelism, GRO, then this) rather than assuming the first one. See docs/INTERCEPT.md.

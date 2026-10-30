@@ -6,7 +6,9 @@ what you point a [policy](POLICY.md) at.
 
 ## How a device is found
 
-Everything is passive. Shepherd listens; it never scans, spoofs or announces anything.
+Everything is passive. Shepherd listens; it never scans, spoofs or announces anything. (The separate
+[ports and exposure](PORTSCAN.md) scanner does actively probe the devices this registry already knows
+about; this registry itself still only listens.)
 
 | Source | What it learns | Config |
 |---|---|---|

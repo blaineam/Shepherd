@@ -758,6 +758,74 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
   const field = (k, v, cls = '') => { const r = el('div', 'dr-row'); r.append(el('span', 'dr-k', k)); const vv = el('span', 'dr-v ' + cls); if (v instanceof Node) vv.append(v); else vv.textContent = v; r.append(vv); return r; };
   const section = (t) => { const s = el('section', 'dr-sec'); s.append(el('h3', 'ph', t)); return s; };
 
+  // Common ports named for display; anything not listed just shows its
+  // number. Kept in step with internal/portscan's own list by eye, not by a
+  // shared source: it is cosmetic, the server's list is authoritative.
+  const PORT_NAMES = {
+    21: 'FTP', 22: 'SSH', 23: 'Telnet', 25: 'SMTP', 53: 'DNS', 80: 'HTTP', 110: 'POP3', 111: 'rpcbind',
+    135: 'RPC', 139: 'NetBIOS', 143: 'IMAP', 389: 'LDAP', 443: 'HTTPS', 445: 'SMB', 465: 'SMTPS', 515: 'LPD',
+    548: 'AFP', 554: 'RTSP', 587: 'SMTP', 631: 'IPP', 873: 'rsync', 993: 'IMAPS', 995: 'POP3S', 1433: 'MSSQL',
+    1723: 'PPTP', 1883: 'MQTT', 2049: 'NFS', 2375: 'Docker', 2376: 'Docker', 3000: 'Web admin', 3306: 'MySQL',
+    3389: 'RDP', 5000: 'Web admin', 5432: 'PostgreSQL', 5900: 'VNC', 6379: 'Redis', 8000: 'Web admin',
+    8080: 'Web admin', 8443: 'Web admin', 8888: 'Web admin', 9100: 'Printing',
+  };
+  const portLabel = (p) => (PORT_NAMES[p] ? p + ' (' + PORT_NAMES[p] + ')' : String(p));
+
+  // renderPorts fetches and paints one device's port-scan panel into holder,
+  // with a manual "Scan now" button. It guards every repaint on the drawer
+  // still showing this same device, since its own fetch and scan calls are
+  // asynchronous and the drawer can move to another device or close first.
+  function renderPorts(holder, id) {
+    let data = null;
+    let scanning = false;
+    let failed = null;
+
+    function paint() {
+      if (drawerId !== id || !holder.isConnected) return;
+      holder.replaceChildren();
+      if (failed) {
+        holder.append(unavailable(failed) ? el('p', 'muted small', 'Port scanning is not available on this version.') : el('p', 'err small', failed.message));
+        return;
+      }
+      const head = el('div', 'dr-ports-head');
+      head.append(el('span', 'muted small', data && data.last_scanned ? 'Last scanned ' + relTime(data.last_scanned) : 'Never scanned'));
+      const btn = button(scanning ? 'Scanning…' : 'Scan now', 'ghost', scan, 'refresh');
+      btn.disabled = scanning;
+      head.append(btn);
+      holder.append(head);
+      const open = ((data && data.ports) || []).filter((p) => p.open);
+      if (!open.length) {
+        holder.append(el('p', 'muted small', scanning ? 'Scanning…' : 'No open ports found.'));
+        return;
+      }
+      const list = el('div', 'dr-chips');
+      for (const p of open) {
+        const cls = 'port-chip' + (p.risky ? ' risky' : '') + (p.newly_opened ? ' new' : '');
+        const c = el('span', cls);
+        c.append(document.createTextNode(portLabel(p.port)));
+        if (p.newly_opened) c.append(el('span', 'port-flag', 'NEW'));
+        const why = [p.risky ? p.risk_note : '', p.newly_opened ? 'Newly opened since the last scan' : ''].filter(Boolean).join(' — ');
+        if (why) c.title = why;
+        list.append(c);
+      }
+      holder.append(list);
+    }
+
+    function scan() {
+      scanning = true;
+      paint();
+      mgmt.scanPorts(id).then((r) => {
+        scanning = false;
+        const found = ((r && r.devices) || []).find((x) => x.device_id === id);
+        if (found) data = found;
+        paint();
+      }).catch((e) => { scanning = false; failed = e; paint(); });
+    }
+
+    paint();
+    mgmt.portscanDevice(id).then((d) => { data = d; paint(); }).catch((e) => { failed = e; paint(); });
+  }
+
   function paintDrawer(d) {
     const keepScroll = drawer.scrollTop;
     drawer.replaceChildren();
@@ -810,6 +878,13 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     sNet.append(field('First seen', d.first_seen ? new Date(d.first_seen).toLocaleString() : 'Unknown'));
     sNet.append(field('Last seen', d.last_seen ? new Date(d.last_seen).toLocaleString() + '  (' + relTime(d.last_seen) + ')' : 'Unknown'));
     drawer.append(sNet);
+
+    // Ports and exposure
+    const sPorts = section('Ports');
+    const portsHolder = el('div', 'dr-ports');
+    sPorts.append(portsHolder);
+    drawer.append(sPorts);
+    renderPorts(portsHolder, d.id);
 
     // Groups
     const sG = section('Groups');
