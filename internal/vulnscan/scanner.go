@@ -34,9 +34,15 @@ type Finding struct {
 	FirstSeen   time.Time `json:"first_seen"`
 	LastSeen    time.Time `json:"last_seen"`
 	ResolvedAt  time.Time `json:"resolved_at,omitzero"`
-	// NewlyFound marks a finding that was inactive (or unseen) on the
-	// previous scan and active now. Never set on a device's very first
-	// scan, the same rule PortRecord.NewlyOpened follows.
+	// NewlyFound marks a finding that was inactive (or did not exist) on
+	// the previous scan and is active now — including a device's very
+	// first scan. This deliberately differs from
+	// internal/portscan.PortRecord.NewlyOpened, which is never set on a
+	// first scan (every port looking "new" on day one would be noise);
+	// here, a pre-existing vulnerability found the moment Shepherd first
+	// looks is exactly the case this feature exists for, so it is never
+	// held back. cmd/shepherd/vulnscan.go uses this flag to decide when to
+	// raise an alarm (see docs/VULNSCAN.md's "Alerting" section).
 	NewlyFound bool `json:"newly_found,omitempty"`
 }
 
@@ -196,7 +202,6 @@ func (s *Scanner) recordDevice(id, ip string, probed []portProbe, now time.Time)
 	defer s.mu.Unlock()
 
 	ds := s.history[id]
-	firstScan := ds == nil
 	if ds == nil {
 		ds = &DeviceFindings{DeviceID: id}
 		s.history[id] = ds
@@ -224,7 +229,7 @@ func (s *Scanner) recordDevice(id, ip string, probed []portProbe, now time.Time)
 			wasActive := f.Active
 			f.Active = true
 			f.LastSeen = now
-			f.NewlyFound = !wasActive // reopened findings are "new" again, same rule PortRecord.NewlyOpened follows
+			f.NewlyFound = !wasActive // a reopened finding is "new" again, same as a brand new one
 			f.Evidence = m.Evidence
 			f.Name, f.Description, f.Severity = m.Signature.Name, m.Signature.Description, m.Signature.Severity
 			f.ResolvedAt = time.Time{}
@@ -244,7 +249,7 @@ func (s *Scanner) recordDevice(id, ip string, probed []portProbe, now time.Time)
 		next = append(next, Finding{
 			SignatureID: m.Signature.ID, Name: m.Signature.Name, Description: m.Signature.Description,
 			Severity: m.Signature.Severity, Port: k.port, Evidence: m.Evidence,
-			Active: true, FirstSeen: now, LastSeen: now, NewlyFound: !firstScan,
+			Active: true, FirstSeen: now, LastSeen: now, NewlyFound: true,
 		})
 	}
 	sort.Slice(next, func(a, b int) bool {

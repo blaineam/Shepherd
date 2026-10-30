@@ -367,6 +367,42 @@ func TestExampleConfigShowsThePortscanDefaults(t *testing.T) {
 	}
 }
 
+func TestVulnscanDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Vulnscan.Enabled || cfg.Vulnscan.IntervalSeconds != 86400 {
+		t.Errorf("vulnscan defaults = %+v", cfg.Vulnscan)
+	}
+}
+
+func TestVulnscanOverridesAndValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v.toml")
+	os.WriteFile(path, []byte("[vulnscan]\nenabled = false\ninterval_seconds = 3600\n"), 0o600)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Vulnscan.Enabled || cfg.Vulnscan.IntervalSeconds != 3600 {
+		t.Errorf("vulnscan overrides = %+v", cfg.Vulnscan)
+	}
+	os.WriteFile(path, []byte("[vulnscan]\ninterval_seconds = 299\n"), 0o600)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "at least 300") {
+		t.Errorf("too-short interval: %v", err)
+	}
+}
+
+func TestExampleConfigShowsTheVulnscanDefaults(t *testing.T) {
+	ex, err := Load("../../shepherd.example.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.Vulnscan != Default().Vulnscan {
+		t.Errorf("example %+v differs from the defaults %+v", ex.Vulnscan, Default().Vulnscan)
+	}
+}
+
 func TestQuarantineCanBeOptedOut(t *testing.T) {
 	cfg := writeCfg(t, "[devices]\nquarantine_new_devices = false\n")
 	if cfg.Devices.QuarantineNewDevices || !cfg.Devices.Enabled {

@@ -110,8 +110,11 @@ Per device, per (signature, port) pair, Shepherd keeps a `Finding`: whether it i
 it was first and most recently seen, and, mirroring `internal/portscan.PortRecord`'s own philosophy, it
 is **kept, not discarded, once it stops matching** — `Active` flips to `false` and `ResolvedAt` is set,
 so "this device was exposed for a while and the problem is now fixed" stays visible instead of silently
-disappearing. `NewlyFound` marks a finding that just went from inactive-or-unseen to active, the same rule
-`PortRecord.NewlyOpened` follows (never set on a device's very first scan).
+disappearing. `NewlyFound` marks a finding that just went from inactive-or-unseen to active — **including
+on a device's very first scan**, which is the one deliberate difference from `PortRecord.NewlyOpened`
+(never set on a first scan, since everything would look "new" with no baseline yet). A vulnerability that
+already existed before Shepherd ever looked is still exactly the thing this feature exists to tell you
+about, so it is never held back just because it was found on day one.
 
 ## Should this be on by default?
 

@@ -35,6 +35,7 @@ const (
 	TypeNewInboundExposure = "new-inbound-exposure" // for the ports feature
 	TypeThreatMatch        = "threat-match"         // for threat intelligence
 	TypeSelfUpdate         = "self-update"          // for self-update
+	TypeVulnerabilityFound = "vulnerability-found"  // internal/vulnscan
 	TypeTest               = "test"
 )
 
@@ -86,6 +87,7 @@ func BuiltinTypes() []AlarmType {
 		all(TypeNewInboundExposure, "New inbound exposure", "A service became reachable from outside the network.", SeverityCritical, false, false),
 		all(TypeThreatMatch, "Threat match", "A device contacted an address or name on a threat list.", SeverityCritical, false, false),
 		all(TypeSelfUpdate, "Shepherd update", "Shepherd updated itself, or an update needs attention.", SeverityLow, false, false),
+		all(TypeVulnerabilityFound, "Vulnerability found", "internal/vulnscan matched a device's open port against a known vulnerability signature.", SeverityHigh, false, false),
 		func() AlarmType {
 			t := all(TypeTest, "Test notification", "Sent on request to check that notifications arrive.", SeverityHigh, false, false)
 			t.Bypass = true

@@ -9,6 +9,12 @@ import "shepherd/internal/portscan"
 // address. This package never independently decides a port is open —
 // portscan already owns that (docs/PORTSCAN.md) — so nothing here
 // duplicates its TCP connect scanning.
+//
+// A device with no open ports right now is still included, with an empty
+// Ports list: Scanner.Scan still needs to see it to resolve any finding
+// that was active on an earlier scan (a port that closed, or stopped
+// matching a signature) — a target this function dropped entirely would
+// never get the chance to resolve.
 func TargetsFromPortscan(scans []portscan.DeviceScan) []Target {
 	out := make([]Target, 0, len(scans))
 	for _, ds := range scans {
@@ -20,9 +26,6 @@ func TargetsFromPortscan(scans []portscan.DeviceScan) []Target {
 			if p.Open {
 				ports = append(ports, p.Port)
 			}
-		}
-		if len(ports) == 0 {
-			continue
 		}
 		out = append(out, Target{DeviceID: ds.DeviceID, IP: ds.IP, Ports: ports})
 	}

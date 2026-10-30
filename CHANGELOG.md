@@ -21,8 +21,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   Docker API and SMBv1 still being enabled. Every signature needs a gentle, protocol-appropriate probe to
   actually confirm exposure (a banner read, one HTTP request, one well-known anonymous FTP login, one raw
   SMBv1 negotiate packet) through the same injectable-dial-function seam `internal/portscan.Scanner`
-  already uses, so tests touch zero real sockets. Still in progress: config wiring, alarm integration and
-  the portal API/UI land in the commits that follow this one. See docs/VULNSCAN.md.
+  already uses, so tests touch zero real sockets. Wired into `cmd/shepherd` (`[vulnscan]`, enabled by
+  default, needs `[portscan]` enabled too — see docs/VULNSCAN.md for why), a new `alarms.TypeVulnerabilityFound`
+  alarm type (raised once per newly-found vulnerability per device, never suppressed by learning mode —
+  this feature's whole point is telling the owner about exposure found on day one; a finding that clears
+  resolves the alarm rather than leaving it to linger), and the portal (`GET /api/vulnscan`, `GET
+  /api/vulnscan/devices[/{id}]`, `POST /api/vulnscan/scan`). The portal UI panel lands in the next commit.
+  See docs/VULNSCAN.md.
 - **Import wired into the portal:** the Devices screen's new "Import" modal drives `internal/importers`
   end to end — CSV upload or eero login (phone/email, then the code eero sends, then a network), a
   dry-run preview of what would be created or changed, and an apply step, matching the Devices tab's

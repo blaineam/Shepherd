@@ -137,6 +137,15 @@ tls = "starttls"        # "starttls" (port 587 convention), "tls" (port 465) or 
 enabled = true
 interval_seconds = 21600         # 6 hours; the port list itself is built in
 
+[vulnscan]
+# Deepens portscan's open-port findings into named, concrete vulnerability
+# findings: a gentle banner/protocol probe per open port, matched against a
+# small, curated, built-in signature list (docs/VULNSCAN.md). No external CVE
+# API. Needs [portscan] enabled; it probes ports portscan already found open,
+# it never scans for open ports itself.
+enabled = true
+interval_seconds = 86400        # once a day; the signature list itself is built in
+
 [portal]
 listen = "127.0.0.1:8787"
 

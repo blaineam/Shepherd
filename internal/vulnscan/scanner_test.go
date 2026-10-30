@@ -71,8 +71,8 @@ func TestScanFindsTelnetExposed(t *testing.T) {
 		t.Fatalf("Scan() = %+v, want one finding", r)
 	}
 	f := r[0].Findings[0]
-	if f.SignatureID != "telnet-exposed" || !f.Active || f.NewlyFound {
-		t.Fatalf("finding = %+v, want active telnet-exposed, never NewlyFound on the first scan", f)
+	if f.SignatureID != "telnet-exposed" || !f.Active || !f.NewlyFound {
+		t.Fatalf("finding = %+v, want active telnet-exposed, NewlyFound even on the first scan", f)
 	}
 }
 
