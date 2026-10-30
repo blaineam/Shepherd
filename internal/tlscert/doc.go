@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Package tlscert obtains and renews a real TLS certificate for Shepherd's
-// own portal, using the ACME protocol's DNS-01 challenge against Cloudflare
-// DNS (docs/TLS.md). This is the first, additive slice of roadmap step 18
-// ("Access"): it gives the portal a real hostname and a real certificate,
-// matching the maintainer's existing reverse-proxy setup (Cloudflare DNS-01,
-// driven today by a separate reverse-proxy manager this does not touch or
-// replace). It never does anything beyond that: no reverse proxying of other
-// services, no change to any other DNS record, no change to the portal's
-// existing plain-HTTP listener.
+// Package tlscert obtains and renews a real TLS certificate using the ACME
+// protocol's DNS-01 challenge against Cloudflare DNS (docs/TLS.md). It
+// backs two independent listeners: [tls], the portal's own certificate for
+// its own hostname, and [reverseproxy], which asks for a wildcard
+// ("*.example.com") so one certificate covers every proxied hostname
+// (docs/REVERSEPROXY.md). Nothing here changes any DNS record beyond the
+// short-lived challenge TXT record, and neither use touches the portal's
+// plain-HTTP listener.
 //
 // The ACME wire protocol itself (nonces, account keys, order and challenge
 // polling, certificate parsing) is handled by golang.org/x/crypto/acme,

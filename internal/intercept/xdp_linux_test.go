@@ -57,17 +57,6 @@ const (
 	xdpTX   = 3
 )
 
-func ipv4Frame(dst, src arp.MAC, daddr netip.Addr, payload []byte) []byte {
-	ip := make([]byte, 20)
-	ip[0] = 0x45
-	ip[8] = 64
-	ip[9] = 17
-	d := daddr.As4()
-	copy(ip[12:16], []byte{192, 0, 2, 10})
-	copy(ip[16:20], d[:])
-	return ethFrame(dst, src, 0x0800, append(ip, payload...))
-}
-
 func TestXDPRelayVerdictsAndRewrite(t *testing.T) {
 	objs := loadXDPForTest(t)
 	dp := &xdpDataPlane{objs: objs}
@@ -81,7 +70,7 @@ func TestXDPRelayVerdictsAndRewrite(t *testing.T) {
 	other := rndMAC(99)
 
 	t.Run("steered device to the internet is relayed with both MACs rewritten", func(t *testing.T) {
-		in := ipv4Frame(shepherdMAC, devMAC, remote, []byte("hello"))
+		in := ipv4Frame(shepherdMAC, devMAC, devIP, remote, []byte("hello"))
 		verdict, out := runXDP(t, objs, in)
 		if verdict != xdpTX {
 			t.Fatalf("verdict = %d, want XDP_TX", verdict)
@@ -108,9 +97,9 @@ func TestXDPRelayVerdictsAndRewrite(t *testing.T) {
 		name  string
 		frame []byte
 	}{
-		{"steered device to Shepherd itself (DNS, portal)", ipv4Frame(shepherdMAC, devMAC, shepherdIP, []byte("dns"))},
-		{"unsteered device to the internet", ipv4Frame(shepherdMAC, other, remote, []byte("x"))},
-		{"not addressed to Shepherd", ipv4Frame(gwMAC, devMAC, remote, []byte("x"))},
+		{"steered device to Shepherd itself (DNS, portal)", ipv4Frame(shepherdMAC, devMAC, devIP, shepherdIP, []byte("dns"))},
+		{"unsteered device to the internet", ipv4Frame(shepherdMAC, other, devIP, remote, []byte("x"))},
+		{"not addressed to Shepherd", ipv4Frame(gwMAC, devMAC, devIP, remote, []byte("x"))},
 		{"ARP", ethFrame(shepherdMAC, devMAC, 0x0806, make([]byte, 28))},
 		{"IPv6", ethFrame(shepherdMAC, devMAC, 0x86dd, make([]byte, 40))},
 		{"VLAN-tagged", ethFrame(shepherdMAC, devMAC, 0x8100, append([]byte{0, 1, 8, 0}, make([]byte, 20)...))},
@@ -131,7 +120,7 @@ func TestXDPRelayVerdictsAndRewrite(t *testing.T) {
 
 	t.Run("unsteering removes the device from the map at once", func(t *testing.T) {
 		dp.resync(nil)
-		verdict, _ := runXDP(t, objs, ipv4Frame(shepherdMAC, devMAC, remote, []byte("x")))
+		verdict, _ := runXDP(t, objs, ipv4Frame(shepherdMAC, devMAC, devIP, remote, []byte("x")))
 		if verdict != xdpPass {
 			t.Fatalf("verdict after unsteer = %d, want XDP_PASS", verdict)
 		}
@@ -155,7 +144,7 @@ func TestXDPRelayAgreesWithHandleFrame(t *testing.T) {
 			for _, et := range []uint16{0x0800, 0x0806, 0x86dd, 0x8100} {
 				var frame []byte
 				if et == 0x0800 {
-					frame = ipv4Frame(dst, src, remote, []byte("p"))
+					frame = ipv4Frame(dst, src, devIP, remote, []byte("p"))
 				} else {
 					frame = ethFrame(dst, src, et, make([]byte, 28))
 				}

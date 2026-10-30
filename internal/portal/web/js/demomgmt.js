@@ -9,6 +9,7 @@ import { buildDevices, fallbackName, DEMO_GROUPS, DEMO_CATALOG, DEMO_SWITCHES, D
 import { GROUP_COLORS } from './devtypes.js';
 import { classifyAddr, isIP } from './upstreams.js';
 import { normalizeDomain, scopeKey } from './scope.js';
+import { hostBody, formatTarget, sortHosts } from './reverseproxy.js';
 
 const err = (status, msg) => new ApiError(msg, status);
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -46,6 +47,13 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
     { config: '203.0.113.53', kind: 'udp', healthy: false, rtt_ms: 0, consecutive_failures: 4, last_error: 'read udp: i/o timeout', queries: 412, errors: 380 },
   ];
   let bootstrap = ['198.51.100.2', '198.51.100.3'];
+  let proxyHosts = [
+    { id: 'rp-1', domain: 'media.example.com', target_scheme: 'http', target_host: '192.0.2.20', target_port: 8096, skip_tls_verify: false, enabled: true },
+    { id: 'rp-2', domain: 'photos.example.com', target_scheme: 'http', target_host: '192.0.2.21', target_port: 2283, skip_tls_verify: false, enabled: true },
+    { id: 'rp-3', domain: 'nas.example.com', target_scheme: 'https', target_host: '192.0.2.22', target_port: 5001, skip_tls_verify: true, enabled: true },
+    { id: 'rp-4', domain: 'old.wiki.example.com', target_scheme: 'http', target_host: '192.0.2.23', target_port: 3000, skip_tls_verify: false, enabled: false },
+  ];
+  let nextProxyId = 5;
   const hist = { mode: history === 'memory' ? 'memory' : 'encrypted', locked: history === 'locked' || history === 'fresh', initialized: history !== 'fresh' };
   let lastBulk = 0;
 
@@ -306,6 +314,34 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       if (bad.length) throw err(400, 'not an IP address: ' + bad[0]);
       bootstrap = [...body.servers];
       return upstreamDoc();
+    }
+    // ---- reverse proxy
+    if (path === '/api/reverseproxy' && method === 'GET') {
+      return { enabled: true, listen: ':443', wildcard: '*.example.com', certificate: { names: ['*.example.com'], not_after: new Date(now() + 54 * 86400000).toISOString() } };
+    }
+    if (path === '/api/reverseproxy/hosts' && method === 'GET') return { hosts: sortHosts(proxyHosts) };
+    if (path.startsWith('/api/reverseproxy/hosts')) {
+      const id = decodeURIComponent(path.slice('/api/reverseproxy/hosts/'.length));
+      const i = proxyHosts.findIndex((h) => h.id === id);
+      if (method === 'DELETE') {
+        if (i < 0) throw err(404, 'no such proxy host');
+        proxyHosts.splice(i, 1);
+        return { ok: true };
+      }
+      if (method === 'PUT' && i < 0) throw err(404, 'no such proxy host');
+      const target = body.target_host ? formatTarget(body) : '';
+      const r = hostBody({ domain: body.domain, target, skipVerify: body.skip_tls_verify, enabled: body.enabled });
+      if (!r.ok) throw err(400, r.error);
+      if (proxyHosts.some((h, j) => h.domain === r.body.domain && j !== i)) throw err(409, 'another proxy host already uses that domain');
+      if (method === 'POST') {
+        const h = { id: 'rp-' + nextProxyId++, enabled: true, ...r.body };
+        proxyHosts.push(h);
+        return h;
+      }
+      if (method === 'PUT') {
+        proxyHosts[i] = { id, enabled: proxyHosts[i].enabled, ...r.body };
+        return proxyHosts[i];
+      }
     }
     // ---- history
     if (path === '/api/history' && method === 'GET') {

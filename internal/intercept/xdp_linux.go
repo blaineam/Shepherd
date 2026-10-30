@@ -62,7 +62,13 @@ func (c *Controller) AttachXDP(ctx context.Context, iface string, opts XDPOption
 		return fmt.Errorf("%w: interface %s has %s, Controller has %s", ErrXDPMACMismatch, iface, ifMAC, c.cfg.ShepherdMAC)
 	}
 
+	// Shepherd's own addresses, in order of preference: the caller's,
+	// the Controller's (ControllerConfig.ShepherdIPs, shared with the
+	// userspace Relay), else read from the interface.
 	localIPs := opts.LocalIPs
+	if len(localIPs) == 0 {
+		localIPs = c.cfg.ShepherdIPs
+	}
 	if len(localIPs) == 0 {
 		localIPs, err = interfaceIPv4s(ifc)
 		if err != nil {
@@ -294,7 +300,7 @@ func (dp *xdpDataPlane) harvest(c *Controller) {
 			sum.RelayedBytes += s.RelayedBytes
 		}
 		if sum.Examined > dp.lastStats.Examined {
-			c.recordExaminedBatch(sum.Examined-dp.lastStats.Examined, 0)
+			c.recordExaminedBatch(sum.Examined-dp.lastStats.Examined, 0, sum.PassedLocal-dp.lastStats.PassedLocal)
 		}
 		dp.lastStats = sum
 	}

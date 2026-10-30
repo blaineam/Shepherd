@@ -23,6 +23,7 @@ import (
 	"shepherd/internal/geo"
 	"shepherd/internal/history"
 	"shepherd/internal/portal"
+	"shepherd/internal/reverseproxy"
 	"shepherd/internal/settings"
 )
 
@@ -235,9 +236,31 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		deps.History = store
 	}
 
+	portalErr := make(chan error, 1)
+
+	// The proxied hosts are always editable in the portal, so an owner can
+	// line them all up before switching the listener on; the listener
+	// itself (docs/REVERSEPROXY.md) only starts when [reverseproxy] is
+	// enabled, which it is not by default.
+	proxyHosts, err := reverseproxy.Open(filepath.Join(cfg.DataDir, "reverseproxy.json"))
+	if err != nil {
+		return err
+	}
+	deps.ReverseProxy = proxyHosts
+	deps.ReverseProxyStatus = portal.ReverseProxyStatus{Listen: cfg.ReverseProxy.Listen, Wildcard: cfg.ReverseProxy.Wildcard()}
+	proxySrv, err := startReverseProxy(ctx, cfg, proxyHosts, stopOnFailure(portalErr, cancel))
+	if err != nil {
+		return err
+	}
+	if proxySrv != nil {
+		defer proxySrv.Close()
+		deps.ReverseProxyStatus.Enabled = true
+		deps.ReverseProxyStatus.Certificate = proxySrv.cert.Certificate
+		log.Printf("shepherd %s: reverse proxy on https://%s (%s)", version, proxySrv.addr, cfg.ReverseProxy.Wildcard())
+	}
+
 	srv := portal.New(deps)
 	httpSrv := &http.Server{Addr: cfg.Portal.Listen, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
-	portalErr := make(chan error, 1)
 	go func() {
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			portalErr <- fmt.Errorf("portal: %w", err)

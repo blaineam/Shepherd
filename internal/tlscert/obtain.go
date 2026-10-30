@@ -12,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/acme"
@@ -61,8 +62,11 @@ var _ ACMEClient = (*acme.Client)(nil)
 // authorization's dns-01 challenge, wait for the CA to validate it, and
 // finalize the order into a certificate.
 type Obtainer struct {
-	ACME     ACMEClient
-	DNS01    DNS01Provider
+	ACME  ACMEClient
+	DNS01 DNS01Provider
+	// Hostname may be a wildcard ("*.example.com"): the order, the CSR and
+	// the challenge record all handle the prefix, so one certificate can
+	// cover every direct subdomain (docs/REVERSEPROXY.md).
 	Hostname string
 	// Contact is an optional "mailto:" address used only on first account
 	// registration (Let's Encrypt uses it for expiry notices). Empty omits it.
@@ -163,7 +167,11 @@ func (o *Obtainer) satisfyAuthorization(ctx context.Context, authzURL string) er
 	if err != nil {
 		return fmt.Errorf("tlscert: computing the dns-01 record value: %w", err)
 	}
-	fqdn := "_acme-challenge." + authz.Identifier.Value
+	// A wildcard order's challenge lives at the base domain. RFC 8555 has
+	// the CA strip the "*." itself, but trimming it here too costs nothing
+	// and keeps a CA that echoes the full name from publishing a record
+	// DNS-01 can never validate.
+	fqdn := "_acme-challenge." + strings.TrimPrefix(authz.Identifier.Value, "*.")
 
 	recordID, err := o.DNS01.Present(ctx, fqdn, value)
 	if err != nil {

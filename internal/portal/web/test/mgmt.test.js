@@ -223,3 +223,18 @@ test('nethealth endpoints', async () => {
   await m.nethealthBufferbloatRun();
   assert.deepEqual([calls[4][0], calls[4][1].method, calls[4][1].body], ['/api/nethealth/bufferbloat/run', 'POST', '{}']);
 });
+
+test('reverse proxy endpoints', async () => {
+  const { calls, m } = rig();
+  await m.reverseProxy();
+  await m.proxyHosts();
+  assert.deepEqual([calls[0][0], calls[1][0]], ['/api/reverseproxy', '/api/reverseproxy/hosts']);
+  const body = { domain: 'a.example.com', target_scheme: 'http', target_host: '127.0.0.1', target_port: 80, skip_tls_verify: false };
+  await m.addProxyHost(body);
+  assert.deepEqual([calls[2][0], calls[2][1].method, calls[2][1].body], ['/api/reverseproxy/hosts', 'POST', JSON.stringify(body)]);
+  await m.updateProxyHost('id/1', { ...body, enabled: false });
+  assert.deepEqual([calls[3][0], calls[3][1].method], ['/api/reverseproxy/hosts/id%2F1', 'PUT']);
+  assert.equal(JSON.parse(calls[3][1].body).enabled, false);
+  await m.deleteProxyHost('id1');
+  assert.deepEqual([calls[4][0], calls[4][1].method], ['/api/reverseproxy/hosts/id1', 'DELETE']);
+});

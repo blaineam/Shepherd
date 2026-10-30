@@ -10,11 +10,13 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/ntfy"
+	"shepherd/internal/reverseproxy"
 )
 
 type Config struct {
@@ -39,6 +41,7 @@ type Config struct {
 	Vulnscan       Vulnscan       `toml:"vulnscan"`
 	TLS            TLS            `toml:"tls"`
 	Nethealth      Nethealth      `toml:"nethealth"`
+	ReverseProxy   ReverseProxy   `toml:"reverseproxy"`
 }
 
 // ARP controls the passive ARP monitor (docs/ARP.md): a read-only listener
@@ -255,6 +258,48 @@ type TLS struct {
 	CloudflareAPITokenFile string `toml:"cloudflare_api_token_file"`
 }
 
+// ReverseProxy terminates HTTPS for other self-hosted services and forwards
+// each request by its Host header to the backend the portal configured for
+// it (docs/REVERSEPROXY.md), with one wildcard certificate for "*.Domain"
+// obtained the same way [tls] obtains the portal's own. Off by default: it
+// opens a new listener and, once DNS points at it, carries real traffic for
+// every proxied service, so it waits for the owner to ask. The hosts
+// themselves are not configured here; they live in the portal.
+type ReverseProxy struct {
+	Enabled bool `toml:"enabled"`
+	// Listen is where the HTTPS listener binds. ":8443" by default, never
+	// 443: taking over the standard port from an existing reverse proxy is
+	// a cutover the owner makes deliberately (docs/REVERSEPROXY.md).
+	Listen string `toml:"listen"`
+	// Domain is the zone the wildcard certificate covers: "example.com"
+	// (or "*.example.com", the same thing) gets "*.example.com", valid for
+	// jellyfin.example.com but not for example.com itself or a.b.example.com.
+	Domain string `toml:"domain"`
+	// Email is an optional Let's Encrypt expiry-notice contact.
+	Email string `toml:"email"`
+	// CloudflareAPIToken and CloudflareAPITokenFile follow [tls]'s
+	// convention exactly: exactly one while enabled, never both. They may
+	// name the same token (or file) [tls] uses.
+	CloudflareAPIToken     string `toml:"cloudflare_api_token"`
+	CloudflareAPITokenFile string `toml:"cloudflare_api_token_file"`
+}
+
+// BaseDomain is Domain normalized: lowercase, without a "*." prefix or a
+// trailing dot. Empty when Domain is unset.
+func (r ReverseProxy) BaseDomain() string {
+	d := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(r.Domain)), ".")
+	return strings.TrimPrefix(d, "*.")
+}
+
+// Wildcard is the name the certificate is issued for, "*.<BaseDomain>", or
+// empty when no domain is configured.
+func (r ReverseProxy) Wildcard() string {
+	if b := r.BaseDomain(); b != "" {
+		return "*." + b
+	}
+	return ""
+}
+
 // Nethealth schedules internal/nethealth's periodic latency, jitter,
 // packet-loss and reachability probes against the configured DNS
 // upstreams plus a couple of well-known public resolvers, and its
@@ -372,6 +417,7 @@ func Default() Config {
 		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600, WANExposure: WANExposure{Enabled: true, RefreshIntervalSeconds: 600}},
 		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600},
 		Nethealth:      Nethealth{Enabled: false, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
+		ReverseProxy:   ReverseProxy{Listen: ":8443"},
 		DataDir:        "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
@@ -487,6 +533,9 @@ func (c Config) Validate() error {
 			return errors.New("tls.cloudflare_api_token and tls.cloudflare_api_token_file must not both be set")
 		}
 	}
+	if err := c.validateReverseProxy(); err != nil {
+		return err
+	}
 	if c.Nethealth.Enabled && c.Nethealth.IntervalSeconds < 60 {
 		return errors.New("nethealth.interval_seconds must be at least 60")
 	}
@@ -514,6 +563,32 @@ func (c Config) Validate() error {
 		if l.URL == "" {
 			return fmt.Errorf("list %q has no url", l.Name)
 		}
+	}
+	return nil
+}
+
+func (c Config) validateReverseProxy() error {
+	rp := c.ReverseProxy
+	if !rp.Enabled {
+		return nil
+	}
+	if rp.Domain == "" {
+		return errors.New("reverseproxy.domain is required when reverseproxy.enabled is true")
+	}
+	if _, err := reverseproxy.NormalizeDomain(rp.BaseDomain()); err != nil {
+		return fmt.Errorf("reverseproxy.domain: %w", err)
+	}
+	if rp.Listen == "" {
+		return errors.New("reverseproxy.listen is required when reverseproxy.enabled is true")
+	}
+	if rp.CloudflareAPIToken == "" && rp.CloudflareAPITokenFile == "" {
+		return errors.New("reverseproxy.cloudflare_api_token or reverseproxy.cloudflare_api_token_file is required when reverseproxy.enabled is true")
+	}
+	if rp.CloudflareAPIToken != "" && rp.CloudflareAPITokenFile != "" {
+		return errors.New("reverseproxy.cloudflare_api_token and reverseproxy.cloudflare_api_token_file must not both be set")
+	}
+	if c.TLS.Enabled && c.TLS.Listen == rp.Listen {
+		return fmt.Errorf("tls.listen and reverseproxy.listen are the same address (%s); each needs its own", rp.Listen)
 	}
 	return nil
 }

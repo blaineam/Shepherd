@@ -98,6 +98,69 @@ func TestRelayIgnoresFramesNotAddressedToShepherd(t *testing.T) {
 	}
 }
 
+func TestRelaySkipsFramesDestinedForShepherdItself(t *testing.T) {
+	sender := NewFakeSender()
+	var skippedN int
+	r := &Relay{
+		Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC,
+		ShepherdIPs:              []netip.Addr{shepherdIP},
+		Lookup:                   steeredLookup(devMAC, devIP),
+		OnFrameForShepherdItself: func(n int) { skippedN = n },
+	}
+	raw := ipv4Frame(shepherdMAC, devMAC, devIP, shepherdIP, []byte("dns query"))
+	ok, err := r.HandleFrame(raw)
+	if ok || err != nil {
+		t.Fatalf("got %v, %v", ok, err)
+	}
+	if len(sender.Frames()) != 0 {
+		t.Fatal("a frame destined for Shepherd's own IP must never be relayed to the gateway")
+	}
+	if skippedN != len(raw) {
+		t.Fatalf("OnFrameForShepherdItself got n=%d, want %d", skippedN, len(raw))
+	}
+}
+
+func TestRelayStillRelaysFramesDestinedElsewhere(t *testing.T) {
+	sender := NewFakeSender()
+	skipped := false
+	r := &Relay{
+		Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC,
+		ShepherdIPs:              []netip.Addr{shepherdIP},
+		Lookup:                   steeredLookup(devMAC, devIP),
+		OnFrameForShepherdItself: func(int) { skipped = true },
+	}
+	internet := ip(200)
+	raw := ipv4Frame(shepherdMAC, devMAC, devIP, internet, []byte("https request"))
+	ok, err := r.HandleFrame(raw)
+	if err != nil || !ok {
+		t.Fatalf("HandleFrame = %v, %v", ok, err)
+	}
+	if len(sender.Frames()) != 1 {
+		t.Fatal("a frame destined elsewhere must still be relayed")
+	}
+	if skipped {
+		t.Fatal("OnFrameForShepherdItself fired for a frame that was not destined for Shepherd")
+	}
+}
+
+func TestRelayWithNoShepherdIPsConfiguredRelaysEverything(t *testing.T) {
+	// ShepherdIPs left empty (the zero value) must behave exactly as it
+	// did before this field existed: destinedForShepherd is never even
+	// consulted, so a frame whose IP destination happens to equal
+	// Shepherd's real IP is still relayed rather than silently dropped
+	// by a caller that never set this up.
+	sender := NewFakeSender()
+	r := &Relay{Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC, Lookup: steeredLookup(devMAC, devIP)}
+	raw := ipv4Frame(shepherdMAC, devMAC, devIP, shepherdIP, []byte("x"))
+	ok, err := r.HandleFrame(raw)
+	if err != nil || !ok {
+		t.Fatalf("HandleFrame = %v, %v", ok, err)
+	}
+	if len(sender.Frames()) != 1 {
+		t.Fatal("with ShepherdIPs unset, every matched frame must still be relayed")
+	}
+}
+
 func TestRelayIgnoresARP(t *testing.T) {
 	sender := NewFakeSender()
 	r := &Relay{Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC, Lookup: steeredLookup(devMAC, devIP)}

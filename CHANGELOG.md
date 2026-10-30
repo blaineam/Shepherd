@@ -13,6 +13,42 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **2D map fallback for the HUD:** browsers without WebGL, notably Safari in Lockdown Mode, now get a
+  flat canvas map (`js/flatmap.js`) with the same arcs, comets, pulses, picking, Set home and panning and
+  zooming, plus day/night shading, instead of a "needs WebGL" notice. `?nogl=1` forces it.
+- **Reverse proxy (`[reverseproxy]`, `internal/reverseproxy`):** the main remaining piece of
+  [ROADMAP.md](docs/ROADMAP.md) step 18 ("Access") — Shepherd can now do what a separate reverse-proxy
+  manager does: own an HTTPS listener, terminate TLS for every configured hostname, and forward each
+  request by its `Host` header to that host's `http://` or `https://` backend, path, query, body and
+  headers untouched, with `X-Forwarded-For`/`X-Real-IP` set to the client's own address (set, never
+  appended to a client-supplied chain: this is the edge), `X-Forwarded-Proto`/`X-Forwarded-Host`, and the
+  public `Host` passed through the way such managers do. A name with no enabled host gets a plain 404 from
+  the proxy itself, never the portal; a host pointed back at the proxy is answered 508 instead of looping.
+  Forwarding is `httputil.ReverseProxy`, and **WebSocket upgrades are proven end to end, not assumed**:
+  `internal/reverseproxy/websocket_test.go` hand-rolls RFC 6455 on both sides with only the standard
+  library (zero new module dependencies) — a hijacking backend that pushes a message first and echoes, and
+  a raw TLS client negotiating `http/1.1` like a browser — and checks the 101 handshake, the unprompted
+  backend-to-client frame, echoes, a 70 KB frame each way and the close handshake, for both `http` and
+  `https` backends; `cmd/shepherd`'s tests repeat it through the real listener started by `run()`.
+  **One wildcard certificate** (`*.<domain>`) covers every host, issued over the same Cloudflare DNS-01
+  flow as `[tls]` (now shared as `startCertManager`; `[tls]` behaves exactly as before) but kept in its
+  own `<data_dir>/reverseproxy/tls/`; `tlscert.Obtainer` was already wildcard-capable and a test now
+  proves the CSR and challenge naming. Backend certificates are verified by default, with an explicit
+  per-host "accept any backend certificate" switch for self-signed backends (a typical manager never
+  verified them at all). Hosts live in `<data_dir>/reverseproxy.json` (0600), managed only from the
+  portal — never seeded from `shepherd.toml`, nothing written until the first edit, editable while the
+  listener is off so everything can be lined up first — over `GET/POST /api/reverseproxy/hosts`,
+  `PUT/DELETE /api/reverseproxy/hosts/{id}` and `GET /api/reverseproxy` (listener and certificate state),
+  and a new **Proxy** tab (`js/reverseproxyview.js`, pure logic in `js/reverseproxy.js` with its own
+  tests) that badges any name the wildcard cannot cover and any backend left unverified. New config:
+  `[reverseproxy]`'s `enabled` (**false by default**), `listen` (`:8443` by default, never 443: moving
+  the standard port over is the owner's deliberate cutover), `domain`, `email` and
+  `cloudflare_api_token`/`cloudflare_api_token_file` (same rules as `[tls]`). A taken listen port stops
+  startup with a clear error; obtaining the certificate never blocks it. Not yet: per-host access control
+  of any kind, custom per-host config, an HTTP-to-HTTPS redirect listener, an access log, or import from
+  an existing manager — a straight migration can lose per-host features a manager had. Every test runs
+  against fakes and loopback; a real wildcard issuance and real application traffic have not been tried.
+  See docs/REVERSEPROXY.md, including its "Before you point real traffic at this" checklist.
 - **Watch mode: in-kernel XDP relay (`internal/intercept.Controller.AttachXDP`, Linux).** The same
   one-sided ARP relay as an eBPF/XDP program on the interface: a steered device's IPv4 frame to
   Shepherd's MAC gets both MACs rewritten and is bounced straight back out (`XDP_TX`) without ever
@@ -22,25 +58,6 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   generic-mode fallback. `cmd/intercept-trial -xdp auto` uses it in place of `ParallelRelay`. The
   program is compiled by `go generate` (needs a clang with the BPF backend); the generated objects
   are committed so `go build` needs nothing new. See docs/INTERCEPT.md, "Beyond userspace".
-
-### Fixed
-- **Watch mode relayed frames with the steered device's own source MAC**, which taught every switch
-  and Wi-Fi/LAN bridge in between that the device lived on Shepherd's port and misdelivered the
-  device's *inbound* traffic there until its next frame flipped the entry back. This is the first
-  explanation that fits every live measurement of the ~300 Mbps ceiling while steered (near-zero
-  relayed packets, loss-shaped slowdown, the `not_for_shepherd` burst). Relayed frames now carry
-  Shepherd's MAC as source; the IP packet inside is untouched. Not yet re-measured live. See
-  docs/INTERCEPT.md, "The cause the evidence points at".
-- **Watch mode's Relay let VLAN-tagged frames through.** It filtered by denylist (not ARP, not IPv6),
-  and a VLAN tag hides the real ethertype one header in, so it could wrap IPv6. `Relay.HandleFrame`
-  now positively matches plain IPv4 only. Found by the new capture-filter agreement test.
-
-### Changed
-- **Watch mode's capture sockets filter in the kernel.** Each `PACKET_FANOUT` socket carries a
-  classic BPF filter (IPv4, destination MAC is Shepherd's) so frames the Relay would discard are
-  dropped before being copied to userspace; attached before bind so nothing slips in ahead of it.
-  Per-device relay counters are now atomics, so the parallel relay workers no longer serialize on a
-  mutex for every frame.
 - **Marketing site (`site/`):** a public, vanilla-HTML/CSS/JS landing page — hero, the real shipped feature
   set (DNS filtering and the 95-list catalog, devices, the globe HUD, alarms, port and vulnerability
   scanning, geo-block, portal locking, self-healing upstreams and more), an honest "what's coming" section
@@ -287,6 +304,29 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- **Watch mode relayed frames with the steered device's own source MAC**, which taught every switch
+  and Wi-Fi/LAN bridge in between that the device lived on Shepherd's port and misdelivered the
+  device's *inbound* traffic there until its next frame flipped the entry back. This is the first
+  explanation that fits every live measurement of the ~300 Mbps ceiling while steered (near-zero
+  relayed packets, loss-shaped slowdown, the `not_for_shepherd` burst). Relayed frames now carry
+  Shepherd's MAC as source; the IP packet inside is untouched. Not yet re-measured live. See
+  docs/INTERCEPT.md, "The cause the evidence points at".
+- **Watch mode's Relay let VLAN-tagged frames through.** It filtered by denylist (not ARP, not IPv6),
+  and a VLAN tag hides the real ethertype one header in, so it could wrap IPv6. `Relay.HandleFrame`
+  now positively matches plain IPv4 only. Found by the new capture-filter agreement test.
+- `internal/intercept.Relay` relayed *every* frame a steered device addressed to Shepherd's own MAC to
+  the real gateway, including frames genuinely destined for Shepherd itself (a DNS query to the resolver
+  Shepherd runs, a connection to its portal) — because a steered device's ARP entry for the real gateway
+  is spoofed to Shepherd's MAC, but its entry for Shepherd's own IP is never touched and already
+  correctly resolves to that same MAC, making the two indistinguishable at the Ethernet layer alone. A
+  live packet capture confirmed it directly: the same DNS query visible twice, once answered normally by
+  Shepherd's own stack, once uselessly re-transmitted to the gateway with a rewritten destination MAC —
+  wasted relay-worker capacity on every locally-destined packet, not data loss (Shepherd's own stack
+  still answered the original), but a real, avoidable cost under load. Fixed with `Relay.ShepherdIPs`:
+  a frame whose IPv4 destination is one of Shepherd's own addresses on the interface is now left
+  completely alone instead of relayed. `cmd/intercept-trial` auto-detects these addresses and reports
+  how often this was happening via a new `for_shepherd_itself` count in its `rate:` log line. See
+  docs/INTERCEPT.md.
 - `internal/dnsengine.Engine` wrote every DNS response to the client before recording the matching
   query-log entry, in all four response paths (blocked, geo-blocked, error, allowed/cached). Nothing
   synchronizes "the client's goroutine woke up because it got a UDP packet" with "this goroutine's next
@@ -353,6 +393,11 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Four `internal/alarms` tests polled a background worker with a 3-second real-wall-clock deadline against a fake-clock-advanced tick; under load (the full suite running concurrently) that was occasionally too tight and failed even though the worker itself was fine (instant in isolation). Widened to 10 seconds.
 
 ### Changed
+- **Watch mode's capture sockets filter in the kernel.** Each `PACKET_FANOUT` socket carries a
+  classic BPF filter (IPv4, destination MAC is Shepherd's) so frames the Relay would discard are
+  dropped before being copied to userspace; attached before bind so nothing slips in ahead of it.
+  Per-device relay counters are now atomics, so the parallel relay workers no longer serialize on a
+  mutex for every frame.
 - The optional Docker packaging (`deploy/docker/compose.yaml`) now also grants `NET_RAW`, alongside the existing `NET_BIND_SERVICE`, so the passive ARP monitor (read-only) can actually run in the container; `cap_drop: [ALL]` otherwise, unchanged.
 - **Policy lives in `<data_dir>/policy.json`.** On the first start after upgrading, `rules.json` (allow, block, policy switches) and `[[lists]]` are migrated into it with nothing lost and the same blocking; a catalog entry with the same URL replaces the old list, anything else becomes a custom list. An install that already existed does **not** gain the recommended catalog lists; a new install does. After that `rules.json`, `[[lists]]` and `no_default_lists` are no longer read (they only seed a first run) and the portal owns the policy. The old rule, policy and list endpoints now act on the network scope.
 - **Protection is on by default; you opt out, not in.** A fresh install now ships with a blocklist and blocks Apple iCloud Private Relay (devices see a notice that it is unavailable on the network). Opt out with `block_private_relay = false` or `no_default_lists = true`, or from the portal. Lists you define always replace the built-in one. Watch mode will follow the same rule (default-on with automatic exclusions and a fail-open watchdog); see the design doc.

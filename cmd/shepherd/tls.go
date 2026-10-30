@@ -55,58 +55,97 @@ func startTLS(ctx context.Context, cfg config.Config) (*tlscert.Manager, error) 
 	if !cfg.TLS.Enabled {
 		return nil, nil
 	}
-	dir := filepath.Join(cfg.DataDir, "tls")
+	mgr, err := startCertManager(ctx, certSpec{
+		logPrefix: "tls",
+		dir:       filepath.Join(cfg.DataDir, "tls"),
+		hostname:  cfg.TLS.Hostname,
+		email:     cfg.TLS.Email,
+		token:     func() (string, error) { return cloudflareAPIToken(cfg.TLS) },
+		bootstrap: cfg.DNS.Bootstrap,
+		acme:      tlsACMEClient,
+		dns01:     tlsDNS01,
+		propagate: tlsPropagationCheck,
+		every:     tlsEvery,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("tls: %w", err)
+	}
+	return mgr, nil
+}
 
-	dns01 := tlsDNS01
+// certSpec is everything startCertManager needs for one certificate. The
+// acme, dns01, propagate and every fields are the calling feature's own
+// test seams, passed through as they are: nil or zero builds the real
+// thing, so production never sets them.
+type certSpec struct {
+	logPrefix string
+	dir       string
+	hostname  string
+	email     string
+	token     func() (string, error)
+	bootstrap []string
+	acme      tlscert.ACMEClient
+	dns01     tlscert.DNS01Provider
+	propagate func(ctx context.Context, fqdn, value string) error
+	every     time.Duration
+}
+
+// startCertManager is the shared half of startTLS and startReverseProxy:
+// build the real Cloudflare DNS-01 provider and ACME client unless a test
+// supplied fakes, load any cached certificate from spec.dir (local disk
+// only), and start the renewal loop in the background so an unreachable
+// Cloudflare or Let's Encrypt never delays startup.
+func startCertManager(ctx context.Context, spec certSpec) (*tlscert.Manager, error) {
+	dns01 := spec.dns01
 	if dns01 == nil {
-		token, err := cloudflareAPIToken(cfg.TLS)
+		token, err := spec.token()
 		if err != nil {
-			return nil, fmt.Errorf("tls: %w", err)
+			return nil, err
 		}
 		dns01 = &tlscert.CloudflareProvider{APIToken: token}
 	}
 
-	acmeClient := tlsACMEClient
+	acmeClient := spec.acme
 	if acmeClient == nil {
-		accountKey, err := tlscert.LoadOrCreateAccountKey(filepath.Join(dir, "account.key"))
+		accountKey, err := tlscert.LoadOrCreateAccountKey(filepath.Join(spec.dir, "account.key"))
 		if err != nil {
-			return nil, fmt.Errorf("tls: %w", err)
+			return nil, err
 		}
 		acmeClient = &acme.Client{Key: accountKey, DirectoryURL: letsEncryptDirectoryURL}
 	}
 
-	propagationCheck := tlsPropagationCheck
+	propagationCheck := spec.propagate
 	if propagationCheck == nil {
-		propagationCheck = tlscert.WaitForDNSPropagation(dnsLookupTXT(cfg.DNS.Bootstrap), 2*time.Minute, 5*time.Second)
+		propagationCheck = tlscert.WaitForDNSPropagation(dnsLookupTXT(spec.bootstrap), 2*time.Minute, 5*time.Second)
 	}
 
 	obtainer := &tlscert.Obtainer{
 		ACME:             acmeClient,
 		DNS01:            dns01,
-		Hostname:         cfg.TLS.Hostname,
-		Contact:          cfg.TLS.Email,
+		Hostname:         spec.hostname,
+		Contact:          spec.email,
 		PropagationCheck: propagationCheck,
-		OnCleanupError:   func(err error) { log.Printf("tls: %v", err) },
+		OnCleanupError:   func(err error) { log.Printf("%s: %v", spec.logPrefix, err) },
 	}
 	mgr, err := tlscert.New(tlscert.Options{
-		Hostname: cfg.TLS.Hostname,
-		Dir:      dir,
+		Hostname: spec.hostname,
+		Dir:      spec.dir,
 		Obtainer: obtainer,
-		OnError:  func(err error) { log.Printf("tls: %v", err) },
+		OnError:  func(err error) { log.Printf("%s: %v", spec.logPrefix, err) },
 		OnObtained: func(notAfter time.Time) {
-			log.Printf("tls: certificate for %s is valid until %s", cfg.TLS.Hostname, notAfter.Format(time.RFC3339))
+			log.Printf("%s: certificate for %s is valid until %s", spec.logPrefix, spec.hostname, notAfter.Format(time.RFC3339))
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("tls: %w", err)
+		return nil, err
 	}
 	if err := mgr.LoadCached(); err != nil {
-		log.Printf("tls: ignoring an unreadable cached certificate in %s: %v", dir, err)
+		log.Printf("%s: ignoring an unreadable cached certificate in %s: %v", spec.logPrefix, spec.dir, err)
 	}
 
 	every := tlscert.DefaultCheckInterval
-	if tlsEvery > 0 {
-		every = tlsEvery
+	if spec.every > 0 {
+		every = spec.every
 	}
 	go mgr.Run(ctx, every)
 	return mgr, nil
@@ -178,12 +217,18 @@ func realTXTExchange(ctx context.Context, server string, m *dns.Msg) (*dns.Msg, 
 // CloudflareAPIToken, so there is never a "which one wins" question. Mirrors
 // cmd/shepherd/accountability.go's smtpPassword exactly.
 func cloudflareAPIToken(t config.TLS) (string, error) {
-	if t.CloudflareAPITokenFile == "" {
-		return t.CloudflareAPIToken, nil
+	return tokenFrom(t.CloudflareAPIToken, t.CloudflareAPITokenFile, "tls.cloudflare_api_token_file")
+}
+
+// tokenFrom returns direct, or the trimmed contents of file when one is
+// named; setting names the file's config key for the error message.
+func tokenFrom(direct, file, setting string) (string, error) {
+	if file == "" {
+		return direct, nil
 	}
-	b, err := os.ReadFile(t.CloudflareAPITokenFile)
+	b, err := os.ReadFile(file)
 	if err != nil {
-		return "", fmt.Errorf("reading tls.cloudflare_api_token_file: %w", err)
+		return "", fmt.Errorf("reading %s: %w", setting, err)
 	}
 	return strings.TrimSpace(string(b)), nil
 }

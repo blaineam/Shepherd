@@ -106,7 +106,7 @@ func TestAttachXDPRelaysOnVeth(t *testing.T) {
 	go caps[0].run(capCtx, func(raw []byte) { got <- append([]byte(nil), raw...) })
 
 	remote := netip.AddrFrom4([4]byte{203, 0, 113, 7})
-	frame := ipv4Frame(shepMAC, devMAC, remote, []byte("before steer"))
+	frame := ipv4Frame(shepMAC, devMAC, devIP, remote, []byte("before steer"))
 
 	// Not steered yet: nothing may come back.
 	if err := peerSender.Send(frame); err != nil {
@@ -123,7 +123,7 @@ func TestAttachXDPRelaysOnVeth(t *testing.T) {
 	}
 	// The observer path should have updated the map synchronously inside
 	// Steer; no sleep needed. Send a few frames.
-	frame = ipv4Frame(shepMAC, devMAC, remote, []byte("after steer"))
+	frame = ipv4Frame(shepMAC, devMAC, devIP, remote, []byte("after steer"))
 	const n = 5
 	for i := 0; i < n; i++ {
 		if err := peerSender.Send(frame); err != nil {
@@ -168,7 +168,7 @@ func TestAttachXDPRelaysOnVeth(t *testing.T) {
 	if err := ctrl.Unsteer(devMAC); err != nil {
 		t.Fatal(err)
 	}
-	if err := peerSender.Send(ipv4Frame(shepMAC, devMAC, remote, []byte("after unsteer"))); err != nil {
+	if err := peerSender.Send(ipv4Frame(shepMAC, devMAC, devIP, remote, []byte("after unsteer"))); err != nil {
 		t.Fatal(err)
 	}
 	select {

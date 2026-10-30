@@ -210,6 +210,31 @@ This is a software relay, not a hardware switch, so steering a device will never
 but a drop this large, confirmed unchanged across three real fixes, is not ordinary relay overhead.
 Watch mode stays a trial-only tool, not something left on indefinitely, until this is understood.
 
+### A real, separate bug found via the planned `tcpdump` — not the throughput-ceiling cause, but fixed
+
+The fresh capture called for above turned up something concrete, though not the burst's root cause:
+`Relay.HandleFrame` rewrote the destination MAC and relayed *every* frame addressed to Shepherd's own
+MAC from a steered device, with no check on where it was actually headed. A steered device's ARP entry
+for the real gateway is spoofed to Shepherd's MAC, but its entry for Shepherd's *own* IP (a DNS query to
+the resolver Shepherd itself runs, a connection to its portal) is never touched and already correctly
+resolves to that same MAC — so at the Ethernet layer, traffic genuinely meant for Shepherd was
+indistinguishable from traffic meant for the real gateway, and every single one of those locally-destined
+packets got needlessly duplicated out to the gateway, which has no reason to do anything with a frame
+addressed to its own MAC but a different IP and just drops it. Confirmed directly in the capture: the
+same DNS query, from the steered device to Shepherd's resolver, visible twice — once answered normally
+by Shepherd's own stack, once uselessly re-transmitted to the gateway with a rewritten destination MAC.
+
+Not data loss (Shepherd's own stack still received and answered the original locally, independent of the
+relay's duplicate), but real wasted relay-worker capacity on every locally-destined packet a steered
+device sends — a plausible, if likely partial, contributor to the throughput ceiling, now closed. Fixed
+by `Relay.ShepherdIPs`: `HandleFrame` now leaves a frame alone (lets Shepherd's own kernel handle it
+normally) when its IPv4 destination is one of Shepherd's own addresses on the interface, instead of
+blindly relaying anything addressed to its MAC. `cmd/intercept-trial` auto-detects these from the
+interface and a new `for_shepherd_itself` count in the `rate:` log line shows how much of this was
+happening on any future live trial. The eero-bridging-reaction and capture-amplification hypotheses
+above remain open and still need that same `tcpdump`, since this fix does not, by itself, change the
+Mbps ceiling's own suspected cause.
+
 ### The cause the evidence points at: the relay was teaching the switch the wrong port
 
 Re-read together, the live results above describe packet *loss* on the device's **inbound** side,
