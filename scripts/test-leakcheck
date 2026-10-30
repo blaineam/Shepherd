@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Proves leakcheck catches what it claims to catch, and passes clean content.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+cd "$work" && git init -q . && git config user.email t@example.com && git config user.name t
+fail=0
+
+check() { # name expect(0|1) [reason]
+  "$here/leakcheck" --all >"$work/o" 2>&1; rc=$?
+  if [ "$rc" -ne "$2" ]; then echo "FAIL $1: exit $rc, want $2"; sed 's/^/    /' "$work/o"; fail=1; return; fi
+  if [ -n "${3:-}" ] && ! grep -q "$3" "$work/o"; then echo "FAIL $1: output lacks '$3'"; sed 's/^/    /' "$work/o"; fail=1; return; fi
+  echo "ok   $1"
+}
+put() { printf '%s\n' "$2" > "$1"; git add -f "$1"; }
+reset() { git rm -rq --cached . 2>/dev/null; find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +; }
+
+put a.txt 'server at 192.0.2.10, lan 192.168.1.20, resolver 9.9.9.10, mac 02:00:5e:00:53:01 ula 2001:db8::1 host shepherd.example.ts.net'
+check "clean documentation values pass" 0
+reset
+put a.txt 'host 10.1.2.3'; check "private IPv4" 1 "private LAN address"; reset  # leakcheck:allow self-test fixture
+put a.txt 'peer 100.101.102.103'; check "Tailscale CGNAT" 1 "Tailscale/CGNAT"; reset  # leakcheck:allow self-test fixture
+put a.txt 'wan 93.184.216.34'; check "public IPv4" 1 "public IP address"; reset  # leakcheck:allow self-test fixture
+put a.txt 'device aa:bb:cc:dd:ee:ff'; check "MAC address" 1 "MAC address"; reset  # leakcheck:allow self-test fixture
+put a.txt 'ula fd12:3456:789a::1'; check "IPv6 ULA" 1 "IPv6 ULA"; reset  # leakcheck:allow self-test fixture
+put a.txt 'gua 2606:4700:4700::1111'; check "IPv6 global" 1 "IPv6 global"; reset  # leakcheck:allow self-test fixture
+put a.txt 'node my-box.tailnet-name.ts.net'; check "tailnet name" 1 "tailnet hostname"; reset  # leakcheck:allow self-test fixture
+put a.txt 'key tskey-auth-abcdef123456'; check "tailscale key" 1 "access key"; reset  # leakcheck:allow self-test fixture
+put a.txt 'path /Users/jane/Documents'; check "personal path" 1 "personal path"; reset  # leakcheck:allow self-test fixture
+put a.txt 'mail jane@corp.org'; check "email" 1 "email address"; reset  # leakcheck:allow self-test fixture
+put .env 'X=1'; check "env file" 1 "runtime or private file"; reset
+put a.txt 'ok 10.9.9.9 leakcheck:allow because test'; check "allow marker" 0; reset
+printf 'my-secret-domain.test\n' > .leakcheck.local
+put a.txt 'see My-Secret-Domain.test'; check "local identifier" 1 "private identifier"; reset  # leakcheck:allow self-test fixture
+exit $fail

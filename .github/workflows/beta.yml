@@ -1,0 +1,48 @@
+# Every push to main builds one rolling beta and deletes the previous betas, so
+# the Releases page only ever shows the newest beta. Versions follow SemVer:
+# the next planned release from VERSION plus -beta.<run number>.
+name: Beta
+on:
+  push:
+    branches: [main]
+concurrency:
+  group: beta
+  cancel-in-progress: true
+permissions:
+  contents: write
+jobs:
+  beta:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Gate on tests, coverage and the leak guard
+        run: |
+          scripts/coverage
+          scripts/leakcheck --all
+      - name: Version
+        id: v
+        run: echo "version=$(tr -d '[:space:]' < VERSION)-beta.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+      - name: Build
+        run: scripts/build-release "${{ steps.v.outputs.version }}"
+      - name: Publish this beta and prune the older ones
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${{ steps.v.outputs.version }}"
+          {
+            echo "Automated beta of commit ${GITHUB_SHA::7}. Not for production use."
+            echo
+            echo "## Unreleased changes"
+            scripts/release-notes Unreleased
+          } > notes.md
+          gh release create "$tag" dist/* --prerelease --target "$GITHUB_SHA" \
+            --title "Beta ${{ steps.v.outputs.version }}" --notes-file notes.md
+          gh release list --limit 200 --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease) | .tagName' \
+            | grep -vx "$tag" \
+            | while read -r old; do gh release delete "$old" --cleanup-tag --yes; done

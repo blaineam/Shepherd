@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# coverage: run the tests with the race detector and enforce the coverage floor.
+#   coverage            fail when total coverage is below .coverage-floor
+#   coverage --ratchet  also raise the floor when coverage has risen well above it
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+floor=$(tr -d '[:space:]' < .coverage-floor)
+go test -race -count=1 -coverprofile=coverage.out ./...
+total=$(go tool cover -func=coverage.out | awk '/^total:/ { sub("%", "", $3); print $3 }')
+echo "coverage: ${total}% (floor ${floor}%)"
+awk -v t="$total" -v f="$floor" 'BEGIN { exit !(t + 0 >= f + 0) }' || { echo "coverage fell below the floor" >&2; exit 1; }
+if [ "${1:-}" = --ratchet ]; then
+  new=$(awk -v t="$total" 'BEGIN { print int(t) - 1 }')
+  if awk -v n="$new" -v f="$floor" 'BEGIN { exit !(n + 0 > f + 0) }'; then
+    echo "$new" > .coverage-floor
+    echo "floor raised to ${new}% (commit .coverage-floor)"
+  fi
+fi

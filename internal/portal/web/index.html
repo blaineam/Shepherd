@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Shepherd</title>
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <img src="icon.png" alt="" class="logo">
+    <h1>Shepherd</h1>
+    <span class="pill live" id="live">connecting</span>
+    <span class="spacer"></span>
+    <span class="muted" id="version"></span>
+    <span class="muted" id="uptime"></span>
+  </header>
+
+  <main>
+    <section class="tiles">
+      <div class="tile"><span class="k">Queries</span><span class="v" id="t-total">0</span></div>
+      <div class="tile"><span class="k">Blocked</span><span class="v" id="t-blocked">0</span><span class="sub" id="t-pct"></span></div>
+      <div class="tile"><span class="k">Cached</span><span class="v" id="t-cached">0</span></div>
+      <div class="tile"><span class="k">Errors</span><span class="v" id="t-errors">0</span></div>
+      <div class="tile"><span class="k">Listed domains</span><span class="v" id="t-listed">0</span></div>
+    </section>
+
+    <section class="grid">
+      <div class="card wide">
+        <div class="card-h">
+          <h2>Live queries</h2>
+          <input id="filter" type="search" placeholder="Filter by device, domain or action" autocomplete="off">
+        </div>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Time</th><th>Device</th><th>Domain</th><th>Type</th><th>Result</th><th>Via</th><th>ms</th><th></th></tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Upstreams</h2>
+        <ul class="list" id="upstreams"></ul>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h2>Blocklists</h2><button id="refresh" class="ghost">Refresh now</button></div>
+        <ul class="list" id="lists"></ul>
+      </div>
+
+      <div class="card">
+        <h2>Privacy policy</h2>
+        <label class="switch"><input type="checkbox" id="p-relay"><span>Block Apple iCloud Private Relay</span></label>
+        <p class="muted small">Answers NXDOMAIN for the relay hostnames so Apple devices report the relay is unavailable on this network. Attempts appear in the query list.</p>
+      </div>
+
+      <div class="card">
+        <h2>Your rules</h2>
+        <form id="rule-form" class="inline">
+          <input id="rule-domain" placeholder="example.com" required autocomplete="off">
+          <select id="rule-kind"><option value="block">Block</option><option value="allow">Allow</option></select>
+          <button>Add</button>
+        </form>
+        <ul class="list" id="rules"></ul>
+      </div>
+
+      <div class="card">
+        <h2>Top devices</h2>
+        <ul class="list" id="top-clients"></ul>
+      </div>
+
+      <div class="card">
+        <h2>Top blocked</h2>
+        <ul class="list" id="top-blocked"></ul>
+      </div>
+    </section>
+  </main>
+
+  <div id="login" class="overlay" hidden>
+    <form id="login-form" class="modal">
+      <img src="icon.png" alt="" class="logo big">
+      <h2>Sign in to Shepherd</h2>
+      <p class="muted small">Paste the portal token. It is in the data directory, or run <code>shepherd -print-token</code>.</p>
+      <input id="token" type="password" placeholder="Portal token" autocomplete="current-password" required>
+      <button>Sign in</button>
+      <p class="err" id="login-err"></p>
+    </form>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

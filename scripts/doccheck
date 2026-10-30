@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# doccheck: code changes must travel with documentation changes.
+#
+#   doccheck --staged           files about to be committed (pre-commit hook)
+#   doccheck --range A..B       files changed in a range (CI)
+#
+# A change to Go source, the compose testbed or the example config must come with a
+# change to CHANGELOG.md, README.md, docs/ or site/. Tests alone do not count as code.
+# DOCCHECK_SKIP=1 bypasses the hook for one commit (say why in the commit message).
+set -u
+
+mode=${1:---staged}
+if [ "${DOCCHECK_SKIP:-}" = 1 ] && [ "$mode" = --staged ]; then
+  echo "doccheck: SKIPPED by DOCCHECK_SKIP=1" >&2
+  exit 0
+fi
+
+case "$mode" in
+  --staged) files=$(git diff --cached --name-only --diff-filter=ACMR) ;;
+  --range)  files=$(git diff --name-only "${2:?range required}") ;;
+  *) echo "usage: doccheck --staged | --range A..B" >&2; exit 2 ;;
+esac
+
+code=$(printf '%s\n' "$files" | grep -E '^(cmd|internal)/.*\.go$|^compose\.yaml$|^shepherd\.example\.toml$' | grep -v '_test\.go$')
+[ -z "$code" ] && exit 0
+
+docs=$(printf '%s\n' "$files" | grep -E '^(CHANGELOG\.md|README\.md|docs/|site/)')
+if [ -z "$docs" ]; then
+  echo "doccheck: code changed without documentation:" >&2
+  printf '%s\n' "$code" | sed 's/^/  /' >&2
+  echo "Update CHANGELOG.md (and docs/, README.md or site/ when behavior changes) in the same change." >&2
+  exit 1
+fi
+exit 0

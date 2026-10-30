@@ -1,0 +1,29 @@
+# Copy to shepherd.toml (git-ignored) and edit. Never commit your real config.
+
+# Where Shepherd keeps its state (portal token, rules, cached lists).
+# Keep this OUTSIDE the repository.
+data_dir = "data"
+
+[dns]
+# host:port addresses, each served over UDP and TCP. Use your LAN address
+# (not 0.0.0.0) on hosts where system DNS already holds 127.0.0.1:53.
+listen = ["127.0.0.1:5353"]
+upstreams = ["9.9.9.10", "149.112.112.10", "1.1.1.1"]
+block_mode = "null"            # "null" answers 0.0.0.0 / ::, "nxdomain" answers NXDOMAIN
+probe_interval_seconds = 15
+cache_size = 20000
+log_size = 5000
+# Extra apex domains no blocklist may ever contain (yours, plus the built-in set).
+protected_domains = []
+
+[privacy]
+# Initial value for blocking Apple iCloud Private Relay (NXDOMAIN for its
+# hostnames). After first run, change it from the portal.
+block_private_relay = false
+
+[portal]
+listen = "127.0.0.1:8787"
+
+[[lists]]
+name = "hagezi-pro"
+url = "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/pro.txt"

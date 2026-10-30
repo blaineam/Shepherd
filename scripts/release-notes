@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# release-notes <Unreleased|X.Y.Z>: print the body of that CHANGELOG.md section.
+set -eu
+want=${1:?usage: release-notes Unreleased|X.Y.Z}
+awk -v want="$want" '
+  /^## \[/ { if (on) exit; on = (index($0, "## [" want "]") == 1); next }
+  on { print }
+' "$(git rev-parse --show-toplevel)/CHANGELOG.md"

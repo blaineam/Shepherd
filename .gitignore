@@ -1,0 +1,10 @@
+.env
+data/
+*.log
+.DS_Store
+shepherd.toml
+*.local
+.leakcheck.local
+/bin/
+/dist/
+coverage.out

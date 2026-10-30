@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# leakcheck: keeps the details of a real network out of a public repository.
+#
+#   leakcheck --staged          scan what is about to be committed (pre-commit hook)
+#   leakcheck --all             scan every tracked and untracked-but-not-ignored file (CI)
+#   leakcheck --message FILE    scan a commit message (commit-msg hook)
+#
+# Generic patterns are built in: private and Tailscale addresses, public IPs,
+# MAC addresses, IPv6 ULA/link-local/global addresses, tailnet names, access
+# keys, personal paths and email addresses. Your own identifiers (domains,
+# device names, anything specific to you) go one per line in the git-ignored
+# file .leakcheck.local, so the public repo never lists them itself.
+#
+# Add "leakcheck:allow" to a line to exempt it (use sparingly, with a reason).
+# LEAKCHECK_SKIP=1 bypasses the hook for one commit and prints a warning.
+set -u
+
+mode=${1:---staged}
+root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "leakcheck: not in a git repository" >&2; exit 2; }
+cd "$root" || exit 2
+
+if [ "${LEAKCHECK_SKIP:-}" = 1 ] && [ "$mode" != --all ]; then
+  echo "leakcheck: SKIPPED by LEAKCHECK_SKIP=1" >&2
+  exit 0
+fi
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+raw="$tmp/raw"       # file <TAB> line <TAB> content
+scan="$tmp/scan"
+out="$tmp/out"
+: > "$raw"; : > "$out"
+
+skip_file() {
+  case "$1" in
+    LICENSE|go.sum|*.png|*.jpg|*.jpeg|*.gif|*.ico|*.icns|*.pdf|*.woff|*.woff2) return 0 ;;
+  esac
+  return 1
+}
+
+case "$mode" in
+  --staged)
+    files=$(git diff --cached --name-only --diff-filter=ACMR)
+    git diff --cached -U0 --no-color --diff-filter=ACMR | awk '
+      /^\+\+\+ /   { f = substr($0, 7); next }
+      /^@@/        { match($0, /\+[0-9]+/); n = substr($0, RSTART + 1, RLENGTH - 1) + 0; next }
+      /^\+/        { print f "\t" n "\t" substr($0, 2); n++ }
+    ' > "$raw"
+    ;;
+  --all)
+    files=$(git ls-files --cached --others --exclude-standard)
+    printf '%s\n' "$files" | while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      skip_file "$f" && continue
+      [ -f "$f" ] || continue
+      grep -Iq . "$f" 2>/dev/null || continue
+      awk -v F="$f" '{ print F "\t" FNR "\t" $0 }' "$f"
+    done > "$raw"
+    ;;
+  --message)
+    files=""
+    [ -f "${2:-}" ] || { echo "leakcheck: --message needs a file" >&2; exit 2; }
+    grep -v '^#' "$2" | awk '{ print "commit-message\t" NR "\t" $0 }' > "$raw"
+    ;;
+  *) echo "usage: leakcheck --staged | --all | --message FILE" >&2; exit 2 ;;
+esac
+
+# Drop skipped files and explicitly allowed lines.
+awk -F'\t' '
+  $1 ~ /(^|\/)(LICENSE|go\.sum)$/ { next }
+  $1 ~ /\.(png|jpg|jpeg|gif|ico|icns|pdf|woff2?)$/ { next }
+  index($0, "leakcheck:allow") { next }
+  { print }
+' "$raw" > "$scan"
+
+emit() { # reason; reads matching TSV lines from stdin
+  awk -F'\t' -v why="$1" '{ c = $3; if (length(c) > 90) c = substr(c, 1, 90) "..."; print $1 ":" $2 "  [" why "]  " c }' >> "$out"
+}
+
+# Files that must never be committed, whatever they contain.
+printf '%s\n' "$files" | grep -E '(^|/)(\.env|rules\.json|portal-token|shepherd\.toml|\.leakcheck\.local)$|(^|/)data/|\.(pcap|pcapng|sqlite3?)$|(^|/)querylog[^/]*\.(json|jsonl|log|db)$' \
+  | awk 'NF { print $0 ":0  [runtime or private file]  must stay out of the repository" }' >> "$out"
+
+# IPv4: only documentation ranges, loopback, a generic example LAN and well-known
+# public resolvers are allowed. Everything else is a real address.
+awk -F'\t' '{
+  s = $3
+  while (match(s, /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/)) {
+    ip = substr(s, RSTART, RLENGTH)
+    pre = (RSTART > 1) ? substr(s, RSTART - 1, 1) : ""
+    post = substr(s, RSTART + RLENGTH, 1)
+    s = substr(s, RSTART + RLENGTH)
+    if (pre ~ /[0-9.]/ || post ~ /[0-9]/) continue
+    split(ip, o, ".")
+    ok = 1
+    for (i = 1; i <= 4; i++) if (o[i] + 0 > 255) ok = 0
+    if (!ok) continue
+    a = o[1] + 0; b = o[2] + 0; c = o[3] + 0
+    if (a == 127 || ip == "0.0.0.0" || ip == "255.255.255.255") continue
+    if ((a == 192 && b == 0 && c == 2) || (a == 198 && b == 51 && c == 100) || (a == 203 && b == 0 && c == 113)) continue
+    if (ip ~ /^192\.168\.1\./) continue
+    if (ip == "1.1.1.1" || ip == "1.0.0.1" || ip == "8.8.8.8" || ip == "8.8.4.4" || ip == "9.9.9.9" || ip == "9.9.9.10" || ip == "149.112.112.10" || ip == "149.112.112.112") continue
+    kind = "public IP address"
+    if (a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168)) kind = "private LAN address"
+    else if (a == 100 && b >= 64 && b <= 127) kind = "Tailscale/CGNAT address"
+    else if (a == 169 && b == 254) kind = "link-local address"
+    print $1 "\t" $2 "\t" kind ": " ip
+  }
+}' "$scan" | awk -F'\t' '{ print $1 ":" $2 "  [" substr($3, 1, index($3, ":") - 1) "]  " substr($3, index($3, ":") + 2) }' >> "$out"
+
+# MAC addresses (locally administered 02:... and 00:... are fine as examples).
+grep -iE '(^|[^0-9a-f:-])(0[13-9a-f]|[1-9a-f][0-9a-f])([:-][0-9a-f]{2}){5}([^0-9a-f:-]|$)' "$scan" | emit "MAC address"
+
+# IPv6: unique-local, link-local, and global addresses (2001:db8 is documentation).
+grep -iE '(^|[^0-9a-f:])(f[cd][0-9a-f]{2}|fe80):[0-9a-f:]*' "$scan" | emit "IPv6 ULA/link-local address"
+grep -iE '(^|[^0-9a-f:])2[0-9a-f]{3}:[0-9a-f]{1,4}:[0-9a-f:]+' "$scan" | grep -viE '2001:0?db8' | emit "IPv6 global address"
+
+# Tailnet hostnames.
+grep -iE '[a-z0-9-]+\.ts\.net' "$scan" | grep -viE 'example\.ts\.net' | emit "tailnet hostname"
+
+# Keys and tokens.
+grep -E 'tskey-[A-Za-z0-9-]+|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]+|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]+|-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-[A-Za-z0-9]{32,}' "$scan" | emit "access key or token"
+grep -iE '(token|secret|password|passwd|api[_-]?key)[A-Za-z_]*[ ]*[:=][ ]*["'\'']?[A-Za-z0-9+/=_-]{24,}' "$scan" | emit "credential-looking value"
+
+# Personal paths and email addresses.
+grep -E '/(Users|home)/[A-Za-z0-9._-]+' "$scan" | grep -vE '/(Users|home)/(you|user|runner|example|name|username)([^A-Za-z0-9._-]|$)' | emit "personal path"
+grep -E '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$scan" | grep -viE '@(users\.noreply\.github\.com|example\.(com|org|net)|anthropic\.com)' | emit "email address"
+
+# Your own identifiers.
+if [ -f .leakcheck.local ]; then
+  grep -vE '^[[:space:]]*(#|$)' .leakcheck.local > "$tmp/mine"
+  if [ -s "$tmp/mine" ]; then
+    grep -iFf "$tmp/mine" "$scan" | emit "your private identifier (.leakcheck.local)"
+  fi
+fi
+
+if [ -s "$out" ]; then
+  echo "leakcheck: found details that must not be published:" >&2
+  sort -u "$out" | sed 's/^/  /' >&2
+  cat >&2 <<'EOF'
+
+Use documentation values instead (192.0.2.x, 198.51.100.x, 203.0.113.x, 02:00:... MACs,
+2001:db8::/32, example.ts.net), or add "leakcheck:allow" to a line that is safe.
+EOF
+  exit 1
+fi
+exit 0

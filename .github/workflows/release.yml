@@ -1,0 +1,38 @@
+# Pushing a tag vX.Y.Z (no suffix) publishes a stable release, with notes taken
+# from CHANGELOG.md, and removes any remaining beta.
+name: Release
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Tag, VERSION and CHANGELOG must agree
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          test "$version" = "$(tr -d '[:space:]' < VERSION)" || { echo "tag $GITHUB_REF_NAME does not match VERSION"; exit 1; }
+          test -n "$(scripts/release-notes "$version")" || { echo "CHANGELOG.md has no section for $version"; exit 1; }
+      - name: Tests and coverage floor
+        run: scripts/coverage
+      - name: Build
+        run: scripts/build-release "${GITHUB_REF_NAME#v}"
+      - name: Publish and remove betas
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          scripts/release-notes "$version" > notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --latest --title "Shepherd $version" --notes-file notes.md
+          gh release list --limit 200 --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease) | .tagName' \
+            | while read -r old; do gh release delete "$old" --cleanup-tag --yes; done

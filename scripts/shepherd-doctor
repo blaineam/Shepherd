@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# shepherd-doctor: read-only preflight. Changes nothing on your system or network.
+# Exit code: 0 = no failures (warnings allowed), 1 = at least one FAIL.
+set -u
+
+PASS=0; WARN=0; FAIL=0
+OS=$(uname -s)
+
+ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; PASS=$((PASS + 1)); }
+warn() { printf '  \033[33mWARN\033[0m  %s\n' "$1"; WARN=$((WARN + 1)); }
+bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAIL=$((FAIL + 1)); }
+info() { printf '  INFO  %s\n' "$1"; }
+section() { printf '\n%s\n' "$1"; }
+
+# Run a command with a hard time limit (GNU timeout, or perl alarm on macOS).
+run_limited() {
+  secs=$1; shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$@" 2>/dev/null
+  else
+    perl -e 'alarm shift; exec @ARGV' "$secs" "$@" 2>/dev/null
+  fi
+}
+
+# Read a sysctl via /proc (UGOS and other minimal hosts have no sysctl binary).
+sysctl_val() {
+  cat "/proc/sys/$(echo "$1" | tr . /)" 2>/dev/null || echo "?"
+}
+
+port_in_use() {
+  if command -v ss >/dev/null 2>&1; then
+    ss -lntuH 2>/dev/null | awk '{print $5}' | grep -Eq "[:.]$1\$"
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1 || lsof -nP -iUDP:"$1" >/dev/null 2>&1
+  else
+    return 1
+  fi
+}
+
+section "Container runtime"
+if command -v docker >/dev/null 2>&1; then
+  ok "docker found: $(docker --version 2>/dev/null)"
+  if docker compose version >/dev/null 2>&1; then
+    ok "docker compose available: $(docker compose version --short 2>/dev/null)"
+  else
+    bad "docker compose plugin not found (Wave 1 needs 'docker compose')"
+  fi
+else
+  bad "docker not found"
+fi
+
+section "Ports Shepherd needs (53 DNS, 3001 Uptime Kuma, 3002 AdGuard admin UI)"
+for p in 3001 3002; do
+  if port_in_use "$p"; then
+    warn "port $p is already in use (stop the service or pick another port before 'docker compose up')"
+  else
+    ok "port $p is free"
+  fi
+done
+if [ "$OS" = "Linux" ] && command -v ss >/dev/null 2>&1; then
+  dns_holders=$(ss -lntuH 2>/dev/null | awk '{print $5}' | grep -E '[:.]53$' | sort -u)
+  if [ -z "$dns_holders" ]; then
+    ok "port 53 is free"
+  elif echo "$dns_holders" | grep -Eq '^(0\.0\.0\.0|\*|\[::\]):53$'; then
+    warn "port 53 is held on all addresses ($(echo "$dns_holders" | paste -sd' ')): something else must stop before AdGuard can serve DNS"
+  else
+    info "port 53 is held only on specific addresses ($(echo "$dns_holders" | paste -sd' ')); AdGuard must bind your LAN interface, not all interfaces"
+  fi
+elif port_in_use 53; then
+  warn "port 53 is already in use (stop the service before 'docker compose up')"
+else
+  ok "port 53 is free"
+fi
+
+section "IPv6 (must stay working: Thread and Matter depend on it)"
+if [ "$OS" = "Linux" ]; then
+  v6_global=$(ip -6 addr show scope global 2>/dev/null | awk '/inet6/ {print $2}')
+  v6_default=$(ip -6 route show default 2>/dev/null | head -1)
+else
+  v6_global=$(ifconfig 2>/dev/null | awk '/inet6/ && $2 !~ /^fe80/ && $2 != "::1" {print $2}')
+  v6_default=$(netstat -rn -f inet6 2>/dev/null | awk '$1 == "default" {print; exit}')
+fi
+if [ -n "$v6_global" ]; then
+  ok "global/ULA IPv6 address present: $(echo "$v6_global" | head -1)"
+else
+  warn "no non-link-local IPv6 address on this host (Shepherd will still leave IPv6 untouched)"
+fi
+if [ -n "$v6_default" ]; then
+  ok "IPv6 default route present"
+else
+  warn "no IPv6 default route"
+fi
+
+if [ "$OS" = "Linux" ]; then
+  fwd=$(sysctl_val net.ipv6.conf.all.forwarding)
+  if [ "$fwd" = "1" ]; then
+    trap_found=0
+    for dev in /proc/sys/net/ipv6/conf/*/accept_ra; do
+      iface=$(basename "$(dirname "$dev")")
+      case "$iface" in all|default|lo|docker*|veth*|br-*|virbr*|tailscale*) continue ;; esac
+      if [ "$(cat "$dev" 2>/dev/null)" != "2" ]; then
+        warn "ipv6 forwarding is on but accept_ra=$(cat "$dev") on $iface: the host may lose its IPv6 default route (set accept_ra=2)"
+        trap_found=1
+      fi
+    done
+    [ "$trap_found" = "0" ] && ok "ipv6 forwarding is on and accept_ra is safe on LAN interfaces"
+  else
+    info "net.ipv6.conf.all.forwarding=$fwd (fine; see docs/IPV6.md before enabling it)"
+  fi
+fi
+
+section "Thread / Matter border routers on this network"
+count=0
+if command -v avahi-browse >/dev/null 2>&1; then
+  count=$(run_limited 5 avahi-browse -rpt _meshcop._udp | awk -F';' '/^=/ {print $4}' | sort -u | wc -l | tr -d ' ')
+elif command -v dns-sd >/dev/null 2>&1; then
+  count=$( { run_limited 4 dns-sd -B _meshcop._udp local. | grep -c ' Add '; } 2>/dev/null )
+else
+  info "no avahi-browse or dns-sd available; skipping Thread border router discovery"
+  count=-1
+fi
+if [ "$count" -gt 0 ]; then
+  ok "$count Thread border router service(s) discovered (Shepherd will leave them alone)"
+elif [ "$count" = 0 ]; then
+  info "no Thread border routers discovered (none present, or mDNS not visible from this host)"
+fi
+
+section "Network interfaces and link speed"
+if [ "$OS" = "Linux" ]; then
+  for dev in /sys/class/net/*; do
+    iface=$(basename "$dev")
+    case "$iface" in lo|docker*|veth*|br-*|tailscale*) continue ;; esac
+    [ "$(cat "$dev/operstate" 2>/dev/null)" = "up" ] || continue
+    speed=$(cat "$dev/speed" 2>/dev/null || echo "?")
+    case "$speed" in
+      ''|'?'|-1) info "$iface up (speed unknown)" ;;
+      *) if [ "$speed" -ge 10000 ]; then ok "$iface up at ${speed} Mb/s"; else info "$iface up at ${speed} Mb/s"; fi ;;
+    esac
+  done
+  if [ -c /dev/net/tun ]; then
+    ok "/dev/net/tun present (needed by Tailscale)"
+  else
+    bad "/dev/net/tun missing (Tailscale needs it; load the 'tun' kernel module)"
+  fi
+  fwd4=$(sysctl_val net.ipv4.ip_forward)
+  if [ "$fwd4" = "1" ]; then
+    ok "net.ipv4.ip_forward=1 (needed to advertise LAN routes over Tailscale)"
+  else
+    warn "net.ipv4.ip_forward=$fwd4 (set to 1 to use this host as a Tailscale subnet router)"
+  fi
+else
+  info "interface/Tailscale kernel checks only run on Linux (this is $OS)"
+fi
+
+printf '\nSummary: %d pass, %d warn, %d fail\n' "$PASS" "$WARN" "$FAIL"
+[ "$FAIL" -eq 0 ]

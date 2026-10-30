@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Installed by scripts/install-hooks. Keeps real network details out of commits
+# and makes code changes travel with documentation.
+root=$(git rev-parse --show-toplevel)
+"$root/scripts/leakcheck" --staged || exit 1
+"$root/scripts/doccheck" --staged || exit 1

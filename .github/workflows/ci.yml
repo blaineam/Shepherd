@@ -1,0 +1,49 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Formatting
+        run: test -z "$(gofmt -l .)"
+      - name: Vet
+        run: go vet ./...
+      - name: Tests and coverage floor
+        run: scripts/coverage
+      - name: Leak guard self-test
+        run: scripts/test-leakcheck
+      - name: Leak guard on the whole tree
+        run: scripts/leakcheck --all
+      - name: Docs travel with code (push)
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        run: scripts/doccheck --range "${{ github.event.before }}..${{ github.sha }}"
+      - name: Docs travel with code (pull request)
+        if: github.event_name == 'pull_request'
+        run: scripts/doccheck --range "origin/${{ github.base_ref }}...HEAD"
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [linux/amd64, linux/arm64, darwin/arm64, darwin/amd64, windows/amd64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Cross-compile
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          target="${{ matrix.target }}"
+          GOOS="${target%/*}" GOARCH="${target#*/}" go build -trimpath -o /dev/null ./cmd/shepherd

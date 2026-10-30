@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Point git at the repository's hooks. Run once after cloning.
+set -e
+root=$(git rev-parse --show-toplevel)
+git -C "$root" config core.hooksPath .githooks
+chmod +x "$root"/.githooks/* "$root"/scripts/leakcheck "$root"/scripts/doccheck
+[ -f "$root/.leakcheck.local" ] || {
+  cat > "$root/.leakcheck.local" <<'LOCAL'
+# One private identifier per line (git-ignored): your domains, tailnet name, device
+# and family names, anything that must never appear in a public commit or message.
+# Matching is case-insensitive.
+LOCAL
+  echo "created .leakcheck.local; add your own identifiers to it"
+}
+echo "hooks installed (core.hooksPath=.githooks)"
