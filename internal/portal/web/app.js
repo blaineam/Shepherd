@@ -12,6 +12,8 @@
   let last = 0;
   let rows = [];
   let filter = '';
+  let timers = [];
+  const stopPolling = () => { timers.forEach(clearInterval); timers = []; };
 
   async function api(path, opts = {}) {
     const res = await fetch(path, {
@@ -19,7 +21,7 @@
       ...opts,
       headers: { 'X-Shepherd': '1', 'Content-Type': 'application/json', ...(opts.headers || {}) },
     });
-    if (res.status === 401) { $('#login').hidden = false; throw new Error('unauthorized'); }
+    if (res.status === 401) { stopPolling(); $('#login').hidden = false; throw new Error('unauthorized'); }
     if (!res.ok) throw new Error((await res.text()).trim() || res.statusText);
     return res.status === 202 ? null : res.json();
   }
@@ -157,9 +159,8 @@
     } catch (err) { $('#login-err').textContent = 'That token did not work.'; }
   });
 
-  let timers = [];
   function start() {
-    timers.forEach(clearInterval);
+    stopPolling();
     pollStatus(); pollQueries();
     api('/api/rules').then(renderRules).catch(() => {});
     timers = [setInterval(pollQueries, 1000), setInterval(pollStatus, 3000)];
