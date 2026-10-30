@@ -13,7 +13,16 @@ import (
 const (
 	ethHeaderLen  = 14
 	etherTypeARP  = 0x0806
+	etherTypeIPv4 = 0x0800
 	etherTypeIPv6 = 0x86dd
+
+	// ipv4DstOffset is the destination address field's offset within an
+	// IPv4 header (bytes 16-19), and ipv4HeaderMinLen is that header's
+	// length with no options — the only shape destinedForShepherd needs
+	// to read, since the destination address sits before where any
+	// options would start.
+	ipv4DstOffset    = 16
+	ipv4HeaderMinLen = 20
 )
 
 // Relay rewrites and retransmits the outbound frames a steered device
@@ -28,6 +37,24 @@ type Relay struct {
 	ShepherdMAC arp.MAC
 	GatewayMAC  arp.MAC
 	SendTimeout time.Duration // default DefaultSendTimeout
+
+	// ShepherdIPs are this host's own IPv4 addresses on the interface
+	// Relay runs on. A steered device's ARP entry for the real gateway is
+	// spoofed to ShepherdMAC, but its entry for Shepherd's own IP (e.g. a
+	// DNS query to the resolver Shepherd itself runs, or a connection to
+	// its portal) is never touched and already correctly resolves to the
+	// same ShepherdMAC — so at the Ethernet layer, traffic genuinely meant
+	// for Shepherd is indistinguishable from traffic meant for the real
+	// gateway; only the IPv4 destination address tells them apart.
+	// HandleFrame leaves a frame destined for one of these addresses
+	// completely alone (Shepherd's own kernel already receives and
+	// answers it normally): relaying it to the real gateway as well would
+	// not just waste a relay worker's capacity on every single locally-
+	// destined packet, the gateway has no reason to do anything with a
+	// frame addressed to its own MAC but a different IP, and silently
+	// drops it. Empty (the default) skips this check entirely, so a
+	// caller that has not supplied it gets today's behavior unchanged.
+	ShepherdIPs []netip.Addr
 
 	// Lookup reports whether mac is a currently steered device and its
 	// registered IP. This is the hot-path check: keep it cheap (a map
@@ -56,6 +83,10 @@ type Relay struct {
 	// capture_linux.go and docs/INTERCEPT.md's "Throughput" section.
 	// Optional, diagnostic only.
 	OnFrameNotForShepherd func(n int)
+	// OnFrameForShepherdItself, when set, is called for every frame
+	// HandleFrame leaves alone because its IPv4 destination is one of
+	// ShepherdIPs (see ShepherdIPs). Optional, diagnostic only.
+	OnFrameForShepherdItself func(n int)
 
 	Now func() time.Time // default time.Now
 }
@@ -78,11 +109,12 @@ func (r *Relay) timeout() time.Duration {
 // wire. It reports whether the frame was relayed.
 //
 // A frame that is too short to have an Ethernet header, not addressed to
-// Shepherd's MAC, ARP, IPv6, or whose Ethernet source MAC is not a
-// currently steered device is ignored (false, nil) and left completely
-// untouched. Matching is by source MAC only — MAC is Shepherd's device
-// identity key everywhere else (docs/DESIGN.md, "Device identity") — so a
-// device that gets a new IP from DHCP is still relayed without a gap.
+// Shepherd's MAC, ARP, IPv6, whose Ethernet source MAC is not a currently
+// steered device, or whose IPv4 destination is one of ShepherdIPs is
+// ignored (false, nil) and left completely untouched. Matching is by
+// source MAC only — MAC is Shepherd's device identity key everywhere else
+// (docs/DESIGN.md, "Device identity") — so a device that gets a new IP
+// from DHCP is still relayed without a gap.
 //
 // A matched frame has its destination MAC rewritten to the real gateway
 // MAC; the source MAC, the source IP, and everything else in the frame is
@@ -114,6 +146,12 @@ func (r *Relay) HandleFrame(raw []byte) (bool, error) {
 	if _, ok := r.Lookup(src); !ok {
 		return false, nil
 	}
+	if etherType == etherTypeIPv4 && r.destinedForShepherd(raw) {
+		if r.OnFrameForShepherdItself != nil {
+			r.OnFrameForShepherdItself(len(raw))
+		}
+		return false, nil
+	}
 
 	out := make([]byte, len(raw))
 	copy(out, raw)
@@ -129,4 +167,25 @@ func (r *Relay) HandleFrame(raw []byte) (bool, error) {
 		r.OnRelayed(src, len(raw), r.now())
 	}
 	return true, nil
+}
+
+// destinedForShepherd reports whether raw's IPv4 destination address is one
+// of ShepherdIPs. Called only once etherType is known to be IPv4 and raw
+// has already passed the minimum Ethernet-header-length check in
+// HandleFrame, so the only remaining bounds check is for the IPv4 header
+// itself; a frame too short to hold one is, by definition, not destined
+// for any specific address Shepherd would recognize.
+func (r *Relay) destinedForShepherd(raw []byte) bool {
+	if len(r.ShepherdIPs) == 0 || len(raw) < ethHeaderLen+ipv4HeaderMinLen {
+		return false
+	}
+	var b [4]byte
+	copy(b[:], raw[ethHeaderLen+ipv4DstOffset:ethHeaderLen+ipv4DstOffset+4])
+	dst := netip.AddrFrom4(b)
+	for _, own := range r.ShepherdIPs {
+		if own.Unmap() == dst {
+			return true
+		}
+	}
+	return false
 }

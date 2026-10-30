@@ -81,11 +81,12 @@ type SteeredDevice struct {
 // cmd/intercept-trial does) and diff consecutive snapshots to get
 // frames/bytes per second. See docs/INTERCEPT.md's "Throughput" section.
 type ControllerStats struct {
-	FramesExamined       uint64 // every frame HandleFrame was ever given, matched or not
-	BytesExamined        uint64 // their total wire length
-	FramesNotForShepherd uint64 // subset discarded because dst != ShepherdMAC (see OnFrameNotForShepherd)
-	FramesRelayed        uint64 // subset actually relayed
-	BytesRelayed         uint64 // their total wire length
+	FramesExamined          uint64 // every frame HandleFrame was ever given, matched or not
+	BytesExamined           uint64 // their total wire length
+	FramesNotForShepherd    uint64 // subset discarded because dst != ShepherdMAC (see OnFrameNotForShepherd)
+	FramesForShepherdItself uint64 // subset left alone because they were for Shepherd's own IP (see Relay.ShepherdIPs)
+	FramesRelayed           uint64 // subset actually relayed
+	BytesRelayed            uint64 // their total wire length
 }
 
 // UnsteerRecord is one entry in the Controller's unsteer history: what
@@ -108,6 +109,15 @@ type ControllerConfig struct {
 	ShepherdMAC arp.MAC
 	GatewayIP   netip.Addr
 	GatewayMAC  arp.MAC
+	// ShepherdIPs are this host's own IPv4 addresses on the interface
+	// being relayed on, passed straight through to every Relay (see
+	// Relay.ShepherdIPs for why this matters: without it, traffic a
+	// steered device sends to Shepherd itself — a DNS query, a portal
+	// connection — gets needlessly relayed to the real gateway too,
+	// which just drops it, wasting a relay worker's capacity on every
+	// single locally-destined packet for nothing). Optional but strongly
+	// recommended; empty keeps today's behavior of relaying everything.
+	ShepherdIPs []netip.Addr
 
 	// Excluder is consulted on every Steer call. Optional.
 	Excluder Excluder
@@ -199,11 +209,12 @@ type Controller struct {
 	// hot path without taking mu: a lock-free counter bump is cheap enough
 	// to leave on unconditionally, unlike the per-device bookkeeping in
 	// recordRelayed, which needs mu to find the right deviceState anyway.
-	framesExamined       atomic.Uint64
-	bytesExamined        atomic.Uint64
-	framesNotForShepherd atomic.Uint64
-	framesRelayed        atomic.Uint64
-	bytesRelayedTotal    atomic.Uint64
+	framesExamined          atomic.Uint64
+	bytesExamined           atomic.Uint64
+	framesNotForShepherd    atomic.Uint64
+	framesForShepherdItself atomic.Uint64
+	framesRelayed           atomic.Uint64
+	bytesRelayedTotal       atomic.Uint64
 
 	// afterHealthCheck is a test-only hook, called at the end of every
 	// health-check tick the background loop runs, after the next tick has
@@ -239,16 +250,18 @@ func NewController(cfg ControllerConfig) (*Controller, error) {
 	c.steered.Store(&empty)
 
 	c.relay = &Relay{
-		Sender:                cfg.Sender,
-		ShepherdMAC:           cfg.ShepherdMAC,
-		GatewayMAC:            cfg.GatewayMAC,
-		SendTimeout:           cfg.SendTimeout,
-		Lookup:                c.lookupSteered,
-		OnRelayed:             c.recordRelayed,
-		OnRelayError:          c.recordRelayError,
-		OnFrameExamined:       c.recordFrameExamined,
-		OnFrameNotForShepherd: c.recordFrameNotForShepherd,
-		Now:                   cfg.Clock.Now,
+		Sender:                   cfg.Sender,
+		ShepherdMAC:              cfg.ShepherdMAC,
+		ShepherdIPs:              cfg.ShepherdIPs,
+		GatewayMAC:               cfg.GatewayMAC,
+		SendTimeout:              cfg.SendTimeout,
+		Lookup:                   c.lookupSteered,
+		OnRelayed:                c.recordRelayed,
+		OnRelayError:             c.recordRelayError,
+		OnFrameExamined:          c.recordFrameExamined,
+		OnFrameNotForShepherd:    c.recordFrameNotForShepherd,
+		OnFrameForShepherdItself: c.recordFrameForShepherdItself,
+		Now:                      cfg.Clock.Now,
 	}
 
 	first := cfg.Clock.After(cfg.HealthInterval)
@@ -282,16 +295,18 @@ func (c *Controller) HandleFrame(raw []byte) (bool, error) {
 // version of exactly this.
 func (c *Controller) NewRelay(sender Sender) *Relay {
 	return &Relay{
-		Sender:                sender,
-		ShepherdMAC:           c.cfg.ShepherdMAC,
-		GatewayMAC:            c.cfg.GatewayMAC,
-		SendTimeout:           c.cfg.SendTimeout,
-		Lookup:                c.lookupSteered,
-		OnRelayed:             c.recordRelayed,
-		OnRelayError:          c.recordRelayError,
-		OnFrameExamined:       c.recordFrameExamined,
-		OnFrameNotForShepherd: c.recordFrameNotForShepherd,
-		Now:                   c.cfg.Clock.Now,
+		Sender:                   sender,
+		ShepherdMAC:              c.cfg.ShepherdMAC,
+		ShepherdIPs:              c.cfg.ShepherdIPs,
+		GatewayMAC:               c.cfg.GatewayMAC,
+		SendTimeout:              c.cfg.SendTimeout,
+		Lookup:                   c.lookupSteered,
+		OnRelayed:                c.recordRelayed,
+		OnRelayError:             c.recordRelayError,
+		OnFrameExamined:          c.recordFrameExamined,
+		OnFrameNotForShepherd:    c.recordFrameNotForShepherd,
+		OnFrameForShepherdItself: c.recordFrameForShepherdItself,
+		Now:                      c.cfg.Clock.Now,
 	}
 }
 
@@ -318,9 +333,10 @@ func (c *Controller) recordRelayed(mac arp.MAC, n int, now time.Time) {
 	}
 }
 
-// recordFrameExamined and recordFrameNotForShepherd are Relay's
-// OnFrameExamined/OnFrameNotForShepherd hooks: diagnostics only, so they
-// run lock-free and never touch c.devices. See ControllerStats.
+// recordFrameExamined, recordFrameNotForShepherd and
+// recordFrameForShepherdItself are Relay's OnFrameExamined/
+// OnFrameNotForShepherd/OnFrameForShepherdItself hooks: diagnostics only,
+// so they run lock-free and never touch c.devices. See ControllerStats.
 func (c *Controller) recordFrameExamined(n int) {
 	c.framesExamined.Add(1)
 	c.bytesExamined.Add(uint64(n))
@@ -328,6 +344,10 @@ func (c *Controller) recordFrameExamined(n int) {
 
 func (c *Controller) recordFrameNotForShepherd(int) {
 	c.framesNotForShepherd.Add(1)
+}
+
+func (c *Controller) recordFrameForShepherdItself(int) {
+	c.framesForShepherdItself.Add(1)
 }
 
 // recordRelayError is the Relay's error hook: a send failure while
@@ -613,11 +633,12 @@ func (c *Controller) Status() []SteeredDevice {
 // counters. See ControllerStats.
 func (c *Controller) Stats() ControllerStats {
 	return ControllerStats{
-		FramesExamined:       c.framesExamined.Load(),
-		BytesExamined:        c.bytesExamined.Load(),
-		FramesNotForShepherd: c.framesNotForShepherd.Load(),
-		FramesRelayed:        c.framesRelayed.Load(),
-		BytesRelayed:         c.bytesRelayedTotal.Load(),
+		FramesExamined:          c.framesExamined.Load(),
+		BytesExamined:           c.bytesExamined.Load(),
+		FramesNotForShepherd:    c.framesNotForShepherd.Load(),
+		FramesForShepherdItself: c.framesForShepherdItself.Load(),
+		FramesRelayed:           c.framesRelayed.Load(),
+		BytesRelayed:            c.bytesRelayedTotal.Load(),
 	}
 }
 

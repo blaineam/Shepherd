@@ -103,6 +103,26 @@ func run() error {
 		return fmt.Errorf("intercept-trial: interface %q has no usable MAC", *iface)
 	}
 
+	// Every IPv4 address this host holds on iface, so Relay can tell
+	// traffic genuinely meant for Shepherd itself (DNS, the portal) apart
+	// from traffic a steered device means for the real gateway — see
+	// Relay.ShepherdIPs. Not fatal if iface turns out to have none (an
+	// unusual setup); the relay just has nothing to exclude.
+	addrs, err := ifc.Addrs()
+	if err != nil {
+		return fmt.Errorf("intercept-trial: reading addresses on %q: %w", *iface, err)
+	}
+	var shepherdIPs []netip.Addr
+	for _, a := range addrs {
+		ipNet, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		if addr, ok := netip.AddrFromSlice(ipNet.IP); ok && addr.Unmap().Is4() {
+			shepherdIPs = append(shepherdIPs, addr.Unmap())
+		}
+	}
+
 	sender, err := intercept.Open(*iface)
 	if err != nil {
 		return fmt.Errorf("intercept-trial: %w", err)
@@ -146,6 +166,7 @@ func run() error {
 	ctrl, err := intercept.NewController(intercept.ControllerConfig{
 		Sender:      sender,
 		ShepherdMAC: shepherdMAC,
+		ShepherdIPs: shepherdIPs,
 		GatewayIP:   gatewayIP,
 		GatewayMAC:  gatewayMAC,
 		OnUnsteer: func(r intercept.UnsteerRecord) {
@@ -170,7 +191,7 @@ func run() error {
 		}
 	}()
 
-	log.Printf("shepherd: %s (%s)  gateway: %s (%s)", shepherdMAC, *iface, gatewayMAC, gatewayIP)
+	log.Printf("shepherd: %s (%s) %v  gateway: %s (%s)", shepherdMAC, *iface, shepherdIPs, gatewayMAC, gatewayIP)
 	log.Printf("relaying across %d parallel workers", *workers)
 	log.Printf("steering %s (%s) for %s, trial mode (auto-revert)", targetMAC, targetIP, *duration)
 
@@ -230,13 +251,18 @@ func reportStatus(ctx context.Context, ctrl *intercept.Controller) {
 // statsRate turns two ControllerStats samples, taken elapsed apart, into a
 // one-line summary: packets and bytes per second actually relayed, the
 // examined rate (everything the capture sockets handed to a Relay, matched
-// or not), and not_for_shepherd — the count of frames in that window whose
-// destination was not Shepherd's own MAC. On a non-promiscuous capture
+// or not), not_for_shepherd — the count of frames in that window whose
+// destination was not Shepherd's own MAC (on a non-promiscuous capture
 // socket that is overwhelmingly Shepherd's own transmitted frames looping
-// back (see PACKET_IGNORE_OUTGOING in capture_linux.go and
-// docs/INTERCEPT.md); a number here close to the relayed count is exactly
-// the shape of the avoidable overhead that fix targets, and this line is
-// how a live trial would notice it without a separate packet capture.
+// back; see PACKET_IGNORE_OUTGOING in capture_linux.go and
+// docs/INTERCEPT.md) — and for_shepherd_itself, the count left alone
+// because they were genuinely addressed to the steered device's gateway-
+// spoofed MAC but destined for Shepherd's own IP (a DNS query, a portal
+// connection): see Relay.ShepherdIPs. Every one of those would otherwise
+// have been relayed to the real gateway and silently dropped there,
+// wasting a relay worker's capacity for nothing a live trial's own
+// capture could not have told apart from genuine internet-bound traffic
+// without also decoding the IPv4 destination by hand.
 func statsRate(prev, cur intercept.ControllerStats, elapsed time.Duration) string {
 	if elapsed <= 0 {
 		return "n/a (no time elapsed)"
@@ -246,8 +272,9 @@ func statsRate(prev, cur intercept.ControllerStats, elapsed time.Duration) strin
 	relayedPPS := float64(cur.FramesRelayed-prev.FramesRelayed) / secs
 	relayedBPS := float64(cur.BytesRelayed-prev.BytesRelayed) / secs
 	notForShepherd := cur.FramesNotForShepherd - prev.FramesNotForShepherd
-	return fmt.Sprintf("examined=%.0f pkt/s relayed=%.0f pkt/s (%.0f B/s) not_for_shepherd=%d",
-		examinedPPS, relayedPPS, relayedBPS, notForShepherd)
+	forShepherdItself := cur.FramesForShepherdItself - prev.FramesForShepherdItself
+	return fmt.Sprintf("examined=%.0f pkt/s relayed=%.0f pkt/s (%.0f B/s) not_for_shepherd=%d for_shepherd_itself=%d",
+		examinedPPS, relayedPPS, relayedBPS, notForShepherd, forShepherdItself)
 }
 
 // ethtoolGRO reports whether generic-receive-offload is currently on for

@@ -26,6 +26,7 @@ var (
 	gwMAC       = stableMAC(1)
 	gwIP        = ip(1)
 	shepherdMAC = stableMAC(2)
+	shepherdIP  = ip(2)
 	devMAC      = rndMAC(10)
 	devIP       = ip(10)
 )
@@ -57,8 +58,10 @@ func newTestController(t *testing.T, mod func(*ControllerConfig)) (*Controller, 
 }
 
 // ethFrame builds a raw Ethernet frame with an arbitrary (non-ARP)
-// ethertype and payload, for Relay tests. It never needs to be valid IP;
-// the Relay only looks at the Ethernet header.
+// ethertype and payload, for Relay tests that do not care about
+// destinedForShepherd's IPv4-destination check (ARP, IPv6, and
+// not-addressed-to-Shepherd cases never get far enough to parse the
+// payload as IP at all). Use ipv4Frame for anything that does.
 func ethFrame(dst, src arp.MAC, etherType uint16, payload []byte) []byte {
 	b := make([]byte, ethHeaderLen+len(payload))
 	copy(b[0:6], dst[:])
@@ -66,6 +69,20 @@ func ethFrame(dst, src arp.MAC, etherType uint16, payload []byte) []byte {
 	binary.BigEndian.PutUint16(b[12:14], etherType)
 	copy(b[14:], payload)
 	return b
+}
+
+// ipv4Frame builds a raw Ethernet frame carrying a minimal (20-byte,
+// no-options) IPv4 header with the given source/destination addresses,
+// for tests exercising Relay's destinedForShepherd check. The header's
+// own correctness (checksum, total length, protocol) does not matter —
+// destinedForShepherd only ever reads the destination address field.
+func ipv4Frame(dst, src arp.MAC, srcIP, dstIP netip.Addr, payload []byte) []byte {
+	ipHdr := make([]byte, ipv4HeaderMinLen)
+	ipHdr[0] = 0x45 // version 4, header length 5 (20 bytes)
+	srcB, dstB := srcIP.As4(), dstIP.As4()
+	copy(ipHdr[12:16], srcB[:])
+	copy(ipHdr[16:20], dstB[:])
+	return ethFrame(dst, src, etherTypeIPv4, append(ipHdr, payload...))
 }
 
 // waitForFrame blocks until ch delivers a frame or timeout elapses, and

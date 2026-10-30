@@ -259,6 +259,19 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- `internal/intercept.Relay` relayed *every* frame a steered device addressed to Shepherd's own MAC to
+  the real gateway, including frames genuinely destined for Shepherd itself (a DNS query to the resolver
+  Shepherd runs, a connection to its portal) — because a steered device's ARP entry for the real gateway
+  is spoofed to Shepherd's MAC, but its entry for Shepherd's own IP is never touched and already
+  correctly resolves to that same MAC, making the two indistinguishable at the Ethernet layer alone. A
+  live packet capture confirmed it directly: the same DNS query visible twice, once answered normally by
+  Shepherd's own stack, once uselessly re-transmitted to the gateway with a rewritten destination MAC —
+  wasted relay-worker capacity on every locally-destined packet, not data loss (Shepherd's own stack
+  still answered the original), but a real, avoidable cost under load. Fixed with `Relay.ShepherdIPs`:
+  a frame whose IPv4 destination is one of Shepherd's own addresses on the interface is now left
+  completely alone instead of relayed. `cmd/intercept-trial` auto-detects these addresses and reports
+  how often this was happening via a new `for_shepherd_itself` count in its `rate:` log line. See
+  docs/INTERCEPT.md.
 - `internal/dnsengine.Engine` wrote every DNS response to the client before recording the matching
   query-log entry, in all four response paths (blocked, geo-blocked, error, allowed/cached). Nothing
   synchronizes "the client's goroutine woke up because it got a UDP packet" with "this goroutine's next
