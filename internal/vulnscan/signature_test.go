@@ -2,7 +2,11 @@
 
 package vulnscan
 
-import "testing"
+import (
+	"crypto/tls"
+	"testing"
+	"time"
+)
 
 func hasFinding(t *testing.T, matches []Match, id string) Match {
 	t.Helper()
@@ -94,6 +98,63 @@ func TestEvaluateDockerAndSMB1(t *testing.T) {
 	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 2375, DockerAPIOpen: false}), "docker-unauthenticated-api")
 	hasFinding(t, Evaluate(Probe{Connected: true, Port: 445, SMB1Negotiated: true}), "smb1-enabled")
 	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 445, SMB1Negotiated: false}), "smb1-enabled")
+}
+
+func TestEvaluateDockerTLSUnauthenticatedAPI(t *testing.T) {
+	hasFinding(t, Evaluate(Probe{Connected: true, Port: 2376, DockerAPIOpen: true}), "docker-tls-unauthenticated-api")
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 2376, DockerAPIOpen: false}), "docker-tls-unauthenticated-api")
+	// The plain-TLS Docker signature must never fire on 2375's own, and vice versa.
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 2375, DockerAPIOpen: true}), "docker-tls-unauthenticated-api")
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 2376, DockerAPIOpen: true}), "docker-unauthenticated-api")
+}
+
+func TestEvaluateTLSWeakProtocol(t *testing.T) {
+	got := hasFinding(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: true, TLSVersion: tls.VersionTLS10}), "tls-weak-protocol")
+	if got.Evidence != "negotiated TLS 1.0" {
+		t.Fatalf("evidence = %q", got.Evidence)
+	}
+	hasFinding(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: true, TLSVersion: tls.VersionTLS11}), "tls-weak-protocol")
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: true, TLSVersion: tls.VersionTLS12}), "tls-weak-protocol")
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: true, TLSVersion: tls.VersionTLS13}), "tls-weak-protocol")
+	// No completed handshake at all: never fires, even if the zero value happened to equal a real version constant.
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: false}), "tls-weak-protocol")
+}
+
+func TestEvaluateTLSWeakCipherSuite(t *testing.T) {
+	weak := tls.InsecureCipherSuites()
+	if len(weak) == 0 {
+		t.Fatal("tls.InsecureCipherSuites() returned none; test needs at least one to exercise the match")
+	}
+	got := hasFinding(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: true, TLSCipherSuite: weak[0].ID}), "tls-weak-cipher-suite")
+	if got.Evidence != weak[0].Name {
+		t.Fatalf("evidence = %q, want %q", got.Evidence, weak[0].Name)
+	}
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: true, TLSCipherSuite: tls.TLS_AES_128_GCM_SHA256}), "tls-weak-cipher-suite")
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: false, TLSCipherSuite: weak[0].ID}), "tls-weak-cipher-suite")
+}
+
+func TestEvaluateTLSCertDates(t *testing.T) {
+	past := time.Now().Add(-24 * time.Hour)
+	future := time.Now().Add(24 * time.Hour)
+
+	hasFinding(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: true, TLSCertNotAfter: past}), "tls-cert-expired")
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: true, TLSCertNotAfter: future}), "tls-cert-expired")
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: true}), "tls-cert-expired") // no cert presented at all
+
+	hasFinding(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: true, TLSCertNotBefore: future}), "tls-cert-not-yet-valid")
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: true, TLSCertNotBefore: past}), "tls-cert-not-yet-valid")
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: true}), "tls-cert-not-yet-valid")
+
+	// A handshake that never completed must never produce a cert-date finding.
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: false, TLSCertNotAfter: past}), "tls-cert-expired")
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 443, TLSNegotiated: false, TLSCertNotBefore: future}), "tls-cert-not-yet-valid")
+}
+
+func TestEvaluateUPnPExposed(t *testing.T) {
+	hasFinding(t, Evaluate(Probe{Connected: true, Port: 5000, HTTPServer: "Linux/3.14 UPnP/1.0 MiniUPnPd/2.1"}), "upnp-exposed")
+	hasFinding(t, Evaluate(Probe{Connected: true, Port: 8080, HTTPServer: "upnp/1.1 something"}), "upnp-exposed")
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 80, HTTPServer: "Apache/2.4.58"}), "upnp-exposed")
+	mustNotMatch(t, Evaluate(Probe{Connected: true, Port: 80, HTTPServer: ""}), "upnp-exposed")
 }
 
 func TestEvaluateSkipsEmptyProbe(t *testing.T) {

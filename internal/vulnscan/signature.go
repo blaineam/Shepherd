@@ -2,7 +2,11 @@
 
 package vulnscan
 
-import "strings"
+import (
+	"crypto/tls"
+	"strings"
+	"time"
+)
 
 // Probe is everything a Signature's Match function gets to look at: one
 // open port on one device, and whatever Shepherd learned about it with a
@@ -43,8 +47,38 @@ type Probe struct {
 	SMB1Negotiated bool
 
 	// DockerAPIOpen is true when a plain, unauthenticated GET /version on
-	// port 2375 came back looking like Docker's own Engine API.
+	// port 2375 came back looking like Docker's own Engine API. The same
+	// field also carries the TLS variant (port 2376, probed over TLS): see
+	// TLSNegotiated.
 	DockerAPIOpen bool
+
+	// TLSNegotiated is true once a TLS handshake with this port actually
+	// completed, for the TLS-wrapped ports probe.go's tlsPorts lists (443,
+	// 8443, 2376, 465, 993, 995). Certificate validation itself is skipped
+	// deliberately (InsecureSkipVerify, see tlsProbeConfig in probe.go): a
+	// home-LAN device presenting a self-signed or hostname-mismatched
+	// certificate is routine and not, on its own, a finding — see
+	// docs/VULNSCAN.md for that judgment call. This package only judges a
+	// certificate's dates (TLSCertNotBefore/TLSCertNotAfter below) and what
+	// protocol version and cipher suite were actually negotiated.
+	TLSNegotiated bool
+
+	// TLSVersion and TLSCipherSuite are exactly what the handshake
+	// negotiated (tls.VersionTLS10, tls.VersionTLS12, ... and the matching
+	// tls.CipherSuite ID), zero when no handshake completed. The handshake
+	// itself deliberately offers every version down to TLS 1.0 and every
+	// cipher suite Go still implements, including the ones Go's own
+	// standard library marks insecure, so a weak server reveals itself by
+	// what it actually picks rather than being refused a connection by
+	// Go's safe-by-default client settings.
+	TLSVersion     uint16
+	TLSCipherSuite uint16
+
+	// TLSCertNotBefore and TLSCertNotAfter are the leaf certificate's own
+	// validity window, zero when no certificate was presented (or no
+	// handshake completed at all).
+	TLSCertNotBefore time.Time
+	TLSCertNotAfter  time.Time
 }
 
 // Signature is one curated, named vulnerability check. See docs/VULNSCAN.md
@@ -240,7 +274,108 @@ func buildSignatures() []Signature {
 				return "answered an SMBv1-framed Negotiate Protocol response", true
 			},
 		},
+		{
+			ID: "docker-tls-unauthenticated-api", Name: "Docker API (TLS) exposed, unauthenticated", Severity: SeverityCritical, Ports: []int{2376},
+			Description: "The Docker Engine API on port 2376 answered an unauthenticated request even though the " +
+				"connection itself used TLS: encryption with no client-certificate check still lets anyone who can " +
+				"reach this port run arbitrary containers with full control of this host (for example, mounting the " +
+				"root filesystem). Require and check client certificates, or remove the exposure entirely.",
+			Match: func(p Probe) (string, bool) {
+				if !p.DockerAPIOpen {
+					return "", false
+				}
+				return "GET /version over TLS answered with no client certificate required", true
+			},
+		},
+		{
+			ID: "tls-weak-protocol", Name: "Outdated TLS version negotiated", Severity: SeverityHigh,
+			Description: "This server negotiated TLS 1.0 or TLS 1.1 even when offered a modern version: both were " +
+				"dropped by every major browser in 2020 and have known weaknesses in how they protect older cipher " +
+				"modes (the BEAST and POODLE-era issues). Configure the server to require TLS 1.2 or newer.",
+			Match: func(p Probe) (string, bool) {
+				if !p.TLSNegotiated {
+					return "", false
+				}
+				switch p.TLSVersion {
+				case tls.VersionTLS10:
+					return "negotiated TLS 1.0", true
+				case tls.VersionTLS11:
+					return "negotiated TLS 1.1", true
+				}
+				return "", false
+			},
+		},
+		{
+			ID: "tls-weak-cipher-suite", Name: "Weak TLS cipher suite negotiated", Severity: SeverityHigh,
+			Description: "This server negotiated a TLS cipher suite Go's own standard library flags as insecure " +
+				"(RC4, 3DES, or a CBC-mode suite with a known padding-oracle weakness). Anyone who can capture the " +
+				"traffic has a real, documented way to attack it. Disable weak cipher suites on the server and keep " +
+				"only modern AEAD suites (AES-GCM or ChaCha20-Poly1305).",
+			Match: func(p Probe) (string, bool) {
+				if !p.TLSNegotiated {
+					return "", false
+				}
+				name, weak := tlsWeakCipherSuiteName(p.TLSCipherSuite)
+				if !weak {
+					return "", false
+				}
+				return name, true
+			},
+		},
+		{
+			ID: "tls-cert-expired", Name: "TLS certificate expired", Severity: SeverityMedium,
+			Description: "This server's TLS certificate expired and was never renewed. An expired certificate does " +
+				"not by itself let anyone read the traffic, but it is a reliable sign this device's TLS setup is not " +
+				"being maintained, and it trains people to click through security warnings on a device that should " +
+				"not need any.",
+			Match: func(p Probe) (string, bool) {
+				if !p.TLSNegotiated || p.TLSCertNotAfter.IsZero() || !p.TLSCertNotAfter.Before(time.Now()) {
+					return "", false
+				}
+				return "certificate expired " + p.TLSCertNotAfter.Format("2006-01-02"), true
+			},
+		},
+		{
+			ID: "tls-cert-not-yet-valid", Name: "TLS certificate not yet valid", Severity: SeverityLow,
+			Description: "This server's TLS certificate has a start date in the future, which usually means either " +
+				"the device's clock is wrong or the certificate was generated incorrectly. Most clients will refuse " +
+				"it as invalid until that date arrives.",
+			Match: func(p Probe) (string, bool) {
+				if !p.TLSNegotiated || p.TLSCertNotBefore.IsZero() || !p.TLSCertNotBefore.After(time.Now()) {
+					return "", false
+				}
+				return "certificate not valid until " + p.TLSCertNotBefore.Format("2006-01-02"), true
+			},
+		},
+		{
+			ID: "upnp-exposed", Name: "UPnP control interface exposed", Severity: SeverityMedium,
+			Description: "This device answered a plain web request with a UPnP (Universal Plug and Play) banner. " +
+				"UPnP responds to requests from anything else on the local network with no authentication at all, " +
+				"and implementations of it have a long history of being exploitable outright or abused as DDoS " +
+				"reflectors (the 2020 \"CallStranger\" issue, CVE-2020-12695, is the best-known example). If this " +
+				"device does not actually need to negotiate its own port forwards, disabling UPnP on it removes " +
+				"this exposure entirely.",
+			Match: func(p Probe) (string, bool) {
+				if !strings.Contains(strings.ToLower(p.HTTPServer), "upnp") {
+					return "", false
+				}
+				return p.HTTPServer, true
+			},
+		},
 	}
+}
+
+// tlsWeakCipherSuiteName reports whether id is one of the cipher suites
+// Go's own standard library documents as insecure (tls.InsecureCipherSuites:
+// RC4, 3DES and the CBC-mode suites with known padding-oracle weaknesses),
+// and if so, its name for the finding's evidence.
+func tlsWeakCipherSuiteName(id uint16) (string, bool) {
+	for _, c := range tls.InsecureCipherSuites() {
+		if c.ID == id {
+			return c.Name, true
+		}
+	}
+	return "", false
 }
 
 func matchOpenSSHBelow(ceiling string) func(Probe) (string, bool) {

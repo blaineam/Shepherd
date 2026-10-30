@@ -48,10 +48,17 @@ function over already-collected data — no I/O happens inside `Match` itself). 
 | `nginx-resolver-cve` | any HTTP port probed | medium | an `nginx` Server header older than 1.20.1 (CVE-2021-23017) |
 | `lighttpd-outdated` | any HTTP port probed | low | a `lighttpd` Server header older than 1.4.50 (no specific CVE cited — see below) |
 | `docker-unauthenticated-api` | 2375 | critical | an unauthenticated `GET /version` answers with Docker's own API shape |
+| `docker-tls-unauthenticated-api` | 2376 | critical | the same, over TLS — the handshake completes with no client certificate, then `GET /version` still answers |
 | `smb1-enabled` | 445 | critical | a raw SMBv1 Negotiate Protocol request gets an SMBv1-framed reply |
+| `tls-weak-protocol` | 443, 8443, 465, 993, 995, 2376 | high | a TLS handshake offering down to TLS 1.0 actually negotiates TLS 1.0 or 1.1 |
+| `tls-weak-cipher-suite` | 443, 8443, 465, 993, 995, 2376 | high | the negotiated cipher suite is one Go's own standard library documents as insecure (RC4, 3DES, or a CBC-mode suite with a padding-oracle weakness) |
+| `tls-cert-expired` | 443, 8443, 465, 993, 995, 2376 | medium | the presented certificate's `NotAfter` is in the past |
+| `tls-cert-not-yet-valid` | 443, 8443, 465, 993, 995, 2376 | low | the presented certificate's `NotBefore` is in the future |
+| `upnp-exposed` | any HTTP port probed | medium | the HTTP `Server:` header contains "UPnP" |
 
-"Any HTTP port probed" means 80, 3000, 5000, 8000, 8080 and 8888 — see "Not detected" for why 443 and 8443
-are left out.
+"Any HTTP port probed" means 80, 3000, 5000, 8000, 8080 and 8888 over plain HTTP, plus 443 and 8443 over
+TLS (see "How a scan works" below) — the Apache/nginx/lighttpd and `upnp-exposed` signatures all key off
+the `Server:` header itself, not the port it arrived on, so they fire identically either way.
 
 Every one of these needs a **positive, confirmed signal** before it fires. A port that is open but gives
 no useful banner, a connection that is refused, or a read that times out, produces no finding at all —
@@ -66,22 +73,41 @@ not having the feature:
 - **No OS-level or general CVE database.** This is a curated table of specific, well-known signatures,
   not a scanner that can tell you about a CVE affecting something not in the table above. A device can
   have real, serious vulnerabilities this feature says nothing about.
-- **No TLS.** Ports 443 and 8443 are in `internal/portscan`'s scanned list, but this package only speaks
-  plain HTTP: confirming a web server's version behind TLS needs a TLS client, which is real additional
-  complexity this first pass deliberately left out rather than bolting on half-done. The Apache/nginx/
-  lighttpd signatures above only ever fire against a plaintext port.
-- **No UPnP checks.** UPnP exposure review (Internet Gateway Device discovery, which is UDP/SSDP on port
-  1900 plus whatever dynamic HTTP control port a router advertises) needs more than a TCP connect scan of
-  a fixed port list can give it; `internal/portscan` is TCP-only and does not scan port 1900, and adding a
-  new UDP probe path just for this one signature was out of scope for this pass. Not built — not faked.
+- **No threat feeds, local or otherwise.** A locally bundled list of known-malicious IPs/domains to flag
+  against observed traffic is a real, different feature (step 23 on [the roadmap](ROADMAP.md), paired
+  with "local AI") — it would need to hook into traffic observation (`internal/dnsengine`/history), not a
+  per-port probe, and was out of scope for this pass. Not started, not half-built.
+- **No self-signed-certificate or hostname-mismatch findings, by deliberate judgment call.** TLS probing
+  (below) inspects every certificate it is handed, but a home LAN device presenting a self-signed
+  certificate, or one whose name does not match how you actually reach it (a router at its LAN IP, a
+  NAS's mDNS name, a camera's default cert), is the **normal, expected case**, not a sign of anything
+  wrong — flagging it on every scan would train people to ignore real findings. This package only judges
+  a certificate's actual dates (`tls-cert-expired`, `tls-cert-not-yet-valid`), which are objectively wrong
+  regardless of who issued the certificate or what name is on it.
+- **No SSLv3 detection.** Go's `crypto/tls` dropped SSLv3 support outright years ago (there is no way to
+  even offer it from a Go TLS client), so `tls-weak-protocol` can only ever detect TLS 1.0/1.1 — a real
+  gap if a device still answers SSLv3 at all, which would need a different TLS implementation to confirm.
+- **TLS probing is limited to six ports.** 443, 8443 (with the same Apache/nginx/lighttpd signatures also
+  checked over the decrypted channel), 2376 (Docker's TLS port, checked the same way 2375 is), and the
+  three implicit-TLS mail ports (465 SMTPS, 993 IMAPS, 995 POP3S — certificate/protocol/cipher only, no
+  mail-protocol-specific signature exists yet). 587 (SMTP submission) is deliberately left as a plaintext
+  banner port: its TLS is explicit (STARTTLS, negotiated after a plaintext greeting), which this package
+  does not attempt to upgrade into.
+- **No UPnP device discovery.** `upnp-exposed` only recognizes a UPnP stack that happens to answer one of
+  the plain HTTP ports this package already probes (80, 3000, 5000, 8000, 8080, 8888) with "UPnP" in its
+  `Server:` header — the same kind of banner match every other HTTP signature here uses, no new wire
+  protocol involved. It is **not** SSDP/IGD discovery (UDP multicast on port 1900, locating a device's
+  real control URL, which can be anywhere): that is a separate, lower-level capability a different
+  feature (LAN-vs-WAN port-exposure discovery via UPnP IGD queries) owns. A UPnP stack that only answers
+  on a port outside the list above, or one whose `Server:` header does not mention UPnP at all, is missed.
 - **No generic default-credential detection.** Beyond the one specific, well-documented case that is
   detectable purely from a banner (the vsftpd 2.3.4 backdoor), this does not try to recognize "this banner
   looks like a device with default credentials": that would mean guessing at vendor-specific banners or
   actually trying credentials, both of which this project's no-authenticated-scanning rule rules out.
-- **Only Docker's own unauthenticated `/version` confirms exposure.** `internal/portscan` already flags
-  2375 and 2376 as risky ports purely from being open; this package goes one step further for 2375 (plain
-  HTTP) by actually calling the API and checking it answers un-authenticated, but 2376 (Docker's TLS
-  port) is not deepened for the same reason as 443/8443 above.
+- **Docker's own unauthenticated `/version` confirms exposure, over plain HTTP and over TLS alike.**
+  `internal/portscan` already flags 2375 and 2376 as risky ports purely from being open; this package
+  goes one step further for both — 2375 over plain HTTP, 2376 by completing a TLS handshake first (with
+  no client certificate offered) and then making the same unauthenticated request over it.
 - **Only one OpenSSH version-history signature family.** Non-OpenSSH SSH servers (Dropbear, libssh, ...)
   are not matched against any version-specific signature — only the protocol-version-1 check, which looks
   at the banner's own protocol field rather than a specific vendor's version history, applies to them.
@@ -105,6 +131,21 @@ The defaults are gentler than `internal/portscan`'s own (10 connections at once,
 2 seconds each. Each probe here does more real work than a bare connect-and-close — a banner read, or a
 short write/read exchange for FTP, Docker and SMB1 — so it deserves a little more time and a little less
 concurrency.
+
+**TLS probing.** For the six TLS-wrapped ports (443, 8443, 465, 993, 995, 2376), the probe runs a real
+TLS handshake over an injectable `TLSConnectFunc` seam (the TLS analog of `DialFunc`, so tests still touch
+zero real sockets or certificates) that deliberately offers down to TLS 1.0 and every cipher suite Go's
+`crypto/tls` still implements, including the ones Go's own standard library documents as insecure. A
+server that only speaks an old protocol version or a weak cipher reveals that by what it actually
+negotiates when offered the choice, rather than the handshake simply failing against Go's modern,
+safe-by-default client settings. Certificate verification itself is skipped (`InsecureSkipVerify`): this
+package only judges the certificate's own dates, never who issued it or what name is on it (see "Not
+detected" above for why). For 443 and 8443, a successful handshake is followed by the same minimal
+HTTP/1.0 request the plaintext HTTP ports get, over the now-decrypted channel — the Apache/nginx/lighttpd
+and `upnp-exposed` signatures fire identically either way, since they only ever look at the `Server:`
+header. For 2376, a successful handshake is followed by the same unauthenticated `GET /version` 2375 gets.
+465, 993 and 995 get the handshake and nothing more: there is no mail-protocol-specific signature yet to
+act on their decrypted content.
 
 Per device, per (signature, port) pair, Shepherd keeps a `Finding`: whether it is currently active, when
 it was first and most recently seen, and, mirroring `internal/portscan.PortRecord`'s own philosophy, it
