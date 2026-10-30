@@ -40,6 +40,16 @@ type DeviceInfo struct {
 	// Excluded devices opted out of protection: their queries are answered
 	// without any blocking (and are still logged and named).
 	Excluded bool
+	// Wandering devices are not filtered at all and every request is watched:
+	// the engine records what filtering WOULD have blocked in Entry.Shadow.
+	// WanderingUntil ends it; the zero time means until turned off.
+	Wandering      bool
+	WanderingUntil time.Time
+}
+
+// wandering reports whether the device is in wandering mode right now.
+func (i DeviceInfo) wandering(now time.Time) bool {
+	return i.Wandering && (i.WanderingUntil.IsZero() || now.Before(i.WanderingUntil))
 }
 
 // DeviceNamer maps a client address to its device. It runs on every query, so
@@ -173,15 +183,27 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		e.ClientSeen(entry.Client)
 	}
 	var d Decision
+	wander := false
 	if e.Names != nil {
 		info := e.Names.DeviceFor(entry.Client)
 		entry.DeviceID, entry.Device = info.ID, info.Name
-		if info.Excluded {
+		wander = info.wandering(start)
+		if info.Excluded && !wander {
 			d.Reason = "excluded"
 		}
 	}
 	if d.Reason == "" {
 		d = e.Filter.CheckFor(entry.Client, entry.Name, e.Clients)
+	}
+	if wander { // answer everything, but remember what filtering would have done
+		if d.Blocked {
+			entry.Shadow = d.Reason
+			if d.Scope != "" {
+				entry.Shadow += " (" + d.Scope + ")"
+			}
+		}
+		d = Decision{Reason: "wandering"}
+		entry.Wandering = true
 	}
 	if d.Blocked {
 		resp := e.sinkhole(r, q, d.NXDOMAIN)

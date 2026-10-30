@@ -107,7 +107,12 @@ type Device struct {
 	Groups   []string `json:"groups,omitempty"`
 	Tags     []string `json:"tags,omitempty"`
 	Excluded bool     `json:"excluded,omitempty"` // opted out of protection and traffic steering
-	Notes    string   `json:"notes,omitempty"`
+	// Wandering devices are not filtered at all, but every request they make is
+	// still logged and watched. WanderingUntil ends it automatically; zero means
+	// until it is turned off.
+	Wandering      bool      `json:"wandering,omitempty"`
+	WanderingUntil time.Time `json:"wandering_until,omitempty"`
+	Notes          string    `json:"notes,omitempty"`
 
 	MergedInto string `json:"merged_into,omitempty"` // set on the tombstone of a merged device
 

@@ -66,7 +66,7 @@ func tokenize(q string) []string {
 
 var filterKeys = map[string]bool{
 	"group": true, "vendor": true, "type": true, "ip": true, "mac": true, "seen": true,
-	"excluded": true, "unnamed": true, "tag": true, "name": true,
+	"excluded": true, "wandering": true, "unnamed": true, "tag": true, "name": true,
 }
 
 func parseQuery(q string) []term {
@@ -209,6 +209,10 @@ func (r *Registry) matchLocked(d *Device, terms []term, now time.Time) bool {
 		case "excluded":
 			want, valid := parseBool(t.val)
 			ok = valid && d.Excluded == want
+		case "wandering":
+			want, valid := parseBool(t.val)
+			active := d.Wandering && (d.WanderingUntil.IsZero() || d.WanderingUntil.After(now))
+			ok = valid && active == want
 		case "unnamed":
 			want, valid := parseBool(t.val)
 			ok = valid && !d.Named() == want

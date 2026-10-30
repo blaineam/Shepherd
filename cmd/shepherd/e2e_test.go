@@ -421,3 +421,38 @@ func TestExcludedDeviceIsNotFiltered(t *testing.T) {
 		t.Errorf("filtering must resume, got %q", got)
 	}
 }
+
+func TestWanderingDeviceIsWatchedButNotFiltered(t *testing.T) {
+	allowLoopbackDevices(t)
+	lists := listServer(t)
+	useCatalog(t, testCatalogFor(t, lists.URL))
+	cfgPath := writeConfig(t, freePort(t), freePort(t), "")
+	body, _ := os.ReadFile(cfgPath)
+	up := answerServer(t)
+	body = []byte(strings.Replace(string(body), `["192.0.2.53"]`, `["`+up+`"]`, 1))
+	body = append(body, []byte("\n[[lists]]\nname = \"pro\"\nurl = \""+lists.URL+"/ads.txt\"\n")...)
+	os.WriteFile(cfgPath, body, 0o600)
+	r := start(t, cfgPath)
+	defer r.stop()
+	waitUntil(t, "the list to load", func() bool { return resolve(t, r.dnsAddr, "x.ads.example.") == "0.0.0.0" })
+	id := deviceIDForIP(t, r, "127.0.0.1")
+
+	r.json("PATCH", "/api/devices/"+id, `{"wandering":true,"wandering_minutes":60}`, 200)
+	if got := resolve(t, r.dnsAddr, "x.ads.example."); got != "192.0.2.99" {
+		t.Errorf("a wandering device must not be filtered, got %q", got)
+	}
+	var found map[string]any
+	for _, e := range r.json("GET", "/api/queries?limit=50", "", 200)["entries"].([]any) {
+		if em := e.(map[string]any); em["name"] == "x.ads.example" && em["action"] == "allowed" {
+			found = em
+		}
+	}
+	if found == nil || found["reason"] != "wandering" || found["wandering"] != true || found["shadow"] == nil {
+		t.Errorf("the request must be logged as wandering with a shadow result: %v", found)
+	}
+
+	r.json("PATCH", "/api/devices/"+id, `{"wandering":false}`, 200)
+	if got := resolve(t, r.dnsAddr, "x.ads.example."); got != "0.0.0.0" {
+		t.Errorf("filtering must resume, got %q", got)
+	}
+}

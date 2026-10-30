@@ -105,3 +105,22 @@ Under the portal token, `X-Shepherd: 1` on every change.
 | `GET/POST /api/groups`, `PATCH/DELETE /api/groups/{id}` | list, create, rename or recolor, delete |
 
 Names are plain text and are rendered as text, never HTML. An unknown id is a 404, a duplicate group name a 409, bad input a 400.
+
+## Modes: Protected, Wandering, Excluded
+
+Every device is in one of three modes, set from the Devices screen (or `PATCH /api/devices/{id}`, or in bulk):
+
+| Mode | Filtering | Watched and logged | Use it for |
+|---|---|---|---|
+| **Protected** (default) | Everything that applies: blocklists, app and category blocks, rules, policies | Yes | Normal devices |
+| **Wandering** | **None at all.** Not even the Private Relay policy | **Yes, every request**, flagged as wandering | A device that misbehaves under filtering, a device you want to study, or a guest you want to see but not restrict |
+| **Excluded** | None | Yes (DNS), but the device is left alone | Infrastructure that must never be touched (routers, mesh nodes, Thread border routers) and, later, devices that must never be steered by Watch mode |
+
+Like a sheep wandering off while the shepherd keeps watch, a wandering device talks freely and nothing it does goes unseen.
+
+- **A timer is optional.** Choose 15 minutes, 1 hour, 4 hours, 24 hours (up to 30 days) or until you turn it off. A timed device returns to Protected by itself, and the DNS engine honours the end time on the very next query, not on a sweep.
+- **Shadow results.** For every request from a wandering device, Shepherd still works out what filtering *would* have blocked and records it as `shadow` (for example `hagezi-pro (network)` or `instagram (group Kids)`). You can see exactly what the device would have been denied, which also makes wandering mode a way to find false positives without breaking anything.
+- **Visible everywhere.** Wandering queries carry `wandering: true` and the reason `wandering` in the live stream, the in-memory view and the encrypted history, so they are easy to filter and replay. The HUD marks them distinctly.
+- **If both are set**, Wandering wins, so the shadow is still recorded.
+- **Search:** `wandering:true` finds the devices currently wandering.
+- **In Watch mode** (later) a wandering device is steered through Shepherd and its flows and bytes are recorded in full, with no blocking of any kind (no geo rules, no automatic blocks).

@@ -209,6 +209,13 @@ func (r *Registry) SetExcluded(id string, excluded bool) error {
 	return r.single(id, func() BulkResult { return r.BulkSetExcluded([]string{id}, excluded) })
 }
 
+// SetWandering puts one device in or out of wandering mode: no filtering at all,
+// every request still watched. until ends it automatically; the zero time keeps
+// it on until it is turned off.
+func (r *Registry) SetWandering(id string, on bool, until time.Time) error {
+	return r.single(id, func() BulkResult { return r.BulkSetWandering([]string{id}, on, until) })
+}
+
 // SetTags replaces a device's tags.
 func (r *Registry) SetTags(id string, tags []string) error {
 	want := normTags(tags)
@@ -279,6 +286,41 @@ func (r *Registry) BulkSetExcluded(ids []string, excluded bool) BulkResult {
 		d.Excluded = excluded
 		return true
 	})
+}
+
+// BulkSetWandering puts every listed device in or out of wandering mode. Turning
+// it off also clears the timer.
+func (r *Registry) BulkSetWandering(ids []string, on bool, until time.Time) BulkResult {
+	return r.bulk(ids, EventUpdated, "", func(d *Device) bool {
+		if !on {
+			if !d.Wandering && d.WanderingUntil.IsZero() {
+				return false
+			}
+			d.Wandering, d.WanderingUntil = false, time.Time{}
+			return true
+		}
+		if d.Wandering && d.WanderingUntil.Equal(until) {
+			return false
+		}
+		d.Wandering, d.WanderingUntil = true, until
+		return true
+	})
+}
+
+// ExpireWandering ends every wandering timer that has run out by now and returns
+// how many devices changed. The DNS engine already stops honouring an expired
+// timer on its own; this keeps the stored state and the UI in step.
+func (r *Registry) ExpireWandering(now time.Time) int {
+	var ids []string
+	for _, d := range r.List() {
+		if d.Wandering && !d.WanderingUntil.IsZero() && !d.WanderingUntil.After(now) {
+			ids = append(ids, d.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return 0
+	}
+	return r.BulkSetWandering(ids, false, time.Time{}).Changed
 }
 
 // BulkSetTags adds and removes tags on every listed device.
@@ -415,6 +457,7 @@ func (r *Registry) Split(id, mac string, ips ...string) (string, error) {
 		nd.Groups = append([]string(nil), d.Groups...)
 		nd.Tags = append([]string(nil), d.Tags...)
 		nd.Excluded = d.Excluded
+		nd.Wandering, nd.WanderingUntil = d.Wandering, d.WanderingUntil
 		r.applyEvidence(nd, Observation{}, "", d.LastSeen)
 		r.retype(d)
 		r.index(d)

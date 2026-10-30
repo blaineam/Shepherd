@@ -156,6 +156,7 @@ func startDevices(ctx context.Context, cfg config.Config, engine *dnsengine.Engi
 			case <-ctx.Done():
 				return nil
 			case <-t.C:
+				reg.ExpireWandering(time.Now())
 				if c := reg.Clock(); c != last {
 					last = c
 					save()
