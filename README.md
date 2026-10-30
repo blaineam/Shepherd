@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icon.png" width="140" alt="Shepherd, a black sheep inside a fluffy teal flock">
+  <img src="assets/icon-rounded.png" width="140" alt="Shepherd, a black sheep inside a fluffy teal flock">
 </p>
 
 <h1 align="center">Shepherd</h1>
