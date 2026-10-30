@@ -5,6 +5,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -193,5 +194,70 @@ func TestMapDatabaseMirror(t *testing.T) {
 	}
 	if cfg := writeCfg(t, "[map]\ndatabase_url = \"https://mirror.example.net/geo\"\n"); cfg.Map.DatabaseURL != "https://mirror.example.net/geo" {
 		t.Errorf("mirror = %q", cfg.Map.DatabaseURL)
+	}
+}
+
+func TestDeviceAndBootstrapDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := cfg.Devices
+	if !d.Enabled || !d.DNS || !d.Neighbors || !d.MDNS || !d.ReverseDNS || d.NeighborIntervalSeconds != 30 || d.SaveIntervalSeconds != 60 || d.ReverseDNSServer != "" {
+		t.Errorf("devices defaults = %+v", d)
+	}
+	if len(cfg.DNS.Bootstrap) != 2 || cfg.DNS.Bootstrap[0] != "9.9.9.9" {
+		t.Errorf("bootstrap default = %v", cfg.DNS.Bootstrap)
+	}
+	if !cfg.ListsAreDefault() {
+		t.Error("an untouched config uses the default list")
+	}
+}
+
+func TestDeviceAndBootstrapOverridesAndValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.toml")
+	os.WriteFile(path, []byte(`[dns]
+bootstrap = ["203.0.113.1"]
+[devices]
+mdns = false
+reverse_dns_server = "192.0.2.1:53"
+neighbor_interval_seconds = 10
+[[lists]]
+name = "mine"
+url = "file:///x"
+`), 0o600)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Devices.MDNS || !cfg.Devices.Neighbors || cfg.Devices.NeighborIntervalSeconds != 10 || cfg.DNS.Bootstrap[0] != "203.0.113.1" || cfg.ListsAreDefault() {
+		t.Errorf("cfg = %+v", cfg)
+	}
+	bad := map[string]string{
+		"[dns]\nbootstrap = []":                              "bootstrap",
+		"[devices]\nneighbor_interval_seconds = 1":           "at least 5",
+		"[devices]\nsave_interval_seconds = 0":               "at least 5",
+		"[devices]\nreverse_dns_server = \"router.example\"": "IP address",
+	}
+	for body, want := range bad {
+		os.WriteFile(path, []byte(body), 0o600)
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", body, err, want)
+		}
+	}
+	os.WriteFile(path, []byte("[devices]\nreverse_dns_server = \"2001:db8::1\"\n"), 0o600)
+	if _, err := Load(path); err != nil {
+		t.Errorf("a bare IPv6 address is valid: %v", err)
+	}
+}
+
+func TestExampleConfigShowsTheDeviceAndBootstrapDefaults(t *testing.T) {
+	ex, err := Load("../../shepherd.example.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := Default()
+	if ex.Devices != def.Devices || !slices.Equal(ex.DNS.Bootstrap, def.DNS.Bootstrap) {
+		t.Errorf("example %+v %v differs from the defaults %+v %v", ex.Devices, ex.DNS.Bootstrap, def.Devices, def.DNS.Bootstrap)
 	}
 }

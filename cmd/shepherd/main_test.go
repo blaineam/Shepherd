@@ -18,6 +18,12 @@ import (
 	"github.com/miekg/dns"
 )
 
+func TestMain(m *testing.M) {
+	// Cheap Argon2id for the passphrase tests; production keeps the strong defaults.
+	argonTime, argonMemKiB = 1, 64
+	os.Exit(m.Run())
+}
+
 func freePort(t *testing.T) int {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -43,6 +49,10 @@ block_private_relay = true
 listen = "127.0.0.1:%d"
 [map]
 enabled = false
+[devices]
+neighbors = false
+mdns = false
+reverse_dns = false
 %s`, filepath.Join(dir, "data"), dnsPort, portalPort, extra)
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -224,7 +234,7 @@ func start(t *testing.T, cfg string) *running {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		q := new(dns.Msg)
-		q.SetQuestion("warmup.example.com.", dns.TypeA)
+		q.SetQuestion("mask.icloud.com.", dns.TypeA) // answered locally; a name that went upstream would leave a slow query behind
 		if _, _, err := (&dns.Client{Timeout: 300 * time.Millisecond}).Exchange(q, r.dnsAddr); err == nil {
 			break
 		}

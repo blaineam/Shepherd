@@ -7,15 +7,25 @@
 # Keep this OUTSIDE the repository.
 data_dir = "data"
 
-# Set true to run with no built-in blocklist. Lists you define under [[lists]]
-# always replace the built-in one, so this is only needed to run with none.
+# A brand new install starts with the catalog's recommended blocklists switched
+# on (see docs/POLICY.md). Set true to start with none. Defining your own
+# [[lists]] below does the same: they replace the recommended ones.
+# This and [[lists]] are read ONCE, the first time Shepherd runs in a data
+# directory (they also seed an install that predates policy.json). After that
+# the portal owns the policy and these are ignored.
 no_default_lists = false
 
 [dns]
 # host:port addresses, each served over UDP and TCP. Use your LAN address
 # (not 0.0.0.0) on hosts where system DNS already holds 127.0.0.1:53.
 listen = ["127.0.0.1:5353"]
+# Upstream resolvers: "9.9.9.10", "9.9.9.10:5353", "tcp://ip", "tls://host[:853]" (DoT),
+# "https://host/dns-query" (DoH). See docs/UPSTREAMS.md. This only seeds the list: once
+# you change it in the portal, <data_dir>/upstreams.json wins.
 upstreams = ["9.9.9.10", "149.112.112.10", "1.1.1.1"]
+# Plain resolvers (IP addresses) used only to look up the names of tls:// and https://
+# upstreams. Never the system resolver.
+bootstrap = ["9.9.9.9", "1.1.1.1"]
 block_mode = "null"            # "null" answers 0.0.0.0 / ::, "nxdomain" answers NXDOMAIN
 probe_interval_seconds = 15
 cache_size = 20000
@@ -48,10 +58,23 @@ enabled = true
 auto_home = true
 # database_url = ""    # a mirror for offline or air-gapped installs
 
+[devices]
+# Names, vendors and groups for the machines on your network (docs/DEVICES.md).
+# Every source is passive: Shepherd listens, it never scans or announces.
+enabled = true
+dns = true                       # learn a device from the address its DNS queries come from
+neighbors = true                 # read the OS neighbor (ARP/NDP) table
+neighbor_interval_seconds = 30
+mdns = true                      # listen for multicast DNS announcements
+reverse_dns = true               # ask one resolver for the name of each new address
+reverse_dns_server = ""          # "ip" or "ip:port"; empty uses the default gateway (Linux)
+save_interval_seconds = 60       # the registry is kept in <data_dir>/devices.json
+
 [portal]
 listen = "127.0.0.1:8787"
 
-# The built-in blocklist. Defining any [[lists]] replaces it.
+# The list a pre-policy install used, and the default for a new one. Defining
+# any [[lists]] replaces the recommended catalog lists on a new install.
 [[lists]]
 name = "hagezi-pro"
 url = "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt"

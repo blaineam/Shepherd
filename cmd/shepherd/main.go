@@ -66,6 +66,9 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	if err := os.MkdirAll(cfg.DataDir, 0o750); err != nil {
 		return err
 	}
+	// An install that has run before has a portal token or a rules.json. Its
+	// blocking behavior is carried over exactly (see openPolicy).
+	existing := fileExists(filepath.Join(cfg.DataDir, "portal-token")) || fileExists(filepath.Join(cfg.DataDir, "rules.json"))
 	token, err := portal.LoadOrCreateToken(cfg.DataDir)
 	if err != nil {
 		return err
@@ -76,19 +79,20 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	}
 
 	filter := dnsengine.NewFilter()
-	rules, err := dnsengine.LoadRules(filepath.Join(cfg.DataDir, "rules.json"), filter,
-		map[string]bool{dnsengine.PolicyPrivateRelay: cfg.Privacy.BlockPrivateRelay})
+	policy, err := openPolicy(cfg, filter, existing)
 	if err != nil {
 		return err
 	}
-	var lists []dnsengine.ListConfig
-	for _, l := range cfg.Lists {
-		lists = append(lists, dnsengine.ListConfig{Name: l.Name, URL: l.URL})
-	}
-	listMgr := dnsengine.NewListManager(filter, cfg.DataDir, lists, cfg.DNS.ProtectedDomains)
-	pool, err := dnsengine.NewPool(cfg.DNS.Upstreams)
+	listMgr := dnsengine.NewScopedListManager(filter, policy, cfg.DataDir, cfg.DNS.ProtectedDomains)
+	pool, err := dnsengine.NewPool(cfg.DNS.Upstreams, dnsengine.WithBootstrap(cfg.DNS.Bootstrap...))
 	if err != nil {
 		return err
+	}
+	// Runtime edits made in the portal live in upstreams.json and, once it
+	// exists, win over dns.upstreams.
+	ups := dnsengine.OpenUpstreamStore(filepath.Join(cfg.DataDir, "upstreams.json"), pool)
+	if err := ups.LoadProblem(); err != nil {
+		log.Printf("upstreams: ignoring the saved list, using the configuration: %v", err)
 	}
 	engine := &dnsengine.Engine{
 		Filter: filter, Pool: pool, Cache: dnsengine.NewCache(cfg.DNS.CacheSize),
@@ -101,11 +105,18 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	go pool.Probe(ctx, time.Duration(cfg.DNS.ProbeIntervalSeconds)*time.Second)
 	go listMgr.Run(ctx, 24*time.Hour)
 
+	registry, stopDevices, err := startDevices(ctx, cfg, engine)
+	if err != nil {
+		return err
+	}
+	defer func() { cancel(); stopDevices() }() // sources stop, then the registry is saved
+
 	prefs, err := settings.Open(filepath.Join(cfg.DataDir, "settings.json"))
 	if err != nil {
 		return err
 	}
-	deps := portal.Deps{Engine: engine, Lists: listMgr, Rules: rules, Token: token, Version: version, Settings: prefs}
+	deps := portal.Deps{Engine: engine, Lists: listMgr, Policy: policy, Devices: registry, Upstreams: ups,
+		Token: token, Version: version, Settings: prefs}
 
 	if cfg.Map.Enabled {
 		var locator geo.Locator
@@ -165,12 +176,48 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	}
 }
 
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// catalogOverride replaces the shipped catalog. It is a test seam: production
+// leaves it nil.
+var catalogOverride *dnsengine.CatalogSet
+
+// openPolicy opens <data>/policy.json. On first run it is seeded from the old
+// files: rules.json (allow, block and policy switches) and the config's
+// [[lists]], so an install that predates the policy store keeps exactly the
+// blocking it had. A brand new install also gets the catalog's recommended
+// items at network scope (protection is opt-out). The recommended items are
+// left off when the install already existed, when no_default_lists is set, or
+// when the config defines its own [[lists]]: in all three the user chose what
+// is blocked. After first run policy.json is the only source of truth.
+func openPolicy(cfg config.Config, filter *dnsengine.Filter, existing bool) (*dnsengine.PolicyStore, error) {
+	var lists []dnsengine.ListConfig
+	for _, l := range cfg.Lists {
+		lists = append(lists, dnsengine.ListConfig{Name: l.Name, URL: l.URL})
+	}
+	return dnsengine.OpenPolicyStore(filepath.Join(cfg.DataDir, "policy.json"), filter, dnsengine.PolicyOptions{
+		Catalog: catalogOverride,
+		Legacy: &dnsengine.LegacyConfig{
+			RulesPath: filepath.Join(cfg.DataDir, "rules.json"), Lists: lists, BlockPrivateRelay: cfg.Privacy.BlockPrivateRelay,
+		},
+		ExtraProtected: cfg.DNS.ProtectedDomains,
+		NoRecommended:  existing || cfg.NoDefaultLists || !cfg.ListsAreDefault(),
+	})
+}
+
+// argonTime and argonMemKiB override the passphrase key's Argon2id cost.
+// Production leaves them zero (the strong defaults); tests lower them.
+var argonTime, argonMemKiB uint32
+
 // openHistory opens the encrypted history with the configured key source.
 func openHistory(cfg config.Config) (*history.Store, error) {
 	dir := filepath.Join(cfg.DataDir, "history")
 	var keys history.KeySource
 	if cfg.History.KeySource == "passphrase" {
-		keys = &history.PassphraseKey{Dir: filepath.Join(dir, "keys")}
+		keys = &history.PassphraseKey{Dir: filepath.Join(dir, "keys"), Time: argonTime, MemoryKiB: argonMemKiB}
 	} else {
 		path := cfg.History.KeyFile
 		if path == "" {
