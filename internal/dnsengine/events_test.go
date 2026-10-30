@@ -119,6 +119,92 @@ func fakeUpstreamAnswering(t *testing.T, ip string, hits *atomicInt) string {
 	return fakeUpstream(t, ip, hits)
 }
 
+func TestCountryBlockOverridesAllowedAndCached(t *testing.T) {
+	var hits atomicInt
+	up := fakeUpstreamAnswering(t, "198.51.100.7", &hits)
+	pool, _ := NewPool([]string{up})
+	e := &Engine{
+		Filter: NewFilter(), Pool: pool, Cache: NewCache(10), Log: NewQueryLog(20), Stats: NewStats(),
+		Geo: fakeGeo{"198.51.100.7": {Lat: 48.8, Lon: 2.3, City: "Paris", Country: "FR"}},
+	}
+	var observed int
+	e.Observe = func(string, string, []net.IP) { observed++ }
+	var gotDests []Dest
+	e.CountryBlock = func(clientIP string, dests []Dest) (string, bool) {
+		gotDests = dests
+		for _, d := range dests {
+			if d.Country == "FR" {
+				return d.Country, true
+			}
+		}
+		return "", false
+	}
+
+	e.ServeDNS(udpWriter(), query("site.example.", dns.TypeA)) // allowed, then geo-blocked
+	e.ServeDNS(udpWriter(), query("site.example.", dns.TypeA)) // cached, then geo-blocked
+	entries, _ := e.Log.After(0, 10)
+	if len(entries) != 2 {
+		t.Fatalf("entries = %d", len(entries))
+	}
+	for i, en := range entries {
+		if en.Action != "blocked" || en.Reason != "geo" || en.GeoCountry != "FR" {
+			t.Errorf("entry %d = %+v, want blocked/geo/FR", i, en)
+		}
+		if len(en.Dests) != 1 || en.Dests[0].Country != "FR" {
+			t.Errorf("entry %d dests = %+v, want the resolved destination kept", i, en.Dests)
+		}
+	}
+	if observed != 0 {
+		t.Error("Observe must never see a query that ended up country-blocked")
+	}
+	if len(gotDests) != 1 || gotDests[0].IP != "198.51.100.7" {
+		t.Errorf("CountryBlock must receive the geolocated dests: %+v", gotDests)
+	}
+}
+
+func TestCountryBlockLeavesNonMatchingQueriesAlone(t *testing.T) {
+	var hits atomicInt
+	up := fakeUpstreamAnswering(t, "198.51.100.7", &hits)
+	pool, _ := NewPool([]string{up})
+	e := &Engine{
+		Filter: NewFilter(), Pool: pool, Cache: NewCache(10), Log: NewQueryLog(20), Stats: NewStats(),
+		Geo: fakeGeo{"198.51.100.7": {Lat: 48.8, Lon: 2.3, City: "Paris", Country: "FR"}},
+	}
+	var observed int
+	e.Observe = func(string, string, []net.IP) { observed++ }
+	e.CountryBlock = func(string, []Dest) (string, bool) { return "", false } // never blocks
+
+	e.ServeDNS(udpWriter(), query("site.example.", dns.TypeA))
+	entries, _ := e.Log.After(0, 10)
+	if len(entries) != 1 || entries[0].Action != "allowed" || entries[0].Reason != "" {
+		t.Fatalf("entry = %+v", entries)
+	}
+	if observed != 1 {
+		t.Error("Observe must still run when CountryBlock declines to block")
+	}
+}
+
+func TestCountryBlockRespectsBlockNXDOMAIN(t *testing.T) {
+	var hits atomicInt
+	up := fakeUpstreamAnswering(t, "198.51.100.7", &hits)
+	pool, _ := NewPool([]string{up})
+	e := &Engine{
+		Filter: NewFilter(), Pool: pool, Cache: NewCache(10), Log: NewQueryLog(20), Stats: NewStats(),
+		Geo:           fakeGeo{"198.51.100.7": {Lat: 48.8, Lon: 2.3, City: "Paris", Country: "FR"}},
+		BlockNXDOMAIN: true,
+		CountryBlock:  func(string, []Dest) (string, bool) { return "FR", true },
+	}
+	w := udpWriter()
+	e.ServeDNS(w, query("site.example.", dns.TypeA))
+	if len(w.msgs) != 1 || w.msgs[0].Rcode != dns.RcodeNameError {
+		t.Errorf("rcode = %+v, want NXDOMAIN", w.msgs)
+	}
+	entries, _ := e.Log.After(0, 10)
+	if entries[0].Rcode != "NXDOMAIN" {
+		t.Errorf("entry rcode = %q", entries[0].Rcode)
+	}
+}
+
 func TestQueryLogSubscribeSinkAndAll(t *testing.T) {
 	l := NewQueryLog(3)
 	var sunk []Entry

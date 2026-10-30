@@ -36,6 +36,9 @@ export function createMgmt(api) {
     addSubscription: (body) => post('/api/accountability/subscriptions', body),
     deleteSubscription: (id) => api('/api/accountability/subscriptions/' + encodeURIComponent(id), { method: 'DELETE' }),
 
+    geoBlock: () => api('/api/geoblock'),
+    setCountries: (scope, countries) => post('/api/geoblock', { scope, countries }),
+
     upstreams: () => api('/api/upstreams'),
     testUpstream: (addr) => post('/api/upstreams/test', { addr }),
     addUpstream: (addr) => post('/api/upstreams', { addr }),

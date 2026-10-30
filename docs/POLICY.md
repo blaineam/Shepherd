@@ -139,6 +139,12 @@ whatever the next applicable scope or default would otherwise decide.
   domain through during its window; outside it, that domain falls back to whatever would otherwise apply (typically the scope's
   own default-block). A scheduled block rule works the same way in blocklist mode: it blocks only inside its window.
 
+## Country blocking
+
+Blocking a country is **not** one of this policy's rules. It is a separate, additive check that runs after
+this policy has already allowed a query, using the same network/group/device scopes but its own store and
+its own API — see [GEOBLOCK.md](GEOBLOCK.md).
+
 ## Excluded devices
 
 A device marked **excluded** has opted out of protection: its queries are answered without any blocking (the log shows reason

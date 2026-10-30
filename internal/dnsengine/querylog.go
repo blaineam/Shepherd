@@ -41,9 +41,14 @@ type Entry struct {
 	Upstream string  `json:"upstream,omitempty"`
 	Ms       float64 `json:"ms"`
 	Rcode    string  `json:"rcode"`
-	// Dests are the geolocated addresses the answer pointed at (allowed and
-	// cached queries only).
+	// Dests are the geolocated addresses the answer pointed at: for an
+	// allowed or cached query, or for one blocked by country (Reason "geo"),
+	// where it carries the destination the block was for.
 	Dests []Dest `json:"dests,omitempty"`
+	// GeoCountry is set on a query blocked by country (Reason "geo"): the
+	// ISO 3166-1 alpha-2 code of the resolved address that matched. See
+	// Engine.CountryBlock and docs/GEOBLOCK.md.
+	GeoCountry string `json:"geo_country,omitempty"`
 	// Wandering marks a query from a device in wandering mode (never filtered).
 	// Shadow names what would have blocked it, when something would have.
 	Wandering bool   `json:"wandering,omitempty"`

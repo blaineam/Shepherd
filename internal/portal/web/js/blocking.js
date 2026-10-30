@@ -4,10 +4,12 @@
 import { el } from './dom.js';
 import { icon, iconButton, button, toggle, segmented, emptyState, confirmDialog, relTime, unavailableCard, debounce } from './ui.js';
 import { NETWORK, sameScope, scopeLabel, itemStatus, nextItemValue, rulesView, switchView, modeView, effectiveSummary, inheritedSources, dataFor, normalizeDomain } from './scope.js';
+import { normalizeGeoBlock, listFor, countryStatus, setCountry } from './geoscope.js';
+import { COUNTRIES } from './countries.js';
 import { groupCatalog, listStatus, fmtCount, sources, safeHref, bundleProgress, matchesQuery } from './catalog.js';
 import { unavailable } from './mgmt.js';
 
-const TABS = [['apps', 'Apps and categories'], ['lists', 'Blocklists'], ['custom', 'Your lists'], ['rules', 'Domain rules'], ['switches', 'Settings']];
+const TABS = [['apps', 'Apps and categories'], ['lists', 'Blocklists'], ['custom', 'Your lists'], ['rules', 'Domain rules'], ['switches', 'Settings'], ['geo', 'Countries']];
 
 export function createBlocking({ root, mgmt, store, notify, getGroups, onOpenDevice }) {
   let scope = NETWORK;
@@ -17,6 +19,9 @@ export function createBlocking({ root, mgmt, store, notify, getGroups, onOpenDev
   let query = '';
   let loadError = null;
   let started = false;
+  let geo = null; // normalized geo-block state (see geoscope.js); null until loaded
+  let geoError = null;
+  let geoFilter = '';
 
   root.replaceChildren();
   const head = el('div', 'pg-head');
@@ -222,7 +227,7 @@ export function createBlocking({ root, mgmt, store, notify, getGroups, onOpenDev
     if (loadError) { content.append(unavailable(loadError) ? unavailableCard('Blocking policy') : emptyState('Could not load blocking settings', loadError.message, button('Try again', 'ghost', () => load(true)))); return; }
     if (!store.ready) { content.append(el('p', 'muted', 'Loading…')); return; }
     if (scope.kind === 'device' && !scope.id) { content.append(emptyState('Choose a device', 'Pick a device above to see and change what is blocked for it alone.')); return; }
-    if (query) paintSearch(); else if (tab === 'apps') paintApps(); else if (tab === 'lists') paintLists(); else if (tab === 'custom') paintCustom(); else if (tab === 'rules') paintRules(); else paintSwitches();
+    if (query) paintSearch(); else if (tab === 'apps') paintApps(); else if (tab === 'lists') paintLists(); else if (tab === 'custom') paintCustom(); else if (tab === 'rules') paintRules(); else if (tab === 'geo') paintGeo(); else paintSwitches();
     root.scrollTop = st;
     if (focusKey && !inSearch) { const t = content.querySelector('[data-key="' + CSS.escape(focusKey) + '"]'); if (t) t.focus({ preventScroll: true }); }
   }
@@ -551,6 +556,63 @@ export function createBlocking({ root, mgmt, store, notify, getGroups, onOpenDev
     content.append(list);
   }
 
+  // ------------------------------------------------------------- country blocking
+  async function setCountryOn(code, name, on) {
+    const prev = geo;
+    const next = setCountry(geo, scope, code, on);
+    geo = next;
+    paintContent();
+    try {
+      await mgmt.setCountries(scope, listFor(next, scope));
+    } catch (e) {
+      geo = prev;
+      notify('Could not change ' + name + ': ' + e.message);
+      paintContent();
+    }
+  }
+
+  function paintGeo() {
+    if (geoError) { content.append(unavailable(geoError) ? unavailableCard('Country blocking') : emptyState('Could not load country blocking', geoError.message, button('Try again', 'ghost', () => load(true)))); return; }
+    if (!geo) { content.append(el('p', 'muted', 'Loading…')); return; }
+    content.append(intro('Block DNS answers whose address resolves to a country you pick, for ' + (scope.kind === 'network' ? 'everyone' : labelOf(scope)) + '. This only ever sees the IP(s) in Shepherd’s own DNS answer: a device using its own resolver or a VPN is invisible to it. Needs the map’s GeoIP database ([map] enabled) loaded to do anything — see docs/GEOBLOCK.md.'));
+    const sb = el('div', 'sbox');
+    sb.append(icon('search', 15, 'sbox-ico'));
+    const inp = el('input');
+    inp.type = 'search';
+    inp.placeholder = 'Filter countries by name or code';
+    inp.setAttribute('aria-label', 'Filter countries');
+    inp.value = geoFilter;
+    inp.autocomplete = 'off';
+    inp.addEventListener('input', () => { geoFilter = inp.value.trim().toLowerCase(); paintContent(); });
+    sb.append(inp);
+    content.append(sb);
+
+    const f = geoFilter;
+    const list = COUNTRIES.filter(([code, name]) => !f || name.toLowerCase().includes(f) || code.toLowerCase() === f);
+    const wrap = el('div', 'list-rows');
+    if (!list.length) wrap.append(emptyState('Nothing matches', 'Try a different name or two-letter code.'));
+    for (const [code, name] of list) {
+      const st = countryStatus(geo, scope, scopeGroups, code);
+      const row = el('div', 'list-row' + (st.effective ? ' on' : ''));
+      const locked = st.inherited.length > 0;
+      const t = toggle({
+        checked: st.effective, label: 'Block ' + name + ' for ' + labelOf(scope), disabled: locked,
+        title: locked ? 'Blocked by ' + labelOf(st.inherited[0]) + '. Change it there.' : '',
+        onChange: (v) => setCountryOn(code, name, v),
+      });
+      t.input.dataset.key = 'geo:' + code;
+      row.append(t.root);
+      const main = el('div', 'lr-main');
+      const nm = el('div', 'lr-name');
+      nm.append(el('span', '', name), el('span', 'muted small mono', code));
+      for (const s of st.inherited) nm.append(el('span', 'badge inh', labelOf(s)));
+      main.append(nm);
+      row.append(main);
+      wrap.append(row);
+    }
+    content.append(wrap);
+  }
+
   function paintSearch() {
     const g = groupCatalog(store.catalog, query);
     const bundles = store.catalog.entries.filter((e) => e.kind === 'category' && matchesQuery(e, query));
@@ -591,9 +653,18 @@ export function createBlocking({ root, mgmt, store, notify, getGroups, onOpenDev
   const intro = (t) => el('p', 'intro muted', t);
 
   // ------------------------------------------------------------- lifecycle
+  async function loadGeo(force) {
+    if (!force && geo) return;
+    geo = normalizeGeoBlock(await mgmt.geoBlock());
+  }
+
   async function load(force) {
     loadError = null;
-    try { await store.load(force); } catch (e) { loadError = e; }
+    geoError = null;
+    await Promise.all([
+      store.load(force).catch((e) => { loadError = e; }),
+      loadGeo(force).catch((e) => { geoError = e; }),
+    ]);
     repaint();
   }
 
@@ -608,7 +679,7 @@ export function createBlocking({ root, mgmt, store, notify, getGroups, onOpenDev
     },
     setScope(s, name, groupIds) { if (!started) { started = true; paintBar(); } setScope(s, name, groupIds); },
     get scope() { return scope; },
-    onGroupsChanged() { if (scope.kind === 'group' && !groups().some((g) => g.id === scope.id)) scope = NETWORK; if (started && !root.hidden) { store.invalidate(); load(false); } },
+    onGroupsChanged() { if (scope.kind === 'group' && !groups().some((g) => g.id === scope.id)) scope = NETWORK; if (started && !root.hidden) { store.invalidate(); geo = null; load(false); } },
   };
 }
 

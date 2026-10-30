@@ -45,6 +45,15 @@ type Engine struct {
 	// (docs/ACCOUNTABILITY.md) want to know about a watched access whether
 	// or not it was blocked. Must be cheap; nil disables it.
 	OnAccess func(AccessInfo)
+	// CountryBlock, when set, runs after a query would otherwise be answered
+	// (allowed or cached) and may turn it into a blocked one. It receives the
+	// client's address and the already-geolocated answer destinations (nil
+	// when Geo is nil or placed none of them) and reports the ISO country
+	// code that matched and whether to block. This is an additive check,
+	// layered outside the Filter's own decision, never one of its rules
+	// (see internal/geo and docs/GEOBLOCK.md); nil disables it. It must be
+	// fast and must not block.
+	CountryBlock func(clientIP string, dests []Dest) (country string, blocked bool)
 }
 
 // AccessInfo is what OnAccess receives for one query matching a watched
@@ -221,6 +230,34 @@ func (e *Engine) reportAccess(entry Entry) {
 	e.OnAccess(AccessInfo{Time: entry.Time, ClientIP: entry.Client, Items: items, Domain: entry.Name, Action: entry.Action})
 }
 
+// finishAllowed geolocates resp's answer and gives CountryBlock a chance to
+// turn this otherwise-allowed or cached query into a blocked one (an
+// additive check that runs after the Filter's own decision, never inside
+// it). entry.Action and entry.Rcode must already reflect "allowed" or
+// "cached"; a country block overrides both. Observe only ever sees the real
+// answer, never when the query ends up blocked.
+func (e *Engine) finishAllowed(w dns.ResponseWriter, r *dns.Msg, q dns.Question, entry Entry, resp *dns.Msg, start time.Time) {
+	ips := answerIPs(resp)
+	entry.Dests = e.destsOf(ips)
+	if e.CountryBlock != nil {
+		if country, blocked := e.CountryBlock(entry.Client, entry.Dests); blocked {
+			resp = e.sinkhole(r, q, false)
+			entry.Action, entry.Reason, entry.GeoCountry = "blocked", "geo", country
+			entry.Rcode = dns.RcodeToString[resp.Rcode]
+			e.write(w, r, resp)
+			e.reportAccess(entry)
+			e.done(entry, start)
+			return
+		}
+	}
+	if e.Observe != nil {
+		e.Observe(entry.Client, entry.Name, ips)
+	}
+	e.write(w, r, resp)
+	e.reportAccess(entry)
+	e.done(entry, start)
+}
+
 // ServeDNS implements dns.Handler.
 func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	start := time.Now()
@@ -277,14 +314,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	if resp, ok := e.Cache.Get(r); ok {
 		entry.Action, entry.Rcode = "cached", dns.RcodeToString[resp.Rcode]
-		ips := answerIPs(resp)
-		entry.Dests = e.destsOf(ips)
-		if e.Observe != nil {
-			e.Observe(entry.Client, entry.Name, ips)
-		}
-		e.write(w, r, resp)
-		e.reportAccess(entry)
-		e.done(entry, start)
+		e.finishAllowed(w, r, q, entry, resp, start)
 		return
 	}
 
@@ -301,14 +331,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 	e.Cache.Put(r, resp)
 	entry.Action, entry.Upstream, entry.Rcode = "allowed", up.Addr, dns.RcodeToString[resp.Rcode]
-	ips := answerIPs(resp)
-	entry.Dests = e.destsOf(ips)
-	if e.Observe != nil {
-		e.Observe(entry.Client, entry.Name, ips)
-	}
-	e.write(w, r, resp)
-	e.reportAccess(entry)
-	e.done(entry, start)
+	e.finishAllowed(w, r, q, entry, resp, start)
 }
 
 // Serve listens on every address over UDP and TCP until ctx ends. All binds

@@ -83,6 +83,10 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	if err != nil {
 		return err
 	}
+	geoBlock, err := dnsengine.OpenGeoBlockStore(filepath.Join(cfg.DataDir, "geoblock.json"))
+	if err != nil {
+		return err
+	}
 	listMgr := dnsengine.NewScopedListManager(filter, policy, cfg.DataDir, cfg.DNS.ProtectedDomains)
 	pool, err := dnsengine.NewPool(cfg.DNS.Upstreams, dnsengine.WithBootstrap(cfg.DNS.Bootstrap...))
 	if err != nil {
@@ -116,7 +120,7 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		return err
 	}
 	deps := portal.Deps{Engine: engine, Lists: listMgr, Policy: policy, Devices: registry, Upstreams: ups,
-		Token: token, Version: version, Settings: prefs,
+		Token: token, Version: version, Settings: prefs, GeoBlock: geoBlock,
 		DataDir: cfg.DataDir, IdleLockMinutes: cfg.Portal.IdleLockMinutes}
 
 	if cfg.Alarms.Enabled {
@@ -128,16 +132,17 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		deps.Alarms = alarmEngine
 	}
 
+	var mapLocator *geo.Locator
 	var asnLocator *geo.ASNLocator
 	if cfg.Map.Enabled {
-		var locator geo.Locator
-		engine.Geo = &locator
-		mgr := geo.NewManager(&locator, cfg.DataDir)
+		mapLocator = &geo.Locator{}
+		engine.Geo = mapLocator
+		mgr := geo.NewManager(mapLocator, cfg.DataDir)
 		mgr.BaseURL = cfg.Map.DatabaseURL
 		deps.Geo = mgr
 		go mgr.Run(ctx)
 		if cfg.Map.AutoHome {
-			auto := &geo.AutoHome{Detector: geo.NewWANDetector(), Placer: &locator, Store: prefs}
+			auto := &geo.AutoHome{Detector: geo.NewWANDetector(), Placer: mapLocator, Store: prefs}
 			deps.DetectHome = auto.Once
 			go auto.Run(ctx)
 		}
@@ -146,6 +151,11 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		asnMgr.BaseURL = cfg.Map.DatabaseURL
 		go asnMgr.Run(ctx)
 	}
+	// Country blocking depends on the same shared Locator: it reuses
+	// whatever engine.Geo already placed on the globe, so it never opens a
+	// second database and degrades to a no-op when [map] is off (see
+	// startGeoBlock and docs/GEOBLOCK.md).
+	startGeoBlock(engine, geoBlock, registry, mapLocator)
 
 	if cfg.Classify.Enabled {
 		if _, err := startClassify(ctx, cfg, engine, registry, asnLocator); err != nil {
