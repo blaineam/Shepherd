@@ -42,11 +42,21 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Front-end unit tests (94, `node --test`), run in CI.
 - `docs/PORTAL.md` and `docs/THIRD-PARTY.md`.
 
+- **Blocking policy with a catalog (steps 4 to 6 wired in):** a catalog of 95 lists, apps and categories (Instagram, Discord, YouTube, Steam, Social, Gaming, Adult, Gambling and more) you can switch on for the whole network, a group of devices or one device, plus custom lists from a URL or pasted text. Blocks add up across the scopes that apply to a device; an allow at a more specific scope beats a block from a less specific one. See docs/POLICY.md. Endpoints: `/api/catalog`, `/api/policy` and `/api/policy/items|rules|switches|custom-lists|refresh`.
+- **Devices that have names:** a registry of the machines on the network, learned passively from DNS clients, the neighbor table (ARP and NDP), mDNS announcements, reverse DNS (asked of your router) and a built-in MAC vendor table. Display names follow alias, then self-announced name, then reverse DNS, then vendor and type, then the IP address, and appear in the live stream, the query ring and the encrypted history (`device` and `device_id` on every entry). Search with filters (`group:`, `vendor:`, `type:`, `ip:`, `seen:`, `tag:`, `excluded:`, `unnamed:`), groups, bulk edit and merge. Saved to `<data_dir>/devices.json` (0600). New `[devices]` config section; see docs/DEVICES.md. Endpoints: `/api/devices`, `/api/devices/{id}`, `/api/devices/bulk`, `/api/devices/merge`, `/api/groups`.
+- **Configurable upstreams:** plain, TCP, DNS over TLS and DNS over HTTPS upstreams (by IP or name), bootstrap resolvers (`dns.bootstrap`), verified presets, test before adding, add, remove and reorder in the portal. Runtime edits persist to `<data_dir>/upstreams.json` and win over `dns.upstreams` once it exists. See docs/UPSTREAMS.md. Endpoints under `/api/upstreams`.
+- `/api/status` reports `device_count`, `group_count`, `catalog_count`, `custom_list_count` and `network_item_count`.
+- **Excluded devices** are answered without blocking (log reason `excluded`); in Watch mode they will also never be steered through Shepherd.
+- Catalog list licenses and data sources in docs/THIRD-PARTY.md.
+
 ### Fixed
+- `POST /api/lists/refresh` started the refresh with the request's context, which ends as soon as the response is written, so a refresh from the portal could be cancelled immediately. It now runs to completion in the background.
+- The command tests took about 50 seconds because each test's DNS warm-up query went to an unreachable upstream and shutdown waited for it; they now take a few seconds. Passphrase tests also use a cheap Argon2id cost (production keeps the strong defaults).
 - The portal kept polling the API every second while signed out, flooding the console with 401 errors. It now stops until you sign in.
 - The example config's blocklist URL returned HTTP 404. It now points at a working list, and a weekly CI job (`scripts/check-list-urls`) fails if any example blocklist URL stops resolving.
 
 ### Changed
+- **Policy lives in `<data_dir>/policy.json`.** On the first start after upgrading, `rules.json` (allow, block, policy switches) and `[[lists]]` are migrated into it with nothing lost and the same blocking; a catalog entry with the same URL replaces the old list, anything else becomes a custom list. An install that already existed does **not** gain the recommended catalog lists; a new install does. After that `rules.json`, `[[lists]]` and `no_default_lists` are no longer read (they only seed a first run) and the portal owns the policy. The old rule, policy and list endpoints now act on the network scope.
 - **Protection is on by default; you opt out, not in.** A fresh install now ships with a blocklist and blocks Apple iCloud Private Relay (devices see a notice that it is unavailable on the network). Opt out with `block_private_relay = false` or `no_default_lists = true`, or from the portal. Lists you define always replace the built-in one. Watch mode will follow the same rule (default-on with automatic exclusions and a fail-open watchdog); see the design doc.
 - Licensed AGPL-3.0-or-later.
 - The in-memory query log now keeps 20,000 entries by default (was 5,000) so replay reaches further back.

@@ -6,16 +6,22 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"regexp"
+	"slices"
 
 	"github.com/BurntSushi/toml"
+
+	"shepherd/internal/dnsengine"
 )
 
 type Config struct {
 	DataDir string `toml:"data_dir"`
-	// NoDefaultLists opts out of the blocklist Shepherd ships with. Lists you
-	// define yourself are always kept.
+	// NoDefaultLists opts out of the blocklists Shepherd enables on a fresh
+	// install (the catalog's recommended items). Lists you define yourself are
+	// always kept. It only matters the first time Shepherd runs in a data
+	// directory: after that policy.json, edited in the portal, is the truth.
 	NoDefaultLists bool    `toml:"no_default_lists"`
 	DNS            DNS     `toml:"dns"`
 	Lists          []List  `toml:"lists"`
@@ -23,6 +29,31 @@ type Config struct {
 	Privacy        Privacy `toml:"privacy"`
 	History        History `toml:"history"`
 	Map            Map     `toml:"map"`
+	Devices        Devices `toml:"devices"`
+}
+
+// ListsAreDefault reports whether [[lists]] is exactly the built-in default,
+// that is, the user defined no lists of their own.
+func (c Config) ListsAreDefault() bool { return slices.Equal(c.Lists, Default().Lists) }
+
+// Devices controls how Shepherd learns who is on the network. Every source is
+// passive: nothing here transmits on the network except the optional reverse
+// DNS lookups, which go to one server you control (your router).
+type Devices struct {
+	Enabled bool `toml:"enabled"` // false turns the whole registry off
+	// DNS learns a device from the address its queries come from.
+	DNS bool `toml:"dns"`
+	// Neighbors reads the operating system's neighbor (ARP/NDP) table.
+	Neighbors               bool `toml:"neighbors"`
+	NeighborIntervalSeconds int  `toml:"neighbor_interval_seconds"`
+	// MDNS listens passively for multicast DNS announcements.
+	MDNS bool `toml:"mdns"`
+	// ReverseDNS asks one resolver for the PTR name of each newly seen address.
+	ReverseDNS bool `toml:"reverse_dns"`
+	// ReverseDNSServer is that resolver, "ip" or "ip:port". Empty uses the
+	// default gateway found in /proc/net/route (Linux only).
+	ReverseDNSServer    string `toml:"reverse_dns_server"`
+	SaveIntervalSeconds int    `toml:"save_interval_seconds"`
 }
 
 // History controls what is remembered after the fact. "memory" (the default)
@@ -60,6 +91,9 @@ type DNS struct {
 	Listen []string `toml:"listen"`
 	// Upstreams are resolvers: "9.9.9.10", "tcp://1.1.1.1", "tls://dns.quad9.net:853".
 	Upstreams []string `toml:"upstreams"`
+	// Bootstrap are plain resolvers (IP addresses) used only to look up the
+	// hostnames of tls:// and https:// upstreams.
+	Bootstrap []string `toml:"bootstrap"`
 	// BlockMode is "null" (answer 0.0.0.0 / ::) or "nxdomain".
 	BlockMode            string   `toml:"block_mode"`
 	ProbeIntervalSeconds int      `toml:"probe_interval_seconds"`
@@ -93,10 +127,12 @@ func Default() Config {
 		Privacy: Privacy{BlockPrivateRelay: true},
 		History: History{Mode: "memory", RetentionDays: 30, MaxMB: 2048, KeySource: "file"},
 		Map:     Map{Enabled: true, AutoHome: true},
+		Devices: Devices{Enabled: true, DNS: true, Neighbors: true, NeighborIntervalSeconds: 30, MDNS: true, ReverseDNS: true, SaveIntervalSeconds: 60},
 		DataDir: "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
 			Upstreams:            []string{"9.9.9.10", "149.112.112.10", "1.1.1.1"},
+			Bootstrap:            dnsengine.DefaultBootstrapServers(),
 			BlockMode:            "null",
 			ProbeIntervalSeconds: 15,
 			CacheSize:            20000,
@@ -133,6 +169,9 @@ func (c Config) Validate() error {
 	if len(c.DNS.Upstreams) == 0 {
 		return errors.New("dns.upstreams needs at least one resolver")
 	}
+	if len(c.DNS.Bootstrap) == 0 {
+		return errors.New("dns.bootstrap needs at least one resolver (IP address)")
+	}
 	if c.DNS.BlockMode != "null" && c.DNS.BlockMode != "nxdomain" {
 		return fmt.Errorf("dns.block_mode must be \"null\" or \"nxdomain\", got %q", c.DNS.BlockMode)
 	}
@@ -147,6 +186,18 @@ func (c Config) Validate() error {
 	}
 	if c.History.RetentionDays < 0 || c.History.MaxMB < 0 {
 		return errors.New("history.retention_days and history.max_mb must not be negative")
+	}
+	if c.Devices.NeighborIntervalSeconds < 5 || c.Devices.SaveIntervalSeconds < 5 {
+		return errors.New("devices.neighbor_interval_seconds and devices.save_interval_seconds must be at least 5")
+	}
+	if s := c.Devices.ReverseDNSServer; s != "" {
+		host := s
+		if h, _, err := net.SplitHostPort(s); err == nil {
+			host = h
+		}
+		if net.ParseIP(host) == nil {
+			return fmt.Errorf("devices.reverse_dns_server must be an IP address, got %q", s)
+		}
 	}
 	seen := map[string]bool{}
 	for _, l := range c.Lists {

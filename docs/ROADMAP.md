@@ -7,9 +7,9 @@ Work ships in tested increments that are deployed to a real network as they land
 | 1 | Docker testbed, preflight, Tailscale migration | done |
 | 2 | **Core:** DNS engine, self-healing upstreams, guarded lists, portal, Private Relay policy | done, live on the NAS |
 | 3 | **History, map and stream:** encrypted searchable history, geolocated destinations, live event stream, automatic home | built and tested, deploying |
-| 4 | **Policy:** a catalog of lists, apps and categories, custom lists, scopes (network, group, device) | built, merging |
-| 5 | **Upstreams:** plain, DoT and DoH with bootstrap, presets, test before adding | built, merging |
-| 6 | **Devices:** registry, names from mDNS and the neighbor table, vendors, groups, search, bulk edit | built, merging |
+| 4 | **Policy:** a catalog of lists, apps and categories, custom lists, scopes (network, group, device) | built (API wired, not yet deployed) |
+| 5 | **Upstreams:** plain, DoT and DoH with bootstrap, presets, test before adding | built (API wired, not yet deployed) |
+| 6 | **Devices:** registry, names from mDNS and the neighbor table, vendors, groups, search, bulk edit | built (API wired, not yet deployed) |
 | 7 | **Portal:** the globe HUD (arcs weighted by volume, replay, click to control) and management screens for the above | in progress |
 | 8 | **Alarms:** engine with dedupe, severity, mute and snooze, batch actions, ntfy | next |
 | 9 | **Ports and exposure:** scheduled scans, per-device open ports, router port forwards, change alarms | planned |

@@ -26,16 +26,21 @@ type Geo interface {
 
 // Entry is one answered query.
 type Entry struct {
-	ID       uint64    `json:"id"`
-	Time     time.Time `json:"time"`
-	Client   string    `json:"client"`
-	Name     string    `json:"name"`
-	Type     string    `json:"type"`
-	Action   string    `json:"action"` // allowed, cached, blocked or error
-	Reason   string    `json:"reason,omitempty"`
-	Upstream string    `json:"upstream,omitempty"`
-	Ms       float64   `json:"ms"`
-	Rcode    string    `json:"rcode"`
+	ID     uint64    `json:"id"`
+	Time   time.Time `json:"time"`
+	Client string    `json:"client"`
+	// Device and DeviceID name the device behind Client when the registry
+	// knows it. They are filled when the query is recorded, so history keeps
+	// the name the device had then.
+	Device   string  `json:"device,omitempty"`
+	DeviceID string  `json:"device_id,omitempty"`
+	Name     string  `json:"name"`
+	Type     string  `json:"type"`
+	Action   string  `json:"action"` // allowed, cached, blocked or error
+	Reason   string  `json:"reason,omitempty"`
+	Upstream string  `json:"upstream,omitempty"`
+	Ms       float64 `json:"ms"`
+	Rcode    string  `json:"rcode"`
 	// Dests are the geolocated addresses the answer pointed at (allowed and
 	// cached queries only).
 	Dests []Dest `json:"dests,omitempty"`

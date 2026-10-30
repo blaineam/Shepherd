@@ -1,9 +1,26 @@
 #!/usr/bin/env bash
-# check-list-urls: every blocklist URL in the example config must still be reachable.
+# check-list-urls: every blocklist URL Shepherd points at must still be reachable.
+# Covers the example config and every source in the shipped catalog
+# (internal/dnsengine/catalog.json). Uses one-byte range requests, 16 in parallel.
 set -eu
 cd "$(git rev-parse --show-toplevel)"
-fail=0
-for url in $(grep -E '^url *= *"https?://' shepherd.example.toml | sed -E 's/^url *= *"([^"]+)".*/\1/'); do
-  if curl -fsL -m 30 -r 0-0 -o /dev/null "$url"; then echo "ok   $url"; else echo "FAIL $url"; fail=1; fi
-done
-exit $fail
+
+urls=$(
+  {
+    grep -E '^url *= *"https?://' shepherd.example.toml | sed -E 's/^url *= *"([^"]+)".*/\1/'
+    grep -oE '"url": *"https?://[^"]+"' internal/dnsengine/catalog.json | sed -E 's/^"url": *"([^"]+)"$/\1/'
+  } | sort -u
+)
+[ -n "$urls" ] || { echo "check-list-urls: no URLs found" >&2; exit 1; }
+
+check() {
+  if curl -fsL -m 30 -r 0-0 -o /dev/null "$1"; then echo "ok   $1"; else echo "FAIL $1"; fi
+}
+export -f check
+
+out=$(printf '%s\n' "$urls" | xargs -P 16 -I{} bash -c 'check "$1"' _ {})
+printf '%s\n' "$out" | sort
+total=$(printf '%s\n' "$out" | wc -l | tr -d ' ')
+bad=$(printf '%s\n' "$out" | grep -c '^FAIL' || true)
+echo "check-list-urls: $((total - bad))/$total reachable"
+[ "$bad" -eq 0 ]

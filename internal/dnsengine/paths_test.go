@@ -299,9 +299,12 @@ func TestPoolErrorsAndLimits(t *testing.T) {
 	// Only three upstreams are tried per query.
 	var addrs []string
 	for i := 0; i < 5; i++ {
-		addrs = append(addrs, "127.0.0.1:1")
+		addrs = append(addrs, fmt.Sprintf("127.0.0.1:%d", i+1)) // distinct: duplicates are rejected
 	}
-	p5, _ := NewPool(addrs)
+	p5, err := NewPool(addrs)
+	if err != nil {
+		t.Fatal(err)
+	}
 	p5.timeout = 100 * time.Millisecond
 	p5.Exchange(context.Background(), query("a.example.", dns.TypeA))
 	var tried uint64

@@ -21,6 +21,32 @@ type Engine struct {
 	BlockNXDOMAIN bool
 	// Geo places answer addresses on the globe. Nil disables geolocation.
 	Geo Geo
+	// Clients maps a client address to its device and groups for scoped
+	// policy; nil means every client gets network scope only.
+	Clients ClientScopes
+	// Names labels each query with its device (Entry.Device, Entry.DeviceID)
+	// and reports devices excluded from protection. Nil leaves entries unlabeled.
+	Names DeviceNamer
+	// ClientSeen is called with every query's client address, before the
+	// filter runs, so the device registry can learn who is asking. It must be
+	// cheap and rate-limit itself.
+	ClientSeen func(clientIP string)
+}
+
+// DeviceInfo is what the device registry knows about a client address.
+type DeviceInfo struct {
+	ID   string
+	Name string
+	// Excluded devices opted out of protection: their queries are answered
+	// without any blocking (and are still logged and named).
+	Excluded bool
+}
+
+// DeviceNamer maps a client address to its device. It runs on every query, so
+// implementations must be lock-free or nearly so. An unknown client returns
+// the zero DeviceInfo.
+type DeviceNamer interface {
+	DeviceFor(clientIP string) DeviceInfo
 }
 
 func clientIP(a net.Addr) string {
@@ -143,7 +169,20 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		entry.Type = fmt.Sprintf("TYPE%d", q.Qtype)
 	}
 
-	d := e.Filter.Check(entry.Name)
+	if e.ClientSeen != nil {
+		e.ClientSeen(entry.Client)
+	}
+	var d Decision
+	if e.Names != nil {
+		info := e.Names.DeviceFor(entry.Client)
+		entry.DeviceID, entry.Device = info.ID, info.Name
+		if info.Excluded {
+			d.Reason = "excluded"
+		}
+	}
+	if d.Reason == "" {
+		d = e.Filter.CheckFor(entry.Client, entry.Name, e.Clients)
+	}
 	if d.Blocked {
 		resp := e.sinkhole(r, q, d.NXDOMAIN)
 		entry.Action, entry.Reason, entry.Rcode = "blocked", d.Reason, dns.RcodeToString[resp.Rcode]

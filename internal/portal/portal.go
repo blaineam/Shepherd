@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"shepherd/internal/devices"
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/geo"
 	"shepherd/internal/settings"
@@ -38,11 +39,20 @@ const cookieName = "shepherd_session"
 type GeoStatus interface{ Status() geo.Status }
 
 type Deps struct {
-	Engine  *dnsengine.Engine
-	Lists   *dnsengine.ListManager
-	Rules   *dnsengine.Rules
+	Engine *dnsengine.Engine
+	Lists  *dnsengine.ListManager
+	// Policy owns the blocking policy: the catalog, custom lists, and the
+	// switches, allow and block rules at network, group and device scope.
+	Policy  *dnsengine.PolicyStore
 	Token   string
 	Version string
+
+	// Devices is the device registry. Nil gives an empty registry that no
+	// source feeds (the API still works).
+	Devices *devices.Registry
+	// Upstreams edits the upstream list and persists the edits. Nil edits
+	// Engine.Pool in memory only.
+	Upstreams *dnsengine.UpstreamStore
 
 	// History serves past entries. Nil means the in-memory ring.
 	History dnsengine.HistorySource
@@ -88,6 +98,12 @@ func New(d Deps) *Server {
 	if d.History == nil {
 		d.History = dnsengine.MemoryHistory{Log: d.Engine.Log}
 	}
+	if d.Devices == nil {
+		d.Devices = devices.New(devices.Options{})
+	}
+	if d.Upstreams == nil {
+		d.Upstreams = dnsengine.OpenUpstreamStore("", d.Engine.Pool)
+	}
 	if d.Heartbeat <= 0 {
 		d.Heartbeat = 15 * time.Second
 	}
@@ -102,6 +118,7 @@ func New(d Deps) *Server {
 	s.mux.Handle("DELETE /api/rules", s.auth(s.delRule))
 	s.mux.Handle("POST /api/policies", s.auth(s.setPolicy))
 	s.mux.Handle("POST /api/lists/refresh", s.auth(s.refreshLists))
+	s.routes()
 	s.mux.Handle("GET /api/stream", s.auth(s.stream))
 	s.mux.Handle("GET /api/history", s.auth(s.historyQuery))
 	s.mux.Handle("POST /api/history/unlock", s.auth(s.historyUnlock))
@@ -185,7 +202,14 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	listed, allow, block := s.Engine.Filter.Counts()
-	_, _, policies := s.Rules.Snapshot()
+	snap := s.Policy.Snapshot()
+	policies := snap.Network.Policies
+	enabled := 0
+	for _, on := range snap.Network.Items {
+		if on {
+			enabled++
+		}
+	}
 	writeJSON(w, map[string]any{
 		"version":        s.Version,
 		"uptime_seconds": int64(time.Since(s.started).Seconds()),
@@ -196,6 +220,12 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		"allow_rules":    allow,
 		"block_rules":    block,
 		"policies":       policies,
+		// Device and catalog counts for the overview.
+		"device_count":       s.Devices.Len(),
+		"group_count":        len(s.Devices.Groups()),
+		"catalog_count":      len(snap.Catalog),
+		"custom_list_count":  len(snap.Custom),
+		"network_item_count": enabled,
 	})
 }
 
@@ -213,9 +243,16 @@ func (s *Server) queries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"entries": entries, "last": last})
 }
 
+// The rule, policy and list endpoints below predate scopes; they act on the
+// network scope, which is what every device falls back to.
+
 func (s *Server) getRules(w http.ResponseWriter, r *http.Request) {
-	allow, block, policies := s.Rules.Snapshot()
-	writeJSON(w, map[string]any{"allow": allow, "block": block, "policies": policies})
+	n := s.Policy.Snapshot().Network
+	policies := n.Policies
+	if policies == nil {
+		policies = map[string]bool{}
+	}
+	writeJSON(w, map[string]any{"allow": orEmpty(n.Allow), "block": orEmpty(n.Block), "policies": policies})
 }
 
 type ruleBody struct {
@@ -228,16 +265,16 @@ func (s *Server) addRule(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &b) {
 		return
 	}
-	if err := s.Rules.Add(b.Kind, b.Domain); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := s.Policy.AddRule(dnsengine.NetworkScope(), b.Kind, b.Domain); err != nil {
+		policyError(w, err)
 		return
 	}
 	s.getRules(w, r)
 }
 
 func (s *Server) delRule(w http.ResponseWriter, r *http.Request) {
-	if err := s.Rules.Remove(r.URL.Query().Get("kind"), r.URL.Query().Get("domain")); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := s.Policy.RemoveRule(dnsengine.NetworkScope(), r.URL.Query().Get("kind"), r.URL.Query().Get("domain")); err != nil {
+		policyError(w, err)
 		return
 	}
 	s.getRules(w, r)
@@ -251,14 +288,46 @@ func (s *Server) setPolicy(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &b) {
 		return
 	}
-	if err := s.Rules.SetPolicy(b.Name, b.Enabled); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := s.Policy.SetPolicy(dnsengine.NetworkScope(), b.Name, b.Enabled); err != nil {
+		policyError(w, err)
 		return
 	}
 	s.getRules(w, r)
 }
 
 func (s *Server) refreshLists(w http.ResponseWriter, r *http.Request) {
-	go s.Lists.Refresh(r.Context())
+	s.refreshAsync("")
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// routes registers the management API (devices, groups, policy, upstreams).
+func (s *Server) routes() {
+	h := func(pattern string, fn http.HandlerFunc) { s.mux.Handle(pattern, s.auth(fn)) }
+	h("GET /api/devices", s.listDevices)
+	h("POST /api/devices/bulk", s.bulkDevices)
+	h("POST /api/devices/merge", s.mergeDevices)
+	h("GET /api/devices/{id}", s.getDevice)
+	h("PATCH /api/devices/{id}", s.patchDevice)
+	h("DELETE /api/devices/{id}", s.deleteDevice)
+	h("GET /api/groups", s.listGroups)
+	h("POST /api/groups", s.createGroup)
+	h("PATCH /api/groups/{id}", s.patchGroup)
+	h("DELETE /api/groups/{id}", s.deleteGroup)
+
+	h("GET /api/catalog", s.getCatalog)
+	h("GET /api/policy", s.getPolicy)
+	h("POST /api/policy/items", s.setPolicyItem)
+	h("POST /api/policy/rules", s.addPolicyRule)
+	h("DELETE /api/policy/rules", s.deletePolicyRule)
+	h("POST /api/policy/switches", s.setPolicySwitch)
+	h("POST /api/policy/custom-lists", s.addCustomList)
+	h("DELETE /api/policy/custom-lists/{id}", s.deleteCustomList)
+	h("POST /api/policy/refresh", s.refreshPolicy)
+
+	h("GET /api/upstreams", s.getUpstreams)
+	h("POST /api/upstreams/test", s.testUpstream)
+	h("POST /api/upstreams", s.addUpstream)
+	h("DELETE /api/upstreams", s.deleteUpstream)
+	h("PUT /api/upstreams", s.putUpstreams)
+	h("PUT /api/upstreams/bootstrap", s.putBootstrap)
 }

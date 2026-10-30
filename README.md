@@ -77,9 +77,11 @@ Shepherd is early and built in public. This is real, tested and running on a rea
 - [x] **Thread, Matter and IPv6 safe by design**, written down as hard rules ([IPV6.md](docs/IPV6.md)).
 - [x] **97% test coverage** with the race detector, enforced by a floor that only rises.
 
-Built and being wired in: a catalog of 95 lists, apps and categories you can block for the whole
-network, a group or one device; DoH and DoT upstreams; named, searchable, groupable devices.
-Coming next: alarms, port and exposure management, a reverse proxy with certificates and tunnels,
+Built and tested, not yet deployed to the live network: a **catalog of 95 lists, apps and categories** plus custom lists, so you can
+block Instagram, Discord or a whole category for the network, a group of devices or one device ([POLICY.md](docs/POLICY.md));
+**devices with real names**, learned passively from DNS, the neighbor table, mDNS and reverse DNS, with vendors, search, groups and bulk
+edit ([DEVICES.md](docs/DEVICES.md)); and **configurable upstreams** over plain DNS, DNS over TLS and DNS over HTTPS with bootstrap, presets and a test
+before you add one ([UPSTREAMS.md](docs/UPSTREAMS.md)). Their API is in place; the portal screens for them are being built. Coming next: alarms, port and exposure management, a reverse proxy with certificates and tunnels,
 inbound protection, per-device traffic control, the mesh, signed self-updates, the local AI and
 one-click installers. See the [roadmap](docs/ROADMAP.md).
 
