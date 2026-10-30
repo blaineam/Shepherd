@@ -53,6 +53,8 @@ enabled = false
 neighbors = false
 mdns = false
 reverse_dns = false
+[arp]
+enabled = false
 %s`, filepath.Join(dir, "data"), dnsPort, portalPort, extra)
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)

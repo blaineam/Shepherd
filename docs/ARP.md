@@ -5,6 +5,9 @@ real MAC addresses for the device registry, and security events about the ARP la
 the zero-risk first stage of the ARP work described in [DESIGN.md](DESIGN.md). It is
 useful on its own and Watch-mode interception will build on it later.
 
+It is wired into `cmd/shepherd` (the `[arp]` config section, `cmd/shepherd/arp.go`'s `startARP`,
+and `GET /api/arp/stats`); see "Wiring" below. It still needs `CAP_NET_RAW` and is read-only.
+
 ## What it does
 
 - Reads ARP requests, replies, probes and announcements (EtherType 0x0806) on one interface.
@@ -47,6 +50,33 @@ affected. By default the interface of the default route is chosen (read from
 unless one is configured.
 
 ## Wiring
+
+`cmd/shepherd/arp.go`'s `startARP` is the one place that opens the real socket and runs the
+`Monitor`, gated by the `[arp]` config section:
+
+```toml
+[arp]
+enabled = true
+interface = ""     # empty auto-detects the default route's interface
+```
+
+```go
+func startARP(ctx context.Context, cfg config.Config, reg *devices.Registry, onEvent func(arp.Event)) (*arp.Monitor, error)
+```
+
+It is started after the device registry, run in a goroutine, and torn down by cancelling `ctx`
+(`Monitor.Run` closes the source on return). `onEvent` receives every `arp.Event`; `cmd/shepherd`
+currently passes `nil`, so `startARP` just logs each one through the standard `log` package. A
+future alarm engine wiring passes a non-nil callback instead, keyed by `Event.Key`. ARP never
+fails Shepherd's startup: if `cfg.ARP.Enabled` is false, or `arp.Open` fails (wrong platform, no
+`CAP_NET_RAW`), `startARP` logs a clear warning and returns `(nil, nil)`, and the rest of Shepherd
+starts normally.
+
+`Monitor.Stats()` is exposed at `GET /api/arp/stats` (`internal/portal/api_arp.go`), returning
+`{"enabled": false}` when the monitor is not running, or `{"enabled": true, "stats": {...}}`
+otherwise.
+
+Using the library directly, outside `cmd/shepherd`, looks like:
 
 ```go
 src, iface, err := arp.Open("")                  // "" = default-route interface
@@ -115,3 +145,7 @@ route parser, the monitor with crafted frames (DHCP then ARP, IP change, MAC ran
 rotation, gateway MAC change raised once, spoofing burst, garbage), memory bounds and shutdown.
 No real network is used. The raw socket in `open_linux.go` needs `CAP_NET_RAW`, so it cannot run
 unprivileged; it is a thin file that only reads, and everything around it is tested through fakes.
+
+`cmd/shepherd`'s `startARP` and `internal/portal`'s `/api/arp/stats` have their own tests
+(`cmd/shepherd/arp_test.go`, `internal/portal/api_arp_test.go`), injecting a `FakeSource` through
+a test seam over `arp.Open` so the wiring is exercised without `CAP_NET_RAW` either.

@@ -127,7 +127,12 @@ func TestUnreadableDeviceFileIsMovedAsideNotOverwritten(t *testing.T) {
 	// If it cannot even be moved aside, startup stops rather than overwriting it.
 	cfg = writeConfig(t, freePort(t), freePort(t), "")
 	data = filepath.Join(filepath.Dir(cfg), "data")
-	os.MkdirAll(filepath.Join(data, "devices.json.unreadable", "keep"), 0o750)
+	blocked := filepath.Join(data, "devices.json.unreadable")
+	os.MkdirAll(filepath.Join(blocked, "keep"), 0o750)
+	// Deliberately left in a state os.Rename refuses to overwrite (a file
+	// can never replace a non-empty directory), so TempDir's own recursive
+	// cleanup is not relied on to clear it: remove it ourselves first.
+	t.Cleanup(func() { os.RemoveAll(blocked) })
 	os.WriteFile(filepath.Join(data, "devices.json"), []byte("{not json"), 0o600)
 	if err := run(context.Background(), cfg, false, os.Stdout); err == nil {
 		t.Error("expected an error when the unreadable file cannot be moved aside")

@@ -70,15 +70,25 @@ function unwrapRing(ring) {
   return out;
 }
 
-// A ray-casting point-in-ring test, antimeridian-aware: the ring is
-// unwrapped into continuous coordinates once, then the candidate point is
-// tried at its own longitude and at +-360 of it, so whichever one lands in
-// the same unwrapped branch as the ring gives the right answer. Without
-// this, a ring crossing the seam makes the naive test see a crossing for
-// nearly every longitude along its latitude band -- a false "land" ring
-// spanning open ocean, not just a wrong answer right at the seam.
+// A ray-casting point-in-ring test, antimeridian-aware: a ring that
+// crosses the seam is unwrapped into continuous coordinates once, then
+// the candidate point is tried at its own longitude and at +-360 of it,
+// so whichever one lands in the same unwrapped branch as the ring gives
+// the right answer. Without this, a ring crossing the seam makes the
+// naive test see a crossing for nearly every longitude along its
+// latitude band -- a false "land" ring spanning open ocean, not just a
+// wrong answer right at the seam.
+//
+// The vast majority of rings never cross the seam, so unwrapRing returns
+// the same array unchanged for them (its own fast path, no allocation):
+// test those once, at the ring's own coordinates, exactly as before this
+// fix existed. Only a ring that genuinely needed unwrapping pays for the
+// extra two branches -- sampleLandPoints calls this for every candidate
+// point against every nearby polygon, so paying 3x on every call,
+// wrapping or not, was a real, avoidable slowdown at HUD load time.
 export function ringContains(ring, lon, lat) {
   const r = unwrapRing(ring);
+  if (r === ring) return crossingsAt(r, lon, lat);
   return crossingsAt(r, lon, lat) || crossingsAt(r, lon + 360, lat) || crossingsAt(r, lon - 360, lat);
 }
 

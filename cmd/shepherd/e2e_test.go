@@ -123,6 +123,8 @@ enabled = false
 neighbors = false
 mdns = false
 reverse_dns = false
+[arp]
+enabled = false
 %s
 [[lists]]
 name = "pro"

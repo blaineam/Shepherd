@@ -124,6 +124,16 @@ type Engine struct {
 	subMu  sync.RWMutex
 	subSeq int
 	subs   map[int]func(Change)
+
+	// afterTick is a test-only hook, called at the end of every worker-loop
+	// tick (after Tick itself returns), so a test can synchronize with the
+	// background worker deterministically instead of polling a real
+	// wall-clock deadline against a FakeClock-advanced tick -- which is
+	// exactly what made TestWorkerTickSweepsAndSaves flaky under load
+	// (reliable alone, occasionally too slow to land within even a
+	// generous real-time budget when the whole suite runs concurrently).
+	// Nothing in this package's public API sets it.
+	afterTick func()
 }
 
 func randomID() string {
@@ -246,6 +256,9 @@ func (e *Engine) worker() {
 			e.handle(it)
 		case <-tk.C():
 			e.Tick()
+			if e.afterTick != nil {
+				e.afterTick()
+			}
 		case <-e.quit:
 			return
 		}

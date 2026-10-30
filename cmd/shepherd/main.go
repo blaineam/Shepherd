@@ -143,6 +143,17 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		}
 	}
 
+	// onEvent is nil for now: nothing in cmd/shepherd consumes arp.Event yet,
+	// so startARP logs each one. A future alarm engine wiring passes a
+	// non-nil callback here instead.
+	arpMon, err := startARP(ctx, cfg, registry, nil)
+	if err != nil {
+		return err
+	}
+	if arpMon != nil { // avoid handing the portal a non-nil interface over a nil *arp.Monitor
+		deps.ARP = arpMon
+	}
+
 	if cfg.History.Mode == "encrypted" {
 		store, err := openHistory(cfg)
 		if err != nil {

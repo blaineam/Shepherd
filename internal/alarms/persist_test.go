@@ -200,15 +200,24 @@ func TestWorkerTickSweepsAndSaves(t *testing.T) {
 	a := mustRaise(t, e, Event{Type: "custom", Key: "k"})
 	e.Snooze(a.ID, MuteSpec{Preset: MuteHour})
 	rec.reset()
+
+	// Synchronize with the worker loop deterministically via afterTick
+	// instead of polling a real wall-clock deadline against a
+	// FakeClock-advanced tick: that polling was reliable alone but flaky
+	// under full-suite load (the goroutine simply wasn't scheduled in
+	// time), including in CI, even at a 10s deadline.
+	ticked := make(chan struct{}, 1)
+	e.afterTick = func() { ticked <- struct{}{} }
 	clk.Advance(2 * time.Hour) // fires the worker's ticker
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if got, _ := e.Get(a.ID); got.State == StateNew {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
+
+	select {
+	case <-ticked:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the worker tick never ran")
 	}
-	t.Fatal("the worker tick did not end the snooze")
+	if got, _ := e.Get(a.ID); got.State != StateNew {
+		t.Fatalf("the worker tick did not end the snooze: state = %v", got.State)
+	}
 }
 
 // Property: any two engines that have seen the same writes converge to the same
