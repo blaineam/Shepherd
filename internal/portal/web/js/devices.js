@@ -10,6 +10,7 @@ import { TYPES, typeLabel, typeIcon, GROUP_COLORS } from './devtypes.js';
 import { icon, iconButton, button, chip, segmented, emptyState, openPopover, openMenu, confirmDialog, relTime, unavailableCard, debounce } from './ui.js';
 import { unavailable } from './mgmt.js';
 import { TIMER_CHOICES, MODES, deviceMode, countdown, countdownShort, modePatch, applyModeLocal } from './wander.js';
+import { createImportModal } from './importview.js';
 
 const OVER = 6;
 const rowHeight = () => (window.matchMedia && window.matchMedia('(max-width: 760px)').matches ? 88 : 56);
@@ -51,7 +52,12 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
   const sortSeg = segmented([{ id: 'recent', label: 'Recent' }, { id: 'name', label: 'Name' }], sort, (id) => { sort = id; resetList(); }, 'Sort devices');
   const groupsToggle = button('Groups', 'ghost only-md', null, 'users');
   groupsToggle.setAttribute('aria-pressed', 'false');
-  head.append(title, sbox, sortSeg.root, groupsToggle);
+  const importModal = createImportModal({
+    mgmt, notify,
+    onImported: () => { loadGroups().catch(() => {}); list.refresh(); onGroupsChanged(); },
+  });
+  const importBtn = button('Import', 'ghost only-md', () => importModal.open(), 'import');
+  head.append(title, sbox, sortSeg.root, groupsToggle, importBtn);
 
   const main = el('div', 'dv-main');
   const side = el('aside', 'dv-groups panel-lite');

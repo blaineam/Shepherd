@@ -38,5 +38,13 @@ export function createMgmt(api) {
     history: (params) => api('/api/history' + Q(params)),
     unlock: (passphrase) => api('/api/history/unlock', { method: 'POST', body: J({ passphrase }), keep401: true }),
     settings: () => api('/api/settings'),
+
+    importEeroStart: (login) => post('/api/import/eero/start', { login }),
+    importEeroVerify: (sessionId, code) => post('/api/import/eero/verify', { session_id: sessionId, code }),
+    importEeroPreview: (sessionId, networkId, overwriteNames) => post('/api/import/eero/preview', { session_id: sessionId, network_id: networkId, overwrite_names: overwriteNames }),
+    importEeroApply: (sessionId) => post('/api/import/eero/apply', { session_id: sessionId }),
+    importEeroCancel: (sessionId) => post('/api/import/eero/cancel', { session_id: sessionId }),
+    importCSVPreview: (csv, overwriteNames) => post('/api/import/csv/preview', { csv, overwrite_names: overwriteNames }),
+    importCSVApply: (csv, overwriteNames) => post('/api/import/csv/apply', { csv, overwrite_names: overwriteNames }),
   };
 }

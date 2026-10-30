@@ -80,3 +80,21 @@ test('upstream, history and unlock endpoints', async () => {
   await m.settings();
   assert.equal(calls[8][0], '/api/settings');
 });
+
+test('import endpoints build the documented requests', async () => {
+  const { calls, m } = rig();
+  await m.importEeroStart('owner@example.net');
+  assert.deepEqual([calls[0][0], calls[0][1].body], ['/api/import/eero/start', '{"login":"owner@example.net"}']);
+  await m.importEeroVerify('sess-1', '123456');
+  assert.equal(calls[1][1].body, '{"session_id":"sess-1","code":"123456"}');
+  await m.importEeroPreview('sess-1', '3001', true);
+  assert.equal(calls[2][1].body, '{"session_id":"sess-1","network_id":"3001","overwrite_names":true}');
+  await m.importEeroApply('sess-1');
+  assert.deepEqual([calls[3][0], calls[3][1].body], ['/api/import/eero/apply', '{"session_id":"sess-1"}']);
+  await m.importEeroCancel('sess-1');
+  assert.equal(calls[4][1].body, '{"session_id":"sess-1"}');
+  await m.importCSVPreview('mac,name\n', false);
+  assert.equal(calls[5][1].body, '{"csv":"mac,name\\n","overwrite_names":false}');
+  await m.importCSVApply('mac,name\n', true);
+  assert.deepEqual([calls[6][0], calls[6][1].method], ['/api/import/csv/apply', 'POST']);
+});

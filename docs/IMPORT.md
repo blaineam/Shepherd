@@ -92,22 +92,88 @@ marked as infrastructure; a profile entry that cannot be identified is left out.
 - Shepherd does not need and does not ask for your eero password, and nothing about the import is sent
   to any Shepherd server (there is none).
 
-## Step by step (as it will appear in the portal)
+## Step by step, in the portal
 
-The portal screens are not built yet (see below). The flow they will drive:
+Open the **Devices** screen and click **Import**. A modal walks through either source; nothing is ever
+changed before you review a preview and click Apply.
 
-1. **Choose** "Import from eero" (or "Import from a CSV file"). The page repeats the caveats above.
-2. **Enter the login.** Type the email address or phone number of your eero account. eero sends a code.
-   (`Client.StartLogin`)
-3. **Enter the code.** (`Client.Verify`) A wrong code, an expired code or a rate limit is explained in
-   plain words, and you can try again or start over.
-4. **Pick the network** if the account has more than one. (`Client.Networks`)
-5. **Review the preview.** Shepherd reads the devices, profiles and eero nodes
-   (`Client.Snapshot`), maps them (`MapEero`) and shows the diff (`Preview`): devices it would create,
-   devices matched by MAC or IP, names it would set, groups it would create, memberships it would add,
-   conflicts it would leave alone, and warnings. Nothing has changed yet.
-6. **Confirm.** (`Apply`, optionally with "overwrite names") The session token is discarded
-   (`Client.Discard`) whether or not you confirm.
+### eero
+
+1. **Pick "eero"** in the import modal. The modal repeats the caveats above.
+2. **Enter the login.** Type the email address or phone number of your eero account. eero sends a
+   verification code. (`POST /api/import/eero/start`, which calls `Client.StartLogin`.)
+3. **Enter the code.** (`POST /api/import/eero/verify`, `Client.Verify`) A wrong code, an expired code
+   or a rate limit is explained in plain words, and you can try again or start over. On success the
+   response lists the account's networks (`Client.Networks`); with exactly one, the import moves on by
+   itself.
+4. **Pick the network** if the account has more than one.
+5. **Review the preview.** (`POST /api/import/eero/preview`) Shepherd reads the devices, profiles and
+   eero nodes for that network (`Client.Snapshot`), maps them (`MapEero`) and shows the diff
+   (`PreviewWith`): devices it would create, devices matched by MAC or IP, names it would set, groups it
+   would create, memberships it would add, conflicts it would leave alone, and warnings. Nothing has
+   changed yet. An "overwrite names" checkbox controls whether the preview (and the apply that follows)
+   is allowed to replace a name you already set.
+6. **Confirm.** (`POST /api/import/eero/apply`, `Apply`) The eero session token is discarded
+   (`Client.Discard`) the moment this call returns, whether or not it succeeded. Closing the modal, or
+   clicking "Start over", discards it too (`POST /api/import/eero/cancel`) — as does simply walking away:
+   an untouched session expires and is discarded after 15 minutes.
+
+### CSV
+
+1. **Pick "CSV file"** and choose a file. It is read in the browser and sent as text; nothing is
+   uploaded as a file attachment.
+2. **Review the preview.** (`POST /api/import/csv/preview`) Parse errors are per row (`row_errors`) and
+   never stop the import; the rest of the file is still shown.
+3. **Confirm.** (`POST /api/import/csv/apply`)
+
+### The eero import session
+
+The multi-step eero flow needs somewhere to hold the in-progress login between requests, without ever
+writing eero's token to disk. The portal keeps it **server-side, in memory only**, under a random
+`session_id` the browser holds instead of the token itself:
+
+- `start` creates the session (and makes the *importers.Client, holding eero's session token once
+  `verify` succeeds). It is never written to configuration, to `devices.json`, or to any log.
+- `verify`, `preview` and `apply` all take the same `session_id`.
+- The session (and the token inside it) is discarded by `apply`, by `cancel`, or automatically 15
+  minutes after it was last used.
+- Every portal endpoint still requires the normal token auth and `X-Shepherd` CSRF header
+  (see docs/PORTAL.md); the `session_id` only threads one import flow's steps together, it is not a
+  second authentication scheme.
+
+## API reference
+
+All endpoints are `POST`, JSON in and out, under the usual portal auth (bearer token or cookie, plus the
+`X-Shepherd` header). A report (the shape `Preview`/`Apply` return) is rendered as:
+
+```json
+{
+  "dry_run": true, "source": "eero (Home)", "changed": true,
+  "created": 1, "matched_by_mac": 0, "matched_by_ip": 0, "updated": 0,
+  "named": 1, "renamed": 0, "skipped": 0, "unchanged": 0,
+  "groups_created": 1, "memberships_added": 1, "tags_added": 0,
+  "marked_excluded": 0, "notes_set": 0, "types_set": 0,
+  "lines": ["create device \"Kids Tablet\" (02:00:5e:00:00:11)", "create group \"Kids\""],
+  "conflicts": [],
+  "warnings": []
+}
+```
+
+The CSV endpoints add `"row_errors": ["line 4: ..."]` (omitted when there are none).
+
+| Endpoint | Body | Response |
+|---|---|---|
+| `POST /api/import/eero/start` | `{"login": "owner@example.com"}` | `{"session_id": "..."}` |
+| `POST /api/import/eero/verify` | `{"session_id": "...", "code": "123456"}` | `{"session_id": "...", "networks": [{"id": "1001", "name": "Home"}]}` |
+| `POST /api/import/eero/preview` | `{"session_id": "...", "network_id": "1001", "overwrite_names": false}` | a report, `dry_run: true` |
+| `POST /api/import/eero/apply` | `{"session_id": "..."}` | a report, `dry_run: false` |
+| `POST /api/import/eero/cancel` | `{"session_id": "..."}` | `{"ok": true}` |
+| `POST /api/import/csv/preview` | `{"csv": "mac,name\n...", "overwrite_names": false}` | a report (+ `row_errors`), `dry_run: true` |
+| `POST /api/import/csv/apply` | `{"csv": "mac,name\n...", "overwrite_names": false}` | a report (+ `row_errors`), `dry_run: false` |
+
+A bad login, a bad or expired code, an unknown network, an unparseable CSV, or an import session that
+has expired or was never started all answer `4xx` with a plain-text error body; a rate limit from eero
+answers `429`.
 
 ## CSV format
 
@@ -162,7 +228,6 @@ Pass a `TokenStore` in `ClientOptions` only if you decide to keep the token. Tes
 
 ## Not built yet
 
-- The portal screens and API endpoints for both importers (this package is the engine behind them).
 - Periodic re-sync. The importers are one-time by design; running one again is safe (idempotent) but
   nothing schedules it.
 - Refreshing an expired eero session; an expired session just asks you to sign in again.

@@ -24,6 +24,7 @@ import (
 	"shepherd/internal/devices"
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/geo"
+	"shepherd/internal/importers"
 	"shepherd/internal/settings"
 )
 
@@ -64,6 +65,11 @@ type Deps struct {
 	DetectHome func(ctx context.Context) error
 	// Heartbeat is how often the live stream sends a keep-alive (default 15s).
 	Heartbeat time.Duration
+
+	// NewEeroClient builds the eero API client for one import flow (see
+	// api_import.go). Nil talks to production eero over https; tests point it
+	// at a fake server with importers.NewTestClient.
+	NewEeroClient func() (*importers.Client, error)
 }
 
 type Server struct {
@@ -73,6 +79,8 @@ type Server struct {
 
 	mu      sync.Mutex
 	memHome *settings.Home // used when no settings store is configured
+
+	importSessions *eeroSessions
 }
 
 // LoadOrCreateToken returns the portal access token stored in dir, creating a
@@ -107,7 +115,7 @@ func New(d Deps) *Server {
 	if d.Heartbeat <= 0 {
 		d.Heartbeat = 15 * time.Second
 	}
-	s := &Server{Deps: d, started: time.Now(), mux: http.NewServeMux()}
+	s := &Server{Deps: d, started: time.Now(), mux: http.NewServeMux(), importSessions: newEeroSessions()}
 	sub, _ := fs.Sub(webFS, "web")
 	s.mux.Handle("GET /", http.FileServerFS(sub))
 	s.mux.HandleFunc("POST /api/login", s.login)
@@ -313,6 +321,14 @@ func (s *Server) routes() {
 	h("POST /api/groups", s.createGroup)
 	h("PATCH /api/groups/{id}", s.patchGroup)
 	h("DELETE /api/groups/{id}", s.deleteGroup)
+
+	h("POST /api/import/eero/start", s.importEeroStart)
+	h("POST /api/import/eero/verify", s.importEeroVerify)
+	h("POST /api/import/eero/preview", s.importEeroPreview)
+	h("POST /api/import/eero/apply", s.importEeroApply)
+	h("POST /api/import/eero/cancel", s.importEeroCancel)
+	h("POST /api/import/csv/preview", s.importCSVPreview)
+	h("POST /api/import/csv/apply", s.importCSVApply)
 
 	h("GET /api/catalog", s.getCatalog)
 	h("GET /api/policy", s.getPolicy)
