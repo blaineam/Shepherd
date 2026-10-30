@@ -38,8 +38,17 @@ const DefaultCheckInterval = 12 * time.Hour
 
 // DefaultObtainTimeout bounds one renewal attempt, so an unreachable
 // Cloudflare or Let's Encrypt can never hang Manager.Run forever; the next
-// scheduled check simply tries again.
-const DefaultObtainTimeout = 2 * time.Minute
+// scheduled check simply tries again. This must leave real headroom beyond
+// cmd/shepherd's own PropagationCheck timeout (2 minutes, worst case for a
+// slow DNS-01 TXT record to propagate): that wait shares this same context,
+// so after it returns there still needs to be enough of the budget left for
+// the ACME Accept/WaitAuthorization/WaitOrder/CreateCertFromOrder calls that
+// follow, plus CleanUp removing the challenge TXT record afterward. A value
+// equal to (or barely above) the propagation wait's own timeout leaves next
+// to nothing for any of that, so every real attempt fails right after
+// propagation succeeds — exactly what a live Let's Encrypt/Cloudflare trial
+// against a real DNS-01 hostname surfaced.
+const DefaultObtainTimeout = 5 * time.Minute
 
 // Options configures a Manager. Hostname, Dir and Obtainer are required;
 // every duration defaults to the constants above when left zero.

@@ -234,6 +234,15 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- `tlscert.DefaultObtainTimeout` (2 minutes) left no real headroom beyond `cmd/shepherd`'s own DNS-01
+  propagation-wait timeout (also 2 minutes): both clocks start at nearly the same moment inside one
+  `Obtain` call, so once propagation actually finished there was next to no budget left for the
+  ACME Accept/WaitAuthorization/WaitOrder/CreateCertFromOrder calls that still had to run, or for
+  cleaning up the challenge TXT record afterward. A live DNS-01 attempt against a real Cloudflare zone
+  surfaced this directly: the TXT record published and propagated fine, then the obtain failed right
+  after with `context deadline exceeded`, and the deferred `CleanUp` failed the same way for the same
+  reason. Raised to 5 minutes, giving the propagation wait's own worst case plus real room for
+  everything that has to happen after it.
 - `Controller`'s trial-expiry watcher (`internal/intercept`) could fire a second, spurious unsteer after
   a device had already been unsteered manually and then re-steered: its goroutine blocks on
   `select { case <-spoofCtx.Done(): ...; case <-trialTimer: ... }`, and Go's `select` does not prefer
