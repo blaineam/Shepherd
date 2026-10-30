@@ -151,6 +151,25 @@ listen = "127.0.0.1:8787"
 idle_lock_minutes = 10           # relock to demo data after this long idle; 0 = never auto-lock
                                   # (the portal's own settings screen can override this at runtime)
 
+[tls]
+# A real certificate for the portal's own hostname, issued via ACME's
+# DNS-01 challenge against Cloudflare DNS (docs/TLS.md). Off by default:
+# both a real DNS hostname pointed at this machine and a scoped Cloudflare
+# API token (DNS edit on the one zone, nothing broader) are needed before
+# this does anything. Leaving it off (or enabled = false) changes nothing
+# about the existing plain-HTTP portal.listen above; this only ever adds a
+# second, HTTPS listener alongside it.
+enabled = false
+hostname = ""                   # e.g. "shepherd.example.com"
+listen = ""                     # e.g. "0.0.0.0:8443"; separate from portal.listen
+email = ""                      # optional; Let's Encrypt expiry-notice contact
+# The token is a real secret. Either set it here directly (protected only
+# by this file's own 0600 permissions, like every other secret in this
+# project today), or point cloudflare_api_token_file at a separate 0600
+# file holding just the token. Setting both is a configuration error.
+cloudflare_api_token = ""
+cloudflare_api_token_file = ""  # e.g. "/etc/shepherd/cloudflare-api-token"
+
 # The list a pre-policy install used, and the default for a new one. Defining
 # any [[lists]] replaces the recommended catalog lists on a new install.
 [[lists]]
