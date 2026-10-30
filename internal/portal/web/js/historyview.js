@@ -12,7 +12,7 @@ import { isIP } from './upstreams.js';
 const PAGE = 100;
 const ACTIONS = ['all', 'allowed', 'cached', 'blocked', 'error'];
 
-export function createHistory({ root, mgmt, notify, onReplay, demo = null }) {
+export function createHistory({ root, mgmt, notify, onReplay, demo = null, api = null }) {
   let onlyShadow = false;
   const st = { range: '24h', custom: { from: '', to: '' }, device: '', deviceLabel: '', action: 'all', q: '' };
   let entries = [];
@@ -191,6 +191,26 @@ export function createHistory({ root, mgmt, notify, onReplay, demo = null }) {
     pw.focus();
   }
 
+  // allowDomain gives a blocked History row the same one-click override the
+  // HUD inspector's "Allow domain" button already offers live (createInspector's
+  // doRule() in hud.js) — POST /api/rules, the same flat network-scope rule
+  // endpoint, kept here rather than a new mechanism. Narrower and safer than
+  // disabling whatever list blocked it: it only overrides this one domain.
+  async function allowDomain(e, btn) {
+    if (!api) return;
+    btn.disabled = true;
+    btn.textContent = 'Allowing…';
+    try {
+      await api('/api/rules', { method: 'POST', body: JSON.stringify({ kind: 'allow', domain: e.name }) });
+      btn.textContent = 'Allowed';
+      notify('Allowed ' + e.name + '. New queries for it will not be blocked.');
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'Allow';
+      notify(err.status === 404 ? 'Rules are not available on this server.' : 'Could not allow ' + e.name + ': ' + err.message);
+    }
+  }
+
   function rowEl(e) {
     const tr = el('tr', 'a-' + e.action);
     const t = new Date(e.t);
@@ -225,6 +245,14 @@ export function createHistory({ root, mgmt, notify, onReplay, demo = null }) {
     rb.setAttribute('aria-label', 'Replay on the HUD at ' + t.toLocaleString() + ': ' + e.name);
     rb.addEventListener('click', () => onReplay(e.t));
     ac.append(rb);
+    if (e.action === 'blocked' && e.name && api) {
+      const ab = el('button', 'mini', 'Allow');
+      ab.type = 'button';
+      ab.title = 'Add an allow rule for ' + e.name + ', overriding whatever blocked it';
+      ab.setAttribute('aria-label', 'Allow ' + e.name);
+      ab.addEventListener('click', () => allowDomain(e, ab));
+      ac.append(ab);
+    }
     tr.append(tc, dc, dom, ty, rc, pc, ac);
     return tr;
   }

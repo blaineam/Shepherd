@@ -19,11 +19,13 @@
     <img src="icon.png" alt="" class="logo">
     <h1 class="wordmark">SHEPHERD</h1>
     <span class="pill live" id="live" role="status">connecting</span>
+    <button type="button" class="tbtn only-sm" id="btn-navmenu" aria-expanded="false" aria-label="Open menu">&#9776;</button>
     <nav class="tabs" role="tablist" aria-label="View">
       <button type="button" role="tab" id="tab-hud" aria-selected="true" aria-controls="view-hud">HUD</button>
       <button type="button" role="tab" id="tab-devices" aria-selected="false" aria-controls="view-devices">Devices</button>
       <button type="button" role="tab" id="tab-blocking" aria-selected="false" aria-controls="view-blocking">Blocking</button>
       <button type="button" role="tab" id="tab-alarms" aria-selected="false" aria-controls="view-alarms">Alarms</button>
+      <button type="button" role="tab" id="tab-vulnscan" aria-selected="false" aria-controls="view-vulnscan">Vulnerabilities</button>
       <button type="button" role="tab" id="tab-upstreams" aria-selected="false" aria-controls="view-upstreams">Upstreams</button>
       <button type="button" role="tab" id="tab-history" aria-selected="false" aria-controls="view-history">History</button>
       <button type="button" role="tab" id="tab-accountability" aria-selected="false" aria-controls="view-accountability">Accountability</button>
@@ -175,6 +177,7 @@
   <main id="view-devices" class="page page-fill" role="tabpanel" aria-labelledby="tab-devices" hidden></main>
   <main id="view-blocking" class="page" role="tabpanel" aria-labelledby="tab-blocking" hidden></main>
   <main id="view-alarms" class="page page-fill" role="tabpanel" aria-labelledby="tab-alarms" hidden></main>
+  <main id="view-vulnscan" class="page page-fill" role="tabpanel" aria-labelledby="tab-vulnscan" hidden></main>
   <main id="view-upstreams" class="page" role="tabpanel" aria-labelledby="tab-upstreams" hidden></main>
   <main id="view-history" class="page" role="tabpanel" aria-labelledby="tab-history" hidden></main>
   <main id="view-accountability" class="page" role="tabpanel" aria-labelledby="tab-accountability" hidden></main>
