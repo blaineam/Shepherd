@@ -456,3 +456,53 @@ func TestWanderingDeviceIsWatchedButNotFiltered(t *testing.T) {
 		t.Errorf("filtering must resume, got %q", got)
 	}
 }
+
+func TestDevicesAreClassifiedAutomaticallyFromRealDNSTraffic(t *testing.T) {
+	allowLoopbackDevices(t)
+	classifyEvery = 30 * time.Millisecond
+	t.Cleanup(func() { classifyEvery = 0 })
+
+	c := writeE2EConfig(t, t.TempDir(), answerServer(t), listServer(t).URL+"/ads.txt", "")
+	r := c.startRun(t)
+	defer r.stop()
+
+	// Real, verified rule data (internal/classify/rules/domains.json): three
+	// distinct Netflix-family domains, each scored toward "tv". A few lookups
+	// each is enough evidence to cross the classifier's threshold.
+	for i := 0; i < 4; i++ {
+		for _, name := range []string{"netflix.com.", "nflxso.net.", "nflxext.com."} {
+			resolve(t, r.dnsAddr, name)
+		}
+	}
+
+	id := deviceIDForIP(t, r, "127.0.0.1")
+	var dev map[string]any
+	waitUntil(t, "the classifier to guess a type", func() bool {
+		dev = r.json("GET", "/api/devices/"+id, "", 200)
+		typ, _ := dev["type"].(string)
+		return typ == "tv" || typ == "streaming box"
+	})
+	if dev["type_auto"] != true {
+		t.Errorf("a guessed type must be marked type_auto: %v", dev)
+	}
+	if conf, _ := dev["type_confidence"].(float64); conf <= 0 {
+		t.Errorf("type_confidence = %v, want > 0", dev["type_confidence"])
+	}
+	if reason, _ := dev["type_reason"].(string); reason == "" {
+		t.Error("a guessed type must come with a plain-language reason")
+	}
+
+	// A type the user sets themselves always wins and is never overwritten by
+	// later evidence, even through the real API and the real classifier loop.
+	r.json("PATCH", "/api/devices/"+id, `{"type":"laptop"}`, 200)
+	for i := 0; i < 4; i++ {
+		for _, name := range []string{"netflix.com.", "nflxso.net.", "nflxext.com."} {
+			resolve(t, r.dnsAddr, name)
+		}
+	}
+	time.Sleep(150 * time.Millisecond) // give a few more Apply ticks a chance to (wrongly) overwrite it
+	dev = r.json("GET", "/api/devices/"+id, "", 200)
+	if dev["type"] != "laptop" || dev["type_auto"] == true {
+		t.Errorf("a user-set type must survive the classifier: %v", dev)
+	}
+}

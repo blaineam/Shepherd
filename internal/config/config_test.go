@@ -261,3 +261,39 @@ func TestExampleConfigShowsTheDeviceAndBootstrapDefaults(t *testing.T) {
 		t.Errorf("example %+v %v differs from the defaults %+v %v", ex.Devices, ex.DNS.Bootstrap, def.Devices, def.DNS.Bootstrap)
 	}
 }
+
+func TestClassifyDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Classify.Enabled || cfg.Classify.IntervalSeconds != 300 {
+		t.Errorf("classify defaults = %+v (protection is opt-out, so this is on by default)", cfg.Classify)
+	}
+}
+
+func TestClassifyOverridesAndValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.toml")
+	os.WriteFile(path, []byte("[classify]\nenabled = false\ninterval_seconds = 60\n"), 0o600)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Classify.Enabled || cfg.Classify.IntervalSeconds != 60 {
+		t.Errorf("classify overrides = %+v", cfg.Classify)
+	}
+	os.WriteFile(path, []byte("[classify]\ninterval_seconds = 29\n"), 0o600)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "at least 30") {
+		t.Errorf("too-short interval: %v", err)
+	}
+}
+
+func TestExampleConfigShowsTheClassifyDefaults(t *testing.T) {
+	ex, err := Load("../../shepherd.example.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.Classify != Default().Classify {
+		t.Errorf("example %+v differs from the defaults %+v", ex.Classify, Default().Classify)
+	}
+}

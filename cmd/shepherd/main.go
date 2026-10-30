@@ -118,6 +118,7 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	deps := portal.Deps{Engine: engine, Lists: listMgr, Policy: policy, Devices: registry, Upstreams: ups,
 		Token: token, Version: version, Settings: prefs}
 
+	var asnLocator *geo.ASNLocator
 	if cfg.Map.Enabled {
 		var locator geo.Locator
 		engine.Geo = &locator
@@ -129,6 +130,16 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 			auto := &geo.AutoHome{Detector: geo.NewWANDetector(), Placer: &locator, Store: prefs}
 			deps.DetectHome = auto.Once
 			go auto.Run(ctx)
+		}
+		asnLocator = &geo.ASNLocator{}
+		asnMgr := geo.NewASNManager(asnLocator, cfg.DataDir)
+		asnMgr.BaseURL = cfg.Map.DatabaseURL
+		go asnMgr.Run(ctx)
+	}
+
+	if cfg.Classify.Enabled {
+		if _, err := startClassify(ctx, cfg, engine, registry, asnLocator); err != nil {
+			return err
 		}
 	}
 

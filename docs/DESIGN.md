@@ -18,6 +18,30 @@ much traffic reaches it:
 
 Watch mode is IPv4 only. See [IPV6.md](IPV6.md).
 
+### Gateway: Shepherd as a dual-NIC router (future, stated goal)
+
+The maintainer has expressed interest in eventually running Shepherd as the actual router, on hardware
+with two 10 Gb NICs (one WAN-facing, one LAN-facing), with the current Wi-Fi router demoted to a
+bridge/access-point-only role for radios. This is a real target, not idle speculation, and is recorded
+here so it shapes decisions made along the way (for example, Watch mode's relay and health-check code
+should stay reusable by a future full-forwarding path rather than being Watch-mode-specific).
+
+What it would need beyond everything above:
+- **Full L3 forwarding and NAT** for every device, not just steered ones — a different order of
+  engineering and risk than relaying one device's traffic beside the existing router.
+- **DHCP server** (today Shepherd deliberately avoids this; see the DHCP takeover method below,
+  which is a stopgap, not this).
+- **WAN handling**: PPPoE/DHCP client, failover, and reporting uplink health.
+- **Two-sided or full routing visibility**, which also closes the Watch-mode inbound blind spot
+  described below (a router sees both directions of every flow by construction).
+- **A migration path** from Guard/Watch to Gateway on the same install, and a credible rollback (the
+  old router can always be re-plugged as a pure Wi-Fi AP, since consumer mesh routers support bridge
+  mode).
+
+This is explicitly **not scheduled**: it is a large undertaking that only makes sense once Watch mode
+has been proven reliable on real hardware, and it changes Shepherd's risk profile fundamentally (a
+router outage is a full outage, not "one device loses protection"). See the roadmap's research items.
+
 ### Watch interception methods
 
 Watch mode has one interface and swappable methods, tried in this order:

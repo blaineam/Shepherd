@@ -70,6 +70,13 @@ reverse_dns = true               # ask one resolver for the name of each new add
 reverse_dns_server = ""          # "ip" or "ip:port"; empty uses the default gateway (Linux)
 save_interval_seconds = 60       # the registry is kept in <data_dir>/devices.json
 
+[classify]
+# Automatically guesses each device's type (phone, camera, TV, ...) from its DNS
+# lookups, MAC vendor and, when [map] is enabled, the networks it talks to
+# (docs/CLASSIFY.md). A type you set yourself is never overwritten by a guess.
+enabled = true
+interval_seconds = 300           # how often guesses are reconsidered
+
 [portal]
 listen = "127.0.0.1:8787"
 

@@ -22,14 +22,15 @@ type Config struct {
 	// install (the catalog's recommended items). Lists you define yourself are
 	// always kept. It only matters the first time Shepherd runs in a data
 	// directory: after that policy.json, edited in the portal, is the truth.
-	NoDefaultLists bool    `toml:"no_default_lists"`
-	DNS            DNS     `toml:"dns"`
-	Lists          []List  `toml:"lists"`
-	Portal         Portal  `toml:"portal"`
-	Privacy        Privacy `toml:"privacy"`
-	History        History `toml:"history"`
-	Map            Map     `toml:"map"`
-	Devices        Devices `toml:"devices"`
+	NoDefaultLists bool     `toml:"no_default_lists"`
+	DNS            DNS      `toml:"dns"`
+	Lists          []List   `toml:"lists"`
+	Portal         Portal   `toml:"portal"`
+	Privacy        Privacy  `toml:"privacy"`
+	History        History  `toml:"history"`
+	Map            Map      `toml:"map"`
+	Devices        Devices  `toml:"devices"`
+	Classify       Classify `toml:"classify"`
 }
 
 // ListsAreDefault reports whether [[lists]] is exactly the built-in default,
@@ -54,6 +55,14 @@ type Devices struct {
 	// default gateway found in /proc/net/route (Linux only).
 	ReverseDNSServer    string `toml:"reverse_dns_server"`
 	SaveIntervalSeconds int    `toml:"save_interval_seconds"`
+}
+
+// Classify automatically guesses a device's type (phone, camera, TV, ...) from
+// its DNS lookups, MAC vendor and, when the map's ASN database is available,
+// the networks it talks to. A type you set yourself is never overwritten.
+type Classify struct {
+	Enabled         bool `toml:"enabled"`
+	IntervalSeconds int  `toml:"interval_seconds"` // how often guesses are reconsidered
 }
 
 // History controls what is remembered after the fact. "memory" (the default)
@@ -123,12 +132,13 @@ var defaultList = List{
 // Network addresses stay on loopback so it is safe to start on any machine.
 func Default() Config {
 	return Config{
-		Lists:   []List{defaultList},
-		Privacy: Privacy{BlockPrivateRelay: true},
-		History: History{Mode: "memory", RetentionDays: 30, MaxMB: 2048, KeySource: "file"},
-		Map:     Map{Enabled: true, AutoHome: true},
-		Devices: Devices{Enabled: true, DNS: true, Neighbors: true, NeighborIntervalSeconds: 30, MDNS: true, ReverseDNS: true, SaveIntervalSeconds: 60},
-		DataDir: "data",
+		Lists:    []List{defaultList},
+		Privacy:  Privacy{BlockPrivateRelay: true},
+		History:  History{Mode: "memory", RetentionDays: 30, MaxMB: 2048, KeySource: "file"},
+		Map:      Map{Enabled: true, AutoHome: true},
+		Devices:  Devices{Enabled: true, DNS: true, Neighbors: true, NeighborIntervalSeconds: 30, MDNS: true, ReverseDNS: true, SaveIntervalSeconds: 60},
+		Classify: Classify{Enabled: true, IntervalSeconds: 300},
+		DataDir:  "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
 			Upstreams:            []string{"9.9.9.10", "149.112.112.10", "1.1.1.1"},
@@ -189,6 +199,9 @@ func (c Config) Validate() error {
 	}
 	if c.Devices.NeighborIntervalSeconds < 5 || c.Devices.SaveIntervalSeconds < 5 {
 		return errors.New("devices.neighbor_interval_seconds and devices.save_interval_seconds must be at least 5")
+	}
+	if c.Classify.IntervalSeconds < 30 {
+		return errors.New("classify.interval_seconds must be at least 30")
 	}
 	if s := c.Devices.ReverseDNSServer; s != "" {
 		host := s

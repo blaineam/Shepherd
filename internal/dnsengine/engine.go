@@ -31,6 +31,11 @@ type Engine struct {
 	// filter runs, so the device registry can learn who is asking. It must be
 	// cheap and rate-limit itself.
 	ClientSeen func(clientIP string)
+	// Observe is called with every allowed or cached query's real answer
+	// addresses (never a blocked query's sinkhole address), so the automatic
+	// classifier can learn what a device talks to. Must be cheap; the
+	// classifier's own Observe is non-blocking.
+	Observe func(clientIP, qname string, answers []net.IP)
 }
 
 // DeviceInfo is what the device registry knows about a client address.
@@ -125,12 +130,12 @@ func publicIP(ip net.IP) bool {
 // link-local, multicast or carrier-grade NAT).
 func PublicIP(ip net.IP) bool { return publicIP(ip) }
 
-// destsOf geolocates up to three distinct public addresses in resp.
-func (e *Engine) destsOf(resp *dns.Msg) []Dest {
-	if e.Geo == nil || resp == nil {
+// answerIPs returns every distinct A/AAAA address in resp, in answer order.
+func answerIPs(resp *dns.Msg) []net.IP {
+	if resp == nil {
 		return nil
 	}
-	var out []Dest
+	var out []net.IP
 	seen := map[string]bool{}
 	for _, rr := range resp.Answer {
 		var ip net.IP
@@ -140,10 +145,25 @@ func (e *Engine) destsOf(resp *dns.Msg) []Dest {
 		case *dns.AAAA:
 			ip = v.AAAA
 		}
-		if !publicIP(ip) || seen[ip.String()] {
+		if ip == nil || seen[ip.String()] {
 			continue
 		}
 		seen[ip.String()] = true
+		out = append(out, ip)
+	}
+	return out
+}
+
+// destsOf geolocates up to three distinct public addresses in ips.
+func (e *Engine) destsOf(ips []net.IP) []Dest {
+	if e.Geo == nil {
+		return nil
+	}
+	var out []Dest
+	for _, ip := range ips {
+		if !publicIP(ip) {
+			continue
+		}
 		if d, ok := e.Geo.Locate(ip); ok {
 			d.IP = ip.String()
 			out = append(out, d)
@@ -216,7 +236,11 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	if resp, ok := e.Cache.Get(r); ok {
 		entry.Action, entry.Rcode = "cached", dns.RcodeToString[resp.Rcode]
-		entry.Dests = e.destsOf(resp)
+		ips := answerIPs(resp)
+		entry.Dests = e.destsOf(ips)
+		if e.Observe != nil {
+			e.Observe(entry.Client, entry.Name, ips)
+		}
 		e.write(w, r, resp)
 		e.done(entry, start)
 		return
@@ -235,7 +259,11 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 	e.Cache.Put(r, resp)
 	entry.Action, entry.Upstream, entry.Rcode = "allowed", up.Addr, dns.RcodeToString[resp.Rcode]
-	entry.Dests = e.destsOf(resp)
+	ips := answerIPs(resp)
+	entry.Dests = e.destsOf(ips)
+	if e.Observe != nil {
+		e.Observe(entry.Client, entry.Name, ips)
+	}
 	e.write(w, r, resp)
 	e.done(entry, start)
 }

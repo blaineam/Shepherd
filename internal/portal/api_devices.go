@@ -19,23 +19,28 @@ type deviceNames struct {
 }
 
 type deviceJSON struct {
-	ID             string      `json:"id"`
-	Name           string      `json:"name"`
-	Alias          string      `json:"alias"`
-	Names          deviceNames `json:"names"`
-	Vendor         string      `json:"vendor"`
-	Type           string      `json:"type"`
-	TypeReason     string      `json:"type_reason"`
-	MACs           []string    `json:"macs"`
-	IPs            []string    `json:"ips"`
-	FirstSeen      time.Time   `json:"first_seen"`
-	LastSeen       time.Time   `json:"last_seen"`
-	Groups         []string    `json:"groups"`
-	Tags           []string    `json:"tags"`
-	Excluded       bool        `json:"excluded"`
-	Wandering      bool        `json:"wandering"`
-	WanderingUntil *time.Time  `json:"wandering_until,omitempty"`
-	Notes          string      `json:"notes"`
+	ID         string      `json:"id"`
+	Name       string      `json:"name"`
+	Alias      string      `json:"alias"`
+	Names      deviceNames `json:"names"`
+	Vendor     string      `json:"vendor"`
+	Type       string      `json:"type"`
+	TypeReason string      `json:"type_reason"`
+	// TypeAuto marks a type the automatic classifier chose (docs/CLASSIFY.md),
+	// as opposed to one you set yourself. TypeConfidence is how sure it was,
+	// 0 to 1. Both are omitted for a type you set, or for "unknown".
+	TypeAuto       bool       `json:"type_auto,omitempty"`
+	TypeConfidence float64    `json:"type_confidence,omitempty"`
+	MACs           []string   `json:"macs"`
+	IPs            []string   `json:"ips"`
+	FirstSeen      time.Time  `json:"first_seen"`
+	LastSeen       time.Time  `json:"last_seen"`
+	Groups         []string   `json:"groups"`
+	Tags           []string   `json:"tags"`
+	Excluded       bool       `json:"excluded"`
+	Wandering      bool       `json:"wandering"`
+	WanderingUntil *time.Time `json:"wandering_until,omitempty"`
+	Notes          string     `json:"notes"`
 }
 
 func toDevice(d devices.Device) deviceJSON {
@@ -52,7 +57,7 @@ func toDevice(d devices.Device) deviceJSON {
 	return deviceJSON{
 		ID: d.ID, Name: d.DisplayName(), Alias: d.Alias,
 		Names:  deviceNames{MDNS: d.MDNSName, Hostname: d.Hostname, RDNS: d.ReverseName},
-		Vendor: d.Vendor, Type: typ, TypeReason: d.TypeReason,
+		Vendor: d.Vendor, Type: typ, TypeReason: d.TypeReason, TypeAuto: d.TypeAuto, TypeConfidence: d.TypeConfidence,
 		MACs: orEmpty(d.MACs), IPs: orEmpty(d.IPs), FirstSeen: d.FirstSeen, LastSeen: d.LastSeen,
 		Groups: orEmpty(d.Groups), Tags: orEmpty(d.Tags), Excluded: d.Excluded, Wandering: wandering, WanderingUntil: until, Notes: d.Notes,
 	}

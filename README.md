@@ -72,18 +72,25 @@ Shepherd is early and built in public. This is real, tested and running on a rea
 - [x] **Protected out of the box.** A blocklist and the Private Relay policy are on by default; opt out of either in the config or the portal.
 - [x] **The globe HUD.** Live traffic arcs around a 3D globe, heavy lanes thicker, replay with a timeline, click-to-block, filters, and your home found automatically (override it any time). Runs offline and ships a demo mode.
 - [x] **Encrypted, searchable history** (opt-in): AES-256-GCM segments you can query after the fact, plus a live event stream.
-- [x] **Live portal** with per-device queries, one-click allow and block, upstream health, rules and policy switches.
+- [x] **A catalog of 95 lists, apps and categories** plus custom lists, so you can block Instagram, Discord or a whole category for the network, a group of devices or one device ([POLICY.md](docs/POLICY.md)).
+- [x] **Devices with real names**, learned passively from DNS, the neighbor table, mDNS and reverse DNS, with vendors, search, groups and bulk edit ([DEVICES.md](docs/DEVICES.md)).
+- [x] **Automatic device classification** (phone, camera, TV, speaker, and more) from DNS lookups, MAC vendor and, with the map on, the networks a device talks to; a type you set yourself always wins ([CLASSIFY.md](docs/CLASSIFY.md)).
+- [x] **Wandering mode**, per device: stop all filtering while still watching and logging every request, with an optional auto-reverting timer.
+- [x] **Configurable upstreams** over plain DNS, DNS over TLS and DNS over HTTPS, with bootstrap, verified presets and a test before you add one ([UPSTREAMS.md](docs/UPSTREAMS.md)).
+- [x] **Management screens** for all of the above (Devices, Blocking, Upstreams, History) alongside the HUD.
 - [x] **Tailscale integration** for private remote access, validated on a live exit node and subnet router.
 - [x] **Thread, Matter and IPv6 safe by design**, written down as hard rules ([IPV6.md](docs/IPV6.md)).
 - [x] **97% test coverage** with the race detector, enforced by a floor that only rises.
 
-Built and tested, not yet deployed to the live network: a **catalog of 95 lists, apps and categories** plus custom lists, so you can
-block Instagram, Discord or a whole category for the network, a group of devices or one device ([POLICY.md](docs/POLICY.md));
-**devices with real names**, learned passively from DNS, the neighbor table, mDNS and reverse DNS, with vendors, search, groups and bulk
-edit ([DEVICES.md](docs/DEVICES.md)); and **configurable upstreams** over plain DNS, DNS over TLS and DNS over HTTPS with bootstrap, presets and a test
-before you add one ([UPSTREAMS.md](docs/UPSTREAMS.md)). Their API is in place; the portal screens for them are being built. Coming next: alarms, port and exposure management, a reverse proxy with certificates and tunnels,
-inbound protection, per-device traffic control, the mesh, signed self-updates, the local AI and
-one-click installers. See the [roadmap](docs/ROADMAP.md).
+Built and tested, not yet wired in or deployed: a **passive ARP monitor** that learns real MAC addresses and
+raises spoofing alerts ([ARP.md](docs/ARP.md)); an **ARP interception engine** for Watch mode, with mandatory
+device exclusion, automatic fail-open and a panic stop, awaiting a controlled trial on real hardware before
+anything runs against a live network ([INTERCEPT.md](docs/INTERCEPT.md)); an **alarm engine** with Web Push and
+ntfy delivery, mute rules and batch actions ([ALARMS.md](docs/ALARMS.md)); and **router importers** for eero
+and CSV ([IMPORT.md](docs/IMPORT.md)). Coming next: device quarantine for newly discovered devices, port and
+exposure management, a reverse proxy with certificates and tunnels, portal locking (demo data until unlocked,
+PIN, passkeys), inbound protection, the mesh, signed self-updates, the local AI and one-click installers. A
+dual-NIC router profile is a stated future direction, not yet scheduled. See the [roadmap](docs/ROADMAP.md).
 
 ## How it fits together
 

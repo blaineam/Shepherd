@@ -41,24 +41,27 @@ func TestDestsOfPlacesOnlyPublicAddressesAndCapsAtThree(t *testing.T) {
 	geo["2001:db8::7"] = Dest{Lat: 10, Lon: 10, Country: "ZZ"}
 	e := &Engine{Geo: geo}
 
-	got := e.destsOf(answerWith("10.1.2.3", "127.0.0.1", "169.254.1.1", "100.64.0.9", "0.0.0.0", "224.0.0.1", "198.51.100.1", "198.51.100.1", "198.51.100.2", "198.51.100.3", "198.51.100.4"))
+	got := e.destsOf(answerIPs(answerWith("10.1.2.3", "127.0.0.1", "169.254.1.1", "100.64.0.9", "0.0.0.0", "224.0.0.1", "198.51.100.1", "198.51.100.1", "198.51.100.2", "198.51.100.3", "198.51.100.4")))
 	if len(got) != 3 || got[0].IP != "198.51.100.1" || got[1].IP != "198.51.100.2" || got[2].IP != "198.51.100.3" {
 		t.Errorf("want three distinct public addresses in order, got %+v", got)
 	}
 	if got[0].City != "Testville" || got[0].Country != "ZZ" {
 		t.Errorf("location fields lost: %+v", got[0])
 	}
-	if v6 := e.destsOf(answerWith("2001:db8::7")); len(v6) != 1 || v6[0].IP != "2001:db8::7" {
+	if v6 := e.destsOf(answerIPs(answerWith("2001:db8::7"))); len(v6) != 1 || v6[0].IP != "2001:db8::7" {
 		t.Errorf("IPv6 answers must be placed too: %+v", v6)
 	}
-	if none := e.destsOf(answerWith("198.51.100.99")); len(none) != 0 {
+	if none := e.destsOf(answerIPs(answerWith("198.51.100.99"))); len(none) != 0 {
 		t.Errorf("an address the database does not know is skipped: %+v", none)
 	}
-	if (&Engine{}).destsOf(answerWith("198.51.100.1")) != nil {
+	if (&Engine{}).destsOf(answerIPs(answerWith("198.51.100.1"))) != nil {
 		t.Error("no Geo means no destinations")
 	}
 	if e.destsOf(nil) != nil {
-		t.Error("nil response means no destinations")
+		t.Error("nil ips means no destinations")
+	}
+	if answerIPs(nil) != nil {
+		t.Error("a nil response has no answer ips")
 	}
 }
 
@@ -233,4 +236,42 @@ func TestPreloadFillsTheRingQuietly(t *testing.T) {
 	if got, _ := l.After(4, 10); len(got) != 1 || got[0].Name != "live" {
 		t.Errorf("live entries continue after the preload: %+v", got)
 	}
+}
+
+func TestObserveHookSeesRealAnswersNotBlockedSinkholes(t *testing.T) {
+	var hits atomicInt
+	up := fakeUpstreamAnswering(t, "198.51.100.7", &hits)
+	pool, _ := NewPool([]string{up})
+	e := &Engine{Filter: NewFilter(), Pool: pool, Cache: NewCache(10), Log: NewQueryLog(20), Stats: NewStats()}
+	e.Filter.SetList("ads", set("ads.example"))
+
+	var calls []struct {
+		client, name string
+		ips          []net.IP
+	}
+	e.Observe = func(client, name string, ips []net.IP) {
+		calls = append(calls, struct {
+			client, name string
+			ips          []net.IP
+		}{client, name, ips})
+	}
+
+	e.ServeDNS(udpWriter(), query("site.example.", dns.TypeA))  // allowed
+	e.ServeDNS(udpWriter(), query("site.example.", dns.TypeA))  // cached
+	e.ServeDNS(udpWriter(), query("x.ads.example.", dns.TypeA)) // blocked: must not be observed
+
+	if len(calls) != 2 {
+		t.Fatalf("Observe called %d times, want 2 (allowed + cached, never blocked)", len(calls))
+	}
+	for i, c := range calls {
+		if c.name != "site.example" || len(c.ips) != 1 || c.ips[0].String() != "198.51.100.7" {
+			t.Errorf("call %d: %+v", i, c)
+		}
+	}
+	if e.Observe == nil {
+		t.Fatal("sanity")
+	}
+	// A nil Observe must never be called (no panic).
+	e.Observe = nil
+	e.ServeDNS(udpWriter(), query("other.example.", dns.TypeA))
 }
