@@ -15,7 +15,11 @@
 //     must match byte for byte) so a typo can't steer the wrong device;
 //   - Trial mode is mandatory and capped at 5 minutes;
 //   - Ctrl-C (or any termination signal) calls PanicStop then Close before
-//     exiting, so the corrective ARP reply goes out even on a hard stop.
+//     exiting, so the corrective ARP reply goes out even on a hard stop;
+//   - GRO is disabled on the interface for the life of the trial (needs
+//     CAP_NET_ADMIN as well as CAP_NET_RAW) and always restored on exit, so
+//     a real captured frame is never a kernel-coalesced super-frame larger
+//     than the wire allows — see the comment above the GRO handling below.
 package main
 
 import (
@@ -28,7 +32,9 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -99,6 +105,38 @@ func run() error {
 		defer closer.Close()
 	}
 
+	// GRO (Generic Receive Offload) coalesces several inbound TCP segments
+	// into one oversized frame before any socket, raw ones included, ever
+	// sees them. The Relay retransmits whatever it captures unchanged, and
+	// a coalesced super-frame can be larger than a real Ethernet frame is
+	// allowed to be, which fails the raw send with EMSGSIZE and (correctly,
+	// by design) fails that device open at once. Disabling GRO on the
+	// interface for the life of this trial — and restoring it on every
+	// exit path, including a signal — avoids that without leaving the NIC
+	// permanently detuned.
+	groWasOn, groFixed, err := ethtoolGRO(*iface)
+	if err != nil {
+		return fmt.Errorf("intercept-trial: checking GRO on %q: %w", *iface, err)
+	}
+	if groFixed {
+		return fmt.Errorf("intercept-trial: %q reports generic-receive-offload as fixed (cannot be toggled); refusing to start, since an oversized GRO frame would abort the trial the same way it did before", *iface)
+	}
+	if groWasOn {
+		if err := setEthtoolGRO(*iface, false); err != nil {
+			return fmt.Errorf("intercept-trial: disabling GRO on %q: %w", *iface, err)
+		}
+		log.Printf("disabled GRO on %s for this trial", *iface)
+		defer func() {
+			if err := setEthtoolGRO(*iface, true); err != nil {
+				log.Printf("WARNING: failed to restore GRO on %s: %v (run `ethtool -K %s gro on` by hand)", *iface, err, *iface)
+				return
+			}
+			log.Printf("restored GRO on %s", *iface)
+		}()
+	} else {
+		log.Printf("GRO already off on %s", *iface)
+	}
+
 	rawCap, err := openCapture(*iface)
 	if err != nil {
 		return fmt.Errorf("intercept-trial: capture: %w", err)
@@ -167,6 +205,38 @@ func reportStatus(ctx context.Context, ctrl *intercept.Controller) {
 			}
 		}
 	}
+}
+
+// ethtoolGRO reports whether generic-receive-offload is currently on for
+// iface, and whether it is reported as [fixed] (not configurable).
+func ethtoolGRO(iface string) (on bool, fixed bool, err error) {
+	out, err := exec.Command("ethtool", "-k", iface).Output()
+	if err != nil {
+		return false, false, fmt.Errorf("ethtool -k %s: %w", iface, err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		rest, ok := strings.CutPrefix(line, "generic-receive-offload:")
+		if !ok {
+			continue
+		}
+		rest = strings.TrimSpace(rest)
+		return strings.HasPrefix(rest, "on"), strings.Contains(rest, "[fixed]"), nil
+	}
+	return false, false, fmt.Errorf("ethtool -k %s: generic-receive-offload not reported", iface)
+}
+
+// setEthtoolGRO turns generic-receive-offload on iface on or off.
+func setEthtoolGRO(iface string, on bool) error {
+	val := "off"
+	if on {
+		val = "on"
+	}
+	out, err := exec.Command("ethtool", "-K", iface, "gro", val).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ethtool -K %s gro %s: %w: %s", iface, val, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func formatSince(t time.Time) string {

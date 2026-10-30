@@ -126,10 +126,22 @@ capture loop to feed `HandleFrame` (the only piece the library itself does not p
 named twice on the command line (`-target-mac` and `-confirm`, which must match byte for byte) for a
 mandatory, capped (5 minutes max) trial duration. It is **not** built, run, or shipped by anything in
 `cmd/shepherd`; it is a separate binary the maintainer builds and runs by hand, once, watching
-`Status()` scroll by, with Ctrl-C wired to `PanicStop` + `Close`. It has never been run against a
-real household device — only against a disposable, throwaway VM set up for exactly this purpose.
+`Status()` scroll by, with Ctrl-C wired to `PanicStop` + `Close`.
 
-None of this is wired up yet. Doing so, and running it against a real network, happens later, only
+It also disables GRO (generic-receive-offload) on the interface for the trial's duration and always
+restores it on exit, including on a signal: GRO coalesces several inbound TCP segments into one
+oversized frame before any socket sees them, and the Relay retransmits whatever it captures
+unchanged, so a coalesced super-frame can fail a raw send with `EMSGSIZE` — which the health loop
+correctly, safely treats as a fail-open signal and unsteers at once, but which is really a capture
+artifact, not a real fault. Needs `CAP_NET_ADMIN` (for `ethtool`) alongside `CAP_NET_RAW`.
+
+Run twice against a disposable, throwaway VM (clean both times, auto-revert on schedule) and twice
+against the maintainer's own phone with the maintainer's explicit go-ahead, watching live: a 30s run
+(clean, ~8.4 MB relayed) and a 2-minute run that caught exactly the GRO/`EMSGSIZE` case above and
+self-reverted within about a second, before the GRO handling existed. Confirms the maintainer's eero
+7 Max accepts one-sided ARP steering, which was an open question.
+
+None of this is wired into `cmd/shepherd` or the portal yet. Doing so happens later, only
 with the maintainer's explicit go-ahead.
 
 ## Package layout
