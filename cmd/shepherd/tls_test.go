@@ -19,6 +19,7 @@ import (
 	"shepherd/internal/config"
 	"shepherd/internal/tlscert"
 
+	"github.com/miekg/dns"
 	"golang.org/x/crypto/acme"
 )
 
@@ -107,8 +108,10 @@ func makeTestCertDER(hostname string, csrDER []byte) ([]byte, error) {
 // leak overrides into each other.
 func resetTLSSeams(t *testing.T) {
 	t.Helper()
-	oldEvery, oldACME, oldDNS01, oldProp := tlsEvery, tlsACMEClient, tlsDNS01, tlsPropagationCheck
-	t.Cleanup(func() { tlsEvery, tlsACMEClient, tlsDNS01, tlsPropagationCheck = oldEvery, oldACME, oldDNS01, oldProp })
+	oldEvery, oldACME, oldDNS01, oldProp, oldExchange := tlsEvery, tlsACMEClient, tlsDNS01, tlsPropagationCheck, txtLookupExchange
+	t.Cleanup(func() {
+		tlsEvery, tlsACMEClient, tlsDNS01, tlsPropagationCheck, txtLookupExchange = oldEvery, oldACME, oldDNS01, oldProp, oldExchange
+	})
 }
 
 func TestStartTLSDisabledReturnsNilManager(t *testing.T) {
@@ -253,5 +256,85 @@ func TestStartTLSBadTokenFileFailsFast(t *testing.T) {
 	cfg.TLS = config.TLS{Enabled: true, Hostname: "shepherd.example.com", Listen: "127.0.0.1:0", CloudflareAPITokenFile: filepath.Join(t.TempDir(), "missing")}
 	if _, err := startTLS(context.Background(), cfg); err == nil {
 		t.Fatal("expected an error for a missing Cloudflare token file")
+	}
+}
+
+// fakeExchange lets a test script canned responses (or errors) per server
+// address, so dnsLookupTXT's fallback-across-servers behavior can be
+// exercised without a real UDP socket.
+func fakeExchange(responses map[string]*dns.Msg, errs map[string]error) func(ctx context.Context, server string, m *dns.Msg) (*dns.Msg, error) {
+	return func(_ context.Context, server string, _ *dns.Msg) (*dns.Msg, error) {
+		if err, ok := errs[server]; ok {
+			return nil, err
+		}
+		if resp, ok := responses[server]; ok {
+			return resp, nil
+		}
+		return nil, errors.New("fakeExchange: no response configured for " + server)
+	}
+}
+
+func txtAnswer(value string) *dns.Msg {
+	m := new(dns.Msg)
+	m.Rcode = dns.RcodeSuccess
+	m.Answer = []dns.RR{&dns.TXT{Hdr: dns.RR_Header{Name: "_acme-challenge.example.com.", Rrtype: dns.TypeTXT}, Txt: []string{value}}}
+	return m
+}
+
+func TestDNSLookupTXTReturnsFirstServersAnswer(t *testing.T) {
+	resetTLSSeams(t)
+	txtLookupExchange = fakeExchange(map[string]*dns.Msg{
+		"9.9.9.9:53": txtAnswer("the-value"),
+	}, nil)
+	txts, err := dnsLookupTXT([]string{"9.9.9.9"})(context.Background(), "_acme-challenge.example.com")
+	if err != nil {
+		t.Fatalf("dnsLookupTXT: %v", err)
+	}
+	if len(txts) != 1 || txts[0] != "the-value" {
+		t.Fatalf("txts = %v, want [the-value]", txts)
+	}
+}
+
+func TestDNSLookupTXTFallsBackToNextServer(t *testing.T) {
+	resetTLSSeams(t)
+	txtLookupExchange = fakeExchange(map[string]*dns.Msg{
+		"1.1.1.1:53": txtAnswer("fallback-value"),
+	}, map[string]error{
+		"9.9.9.9:53": errors.New("timeout"),
+	})
+	txts, err := dnsLookupTXT([]string{"9.9.9.9", "1.1.1.1"})(context.Background(), "_acme-challenge.example.com")
+	if err != nil {
+		t.Fatalf("dnsLookupTXT: %v", err)
+	}
+	if len(txts) != 1 || txts[0] != "fallback-value" {
+		t.Fatalf("txts = %v, want [fallback-value]", txts)
+	}
+}
+
+func TestDNSLookupTXTAllServersFail(t *testing.T) {
+	resetTLSSeams(t)
+	txtLookupExchange = fakeExchange(nil, map[string]error{
+		"9.9.9.9:53": errors.New("timeout"),
+		"1.1.1.1:53": errors.New("unreachable"),
+	})
+	if _, err := dnsLookupTXT([]string{"9.9.9.9", "1.1.1.1"})(context.Background(), "_acme-challenge.example.com"); err == nil {
+		t.Fatal("expected an error when every bootstrap resolver fails")
+	}
+}
+
+func TestDNSLookupTXTRcodeFailureFallsThrough(t *testing.T) {
+	resetTLSSeams(t)
+	nxdomain := new(dns.Msg)
+	nxdomain.Rcode = dns.RcodeNameError
+	txtLookupExchange = fakeExchange(map[string]*dns.Msg{
+		"9.9.9.9:53": nxdomain,
+		"1.1.1.1:53": txtAnswer("the-value"),
+	}, nil)
+	txts, err := dnsLookupTXT([]string{"9.9.9.9", "1.1.1.1"})(context.Background(), "_acme-challenge.example.com")
+	if err != nil {
+		t.Fatalf("dnsLookupTXT: %v", err)
+	}
+	if len(txts) != 1 || txts[0] != "the-value" {
+		t.Fatalf("txts = %v, want [the-value]", txts)
 	}
 }

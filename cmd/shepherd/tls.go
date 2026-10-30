@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"shepherd/internal/config"
 	"shepherd/internal/tlscert"
 
+	"github.com/miekg/dns"
 	"golang.org/x/crypto/acme"
 )
 
@@ -29,6 +31,10 @@ var (
 	tlsACMEClient       tlscert.ACMEClient
 	tlsDNS01            tlscert.DNS01Provider
 	tlsPropagationCheck func(ctx context.Context, fqdn, value string) error
+	// txtLookupExchange is a test seam for dnsLookupTXT's underlying DNS
+	// exchange, in the same style as internal/dnsengine's bootstrap.query.
+	// Production leaves it nil (use realTXTExchange, a real UDP query).
+	txtLookupExchange func(ctx context.Context, server string, m *dns.Msg) (*dns.Msg, error)
 )
 
 // letsEncryptDirectoryURL is the production ACME directory.
@@ -71,7 +77,7 @@ func startTLS(ctx context.Context, cfg config.Config) (*tlscert.Manager, error) 
 
 	propagationCheck := tlsPropagationCheck
 	if propagationCheck == nil {
-		propagationCheck = tlscert.WaitForDNSPropagation(dnsLookupTXT, 2*time.Minute, 5*time.Second)
+		propagationCheck = tlscert.WaitForDNSPropagation(dnsLookupTXT(cfg.DNS.Bootstrap), 2*time.Minute, 5*time.Second)
 	}
 
 	obtainer := &tlscert.Obtainer{
@@ -106,8 +112,64 @@ func startTLS(ctx context.Context, cfg config.Config) (*tlscert.Manager, error) 
 	return mgr, nil
 }
 
-func dnsLookupTXT(ctx context.Context, name string) ([]string, error) {
-	return net.DefaultResolver.LookupTXT(ctx, name)
+// dnsLookupTXT looks up name's TXT records directly against servers (plain
+// IP addresses, e.g. cfg.DNS.Bootstrap) over UDP, never the system resolver.
+// This matters specifically here: on a typical Shepherd deployment the
+// host's own system resolver is configured to use Shepherd itself (that is
+// the point of running it), so net.DefaultResolver.LookupTXT would route
+// this exact lookup back through Shepherd's own DNS engine and cache
+// instead of checking what the public internet (and so Let's Encrypt) can
+// actually see — the same "a resolver that depends on itself for DNS would
+// deadlock the network" problem internal/dnsengine's own bootstrap resolver
+// exists to avoid for tls:// and https:// upstream hostnames. A live DNS-01
+// attempt against a real Cloudflare-hosted zone hit this directly: a public
+// resolver had the fresh TXT record within seconds while Shepherd's own DNS
+// server never returned it at all, so the propagation check could never
+// succeed.
+func dnsLookupTXT(servers []string) func(ctx context.Context, name string) ([]string, error) {
+	return func(ctx context.Context, name string) ([]string, error) {
+		exchange := txtLookupExchange
+		if exchange == nil {
+			exchange = realTXTExchange
+		}
+		fqdn := dns.Fqdn(name)
+		var lastErr error
+		for _, server := range servers {
+			addr := server
+			if _, _, err := net.SplitHostPort(addr); err != nil {
+				addr = net.JoinHostPort(addr, "53")
+			}
+			m := new(dns.Msg)
+			m.SetQuestion(fqdn, dns.TypeTXT)
+			m.RecursionDesired = true
+			resp, err := exchange(ctx, addr, m)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if resp.Rcode != dns.RcodeSuccess {
+				lastErr = fmt.Errorf("%s answered %s for %s", server, dns.RcodeToString[resp.Rcode], name)
+				continue
+			}
+			var txts []string
+			for _, rr := range resp.Answer {
+				if t, ok := rr.(*dns.TXT); ok {
+					txts = append(txts, strings.Join(t.Txt, ""))
+				}
+			}
+			return txts, nil
+		}
+		if lastErr == nil {
+			lastErr = errors.New("no bootstrap resolver reachable")
+		}
+		return nil, fmt.Errorf("dns: looking up TXT records for %s: %w", name, lastErr)
+	}
+}
+
+func realTXTExchange(ctx context.Context, server string, m *dns.Msg) (*dns.Msg, error) {
+	c := &dns.Client{Net: "udp", Timeout: 4 * time.Second}
+	resp, _, err := c.ExchangeContext(ctx, m, server)
+	return resp, err
 }
 
 // cloudflareAPIToken resolves [tls]'s Cloudflare API token:

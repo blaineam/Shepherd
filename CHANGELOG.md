@@ -234,6 +234,18 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- `cmd/shepherd`'s DNS-01 propagation check (`dnsLookupTXT`) used `net.DefaultResolver`, which honors
+  the host's own system resolver — and on a typical Shepherd deployment, the host's system resolver
+  points at Shepherd itself (that is the point of running it). So the propagation check could end up
+  routing its own lookup back through Shepherd's own DNS engine and cache instead of checking what the
+  public internet (and so Let's Encrypt) actually sees. A live DNS-01 attempt against a real
+  Cloudflare-hosted zone hit this directly: a public resolver had the fresh challenge TXT record within
+  seconds while Shepherd's own DNS server never returned it at all, so the propagation check could never
+  succeed — the same "a resolver that depends on itself for DNS would deadlock the network" problem
+  `internal/dnsengine`'s own bootstrap resolver exists to avoid for `tls://`/`https://` upstream
+  hostnames. Fixed by looking the TXT record up directly against `dns.bootstrap`'s plain resolvers over
+  UDP, the same way and for the same reason `internal/dnsengine` already resolves upstream hostnames
+  without the system resolver.
 - `tlscert.DefaultObtainTimeout` (2 minutes) left no real headroom beyond `cmd/shepherd`'s own DNS-01
   propagation-wait timeout (also 2 minutes): both clocks start at nearly the same moment inside one
   `Obtain` call, so once propagation actually finished there was next to no budget left for the
