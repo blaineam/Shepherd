@@ -793,6 +793,8 @@ tr.a-error .h-dom { color: var(--amber); }
 .port-chip.risky { color: var(--red); border-color: #f2706b66; background: #f2706b12; }
 .port-chip.new:not(.risky) { color: var(--amber); border-color: #f0b64a66; background: #f0b64a12; }
 .port-flag { font: 700 9px var(--mono); letter-spacing: .1em; color: inherit; opacity: .85; }
+/* WAN-forwarded is the more dangerous exposure (docs/PORTSCAN.md): a filled badge, distinct from the plain "NEW" flag. */
+.port-flag.wan { opacity: 1; color: #fff; background: var(--red); padding: 1px 4px; border-radius: 2px; }
 
 /* ---------- Vulnerabilities (deepens Ports and exposure, above) ---------- */
 .dr-vulns { display: flex; flex-direction: column; gap: 8px; }

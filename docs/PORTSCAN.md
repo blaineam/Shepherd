@@ -204,9 +204,12 @@ Under the portal token, `X-Shepherd: 1` on the scan trigger.
 | Endpoint | Does |
 |---|---|
 | `GET /api/portscan` | `{enabled, ports, risky_ports}`: whether the scheduled scan is running, the configured port list, and the risky-port reasons |
-| `GET /api/portscan/devices` | every device's last scan: `{devices: [{device_id, name, ip, last_scanned, ports: [{port, open, first_seen, last_seen, newly_opened, risky, risk_note}]}]}` |
+| `GET /api/portscan/devices` | every device's last scan: `{devices: [{device_id, name, ip, last_scanned, ports: [{port, open, first_seen, last_seen, newly_opened, risky, risk_note, exposure}]}]}` |
 | `GET /api/portscan/devices/{id}` | one device's last scan, in the same shape (empty `ports` and no `last_scanned` if it has never been scanned) |
 | `POST /api/portscan/scan` | `{}` scans every known device now; `{"device_id": "..."}` scans just one. Returns the scanned devices in the same shape as the list endpoint |
+
+`exposure` is one of `"lan_only"`, `"wan_forwarded"` or `"unknown"` (see "WAN exposure," above), and is
+left out of a port's object entirely when `[portscan.wan_exposure]` is disabled.
 
 A manual scan of **every** device can take up to roughly a minute depending on how many devices there are
 and how many of their ports are silently dropped rather than actively refused (a refused connection answers

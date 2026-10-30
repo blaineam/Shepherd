@@ -129,6 +129,48 @@ func TestPortscanScanNowAllDevices(t *testing.T) {
 	}
 }
 
+// fakePortscanExposure is a portscan.ExposureChecker that always reports
+// wan_forwarded, without touching a real IGD.
+type fakePortscanExposure struct{}
+
+func (fakePortscanExposure) Exposure(ctx context.Context, ip string, port int) (bool, bool) {
+	return true, true
+}
+
+func TestPortscanScanNowIncludesExposureWhenConfigured(t *testing.T) {
+	h := newHarness(t)
+	id := h.addDevice("02:00:00:00:00:06", "203.0.113.14", "")
+	h.srv.Portscan = portscan.New(portscan.Options{
+		Dial:  fakePortscanDial(map[string]bool{net.JoinHostPort("203.0.113.14", "23"): true}),
+		Ports: []int{23}, Concurrency: 2, Timeout: time.Second, Exposure: fakePortscanExposure{},
+	})
+
+	m := h.ok("POST", "/api/portscan/scan", `{"device_id":"`+id+`"}`, 200)
+	devs := m["devices"].([]any)
+	ports := devs[0].(map[string]any)["ports"].([]any)
+	p := ports[0].(map[string]any)
+	if p["exposure"] != "wan_forwarded" {
+		t.Fatalf("exposure = %v, want %q", p["exposure"], "wan_forwarded")
+	}
+}
+
+func TestPortscanScanNowOmitsExposureWhenNotConfigured(t *testing.T) {
+	h := newHarness(t)
+	id := h.addDevice("02:00:00:00:00:07", "203.0.113.15", "")
+	h.srv.Portscan = portscan.New(portscan.Options{
+		Dial:  fakePortscanDial(map[string]bool{net.JoinHostPort("203.0.113.15", "23"): true}),
+		Ports: []int{23}, Concurrency: 2, Timeout: time.Second, // no Exposure checker
+	})
+
+	m := h.ok("POST", "/api/portscan/scan", `{"device_id":"`+id+`"}`, 200)
+	devs := m["devices"].([]any)
+	ports := devs[0].(map[string]any)["ports"].([]any)
+	p := ports[0].(map[string]any)
+	if _, has := p["exposure"]; has {
+		t.Fatalf("port record = %v, want no exposure field when WAN-exposure checking is not configured", p)
+	}
+}
+
 func TestPortscanScanNowOneDevice(t *testing.T) {
 	h := newHarness(t)
 	target := h.addDevice("02:00:00:00:00:03", "203.0.113.12", "")
