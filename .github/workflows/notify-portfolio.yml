@@ -1,0 +1,39 @@
+# Pings the portfolio's `mirror-app-docs` workflow the moment Shepherd's marketing site (site/) changes,
+# so blaineam.github.io/apps/shepherd updates immediately instead of waiting for the daily cron.
+#
+# Modeled on Haven's own .github/workflows/notify-portfolio.yml. Requires a PAT stored as
+# `PORTFOLIO_DISPATCH_TOKEN` in this repo's secrets (the default GITHUB_TOKEN can't dispatch to another
+# repo). Use a fine-grained PAT scoped to blaineam/blaineam.github.io with Contents: read-write, or a
+# classic PAT with public_repo.
+
+name: Notify portfolio to mirror docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    # Map the (optional) PAT to a job env var so we can gate on its presence — `secrets` isn't
+    # usable directly in an `if:` but `env` is.
+    env:
+      GH_TOKEN: ${{ secrets.PORTFOLIO_DISPATCH_TOKEN }}
+    steps:
+      # No PAT configured → skip cleanly (green) rather than failing the run. Add a fine-grained PAT
+      # (Contents: read-write on blaineam/blaineam.github.io, or a classic PAT with public_repo) as the
+      # PORTFOLIO_DISPATCH_TOKEN secret to enable the live mirror; the portfolio's daily cron covers it
+      # in the meantime.
+      - name: Skip — no PORTFOLIO_DISPATCH_TOKEN configured
+        if: env.GH_TOKEN == ''
+        run: echo "::notice::PORTFOLIO_DISPATCH_TOKEN not set — skipping portfolio mirror dispatch (the daily cron still mirrors docs)."
+
+      - name: Trigger mirror-app-docs in portfolio
+        if: env.GH_TOKEN != ''
+        run: |
+          gh api -X POST \
+            /repos/blaineam/blaineam.github.io/dispatches \
+            -f event_type=mirror-app-docs

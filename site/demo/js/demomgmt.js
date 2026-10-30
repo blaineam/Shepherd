@@ -34,6 +34,47 @@ const LIST_STATUS = {
   cryptojacking: { count: 1790, size_bytes: 39000, ago: 26 }, 'adult-core': { count: 411980, size_bytes: 9100000, ago: 6 }, 'gambling-core': { count: 18188, size_bytes: 402000, ago: 6 },
 };
 
+// MARKETING-SITE DEMO BUILD ADDITION: the shipped demo mgmt fake (above)
+// never implemented /api/alarms - alarmsview.js handles a 404 there
+// gracefully with an "Alarms is not available on this version" card, which
+// is correct behavior against an older real server but makes a poor first
+// impression on a marketing site built specifically to show the feature
+// off. This block is local to the marketing site's copy of this file only
+// (internal/portal/web/js/demomgmt.js, which cmd/shepherd actually embeds,
+// is untouched) and gives the Alarms screen a small, realistic synthetic
+// data set so it demonstrates the real alarm engine's UI faithfully.
+const SEVERITY_ORDER = ['info', 'low', 'medium', 'high', 'critical'];
+
+function initialAlarms(now) {
+  const mk = (id, severity, type, title, body, deviceId, state, agoMin, count = 1) => ({
+    id, severity, type, title, body, device_id: deviceId || '', state, count,
+    last_seen: new Date(now - agoMin * 60000).toISOString(),
+    first_seen: new Date(now - (agoMin + 180) * 60000).toISOString(),
+  });
+  return [
+    mk('al-1', 'critical', 'vulnerability-found', 'Anonymous FTP login allowed', 'A device accepts anonymous FTP logins on port 21.', 'dev-0003', 'new', 6),
+    mk('al-2', 'high', 'vulnerability-found', 'SMBv1 still enabled', 'A device is still answering SMBv1 negotiate requests.', 'dev-0012', 'new', 24),
+    mk('al-3', 'high', 'arp-spoof', 'Gateway MAC address changed', "The gateway's MAC address changed unexpectedly — possible ARP spoofing.", '', 'new', 48),
+    mk('al-4', 'medium', 'port-opened', 'New port opened: 23 (Telnet)', 'A device opened Telnet, a specifically risky port.', 'dev-0010', 'acknowledged', 95, 2),
+    mk('al-5', 'medium', 'new-device', 'New device joined the network', 'An unrecognized device landed in Quarantine and is waiting for review.', 'dev-0038', 'new', 12),
+    mk('al-6', 'high', 'vulnerability-found', 'Outdated OpenSSH build', 'A device is running an OpenSSH version missing a named security fix.', 'dev-0008', 'acknowledged', 210),
+    mk('al-7', 'low', 'upstream-down', 'All DNS upstreams went unhealthy', 'Every configured upstream failed health checks for about 2 minutes.', '', 'resolved', 540),
+    mk('al-8', 'info', 'upstream-recovered', 'Upstream recovered', 'tls://dns1.example.net is healthy again.', '', 'resolved', 538),
+    mk('al-9', 'medium', 'geo-block', 'Blocked a connection to a geo-blocked country', 'A device attempted a connection answered from a blocked country.', 'dev-0004', 'muted', 300, 14),
+    mk('al-10', 'low', 'wandering-shadow', 'Would have been blocked, while wandering', "A device's wandering mode let a tracker domain through unfiltered.", 'dev-0006', 'new', 20, 5),
+  ];
+}
+
+function alarmMatches(a, f) {
+  if (f.min_severity && SEVERITY_ORDER.indexOf(a.severity) < SEVERITY_ORDER.indexOf(f.min_severity)) return false;
+  if (f.states && f.states.length && !f.states.includes(a.state)) return false;
+  if (f.text) {
+    const t = f.text;
+    if (!(a.title.toLowerCase().includes(t) || (a.body || '').toLowerCase().includes(t) || (a.device_id || '').toLowerCase().includes(t))) return false;
+  }
+  return true;
+}
+
 export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', now = () => Date.now() } = {}) {
   let devices = buildDevices(count, now());
   let groups = DEMO_GROUPS.map((g) => ({ ...g }));
@@ -48,6 +89,11 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
   let bootstrap = ['198.51.100.2', '198.51.100.3'];
   const hist = { mode: history === 'memory' ? 'memory' : 'encrypted', locked: history === 'locked' || history === 'fresh', initialized: history !== 'fresh' };
   let lastBulk = 0;
+  // MARKETING-SITE DEMO BUILD ADDITION: see initialAlarms() above.
+  let alarms = initialAlarms(now());
+  let alarmRules = [];
+  let alarmNextId = 1;
+  let lastAlarmUndo = null;
 
   const gname = (id) => (groups.find((g) => g.id === id) || {}).name || id;
   const withCount = (g) => ({ ...g, count: devices.filter((d) => d.groups.includes(g.id)).length });
@@ -273,6 +319,94 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       return { ok: true };
     }
     if (path === '/api/policy/refresh' && method === 'POST') { await delay(250); return null; }
+    // ---- alarms (MARKETING-SITE DEMO BUILD ADDITION — see initialAlarms() above)
+    if (path === '/api/alarms' && method === 'GET') {
+      const f = { min_severity: q.get('min_severity') || '', states: q.get('states') ? [q.get('states')] : [], text: (q.get('text') || '').toLowerCase() };
+      const offset = Math.max(0, Number(q.get('offset')) || 0), limit = Math.min(200, Math.max(1, Number(q.get('limit')) || 50));
+      const all = alarms.filter((a) => alarmMatches(a, f)).sort((a, b) => Date.parse(b.last_seen) - Date.parse(a.last_seen));
+      return { alarms: all.slice(offset, offset + limit).map((a) => ({ ...a })), total: all.length };
+    }
+    if (path === '/api/alarms/summary' && method === 'GET') {
+      const by_severity = {}, by_state = {};
+      for (const a of alarms) { by_severity[a.severity] = (by_severity[a.severity] || 0) + 1; by_state[a.state] = (by_state[a.state] || 0) + 1; }
+      return { total: alarms.length, by_severity, by_state };
+    }
+    if (path === '/api/alarms/types' && method === 'GET') return { types: [...new Set(alarms.map((a) => a.type))] };
+    if (path === '/api/alarms/rules' && method === 'GET') return { rules: alarmRules.map((r) => ({ ...r })) };
+    if (path === '/api/alarms/rules' && method === 'POST') {
+      const r = { id: 'rule-' + alarmNextId++, name: String(body.name || '').trim() || '(unnamed rule)', match: body.match || {}, reason: body.reason || '', expires_at: null };
+      alarmRules.push(r);
+      return r;
+    }
+    if ((m = /^\/api\/alarms\/rules\/([^/]+)$/.exec(path)) && method === 'DELETE') {
+      alarmRules = alarmRules.filter((r) => r.id !== decodeURIComponent(m[1]));
+      return { ok: true };
+    }
+    if (path === '/api/alarms/bulk' && method === 'POST') {
+      let ids;
+      if (Array.isArray(body.ids)) ids = body.ids;
+      else if (body.all) {
+        const bf = body.filter || {};
+        const ff = { min_severity: bf.min_severity || '', states: bf.states ? [bf.states] : [], text: (bf.text || '').toLowerCase() };
+        ids = alarms.filter((a) => alarmMatches(a, ff)).map((a) => a.id);
+      } else ids = [];
+      const set = new Set(ids);
+      const snapshot = alarms.filter((a) => set.has(a.id)).map((a) => ({ ...a }));
+      let changed = 0;
+      if (body.op === 'delete') {
+        const before = alarms.length;
+        alarms = alarms.filter((a) => !set.has(a.id));
+        changed = before - alarms.length;
+      } else {
+        alarms = alarms.map((a) => {
+          if (!set.has(a.id)) return a;
+          changed++;
+          if (body.op === 'acknowledge') return { ...a, state: 'acknowledged' };
+          if (body.op === 'resolve') return { ...a, state: 'resolved' };
+          if (body.op === 'mute') return { ...a, state: 'muted' };
+          return a;
+        });
+      }
+      const handle = 'undo-' + alarmNextId++;
+      lastAlarmUndo = { handle, op: body.op, snapshot };
+      return { changed, skipped: 0, handle };
+    }
+    if (path === '/api/alarms/undo' && method === 'POST') {
+      if (!lastAlarmUndo || lastAlarmUndo.handle !== body.handle) return { ok: false };
+      const { op, snapshot } = lastAlarmUndo;
+      if (op === 'delete') {
+        const have = new Set(alarms.map((a) => a.id));
+        for (const a of snapshot) if (!have.has(a.id)) alarms.push(a);
+      } else {
+        const byId = new Map(snapshot.map((a) => [a.id, a]));
+        alarms = alarms.map((a) => (byId.has(a.id) ? byId.get(a.id) : a));
+      }
+      lastAlarmUndo = null;
+      return { ok: true };
+    }
+    if ((m = /^\/api\/alarms\/([^/]+)\/mute$/.exec(path)) && method === 'POST') {
+      const id = decodeURIComponent(m[1]);
+      const i = alarms.findIndex((x) => x.id === id);
+      if (i < 0) throw err(404, 'alarm not found');
+      alarms[i] = { ...alarms[i], state: 'muted' };
+      return { ...alarms[i] };
+    }
+    if ((m = /^\/api\/alarms\/([^/]+)$/.exec(path))) {
+      const id = decodeURIComponent(m[1]);
+      if (method === 'GET') { const a = alarms.find((x) => x.id === id); if (!a) throw err(404, 'alarm not found'); return { ...a }; }
+      if (method === 'PATCH') {
+        const i = alarms.findIndex((x) => x.id === id);
+        if (i < 0) throw err(404, 'alarm not found');
+        alarms[i] = { ...alarms[i], state: body.state || alarms[i].state };
+        return { ...alarms[i] };
+      }
+      if (method === 'DELETE') {
+        const before = alarms.length;
+        alarms = alarms.filter((x) => x.id !== id);
+        if (alarms.length === before) throw err(404, 'alarm not found');
+        return { ok: true };
+      }
+    }
     // ---- upstreams
     if (path === '/api/upstreams') {
       if (method === 'GET') return upstreamDoc();

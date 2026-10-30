@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shepherd — the guardian your home network never had</title>
+<meta name="description" content="Shepherd is a free, open-source, self-hosted guardian for your home network: DNS filtering, device management, a live 3D traffic globe, alarms, and port/vulnerability scanning. No cloud, no telemetry, no subscription.">
+<meta property="og:title" content="Shepherd — the guardian your home network never had">
+<meta property="og:description" content="Free, open-source, self-hosted. DNS filtering, device management, a live globe HUD, alarms and security scanning — one native binary, no cloud, no telemetry.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="images/hud-demo.jpg">
+<meta name="theme-color" content="#05080d">
+<link rel="icon" href="images/icon-rounded.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="images/icon-rounded.png" alt="Shepherd"> Shepherd</a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#demo">Live demo</a>
+      <a href="#roadmap">Roadmap</a>
+      <a href="#run-anywhere">Run it</a>
+      <a href="https://github.com/blaineam/shepherd" target="_blank" rel="noopener">GitHub</a>
+    </div>
+    <span class="spacer"></span>
+    <a class="btn btn-ghost" href="https://github.com/blaineam/shepherd" target="_blank" rel="noopener">View source</a>
+    <a class="btn btn-primary" href="demo/index.html">Try the live demo</a>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <div>
+      <p class="eyebrow">Free &middot; Open source &middot; Self-hosted</p>
+      <h1>The guardian your <span class="flock">home network</span> never had.</h1>
+      <p class="hero-sub">Every phone, TV, camera, thermostat and light bulb in your home is quietly talking to
+        servers around the world. Shepherd is one app that watches the whole flock — DNS filtering, device
+        management and security scanning, running on hardware you already own. No cloud. No subscription.
+        No telemetry.</p>
+      <div class="btn-row">
+        <a class="btn btn-primary" href="demo/index.html">Launch the live demo →</a>
+        <a class="btn btn-ghost" href="https://github.com/blaineam/shepherd" target="_blank" rel="noopener">Get it on GitHub</a>
+      </div>
+      <div class="hero-badges">
+        <span class="badge">License <b>AGPL-3.0-or-later</b></span>
+        <span class="badge">Test coverage <b>97%</b></span>
+        <span class="badge">Accounts <b>none</b></span>
+        <span class="badge">Telemetry <b>none</b></span>
+        <span class="badge">Runs on <b>Linux · macOS · Windows</b></span>
+      </div>
+    </div>
+    <div class="hero-art">
+      <img src="images/hud-demo.jpg" alt="Shepherd's globe HUD: arcs from home to destinations around a dot-matrix globe, with a live feed, filters, inspector and replay timeline">
+      <span class="hero-art-cap">THE PORTAL · synthetic demo data</span>
+    </div>
+  </div>
+</header>
+
+<section class="stats">
+  <div class="wrap">
+    <div class="stat"><div class="n">95</div><div class="k">lists, apps &amp; categories in the catalog</div></div>
+    <div class="stat"><div class="n">1</div><div class="k">native binary, zero dependencies</div></div>
+    <div class="stat"><div class="n">$0</div><div class="k">forever — no plans, no paid tiers</div></div>
+    <div class="stat"><div class="n">97%</div><div class="k">statement coverage, race detector on</div></div>
+  </div>
+</section>
+
+<section class="problem">
+  <div class="wrap">
+    <p class="eyebrow">Your network is a flock</p>
+    <h2>Right now, you can't see it.</h2>
+    <p>Most of what's on your network is harmless. Some of it is tracking you. A little of it, one day, will
+      be an attacker, or a device that has gone bad. The tools that can show you this are either closed
+      hardware you rent forever, or a pile of dashboards that don't talk to each other.</p>
+    <p><strong>Shepherd runs on a NAS, a mini PC, a Mac, a Windows box — or a Raspberry Pi — inside your
+      network.</strong> No new router. It learns who your devices are, what they talk to, and notices the
+      black sheep: the device that doesn't belong.</p>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="section-head center">
+      <p class="eyebrow">What's shipped</p>
+      <h2>Real, tested, running on a real network.</h2>
+      <p class="lede" style="margin:0 auto;">Shepherd is built in public. Everything below is live today — not a
+        roadmap slide. See <a href="https://github.com/blaineam/shepherd/blob/main/CHANGELOG.md" target="_blank" rel="noopener">CHANGELOG.md</a>
+        for the full, dated history.</p>
+    </div>
+    <div class="feature-grid">
+      <div class="card">
+        <span class="tag">DNS FILTER</span>
+        <h3>A catalog of 95 lists, apps &amp; categories</h3>
+        <p>Block Instagram, Discord, YouTube, Steam, Social, Gaming, Adult, Gambling and more — plus custom
+          lists from a URL or pasted text. Scope any block (or allow) to the whole network, a group of
+          devices, or just one device.</p>
+      </div>
+      <div class="card">
+        <span class="tag">POLICY</span>
+        <h3>Allowlist mode &amp; scheduled access</h3>
+        <p>Flip any scope from block-by-default to <code>allow</code>-by-default. Any rule can carry a
+          day-of-week / time-of-day schedule, so a block or allow only applies inside the window you set.</p>
+      </div>
+      <div class="card">
+        <span class="tag">DEVICES</span>
+        <h3>Devices with real names</h3>
+        <p>Learned passively from DNS, the neighbor table, mDNS and reverse DNS — with vendors, automatic
+          classification (phone, camera, TV, speaker…), groups, search and bulk edit. New devices land in
+          Quarantine automatically until you look at them.</p>
+      </div>
+      <div class="card">
+        <span class="tag">WANDER</span>
+        <h3>Wandering mode</h3>
+        <p>Stop filtering one device entirely while still watching and logging everything it does, with an
+          optional auto-reverting timer. For the one laptop that needs to see the raw internet, temporarily.</p>
+      </div>
+      <div class="card">
+        <span class="tag">HUD</span>
+        <h3>The globe HUD</h3>
+        <p>Live traffic arcs wrap a 3D globe from home to every destination, weighted so heavy lanes glow
+          brighter. Click an arc, a device or a destination to block or allow it, live, with undo. Scrub a
+          timeline to replay last Tuesday at 3&nbsp;a.m.</p>
+      </div>
+      <div class="card">
+        <span class="tag">HISTORY</span>
+        <h3>Encrypted, searchable history</h3>
+        <p>Opt-in query history sealed with AES-256-GCM in immutable, individually keyed segments, unlocked
+          with a passphrase or key file. In-memory only remains the default.</p>
+      </div>
+      <div class="card amber">
+        <span class="tag">ALARMS</span>
+        <h3>An alarm engine that actually delivers</h3>
+        <p>Severities, dedupe, storm control, mute rules and quiet hours, batch actions, and a digest for
+          low-severity alarms — delivered over <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a>
+          today. Web Push is designed but waits on the portal getting HTTPS.</p>
+      </div>
+      <div class="card amber">
+        <span class="tag">PORTS</span>
+        <h3>Port &amp; exposure scanning</h3>
+        <p>Scheduled, gentle TCP connect scans of every known device's common ports, with history and flags
+          for a newly-opened port or a specifically risky one — Telnet, RDP, SMB, VNC, an unauthenticated
+          Docker API and more.</p>
+      </div>
+      <div class="card red">
+        <span class="tag">VULNSCAN</span>
+        <h3>Vulnerability scanning, not just port numbers</h3>
+        <p>Not "port 23 is open" but "Telnet is open," or "this OpenSSH build is missing a named fix."
+          A curated signature table — confirmed with a real, gentle protocol probe — covers outdated
+          SSH/OpenSSH, unencrypted or anonymous FTP, the vsftpd 2.3.4 backdoor, stale Apache/nginx/lighttpd,
+          an open Docker API, and SMBv1.</p>
+      </div>
+      <div class="card blue">
+        <span class="tag">GEO-BLOCK</span>
+        <h3>Geo-IP country blocking</h3>
+        <p>Firewalla-style, per-scope lists of ISO country codes whose DNS answers get blocked — network,
+          group, or one device at a time, reusing the same GeoIP database that powers the globe.</p>
+      </div>
+      <div class="card">
+        <span class="tag">LOCKING</span>
+        <h3>Portal locking</h3>
+        <p>The portal shows synthetic demo data until it's unlocked. A PIN, bound to up to 20 trusted
+          browsers and hashed with Argon2id, plus idle auto-lock. Passkeys are designed for, waiting on the
+          portal's own HTTPS.</p>
+      </div>
+      <div class="card">
+        <span class="tag">UPSTREAMS</span>
+        <h3>Self-healing upstreams</h3>
+        <p>Plain DNS, DNS-over-TLS and DNS-over-HTTPS, with continuous health probing, automatic failover
+          and fastest-healthy-first ordering — born from a real outage where an encrypted upstream stalled
+          an entire network.</p>
+      </div>
+    </div>
+
+    <p class="lede" style="margin:40px auto 0; text-align:center; max-width:760px;">
+      Also shipped: passive ARP monitoring (learns real MAC addresses, flags spoofing signatures) &middot;
+      <a href="https://tailscale.com" target="_blank" rel="noopener">Tailscale</a> integration for private
+      remote access &middot; Apple iCloud Private Relay blocking, on by default &middot; router import from
+      eero or CSV, with a dry-run preview &middot; accountability-partner email alerts, a self-hosted
+      alternative to Covenant&nbsp;Eyes &middot; IPv6, Thread and Matter protected by rules in the code, not
+      by luck.
+    </p>
+  </div>
+</section>
+
+<section class="demo-section" id="demo">
+  <div class="wrap">
+    <div class="section-head center">
+      <p class="eyebrow">Try it right now</p>
+      <h2>This is the <span class="accent">real portal</span>. The data is fake.</h2>
+      <p class="lede" style="margin:0 auto;">Below is Shepherd's actual portal UI — the same globe, the same
+        Devices and Blocking and Alarms screens — compiled straight from this repository and forced
+        permanently into its own built-in demo mode. Every device, domain and destination is synthetic,
+        generated fresh in your browser. There is no backend behind this page at all: nothing you click here
+        calls an API, and nothing leaves your browser.</p>
+    </div>
+    <div class="demo-frame-wrap">
+      <div class="demo-frame-top">
+        <span class="dots"><span></span><span></span><span></span></span>
+        <span class="url">shepherd &middot; demo mode &middot; synthetic data only</span>
+      </div>
+      <div class="demo-frame">
+        <iframe src="demo/index.html" loading="lazy" title="Shepherd portal, live interactive demo with synthetic data" allow="clipboard-write"></iframe>
+      </div>
+    </div>
+    <p class="demo-note"><span class="dot">●</span> Click around — try the HUD's timeline scrubber, open the
+      Devices or Blocking tabs, click an arc to inspect it. On a small screen, or if it looks cramped in the
+      frame above, <a href="demo/index.html">open the demo full-screen →</a></p>
+  </div>
+</section>
+
+<section id="roadmap">
+  <div class="wrap">
+    <div class="section-head center">
+      <p class="eyebrow">What's coming</p>
+      <h2>Built in public — including what isn't done yet.</h2>
+      <p class="lede" style="margin:0 auto;">Shepherd ships in tested increments, deployed to a real network
+        as they land. Here's what's honestly still ahead. See
+        <a href="https://github.com/blaineam/shepherd/blob/main/docs/ROADMAP.md" target="_blank" rel="noopener">docs/ROADMAP.md</a>
+        for the full, numbered list.</p>
+    </div>
+    <div class="roadmap-grid">
+      <div class="rcard">
+        <h3>Reverse proxy &amp; HTTPS <span class="pill-state planned">planned</span></h3>
+        <p>Wildcard certificates on Cloudflare DNS, private service names, Cloudflare Tunnel — and the
+          portal's own first real HTTPS, which several other features (Web Push, passkeys) are waiting on.</p>
+      </div>
+      <div class="rcard">
+        <h3>Passkeys <span class="pill-state planned">planned</span></h3>
+        <p>Designed as part of portal locking already — WebAuthn needs HTTPS, so this follows the reverse
+          proxy directly.</p>
+      </div>
+      <div class="rcard">
+        <h3>Network health history <span class="pill-state planned">next up</span></h3>
+        <p>Ping/latency, jitter, packet loss, bufferbloat, reachability and traceroute, run on an interval and
+          kept over months so reliability trends are visible, not just this instant.</p>
+      </div>
+      <div class="rcard">
+        <h3>Inbound protection <span class="pill-state planned">planned</span></h3>
+        <p>Logging, rate limits and blocking at the proxy and tunnel, exposure alarms, host-level inbound
+          tracking.</p>
+      </div>
+      <div class="rcard">
+        <h3>Mesh <span class="pill-state planned">planned</span></h3>
+        <p>Run more than one Shepherd; a synced dataset of rules, devices, alarms and history, with a standby
+          that takes over in seconds.</p>
+      </div>
+      <div class="rcard">
+        <h3>Self-maintenance <span class="pill-state planned">planned</span></h3>
+        <p>Signed self-update with rollback, retention budgets, digests — so an install looks after itself the
+          way the blocklists and upstreams already do.</p>
+      </div>
+      <div class="rcard">
+        <h3>Threat feeds &amp; a local AI <span class="pill-state planned">planned</span></h3>
+        <p>A model that learns what normal looks like for each device and explains what's strange, in plain
+          English, without a byte leaving your house.</p>
+      </div>
+      <div class="rcard">
+        <h3>Packaging &amp; installers <span class="pill-state planned">planned</span></h3>
+        <p>A real setup wizard and release channels. Today it's a binary and a config file — see
+          <a href="#run-anywhere">running it</a> below.</p>
+      </div>
+    </div>
+
+    <div class="watch-callout">
+      <h3>⚠ About "Watch mode" (ARP interception)</h3>
+      <p>You may see Watch mode mentioned elsewhere — one-sided ARP steering that would let Shepherd see and
+        control a device's traffic even past its DNS. <strong>It is not live today.</strong> The engine is
+        real and tested, but it only runs by hand, in short trials, through a standalone CLI — nothing in
+        the normal app or portal wires it in yet. A live trial found a real, still-unresolved throughput
+        cost on the steered device (roughly 1.1&nbsp;Gbps down to ~300&nbsp;Mbps), and that gates it from
+        going further.</p>
+      <p>Everything above this box — DNS filtering, devices, the globe, alarms, scanning — has zero network
+        cost and runs today. Watch mode would close one specific gap (a device that deliberately avoids your
+        DNS resolver), not replace any of it. Read the honest, row-by-row comparison in
+        <a href="https://github.com/blaineam/shepherd/blob/main/docs/WATCH-MODE-COMPARISON.md" target="_blank" rel="noopener">docs/WATCH-MODE-COMPARISON.md</a>.</p>
+    </div>
+  </div>
+</section>
+
+<section id="run-anywhere">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Hardware you already own</p>
+      <h2>One static binary. No Docker, no database server.</h2>
+      <p class="lede">Shepherd cross-compiles to Linux, macOS and Windows with no CGO. Run it on a NAS, a
+        mini PC, an old laptop — or a Raspberry Pi 3 or newer.</p>
+    </div>
+    <div class="run-grid">
+      <div>
+        <ul class="run-list">
+          <li><span class="dot2">●</span> <span><strong class="muted" style="color:var(--text)">DNS-only protection costs the network nothing</strong> — it never adds a hop to anyone's traffic, Pi included.</span></li>
+          <li><span class="dot2">●</span> <span>Answering DNS against an in-memory blocklist, passive device learning, the catalog/policy engine and the portal itself are all light enough for a Pi&nbsp;3 or&nbsp;4 to handle a typical home's query volume without strain.</span></li>
+          <li><span class="dot2">●</span> <span>Watch mode's software relay is the one piece that isn't free — treat it as an occasional, short trial on a Pi, not something you run constantly, until its throughput cost is resolved.</span></li>
+          <li><span class="dot2">●</span> <span>No formal installer yet — this is a binary-and-a-config-file setup today. See <a href="https://github.com/blaineam/shepherd/blob/main/docs/RASPBERRY-PI.md" target="_blank" rel="noopener">docs/RASPBERRY-PI.md</a> for the full systemd walkthrough.</span></li>
+        </ul>
+      </div>
+      <div class="codeblock"><span class="c"># clone and build</span>
+git clone https://github.com/blaineam/shepherd <span class="c">&amp;&amp;</span> <span class="s">cd</span> shepherd
+make build
+
+<span class="c"># configure — set dns.listen and portal.listen</span>
+cp shepherd.example.toml shepherd.toml
+
+<span class="c"># run it beside your current resolver first</span>
+bin/shepherd -config shepherd.toml
+
+<span class="c"># cross-compile for a Raspberry Pi (arm64)</span>
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+  go build -trimpath -o shepherd-arm64 ./cmd/shepherd</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="section-head center">
+      <p class="eyebrow">Principles</p>
+      <h2>Open and honest, by construction.</h2>
+    </div>
+    <div class="principles-grid">
+      <div class="pcard"><h3>Private by design</h3><p>No telemetry, no accounts. The only outbound
+        connections are your DNS upstreams and blocklist downloads.</p></div>
+      <div class="pcard"><h3>Never breaks your smart home</h3><p>IPv6, Thread, Matter and mDNS are protected
+        by rules in the code, not by luck.</p></div>
+      <div class="pcard"><h3>Free and keyless</h3><p>No paid APIs. Every data source works without an
+        account.</p></div>
+      <div class="pcard"><h3>Self-maintaining</h3><p>Lists, upstreams and storage look after themselves, with
+        guardrails and rollback.</p></div>
+      <div class="pcard"><h3>Protected by default</h3><p>Set it up once and every device is covered. You opt
+        out, never opt in.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap">
+    <p class="eyebrow">Open source, AGPL-3.0-or-later</p>
+    <h2>See your network. Keep it to yourself.</h2>
+    <p class="lede" style="margin:0 auto;">If you run a modified Shepherd as a service, you share your
+      changes — that's the whole deal.</p>
+    <div class="btn-row" style="justify-content:center;">
+      <a class="btn btn-primary" href="demo/index.html">Launch the live demo →</a>
+      <a class="btn btn-ghost" href="https://github.com/blaineam/shepherd/releases" target="_blank" rel="noopener">Grab the newest beta</a>
+    </div>
+  </div>
+</section>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <a class="footer-brand" href="#top"><img src="images/icon-rounded.png" alt="Shepherd"> Shepherd</a>
+      <div class="footer-links">
+        <a href="https://github.com/blaineam/shepherd" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/blaineam/shepherd#docs" target="_blank" rel="noopener">Docs</a>
+        <a href="https://github.com/blaineam/shepherd/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+        <a href="https://github.com/blaineam/shepherd/blob/main/docs/ROADMAP.md" target="_blank" rel="noopener">Roadmap</a>
+        <a href="https://github.com/blaineam/shepherd/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="https://github.com/blaineam/shepherd/issues" target="_blank" rel="noopener">Report an issue</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>Licensed AGPL-3.0-or-later. Built in public, without leaking your network.</span>
+      <span>Icon: the black sheep, reused from the Lamdi app.</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
