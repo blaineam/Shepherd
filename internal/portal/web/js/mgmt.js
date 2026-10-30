@@ -78,6 +78,7 @@ export function createMgmt(api) {
 
     setLockingSettings: (idleLockMinutes) => post('/api/settings/locking', { idle_lock_minutes: idleLockMinutes }),
     setPIN: (pin) => post('/api/pin', { pin }),
+    trustPIN: (pin) => post('/api/pin/trust', { pin }),
     clearPIN: () => api('/api/pin', { method: 'DELETE' }),
     trustedDevices: () => api('/api/trusted-devices'),
     revokeTrustedDevice: (id) => api('/api/trusted-devices/' + encodeURIComponent(id), { method: 'DELETE' }),

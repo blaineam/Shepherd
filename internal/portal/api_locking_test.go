@@ -420,18 +420,185 @@ func TestSetPINReusesAnExistingTrustedBrowser(t *testing.T) {
 
 func TestTooManyTrustedDevicesIsRejected(t *testing.T) {
 	h, _ := lockingHarness(t)
-	for i := 0; i < maxTrustedDevices; i++ {
+	first := jarClient(t)
+	loginWithToken(t, h, first)
+	if res := req(t, first, "POST", h.ts.URL+"/api/pin", `{"pin":"a1b2c3"}`, withCSRF); res.StatusCode != http.StatusOK {
+		t.Fatalf("first-ever PIN setup = %d", res.StatusCode)
+	}
+	for i := 1; i < maxTrustedDevices; i++ {
 		c := jarClient(t)
 		loginWithToken(t, h, c)
-		if res := req(t, c, "POST", h.ts.URL+"/api/pin", `{"pin":"a1b2c3"}`, withCSRF); res.StatusCode != http.StatusOK {
-			t.Fatalf("device %d: set PIN = %d", i, res.StatusCode)
+		if res := req(t, c, "POST", h.ts.URL+"/api/pin/trust", `{"pin":"a1b2c3"}`, withCSRF); res.StatusCode != http.StatusOK {
+			t.Fatalf("device %d: trust = %d", i, res.StatusCode)
 		}
 	}
 	oneMore := jarClient(t)
 	loginWithToken(t, h, oneMore)
-	res := req(t, oneMore, "POST", h.ts.URL+"/api/pin", `{"pin":"a1b2c3"}`, withCSRF)
+	res := req(t, oneMore, "POST", h.ts.URL+"/api/pin/trust", `{"pin":"a1b2c3"}`, withCSRF)
 	if res.StatusCode != http.StatusConflict {
 		t.Fatalf("over the cap = %d, want 409", res.StatusCode)
+	}
+}
+
+// TestSetPINFromAnUntrustedBrowserOnceAPINExistsIsRejected is the regression
+// test for the original bug: once a PIN is set, an untrusted browser must
+// not be able to "set" a new one for itself, since that would silently
+// change the shared PIN out from under every other trusted browser. It must
+// use /api/pin/trust (TestTrustPINJoinsASecondBrowser) instead.
+func TestSetPINFromAnUntrustedBrowserOnceAPINExistsIsRejected(t *testing.T) {
+	h, _ := lockingHarness(t)
+	first := jarClient(t)
+	loginWithToken(t, h, first)
+	if res := req(t, first, "POST", h.ts.URL+"/api/pin", `{"pin":"a1b2c3"}`, withCSRF); res.StatusCode != http.StatusOK {
+		t.Fatalf("first-ever PIN setup = %d", res.StatusCode)
+	}
+
+	second := jarClient(t)
+	loginWithToken(t, h, second)
+	res := req(t, second, "POST", h.ts.URL+"/api/pin", `{"pin":"different1"}`, withCSRF)
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("setPIN from an untrusted browser once a PIN exists = %d, want 403", res.StatusCode)
+	}
+
+	// And the original PIN and device are untouched by the rejected attempt.
+	req(t, first, "POST", h.ts.URL+"/api/lock", "", withCSRF)
+	if res := req(t, first, "POST", h.ts.URL+"/api/login/pin", `{"pin":"a1b2c3"}`, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("original PIN login after the rejected setPIN = %d, want 200", res.StatusCode)
+	}
+	list := decodeJSON(t, req(t, first, "GET", h.ts.URL+"/api/trusted-devices", "", nil))
+	if devs, _ := list["devices"].([]any); len(devs) != 1 {
+		t.Fatalf("a rejected setPIN must not register a device: %v", devs)
+	}
+}
+
+// TestTrustPINJoinsASecondBrowser covers the actual bug report: a second
+// browser must be able to join using the PIN that is already set, without
+// disturbing the first browser's ability to keep using that same PIN.
+func TestTrustPINJoinsASecondBrowser(t *testing.T) {
+	h, _ := lockingHarness(t)
+	first := jarClient(t)
+	loginWithToken(t, h, first)
+	if res := req(t, first, "POST", h.ts.URL+"/api/pin", `{"pin":"a1b2c3"}`, withCSRF); res.StatusCode != http.StatusOK {
+		t.Fatalf("first-ever PIN setup = %d", res.StatusCode)
+	}
+
+	second := jarClient(t)
+	loginWithToken(t, h, second)
+	trustRes := req(t, second, "POST", h.ts.URL+"/api/pin/trust", `{"pin":"a1b2c3"}`, withCSRF)
+	if trustRes.StatusCode != http.StatusOK {
+		t.Fatalf("trust with the correct existing PIN = %d: %s", trustRes.StatusCode, mustBody(t, trustRes))
+	}
+	trustBody := decodeJSON(t, trustRes)
+	if trustBody["device_id"] == "" || trustBody["device_id"] == nil {
+		t.Fatalf("trust did not return a device_id: %v", trustBody)
+	}
+
+	list := decodeJSON(t, req(t, first, "GET", h.ts.URL+"/api/trusted-devices", "", nil))
+	devs, _ := list["devices"].([]any)
+	if len(devs) != 2 {
+		t.Fatalf("expected 2 trusted devices after joining, got %v", devs)
+	}
+
+	// Both browsers can now lock and unlock with the SAME, unchanged PIN.
+	req(t, first, "POST", h.ts.URL+"/api/lock", "", withCSRF)
+	if res := req(t, first, "POST", h.ts.URL+"/api/login/pin", `{"pin":"a1b2c3"}`, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("first browser PIN login after second joined = %d, want 200", res.StatusCode)
+	}
+	req(t, second, "POST", h.ts.URL+"/api/lock", "", withCSRF)
+	if res := req(t, second, "POST", h.ts.URL+"/api/login/pin", `{"pin":"a1b2c3"}`, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("second browser PIN login = %d, want 200", res.StatusCode)
+	}
+}
+
+// TestTrustPINWithWrongPINFailsAndRegistersNothing covers the join flow's
+// own failure path: a wrong guess must not create a trusted device, and
+// must not disturb the real PIN or the already-trusted browser.
+func TestTrustPINWithWrongPINFailsAndRegistersNothing(t *testing.T) {
+	h, _ := lockingHarness(t)
+	first := jarClient(t)
+	loginWithToken(t, h, first)
+	req(t, first, "POST", h.ts.URL+"/api/pin", `{"pin":"a1b2c3"}`, withCSRF)
+
+	second := jarClient(t)
+	loginWithToken(t, h, second)
+	res := req(t, second, "POST", h.ts.URL+"/api/pin/trust", `{"pin":"wrongpin"}`, withCSRF)
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("trust with the wrong PIN = %d, want 401", res.StatusCode)
+	}
+
+	list := decodeJSON(t, req(t, first, "GET", h.ts.URL+"/api/trusted-devices", "", nil))
+	if devs, _ := list["devices"].([]any); len(devs) != 1 {
+		t.Fatalf("a failed join must not register a device: %v", devs)
+	}
+	req(t, first, "POST", h.ts.URL+"/api/lock", "", withCSRF)
+	if res := req(t, first, "POST", h.ts.URL+"/api/login/pin", `{"pin":"a1b2c3"}`, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("original PIN login after a failed join attempt = %d, want 200", res.StatusCode)
+	}
+}
+
+// TestTrustPINBeforeAnyPINIsSetFails covers the edge case of calling the
+// join endpoint before there is anything to join.
+func TestTrustPINBeforeAnyPINIsSetFails(t *testing.T) {
+	h, _ := lockingHarness(t)
+	client := jarClient(t)
+	loginWithToken(t, h, client)
+	res := req(t, client, "POST", h.ts.URL+"/api/pin/trust", `{"pin":"a1b2c3"}`, withCSRF)
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("trust before any PIN is set = %d, want 401", res.StatusCode)
+	}
+}
+
+// TestTrustPINWhenAlreadyTrustedIsIdempotent covers calling the join
+// endpoint from a browser that is already trusted (a stale UI state, or a
+// double click): it should succeed without touching anything, rather than
+// erroring.
+func TestTrustPINWhenAlreadyTrustedIsIdempotent(t *testing.T) {
+	h, _ := lockingHarness(t)
+	client := jarClient(t)
+	loginWithToken(t, h, client)
+	setBody := decodeJSON(t, req(t, client, "POST", h.ts.URL+"/api/pin", `{"pin":"a1b2c3"}`, withCSRF))
+	id, _ := setBody["device_id"].(string)
+
+	res := req(t, client, "POST", h.ts.URL+"/api/pin/trust", `{"pin":"a1b2c3"}`, withCSRF)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("trust while already trusted = %d, want 200", res.StatusCode)
+	}
+	body := decodeJSON(t, res)
+	if body["device_id"] != id {
+		t.Fatalf("device_id changed: got %v, want %v", body["device_id"], id)
+	}
+	list := decodeJSON(t, req(t, client, "GET", h.ts.URL+"/api/trusted-devices", "", nil))
+	if devs, _ := list["devices"].([]any); len(devs) != 1 {
+		t.Fatalf("trust while already trusted must not register a second device: %v", devs)
+	}
+}
+
+// TestSettingsReportsThisDeviceTrusted covers the new settings field the
+// frontend uses to decide which PIN card to show.
+func TestSettingsReportsThisDeviceTrusted(t *testing.T) {
+	h, _ := lockingHarness(t)
+	first := jarClient(t)
+	loginWithToken(t, h, first)
+
+	before := decodeJSON(t, req(t, first, "GET", h.ts.URL+"/api/settings", "", nil))
+	locking, _ := before["locking"].(map[string]any)
+	if locking["this_device_trusted"] != false {
+		t.Fatalf("this_device_trusted before any PIN = %v, want false", locking["this_device_trusted"])
+	}
+
+	req(t, first, "POST", h.ts.URL+"/api/pin", `{"pin":"a1b2c3"}`, withCSRF)
+	after := decodeJSON(t, req(t, first, "GET", h.ts.URL+"/api/settings", "", nil))
+	locking2, _ := after["locking"].(map[string]any)
+	if locking2["this_device_trusted"] != true {
+		t.Fatalf("this_device_trusted for the browser that just set the PIN = %v, want true", locking2["this_device_trusted"])
+	}
+
+	second := jarClient(t)
+	loginWithToken(t, h, second)
+	secondSettings := decodeJSON(t, req(t, second, "GET", h.ts.URL+"/api/settings", "", nil))
+	locking3, _ := secondSettings["locking"].(map[string]any)
+	if locking3["this_device_trusted"] != false {
+		t.Fatalf("this_device_trusted for a different, untrusted browser = %v, want false", locking3["this_device_trusted"])
 	}
 }
 
