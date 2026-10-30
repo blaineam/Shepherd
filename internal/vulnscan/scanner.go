@@ -74,7 +74,12 @@ type ResolvedFinding struct {
 // real protocol work (a read, sometimes a short write/read exchange), not
 // just a connect-and-close. See docs/VULNSCAN.md.
 type Options struct {
-	Dial        DialFunc
+	Dial DialFunc
+	// TLSConnect performs the TLS handshake for the TLS-wrapped ports
+	// (probe.go's tlsPorts). It defaults to a real handshake over whatever
+	// Dial connected; tests override it the same way they override Dial,
+	// to probe TLS behavior with zero real sockets or certificates.
+	TLSConnect  TLSConnectFunc
 	Concurrency int
 	Timeout     time.Duration
 }
@@ -88,6 +93,7 @@ const (
 // finding history. Safe for concurrent use.
 type Scanner struct {
 	dial        DialFunc
+	tlsConnect  TLSConnectFunc
 	concurrency int
 	timeout     time.Duration
 
@@ -109,12 +115,16 @@ type Scanner struct {
 func New(opts Options) *Scanner {
 	s := &Scanner{
 		dial:        opts.Dial,
+		tlsConnect:  opts.TLSConnect,
 		concurrency: opts.Concurrency,
 		timeout:     opts.Timeout,
 		history:     map[string]*DeviceFindings{},
 	}
 	if s.dial == nil {
 		s.dial = defaultDial
+	}
+	if s.tlsConnect == nil {
+		s.tlsConnect = defaultTLSConnect
 	}
 	if s.concurrency <= 0 {
 		s.concurrency = defaultConcurrency
@@ -161,7 +171,7 @@ func (s *Scanner) Scan(ctx context.Context, targets []Target) []DeviceFindings {
 			go func(i, port int, ip string) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				p := probePort(ctx, s.dial, s.timeout, ip, port)
+				p := probePort(ctx, s.dial, s.tlsConnect, s.timeout, ip, port)
 				matches := Evaluate(p)
 				mu.Lock()
 				probed[i] = append(probed[i], portProbe{port: port, matches: matches})

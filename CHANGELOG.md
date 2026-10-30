@@ -33,6 +33,27 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   /api/vulnscan/devices[/{id}]`, `POST /api/vulnscan/scan`), with a Vulnerabilities panel in each device's
   drawer (reusing the Ports panel's layout and a scan-now button) showing active findings with a severity
   badge, description and evidence, plus a collapsed "N resolved" history. See docs/VULNSCAN.md.
+- **`internal/vulnscan`: TLS probing and a UPnP-exposure signature, six new signatures in all.** A real
+  TLS handshake (over an injectable `TLSConnectFunc` seam, the TLS analog of `DialFunc`, so tests still
+  touch zero real sockets or certificates) now runs against 443, 8443, 465, 993, 995 and 2376 — offering
+  every protocol version down to TLS 1.0 and every cipher suite Go's own `crypto/tls` implements,
+  including the ones its standard library marks insecure, so a weak server reveals itself by what it
+  actually negotiates. New signatures: `tls-weak-protocol` (TLS 1.0/1.1 negotiated), `tls-weak-cipher-
+  suite` (RC4, 3DES, or a padding-oracle-prone CBC suite negotiated), `tls-cert-expired` and `tls-cert-
+  not-yet-valid` (the certificate's own dates, nothing else), and `docker-tls-unauthenticated-api` (2375's
+  own check, now also over Docker's TLS port). Certificate verification itself is skipped on purpose
+  (`InsecureSkipVerify`): a self-signed or hostname-mismatched certificate is routine on a home LAN and
+  deliberately never a finding — only a certificate's dates are judged. 443 and 8443 additionally get the
+  same plaintext-shaped HTTP probe as the other HTTP ports, now over the decrypted channel, so the
+  existing Apache/nginx/lighttpd signatures (and the new `upnp-exposed` one, below) fire over HTTPS too
+  with no new signature code. Also new: `upnp-exposed` (medium) flags a `Server:` header naming UPnP on
+  any HTTP port already probed — a deliberately narrow, banner-only check, not SSDP/IGD discovery (a
+  separate, lower-level feature). Along the way, 465/993/995 were reclassified from `bannerPorts` (reading
+  a plaintext greeting) to the new TLS path, fixing a latent, harmless-but-wrong read of raw TLS handshake
+  bytes as a banner on those three implicit-TLS ports. Threat feeds (roadmap step 23) stay explicitly out
+  of scope — a different, larger feature that needs to hook into traffic observation, not a per-port
+  probe. See docs/VULNSCAN.md for the full signature table and the self-signed/hostname-mismatch judgment
+  call.
 - **Import wired into the portal:** the Devices screen's new "Import" modal drives `internal/importers`
   end to end — CSV upload or eero login (phone/email, then the code eero sends, then a network), a
   dry-run preview of what would be created or changed, and an apply step, matching the Devices tab's

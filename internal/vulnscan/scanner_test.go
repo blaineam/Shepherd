@@ -4,6 +4,7 @@ package vulnscan
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
 	"strconv"
@@ -34,6 +35,9 @@ func TestNewDefaults(t *testing.T) {
 	if s.dial == nil {
 		t.Fatal("New must set a default Dial")
 	}
+	if s.tlsConnect == nil {
+		t.Fatal("New must set a default TLSConnect")
+	}
 	if s.concurrency != defaultConcurrency {
 		t.Fatalf("concurrency = %d, want %d", s.concurrency, defaultConcurrency)
 	}
@@ -61,6 +65,39 @@ func TestScanSkipsPortsItDoesNotUnderstand(t *testing.T) {
 	s.Scan(context.Background(), []Target{{DeviceID: "d1", IP: "192.0.2.10", Ports: []int{3306}}})
 	if atomic.LoadInt32(&calls) != 0 {
 		t.Fatalf("dial called %d times for an uninteresting port, want 0", calls)
+	}
+}
+
+func TestScanDialsTLSPorts(t *testing.T) {
+	var calls int32
+	dial := func(ctx context.Context, network, address string) (net.Conn, error) {
+		atomic.AddInt32(&calls, 1)
+		return &scriptedConn{}, nil
+	}
+	// A fresh scriptedTLSConn per call: six ports are probed concurrently,
+	// and a shared fake connection is not safe for that (same as dial
+	// above, which also returns a new scriptedConn every time).
+	tlsConnect := func(ctx context.Context, conn net.Conn, cfg *tls.Config) (TLSConn, error) {
+		return &scriptedTLSConn{scriptedConn: &scriptedConn{}, state: tls.ConnectionState{Version: tls.VersionTLS12}}, nil
+	}
+	s := New(Options{Dial: dial, TLSConnect: tlsConnect, Concurrency: 2, Timeout: time.Second})
+	s.Scan(context.Background(), []Target{{DeviceID: "d1", IP: "192.0.2.10", Ports: []int{443, 8443, 2376, 465, 993, 995}}})
+	if atomic.LoadInt32(&calls) != 6 {
+		t.Fatalf("dial called %d times, want one per TLS port", calls)
+	}
+}
+
+func TestScanFindsTLSWeakProtocolThroughTLSConnectOption(t *testing.T) {
+	tc := &scriptedTLSConn{scriptedConn: &scriptedConn{}, state: tls.ConnectionState{Version: tls.VersionTLS10}}
+	s := New(Options{
+		Dial:        dialByAddress(connScript{addr("192.0.2.15", 443): nil}),
+		TLSConnect:  dialTLSScripted(tc, nil),
+		Concurrency: 2, Timeout: time.Second,
+	})
+	r := s.Scan(context.Background(), []Target{{DeviceID: "d1", IP: "192.0.2.15", Ports: []int{443}}})
+	f := findFinding(t, r[0].Findings, "tls-weak-protocol")
+	if !f.Active || f.Evidence != "negotiated TLS 1.0" {
+		t.Fatalf("finding = %+v, want an active tls-weak-protocol finding", f)
 	}
 }
 

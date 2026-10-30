@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"io"
 	"net"
 	"net/http"
@@ -26,6 +27,66 @@ func defaultDial(ctx context.Context, network, address string) (net.Conn, error)
 	return d.DialContext(ctx, network, address)
 }
 
+// TLSConn is the subset of *tls.Conn this package needs: Read/Write/Close
+// like any net.Conn, plus ConnectionState so a signature can inspect what
+// was actually negotiated. *tls.Conn satisfies this directly; tests inject
+// a fake that never touches real TLS at all.
+type TLSConn interface {
+	net.Conn
+	ConnectionState() tls.ConnectionState
+}
+
+// TLSConnectFunc performs the TLS handshake over an already-dialed TCP
+// connection, the TLS analog of DialFunc: production wraps conn in a real
+// *tls.Conn and runs a real handshake bounded by ctx; tests inject a fake
+// TLSConn and never touch a real socket or certificate.
+type TLSConnectFunc func(ctx context.Context, conn net.Conn, cfg *tls.Config) (TLSConn, error)
+
+func defaultTLSConnect(ctx context.Context, conn net.Conn, cfg *tls.Config) (TLSConn, error) {
+	tc := tls.Client(conn, cfg)
+	if err := tc.HandshakeContext(ctx); err != nil {
+		return nil, err
+	}
+	return tc, nil
+}
+
+// tlsProbeCipherSuites is every cipher suite Go's own TLS stack still
+// implements, including the ones it marks insecure (tls.InsecureCipherSuites):
+// offering the full list, rather than Go's safe-by-default set, is what lets
+// a server that only supports a weak suite reveal that by what it actually
+// picks, instead of the handshake simply failing against Go's modern
+// defaults. See tlsWeakCipherSuiteName in signature.go for the other half.
+var tlsProbeCipherSuites = buildTLSProbeCipherSuites()
+
+func buildTLSProbeCipherSuites() []uint16 {
+	var ids []uint16
+	for _, c := range tls.CipherSuites() {
+		ids = append(ids, c.ID)
+	}
+	for _, c := range tls.InsecureCipherSuites() {
+		ids = append(ids, c.ID)
+	}
+	return ids
+}
+
+// tlsProbeConfig returns the *tls.Config every TLS probe handshakes with:
+// InsecureSkipVerify because this package judges certificate dates itself
+// (see the tls-cert-* signatures) and deliberately never anything about a
+// self-signed certificate or a hostname mismatch — both are routine on a
+// home LAN and would be noise, not a finding (docs/VULNSCAN.md). MinVersion
+// is TLS 1.0, the oldest version Go's own crypto/tls still implements (Go
+// dropped SSLv3 outright, so this package cannot test for it at all — also
+// documented), offered alongside every cipher suite Go knows, so a weak
+// server reveals itself by what it negotiates rather than being refused a
+// connection by Go's modern defaults.
+func tlsProbeConfig() *tls.Config {
+	return &tls.Config{
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS10,
+		CipherSuites:       tlsProbeCipherSuites,
+	}
+}
+
 // interestingPorts is every port probePort knows how to interpret. Scanner
 // filters a device's open ports down to this set before dialing anything,
 // so vulnscan never opens a connection it would do nothing useful with (and
@@ -33,24 +94,44 @@ func defaultDial(ctx context.Context, network, address string) (net.Conn, error)
 // has no deeper signal for).
 var interestingPorts = map[int]bool{
 	21: true, 22: true, 23: true, 25: true, 80: true, 110: true, 143: true,
-	445: true, 465: true, 587: true, 993: true, 995: true, 2375: true,
-	3000: true, 5000: true, 8000: true, 8080: true, 8888: true,
+	443: true, 445: true, 465: true, 587: true, 993: true, 995: true,
+	2375: true, 2376: true, 3000: true, 5000: true, 8000: true, 8080: true,
+	8443: true, 8888: true,
 }
 
 // bannerPorts send a greeting immediately after the TCP handshake, before
-// the client sends anything: a plain read is enough to grab it.
-var bannerPorts = map[int]bool{22: true, 25: true, 110: true, 143: true, 465: true, 587: true, 993: true, 995: true, 23: true}
+// the client sends anything: a plain read is enough to grab it. 465, 993
+// and 995 are deliberately absent: those are implicit-TLS ports (SMTPS,
+// IMAPS, POP3S) whose first bytes are a TLS handshake, not a plaintext
+// greeting; they are tlsPorts instead. 587 stays here: SMTP submission's
+// TLS is explicit (STARTTLS, after a plaintext greeting), so a plain read
+// is still the right first move there.
+var bannerPorts = map[int]bool{22: true, 23: true, 25: true, 110: true, 143: true, 587: true}
 
 // httpPorts get a minimal plaintext HTTP/1.0 GET /. TLS ports (443, 8443)
-// are deliberately not probed this way: see docs/VULNSCAN.md.
+// are deliberately not probed this way: see tlsHTTPPorts and
+// docs/VULNSCAN.md.
 var httpPorts = map[int]bool{80: true, 3000: true, 5000: true, 8000: true, 8080: true, 8888: true}
+
+// tlsPorts get a real TLS handshake (certificate and negotiated
+// protocol/cipher inspected by the tls-* signatures) before anything else:
+// the two HTTPS admin ports, Docker's TLS port, and the three implicit-TLS
+// mail ports.
+var tlsPorts = map[int]bool{443: true, 8443: true, 2376: true, 465: true, 993: true, 995: true}
+
+// tlsHTTPPorts additionally get the same minimal plaintext-shaped HTTP/1.0
+// GET / as httpPorts, but sent over the now-decrypted TLS channel: the
+// HTTPS variant of the Apache/nginx/lighttpd Server-header signatures
+// already in signature.go, with no new signature code needed since they
+// match on Probe.HTTPServer regardless of which port it came from.
+var tlsHTTPPorts = map[int]bool{443: true, 8443: true}
 
 // probePort runs the single gentle, protocol-appropriate exchange for one
 // open port and returns whatever it learned. It never returns an error: a
 // failed, refused or empty probe just yields a mostly-empty Probe (no
 // signature fires without positive evidence, so "could not learn anything"
 // is handled correctly just by learning nothing).
-func probePort(ctx context.Context, dial DialFunc, timeout time.Duration, ip string, port int) Probe {
+func probePort(ctx context.Context, dial DialFunc, tlsConnect TLSConnectFunc, timeout time.Duration, ip string, port int) Probe {
 	p := Probe{Port: port}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -73,8 +154,42 @@ func probePort(ctx context.Context, dial DialFunc, timeout time.Duration, ip str
 		probeSMB1(conn, &p)
 	case port == 2375:
 		probeDocker(conn, &p)
+	case tlsPorts[port]:
+		probeTLSWrapped(cctx, tlsConnect, conn, &p, port)
 	}
 	return p
+}
+
+// probeTLSWrapped runs the TLS handshake over conn (already a live TCP
+// connection) and, only once that succeeds, records what was negotiated and
+// — for the ports where it makes sense — runs the same application-level
+// probe plaintext ports get, now over the decrypted channel. A handshake
+// failure (refused version/cipher, timeout, anything else) leaves every TLS
+// field at its zero value: "could not learn anything" is handled by
+// learning nothing, the same rule every other probe in this file follows.
+func probeTLSWrapped(ctx context.Context, tlsConnect TLSConnectFunc, conn net.Conn, p *Probe, port int) {
+	tc, err := tlsConnect(ctx, conn, tlsProbeConfig())
+	if err != nil {
+		return
+	}
+	defer tc.Close()
+
+	state := tc.ConnectionState()
+	p.TLSNegotiated = true
+	p.TLSVersion = state.Version
+	p.TLSCipherSuite = state.CipherSuite
+	if len(state.PeerCertificates) > 0 {
+		leaf := state.PeerCertificates[0]
+		p.TLSCertNotBefore = leaf.NotBefore
+		p.TLSCertNotAfter = leaf.NotAfter
+	}
+
+	switch {
+	case tlsHTTPPorts[port]:
+		probeHTTP(tc, p)
+	case port == 2376:
+		probeDocker(tc, p)
+	}
 }
 
 // readBanner reads whatever a server sent so far (one Read, bounded by the
