@@ -312,7 +312,8 @@ slower but still skips userspace entirely.
 **Measured live, 2026-10-30, immediately after the userspace run above**, `-xdp auto` attached in
 native mode on the NAS's NIC and relayed the same phone's speed test at a peak of **180,000 frames/s
 and 221 MB/s (about 1.77 Gbit/s)**, 3.02 GB over the test, healthy throughout, with nothing but
-one-second counter reads crossing into userspace. One thing to know: the NIC driver took about eight
+one-second counter reads crossing into userspace; the maintainer again saw no perceivable slowdown
+and about a gigabit, which is that phone's Wi-Fi maximum. One thing to know: the NIC driver took about eight
 seconds after the native attach before the program saw its first frame (the ring is torn down and
 rebuilt on attach), during which `examined` read zero; the device stayed inside `StartupGrace` and
 relaying began on its own. Generic mode has no such gap.
