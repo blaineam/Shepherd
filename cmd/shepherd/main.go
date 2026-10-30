@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -231,6 +232,31 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		}
 	}()
 	defer httpSrv.Shutdown(context.Background())
+
+	// TLS (docs/TLS.md) is additive: the plain-HTTP listener above keeps
+	// working exactly as it does today whether or not [tls] is configured.
+	// startTLS returns a nil Manager when it is off, in which case no
+	// second, HTTPS listener is started at all.
+	tlsMgr, err := startTLS(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if tlsMgr != nil {
+		httpsSrv := &http.Server{
+			Addr:              cfg.TLS.Listen,
+			Handler:           srv.Handler(),
+			ReadHeaderTimeout: 10 * time.Second,
+			TLSConfig:         &tls.Config{GetCertificate: tlsMgr.GetCertificate},
+		}
+		go func() {
+			if err := httpsSrv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				portalErr <- fmt.Errorf("portal (TLS): %w", err)
+				cancel()
+			}
+		}()
+		defer httpsSrv.Shutdown(context.Background())
+		log.Printf("shepherd %s: portal also on https://%s (%s)", version, cfg.TLS.Listen, cfg.TLS.Hostname)
+	}
 
 	log.Printf("shepherd %s: dns on %v, portal on http://%s", version, cfg.DNS.Listen, cfg.Portal.Listen)
 	log.Printf("portal token is in %s (or run with -print-token)", filepath.Join(cfg.DataDir, "portal-token"))

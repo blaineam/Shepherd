@@ -28,21 +28,6 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   New `.github/workflows/notify-portfolio.yml`, modeled on Haven's, dispatches that mirror on every push to
   `site/**` (needs a `PORTFOLIO_DISPATCH_TOKEN` repo secret to actually fire; skips cleanly without one, same
   as Haven's).
-- **Marketing site (`site/`):** a public, vanilla-HTML/CSS/JS landing page — hero, the real shipped feature
-  set (DNS filtering and the 95-list catalog, devices, the globe HUD, alarms, port and vulnerability
-  scanning, geo-block, portal locking, self-healing upstreams and more), an honest "what's coming" section
-  that calls out Watch mode's current trial-only state by name, and a Raspberry Pi section. The
-  centerpiece is `site/demo/`: the portal's real compiled frontend (`internal/portal/web/`), forced
-  permanently into its own built-in demo mode for a static host with zero backend — the real globe HUD and
-  Devices/Blocking/Alarms screens, populated with synthetic data generated in the browser, not screenshots
-  or a video. `site/demo/js/demomgmt.js` additionally gives the Alarms screen synthetic data (the shipped
-  demo fake never covered `/api/alarms`; alarmsview.js already shows a clean "not available" card for that
-  case, so this is additive, local to the site build, and does not touch
-  `internal/portal/web/js/demomgmt.js`, the file `cmd/shepherd` actually embeds). Mirrored to
-  `blaineam.github.io/apps/shepherd/` by the portfolio repo's `mirror-app-docs.yml`.
-  New `.github/workflows/notify-portfolio.yml`, modeled on Haven's, dispatches that mirror on every push to
-  `site/**` (needs a `PORTFOLIO_DISPATCH_TOKEN` repo secret to actually fire; skips cleanly without one, same
-  as Haven's).
 - **Alarm archiving:** the Alarms view had no way to dismiss a handled alarm from the default list short
   of resolving it (which means "this is fixed," a different claim) or waiting for retention's age/count
   pruning to remove it outright. A new `Archived bool`/`ArchivedAt time.Time` on `alarms.Alarm`,
@@ -58,6 +43,33 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   archived alarms from every count. The Alarms tab gets a "Show archived" toggle, a bulk Archive/Unarchive
   button, and a per-row archive action next to acknowledge/resolve/mute/delete. See docs/ALARMS.md
   ("Archiving") for the Option A vs. Option B design reasoning.
+- **Real TLS for the portal (`[tls]`, `internal/tlscert`):** the first, additive step of
+  [ROADMAP.md](docs/ROADMAP.md) step 18 ("Access") — the portal can now get a real Let's Encrypt
+  certificate for its own hostname, issued over ACME's DNS-01 challenge against Cloudflare DNS, the
+  same mechanism the maintainer's existing reverse-proxy manager already uses for other services on
+  the same Cloudflare zone. The ACME protocol itself (nonces, account keys, order/challenge polling,
+  certificate parsing) is handled by `golang.org/x/crypto/acme` — already a transitive part of this
+  project's existing `golang.org/x/crypto` dependency, so this adds zero new module dependencies
+  (see docs/TLS.md for why that was chosen over `go-acme/lego`). `internal/tlscert` supplies the one
+  piece that library does not (creating/removing the DNS-01 challenge's TXT record through
+  Cloudflare's API, `CloudflareProvider`) plus the scheduling, persistence and hot-swap wiring:
+  `Manager` renews 30 days before the certificate's real 90-day expiry, checking every 12 hours
+  without ever touching the network while the current certificate is still comfortably valid, and
+  never blocks `cmd/shepherd`'s startup — the same "never block on something outside Shepherd's
+  control" convention `startARP` and `startGeoBlock` already follow. Wired into `cmd/shepherd`
+  (`cmd/shepherd/tls.go`'s `startTLS`) as a second, additive HTTPS listener (`tls.listen`) alongside
+  the existing plain-HTTP one on `portal.listen`, which is completely unchanged; `[tls].enabled =
+  false` (the default) leaves Shepherd behaving exactly as it did before this landed. New config:
+  `[tls]`'s `enabled`, `hostname`, `listen`, `email`, and `cloudflare_api_token` /
+  `cloudflare_api_token_file` (mutually exclusive, following `[accountability.smtp]`'s own
+  `password`/`password_file` convention exactly). The certificate, its key, and the ACME account key
+  are persisted under `<data_dir>/tls/`, mode 0600 like every other secret this project persists.
+  Every test (`internal/tlscert`'s own, and `cmd/shepherd`'s wiring tests, including an end-to-end
+  test that makes a real HTTPS request against the running portal) runs against fakes — a fake
+  Cloudflare API and a fake ACME client implementing the exact interface `*acme.Client` does — never
+  a real network call to Cloudflare or Let's Encrypt, staging or otherwise. See docs/TLS.md,
+  including the honest note on what a real live first issuance (a real Cloudflare account and
+  token, done separately and deliberately) would still need to confirm.
 - [docs/WATCH-MODE-COMPARISON.md](docs/WATCH-MODE-COMPARISON.md): a row-by-row, honest comparison of
   what the DNS-only baseline already covers versus what Watch mode (one-sided ARP interception, still
   a hand-run trial library, not wired into `cmd/shepherd` or the portal) would add once it ships —

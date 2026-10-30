@@ -37,6 +37,7 @@ type Config struct {
 	Accountability Accountability `toml:"accountability"`
 	Portscan       Portscan       `toml:"portscan"`
 	Vulnscan       Vulnscan       `toml:"vulnscan"`
+	TLS            TLS            `toml:"tls"`
 }
 
 // ARP controls the passive ARP monitor (docs/ARP.md): a read-only listener
@@ -215,6 +216,42 @@ type Vulnscan struct {
 	// reprobed. Daily by default: this is a deeper, slower probe than
 	// Portscan's own connect scan.
 	IntervalSeconds int `toml:"interval_seconds"`
+}
+
+// TLS obtains and renews a real certificate for the portal's own hostname
+// via the ACME protocol's DNS-01 challenge against Cloudflare DNS
+// (docs/TLS.md) — the first, additive step of roadmap item 18 ("Access").
+// It changes nothing about the existing plain-HTTP portal listener on
+// portal.listen: enabling this only adds a second, HTTPS listener
+// alongside it, on its own hostname and address. Off by default, and safe
+// to leave off: both a scoped Cloudflare API token and a real DNS hostname
+// that resolves to this machine are needed before it does anything, and
+// withholding either just leaves the portal exactly as it is today.
+type TLS struct {
+	Enabled bool `toml:"enabled"`
+	// Hostname is the certificate's subject, e.g. "shepherd.example.com".
+	// It must already resolve (its DNS A/AAAA record can point anywhere
+	// reachable, even a tailnet-only address, since DNS-01 only ever
+	// touches a TXT record, never connects to the host itself) before
+	// Let's Encrypt will issue for it.
+	Hostname string `toml:"hostname"`
+	// Listen is the address the HTTPS listener binds, separate from
+	// portal.listen (which stays loopback-only by convention): e.g.
+	// "0.0.0.0:8443", so it is reachable from wherever Hostname's DNS
+	// record actually resolves to.
+	Listen string `toml:"listen"`
+	// Email is an optional contact Let's Encrypt can use for certificate
+	// expiry notices. Never required.
+	Email string `toml:"email"`
+	// CloudflareAPIToken and CloudflareAPITokenFile supply the token
+	// DNS-01 uses to create and remove the challenge TXT record. Scope it
+	// to DNS edit on the one zone the hostname lives in, nothing broader
+	// (docs/TLS.md). Exactly one must be set while tls.enabled is true;
+	// setting both is a configuration error (Validate rejects it), the
+	// same convention AccountabilitySMTP.Password/PasswordFile already
+	// uses, for the same reason: never an ambiguous "which one wins".
+	CloudflareAPIToken     string `toml:"cloudflare_api_token"`
+	CloudflareAPITokenFile string `toml:"cloudflare_api_token_file"`
 }
 
 // History controls what is remembered after the fact. "memory" (the default)
@@ -400,6 +437,20 @@ func (c Config) Validate() error {
 	}
 	if c.Vulnscan.IntervalSeconds < 300 {
 		return errors.New("vulnscan.interval_seconds must be at least 300")
+	}
+	if c.TLS.Enabled {
+		if c.TLS.Hostname == "" {
+			return errors.New("tls.hostname is required when tls.enabled is true")
+		}
+		if c.TLS.Listen == "" {
+			return errors.New("tls.listen is required when tls.enabled is true")
+		}
+		if c.TLS.CloudflareAPIToken == "" && c.TLS.CloudflareAPITokenFile == "" {
+			return errors.New("tls.cloudflare_api_token or tls.cloudflare_api_token_file is required when tls.enabled is true")
+		}
+		if c.TLS.CloudflareAPIToken != "" && c.TLS.CloudflareAPITokenFile != "" {
+			return errors.New("tls.cloudflare_api_token and tls.cloudflare_api_token_file must not both be set")
+		}
 	}
 	if s := c.Devices.ReverseDNSServer; s != "" {
 		host := s

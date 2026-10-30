@@ -588,3 +588,59 @@ func TestExampleConfigShowsTheAccountabilityDefaults(t *testing.T) {
 		t.Errorf("example %+v differs from the defaults %+v", ex.Accountability, Default().Accountability)
 	}
 }
+
+func TestTLSDefaultsAreOffAndInert(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TLS.Enabled {
+		t.Error("tls must be off by default: no hostname or Cloudflare token has been configured")
+	}
+	if cfg.TLS.Hostname != "" || cfg.TLS.Listen != "" || cfg.TLS.CloudflareAPIToken != "" || cfg.TLS.CloudflareAPITokenFile != "" {
+		t.Errorf("a fresh install must configure nothing under [tls]: %+v", cfg.TLS)
+	}
+}
+
+func TestTLSOverridesAndValidation(t *testing.T) {
+	cfg := writeCfg(t, `[tls]
+enabled = true
+hostname = "shepherd.example.com"
+listen = "0.0.0.0:8443"
+email = "owner@example.com"
+cloudflare_api_token = "cf-test-token"
+`)
+	if !cfg.TLS.Enabled || cfg.TLS.Hostname != "shepherd.example.com" || cfg.TLS.Listen != "0.0.0.0:8443" || cfg.TLS.Email != "owner@example.com" || cfg.TLS.CloudflareAPIToken != "cf-test-token" {
+		t.Errorf("tls overrides = %+v", cfg.TLS)
+	}
+
+	bad := map[string]string{
+		"[tls]\nenabled = true\nlisten = \"0.0.0.0:8443\"\ncloudflare_api_token = \"t\"":                                                           "hostname",
+		"[tls]\nenabled = true\nhostname = \"h\"\ncloudflare_api_token = \"t\"":                                                                    "listen",
+		"[tls]\nenabled = true\nhostname = \"h\"\nlisten = \"0.0.0.0:8443\"":                                                                       "cloudflare_api_token",
+		"[tls]\nenabled = true\nhostname = \"h\"\nlisten = \"0.0.0.0:8443\"\ncloudflare_api_token = \"t\"\ncloudflare_api_token_file = \"/tmp/x\"": "not both",
+	}
+	for body, want := range bad {
+		path := filepath.Join(t.TempDir(), "c.toml")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", body, err, want)
+		}
+	}
+	// Disabled (the default) needs none of this set.
+	if _, err := Load(filepath.Join(t.TempDir(), "absent.toml")); err != nil {
+		t.Errorf("tls.enabled = false (the default) must need no other field: %v", err)
+	}
+}
+
+func TestExampleConfigShowsTheTLSDefaults(t *testing.T) {
+	ex, err := Load("../../shepherd.example.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.TLS != Default().TLS {
+		t.Errorf("example %+v differs from the defaults %+v", ex.TLS, Default().TLS)
+	}
+}

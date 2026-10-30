@@ -165,12 +165,6 @@ privately through [SECURITY.md](SECURITY.md). Releases follow [SemVer](https://s
 [Wave 2 guide](docs/WAVE-2.md) · [Raspberry Pi](docs/RASPBERRY-PI.md) · [Releasing](docs/RELEASING.md) ·
 [Public development](docs/PUBLIC-DEV.md)
 
-## Marketing site
-
-[blaineam.github.io/apps/shepherd](https://blaineam.github.io/apps/shepherd/) — the feature tour, honest
-roadmap, and a live interactive demo of the portal (the real UI, running entirely client-side on synthetic
-data; see [`site/`](site/)).
-
 ## License
 
 AGPL-3.0-or-later. If you run a modified Shepherd as a service, you share your changes. See [LICENSE](LICENSE).
