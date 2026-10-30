@@ -69,6 +69,7 @@ mdns = true                      # listen for multicast DNS announcements
 reverse_dns = true               # ask one resolver for the name of each new address
 reverse_dns_server = ""          # "ip" or "ip:port"; empty uses the default gateway (Linux)
 save_interval_seconds = 60       # the registry is kept in <data_dir>/devices.json
+quarantine_new_devices = true    # a new device joins the reserved Quarantine group until you move it
 
 [classify]
 # Automatically guesses each device's type (phone, camera, TV, ...) from its DNS

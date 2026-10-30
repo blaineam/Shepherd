@@ -22,7 +22,15 @@ var (
 	ErrDuplicateName = errors.New("devices: a group with that name already exists")
 	ErrInvalid       = errors.New("devices: invalid argument")
 	ErrEmptySplit    = errors.New("devices: split would leave the device without an address")
+	ErrReservedGroup = errors.New("devices: quarantine is a reserved group and cannot be deleted")
 )
+
+// QuarantineGroupID is the reserved group every newly discovered device joins
+// automatically. It cannot be deleted; assigning a device to any other group
+// removes it from quarantine (see BulkAssignGroup). Call EnsureQuarantineGroup
+// once at startup so it always exists, even for a data file from before this
+// feature existed.
+const QuarantineGroupID = "quarantine"
 
 const (
 	maxCurrentV6 = 8

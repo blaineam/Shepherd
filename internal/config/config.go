@@ -55,6 +55,13 @@ type Devices struct {
 	// default gateway found in /proc/net/route (Linux only).
 	ReverseDNSServer    string `toml:"reverse_dns_server"`
 	SaveIntervalSeconds int    `toml:"save_interval_seconds"`
+	// QuarantineNewDevices puts every newly discovered device into the
+	// reserved Quarantine group until you move it somewhere else, so it never
+	// silently gets the run of the network before you have looked at it.
+	// Quarantine's own rules apply like any group's (see docs/DEVICES.md);
+	// Shepherd cannot stop a quarantined device from reaching other devices
+	// on the LAN directly (that needs your router's guest network or VLANs).
+	QuarantineNewDevices bool `toml:"quarantine_new_devices"`
 }
 
 // Classify automatically guesses a device's type (phone, camera, TV, ...) from
@@ -136,7 +143,7 @@ func Default() Config {
 		Privacy:  Privacy{BlockPrivateRelay: true},
 		History:  History{Mode: "memory", RetentionDays: 30, MaxMB: 2048, KeySource: "file"},
 		Map:      Map{Enabled: true, AutoHome: true},
-		Devices:  Devices{Enabled: true, DNS: true, Neighbors: true, NeighborIntervalSeconds: 30, MDNS: true, ReverseDNS: true, SaveIntervalSeconds: 60},
+		Devices:  Devices{Enabled: true, DNS: true, Neighbors: true, NeighborIntervalSeconds: 30, MDNS: true, ReverseDNS: true, SaveIntervalSeconds: 60, QuarantineNewDevices: true},
 		Classify: Classify{Enabled: true, IntervalSeconds: 300},
 		DataDir:  "data",
 		DNS: DNS{

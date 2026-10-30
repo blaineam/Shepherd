@@ -11,7 +11,7 @@ Work ships in tested increments that are deployed to a real network as they land
 | 5 | **Upstreams:** plain, DoT and DoH with bootstrap, presets, test before adding | done, live on the NAS |
 | 6 | **Devices:** registry, names from mDNS and the neighbor table, vendors, groups, search, bulk edit, automatic classification (DNS/vendor/ASN), wandering mode (unfiltered + watched) | done, live on the NAS |
 | 7 | **Portal:** the globe HUD (arcs weighted by volume, replay, click to control) and the Devices/Blocking/Upstreams/History management screens | done, live on the NAS |
-| 8 | **Device quarantine:** new devices land in a reserved group with their own rules until moved; LAN isolation is out of Shepherd's reach today (see the Watch mode note below) | in progress |
+| 8 | **Device quarantine:** new devices land in a reserved group with their own rules until moved; LAN isolation is out of Shepherd's reach today (see the Watch mode note below) | done, live on the NAS |
 | 9 | **Alarms:** engine with dedupe, severity, mute and snooze, batch actions, Web Push and ntfy fallback | built (library only, not wired into the portal or UI) |
 | 10 | **Passive ARP:** a read-only monitor that learns MAC addresses and raises spoofing/exposure alarms | built (not yet wired to the alarm engine or deployed) |
 | 11 | **Watch mode (ARP interception):** one-sided relay of a device's outbound traffic, with exclusion, health-checked fail-open, trial mode and panic stop | library built, not yet trialed on the real network (needs a controlled single-device or VM trial first) |

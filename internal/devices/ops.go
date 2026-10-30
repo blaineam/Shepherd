@@ -307,16 +307,29 @@ func (r *Registry) Delete(id string) error {
 
 // ---- bulk operations ------------------------------------------------------
 
-// BulkAssignGroup adds every listed device to a group.
+// BulkAssignGroup adds every listed device to a group. Assigning a device to
+// any group other than quarantine also takes it out of quarantine in the same
+// change, matching "until I move the device to a dedicated group": a device
+// discovered on the network stays quarantined only until it is sorted
+// somewhere real.
 func (r *Registry) BulkAssignGroup(ids []string, groupID string) (BulkResult, error) {
 	if !r.groupExists(groupID) {
 		return BulkResult{}, ErrGroupNotFound
 	}
 	return r.bulk(ids, EventGroupMembers, groupID, func(d *Device) bool {
-		if contains(d.Groups, groupID) {
+		next, changed := d.Groups, false
+		if !contains(next, groupID) {
+			next = sortedUnion(next, []string{groupID})
+			changed = true
+		}
+		if groupID != QuarantineGroupID && contains(next, QuarantineGroupID) {
+			next = remove(next, QuarantineGroupID)
+			changed = true
+		}
+		if !changed {
 			return false
 		}
-		d.Groups = sortedUnion(d.Groups, []string{groupID})
+		d.Groups = next
 		return true
 	}), nil
 }
@@ -556,6 +569,28 @@ func slug(name string) string {
 	return s
 }
 
+// EnsureQuarantineGroup makes sure the reserved quarantine group exists, with
+// a fixed ID (QuarantineGroupID) regardless of how its name is set. It is
+// idempotent and safe to call on every startup, including against a data file
+// saved before this feature existed. The caller may rename or recolor the
+// returned group afterwards (RenameGroup, SetGroupColor); only deleting it is
+// refused.
+func (r *Registry) EnsureQuarantineGroup() Group {
+	var out Group
+	r.do(func() []Event {
+		if g := r.groups[QuarantineGroupID]; g != nil && !g.Deleted {
+			out = *g
+			return nil
+		}
+		g := &Group{ID: QuarantineGroupID, Name: "Quarantine", Color: "#f0b64a", Updated: r.tick(), Node: r.node}
+		r.groups[QuarantineGroupID] = g
+		r.dirty = true
+		out = *g
+		return []Event{{Kind: EventGroupCreated, GroupID: QuarantineGroupID, NewName: g.Name}}
+	})
+	return out
+}
+
 // CreateGroup adds a group. Names are unique, case-insensitively.
 func (r *Registry) CreateGroup(name, color string) (Group, error) {
 	name = strings.TrimSpace(name)
@@ -646,8 +681,13 @@ func (r *Registry) SetGroupColor(id, color string) error {
 	})
 }
 
-// DeleteGroup removes a group and takes its devices out of it.
+// DeleteGroup removes a group and takes its devices out of it. The reserved
+// quarantine group cannot be deleted (ErrReservedGroup); rename or recolor it
+// instead.
 func (r *Registry) DeleteGroup(id string) error {
+	if id == QuarantineGroupID {
+		return ErrReservedGroup
+	}
 	var err error
 	r.do(func() []Event {
 		g := r.groups[id]

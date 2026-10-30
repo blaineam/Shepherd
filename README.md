@@ -74,6 +74,7 @@ Shepherd is early and built in public. This is real, tested and running on a rea
 - [x] **Encrypted, searchable history** (opt-in): AES-256-GCM segments you can query after the fact, plus a live event stream.
 - [x] **A catalog of 95 lists, apps and categories** plus custom lists, so you can block Instagram, Discord or a whole category for the network, a group of devices or one device ([POLICY.md](docs/POLICY.md)).
 - [x] **Devices with real names**, learned passively from DNS, the neighbor table, mDNS and reverse DNS, with vendors, search, groups and bulk edit ([DEVICES.md](docs/DEVICES.md)).
+- [x] **Device quarantine.** New devices land in a reserved group automatically and stay there until you move them, with their own policy rules. Opt out with a config toggle.
 - [x] **Automatic device classification** (phone, camera, TV, speaker, and more) from DNS lookups, MAC vendor and, with the map on, the networks a device talks to; a type you set yourself always wins ([CLASSIFY.md](docs/CLASSIFY.md)).
 - [x] **Wandering mode**, per device: stop all filtering while still watching and logging every request, with an optional auto-reverting timer.
 - [x] **Configurable upstreams** over plain DNS, DNS over TLS and DNS over HTTPS, with bootstrap, verified presets and a test before you add one ([UPSTREAMS.md](docs/UPSTREAMS.md)).

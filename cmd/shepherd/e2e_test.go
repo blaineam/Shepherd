@@ -338,7 +338,8 @@ func TestEndToEndLegacyMigrationGroupsPolicyAndUpstreams(t *testing.T) {
 		t.Error("queries must carry the device name and ID")
 	}
 	st := r.json("GET", "/api/status", "", 200)
-	if st["device_count"].(float64) != 2 || st["group_count"].(float64) != 1 {
+	// 2 groups: Kids, plus the reserved Quarantine group every install now has.
+	if st["device_count"].(float64) != 2 || st["group_count"].(float64) != 2 {
 		t.Errorf("status = %v", st)
 	}
 
@@ -383,7 +384,15 @@ func TestEndToEndLegacyMigrationGroupsPolicyAndUpstreams(t *testing.T) {
 		t.Error("the device ID must survive a restart")
 	}
 	gs := r2.json("GET", "/api/groups", "", 200)["groups"].([]any)
-	if len(gs) != 1 || gs[0].(map[string]any)["count"].(float64) != 1 {
+	byID := map[string]map[string]any{}
+	for _, g := range gs {
+		gm := g.(map[string]any)
+		byID[gm["id"].(string)] = gm
+	}
+	// Kids holds idA (explicitly assigned, which released it from quarantine);
+	// idB was discovered but never assigned anywhere, so it is still quarantined.
+	if len(gs) != 2 || byID["kids"] == nil || byID["kids"]["count"].(float64) != 1 ||
+		byID["quarantine"] == nil || byID["quarantine"]["count"].(float64) != 1 {
 		t.Errorf("groups after restart = %v", gs)
 	}
 }
@@ -504,5 +513,82 @@ func TestDevicesAreClassifiedAutomaticallyFromRealDNSTraffic(t *testing.T) {
 	dev = r.json("GET", "/api/devices/"+id, "", 200)
 	if dev["type"] != "laptop" || dev["type_auto"] == true {
 		t.Errorf("a user-set type must survive the classifier: %v", dev)
+	}
+}
+
+func TestNewDevicesAreQuarantinedUntilMovedToARealGroup(t *testing.T) {
+	allowLoopbackDevices(t)
+	c := writeE2EConfig(t, t.TempDir(), answerServer(t), listServer(t).URL+"/ads.txt", "")
+	r := c.startRun(t)
+	defer r.stop()
+
+	resolve(t, r.dnsAddr, "warmup.example.com.") // creates the one test device
+	id := deviceIDForIP(t, r, "127.0.0.1")
+
+	dev := r.json("GET", "/api/devices/"+id, "", 200)
+	groups, _ := dev["groups"].([]any)
+	if len(groups) != 1 || groups[0] != "quarantine" {
+		t.Fatalf("a newly discovered device must start in quarantine, got groups=%v", groups)
+	}
+	gl := r.json("GET", "/api/groups", "", 200)
+	var quarantine map[string]any
+	for _, g := range gl["groups"].([]any) {
+		if gm := g.(map[string]any); gm["id"] == "quarantine" {
+			quarantine = gm
+		}
+	}
+	if quarantine == nil || quarantine["name"] != "Quarantine" {
+		t.Fatalf("the reserved group must exist and be named Quarantine: %v", gl)
+	}
+	if code, _ := r.api("DELETE", "/api/groups/quarantine", ""); code != 403 {
+		t.Errorf("deleting quarantine through the real API = %d, want 403", code)
+	}
+
+	kids := r.json("POST", "/api/groups", `{"name":"Kids"}`, 200)
+	r.json("POST", "/api/devices/bulk", `{"ids":["`+id+`"],"op":"assign_group","group_id":"`+kids["id"].(string)+`"}`, 200)
+
+	dev = r.json("GET", "/api/devices/"+id, "", 200)
+	groups, _ = dev["groups"].([]any)
+	if len(groups) != 1 || groups[0] != "kids" {
+		t.Errorf("moving to a real group must release quarantine: groups=%v", groups)
+	}
+}
+
+func TestQuarantineOnNewDevicesCanBeOptedOut(t *testing.T) {
+	allowLoopbackDevices(t)
+	c := writeE2EConfig(t, t.TempDir(), answerServer(t), listServer(t).URL+"/ads.txt", "")
+	body, err := os.ReadFile(c.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// splice into the existing [devices] table: a second [devices] header is
+	// invalid TOML (a duplicate table), not something to introduce in a test.
+	patched := strings.Replace(string(body), "reverse_dns = false\n", "reverse_dns = false\nquarantine_new_devices = false\n", 1)
+	if patched == string(body) {
+		t.Fatal("did not find the [devices] block to patch")
+	}
+	if err := os.WriteFile(c.path, []byte(patched), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := c.startRun(t)
+	defer r.stop()
+
+	resolve(t, r.dnsAddr, "warmup.example.com.")
+	id := deviceIDForIP(t, r, "127.0.0.1")
+	dev := r.json("GET", "/api/devices/"+id, "", 200)
+	if groups, _ := dev["groups"].([]any); len(groups) != 0 {
+		t.Errorf("quarantine_new_devices = false must leave new devices ungrouped: groups=%v", groups)
+	}
+	// The reserved group still exists (so policy can be configured for it ahead of time);
+	// it is only the automatic assignment that is turned off.
+	gl := r.json("GET", "/api/groups", "", 200)
+	found := false
+	for _, g := range gl["groups"].([]any) {
+		if gm := g.(map[string]any); gm["id"] == "quarantine" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the quarantine group should still exist even with auto-assignment off")
 	}
 }

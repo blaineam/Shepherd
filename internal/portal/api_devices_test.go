@@ -272,3 +272,19 @@ func TestDeletingThingsForgetsTheirPolicy(t *testing.T) {
 		t.Errorf("scopes after deletes = %d, want 2", scopes())
 	}
 }
+
+func TestQuarantineGroupCannotBeDeletedThroughThePortal(t *testing.T) {
+	h := newHarness(t)
+	h.reg.EnsureQuarantineGroup()
+	before := len(h.ok("GET", "/api/groups", "", 200)["groups"].([]any))
+	h.expect("DELETE", "/api/groups/quarantine", "", 403)
+	after := h.ok("GET", "/api/groups", "", 200)
+	if len(after["groups"].([]any)) != before {
+		t.Errorf("a refused delete must not remove the group: before %d, after %v", before, after)
+	}
+	// Renaming and recoloring the reserved group through the portal still works.
+	r := h.ok("PATCH", "/api/groups/quarantine", `{"name":"Holding Pen","color":"#123456"}`, 200)
+	if r["name"] != "Holding Pen" || r["color"] != "#123456" || r["id"] != "quarantine" {
+		t.Errorf("patched quarantine = %v", r)
+	}
+}

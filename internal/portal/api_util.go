@@ -44,9 +44,10 @@ func decode(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
 	return true
 }
 
-func bad(w http.ResponseWriter, msg string)      { http.Error(w, msg, http.StatusBadRequest) }
-func notFound(w http.ResponseWriter, msg string) { http.Error(w, msg, http.StatusNotFound) }
-func conflict(w http.ResponseWriter, msg string) { http.Error(w, msg, http.StatusConflict) }
+func bad(w http.ResponseWriter, msg string)       { http.Error(w, msg, http.StatusBadRequest) }
+func notFound(w http.ResponseWriter, msg string)  { http.Error(w, msg, http.StatusNotFound) }
+func forbidden(w http.ResponseWriter, msg string) { http.Error(w, msg, http.StatusForbidden) }
+func conflict(w http.ResponseWriter, msg string)  { http.Error(w, msg, http.StatusConflict) }
 
 // serverFault answers 500 without echoing the underlying error to the client.
 func serverFault(w http.ResponseWriter, what string) {

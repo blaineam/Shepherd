@@ -203,7 +203,8 @@ func TestDeviceAndBootstrapDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := cfg.Devices
-	if !d.Enabled || !d.DNS || !d.Neighbors || !d.MDNS || !d.ReverseDNS || d.NeighborIntervalSeconds != 30 || d.SaveIntervalSeconds != 60 || d.ReverseDNSServer != "" {
+	if !d.Enabled || !d.DNS || !d.Neighbors || !d.MDNS || !d.ReverseDNS || !d.QuarantineNewDevices ||
+		d.NeighborIntervalSeconds != 30 || d.SaveIntervalSeconds != 60 || d.ReverseDNSServer != "" {
 		t.Errorf("devices defaults = %+v", d)
 	}
 	if len(cfg.DNS.Bootstrap) != 2 || cfg.DNS.Bootstrap[0] != "9.9.9.9" {
@@ -295,5 +296,12 @@ func TestExampleConfigShowsTheClassifyDefaults(t *testing.T) {
 	}
 	if ex.Classify != Default().Classify {
 		t.Errorf("example %+v differs from the defaults %+v", ex.Classify, Default().Classify)
+	}
+}
+
+func TestQuarantineCanBeOptedOut(t *testing.T) {
+	cfg := writeCfg(t, "[devices]\nquarantine_new_devices = false\n")
+	if cfg.Devices.QuarantineNewDevices || !cfg.Devices.Enabled {
+		t.Errorf("quarantine_new_devices = false must only turn that off: %+v", cfg.Devices)
 	}
 }

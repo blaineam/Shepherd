@@ -80,6 +80,29 @@ it; deleting a device forgets the policy set for it.
 You can also **merge** devices that Shepherd wrongly kept apart (a phone seen on Wi-Fi and on a VPN): the target keeps the addresses,
 names, groups and tags of the sources, which are removed along with their device-level policy.
 
+## Quarantine
+
+A newly discovered device lands in the reserved **Quarantine** group automatically, so nothing new on your network gets the run of it
+before you have looked at it. Assigning a device to *any other* group releases it from quarantine in the same step; moving it back in
+later is still allowed. To release a device without putting it anywhere else, remove it from quarantine directly (the same bulk "remove
+from group" action, pointed at Quarantine).
+
+Quarantine is a group like any other for policy purposes: set its rules on the Blocking screen (scope: **A group** → Quarantine) the same
+way you would for any group, so a sensible default (block known trackers and malware, say) applies to everything new the moment it is
+seen. You can rename or recolor the group; it cannot be deleted, because new devices need somewhere to land.
+
+Turn off automatic assignment with `devices.quarantine_new_devices = false` in the configuration (the group itself still exists, so you
+can set up its policy ahead of time); the default is on, matching the rest of Shepherd's protect-by-default convention.
+
+**What quarantine does not do.** Shepherd enforces quarantine's rules the same way it enforces any group's: through DNS, and, once Watch
+mode is trialed and enabled, through steering a device's own outbound traffic. Neither of those stops a quarantined device from talking
+directly to another device on your LAN — that traffic never goes through DNS, and one-sided Watch mode only sees a device's traffic
+*toward the gateway*, not toward its neighbors. Real LAN isolation needs your router: a guest network (which eero and most consumer mesh
+routers support, as an isolated SSID and subnet) is the practical way to keep a new or untrusted device off the rest of your network
+today. True peer isolation enforced by Shepherd itself would need spoofing a device's view of every other LAN peer, not just the
+gateway — a materially bigger and riskier step than the ARP interception already planned, and not scheduled; see the roadmap's research
+items.
+
 ## Excluded
 
 **Excluded** means the device has opted out of protection. Today that means its DNS queries are answered with no blocking at all (the log

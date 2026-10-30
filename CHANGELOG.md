@@ -13,6 +13,7 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Device quarantine:** a newly discovered device lands in a reserved Quarantine group automatically and stays there until it is moved to a real group (or explicitly released), so nothing new gets the run of the network before you have looked at it. Quarantine is a group like any other for policy, so its rules are set the same way (Blocking → A group → Quarantine). It cannot be deleted; `devices.quarantine_new_devices = false` turns off automatic assignment. Shepherd cannot stop a quarantined device from reaching other LAN devices directly (that needs your router's guest network); see docs/DEVICES.md.
 - **Shepherd core (Wave 2):** one native binary with an embedded DNS filtering resolver and web portal. It cross-compiles, with no CGO, to Linux, macOS and Windows.
 - **DNS engine:** blocklists in hosts, plain-domain and adblock formats; allow and block rules that match subdomains, with allow winning over every block source; a TTL cache; UDP and TCP serving with truncation handled correctly; both IPv4 and IPv6 answers.
 - **Upstream health:** continuous probing with uncached names, automatic failover, fastest-healthy-first ordering, and TCP and TLS upstreams. Learned from a real outage where an encrypted upstream was reset on the network and stalled all DNS.

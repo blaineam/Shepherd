@@ -417,7 +417,11 @@ func derefOr(p *string) string {
 
 func (s *Server) deleteGroup(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := s.Devices.DeleteGroup(id); err != nil {
+	switch err := s.Devices.DeleteGroup(id); {
+	case errors.Is(err, devices.ErrReservedGroup):
+		forbidden(w, "the quarantine group cannot be deleted")
+		return
+	case err != nil:
 		notFound(w, "unknown group")
 		return
 	}

@@ -95,12 +95,21 @@ func startDevices(ctx context.Context, cfg config.Config, engine *dnsengine.Engi
 			return nil, nil, rerr
 		}
 	}
+	reg.EnsureQuarantineGroup() // idempotent; the group always exists, whatever the data file held
 	engine.Clients = reg
 	lookup := devices.NewLookup(reg)
 	engine.Names = lookup
 	if dc.Enabled && dc.DNS {
 		feeder := &devices.DNSFeeder{Sink: reg, Interval: deviceDNSGap}
 		engine.ClientSeen = feeder.Seen
+	}
+	var unquarantine func()
+	if dc.QuarantineNewDevices {
+		unquarantine = reg.Subscribe(func(ev devices.Event) {
+			if ev.Kind == devices.EventNewDevice {
+				_, _ = reg.BulkAssignGroup([]string{ev.DeviceID}, devices.QuarantineGroupID)
+			}
+		})
 	}
 
 	var wg sync.WaitGroup
@@ -166,6 +175,9 @@ func startDevices(ctx context.Context, cfg config.Config, engine *dnsengine.Engi
 	})
 	stop := func() {
 		wg.Wait()
+		if unquarantine != nil {
+			unquarantine()
+		}
 		lookup.Close()
 		save()
 	}
