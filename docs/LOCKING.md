@@ -38,9 +38,11 @@ biometric and nothing to type, using the WebAuthn standard. **This is out of sco
 change and is not implemented.** The reason is a hard platform requirement, not an oversight:
 
 - Browsers only allow WebAuthn on a secure (HTTPS) page with a real hostname, or on `localhost` — never on a plain
-  `http://` address or a bare LAN IP, which is how the portal is reached today. Shepherd has no HTTPS story yet; that
-  is a separate, larger roadmap item (a reverse proxy / Cloudflare Tunnel in front of the portal — see
-  [ROADMAP.md](ROADMAP.md), item 15) that has to land first.
+  `http://` address or a bare LAN IP, which is how the portal is reached by default. `[tls]` (see
+  [TLS.md](TLS.md)) now gives the portal an optional real HTTPS listener on its own hostname — the first,
+  additive step of [ROADMAP.md](ROADMAP.md) item 18 ("Access") — but passkeys are still not implemented here;
+  this remains a known, deliberate gap until that settings-screen registration flow below is actually built.
+  The fuller reverse-proxy / Cloudflare Tunnel story item 18 also covers is separate again and still planned.
 - Once the portal has a stable HTTPS hostname to act as the passkey's relying-party ID, passkeys can be added the
   same way the PIN was here: a settings-screen registration flow, a credential store next to the trusted-device
   registry, and "Order of preference: passkey, then PIN on a trusted browser, then the token" ahead of the PIN at

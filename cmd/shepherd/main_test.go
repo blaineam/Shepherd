@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -357,6 +358,53 @@ func TestBadHistoryKeyFileStopsStartup(t *testing.T) {
 	if err := run(context.Background(), cfg, false, os.Stdout); err == nil || !strings.Contains(err.Error(), "key") {
 		t.Errorf("a broken key file must stop startup rather than run unprotected: %v", err)
 	}
+}
+
+func TestRunServesHTTPSWhenTLSEnabled(t *testing.T) {
+	resetTLSSeams(t)
+	hostname := "shepherd.example.com"
+	tlsEvery = 10 * time.Millisecond
+	tlsACMEClient = newFakeTLSACME(hostname)
+	tlsDNS01 = &fakeTLSDNS01{}
+	tlsPropagationCheck = func(context.Context, string, string) error { return nil }
+
+	tlsPort := freePort(t)
+	extra := fmt.Sprintf(`[tls]
+enabled = true
+hostname = %q
+listen = "127.0.0.1:%d"
+cloudflare_api_token = "unused-fake"
+`, hostname, tlsPort)
+	cfg := writeConfig(t, freePort(t), freePort(t), extra)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, cfg, false, os.Stdout) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("run did not stop")
+		}
+	})
+
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, Timeout: time.Second}
+	url := fmt.Sprintf("https://127.0.0.1:%d/api/status", tlsPort)
+	deadline := time.Now().Add(5 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		res, err := client.Get(url)
+		if err == nil {
+			res.Body.Close()
+			if res.StatusCode == http.StatusUnauthorized {
+				return // the HTTPS listener is up and serving the same portal handler
+			}
+		}
+		lastErr = err
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("HTTPS portal never came up on %s: %v", url, lastErr)
 }
 
 func TestMapAndAutoHomeStartWhenEnabled(t *testing.T) {

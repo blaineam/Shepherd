@@ -13,6 +13,33 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Real TLS for the portal (`[tls]`, `internal/tlscert`):** the first, additive step of
+  [ROADMAP.md](docs/ROADMAP.md) step 18 ("Access") — the portal can now get a real Let's Encrypt
+  certificate for its own hostname, issued over ACME's DNS-01 challenge against Cloudflare DNS, the
+  same mechanism the maintainer's existing reverse-proxy manager already uses for other services on
+  the same Cloudflare zone. The ACME protocol itself (nonces, account keys, order/challenge polling,
+  certificate parsing) is handled by `golang.org/x/crypto/acme` — already a transitive part of this
+  project's existing `golang.org/x/crypto` dependency, so this adds zero new module dependencies
+  (see docs/TLS.md for why that was chosen over `go-acme/lego`). `internal/tlscert` supplies the one
+  piece that library does not (creating/removing the DNS-01 challenge's TXT record through
+  Cloudflare's API, `CloudflareProvider`) plus the scheduling, persistence and hot-swap wiring:
+  `Manager` renews 30 days before the certificate's real 90-day expiry, checking every 12 hours
+  without ever touching the network while the current certificate is still comfortably valid, and
+  never blocks `cmd/shepherd`'s startup — the same "never block on something outside Shepherd's
+  control" convention `startARP` and `startGeoBlock` already follow. Wired into `cmd/shepherd`
+  (`cmd/shepherd/tls.go`'s `startTLS`) as a second, additive HTTPS listener (`tls.listen`) alongside
+  the existing plain-HTTP one on `portal.listen`, which is completely unchanged; `[tls].enabled =
+  false` (the default) leaves Shepherd behaving exactly as it did before this landed. New config:
+  `[tls]`'s `enabled`, `hostname`, `listen`, `email`, and `cloudflare_api_token` /
+  `cloudflare_api_token_file` (mutually exclusive, following `[accountability.smtp]`'s own
+  `password`/`password_file` convention exactly). The certificate, its key, and the ACME account key
+  are persisted under `<data_dir>/tls/`, mode 0600 like every other secret this project persists.
+  Every test (`internal/tlscert`'s own, and `cmd/shepherd`'s wiring tests, including an end-to-end
+  test that makes a real HTTPS request against the running portal) runs against fakes — a fake
+  Cloudflare API and a fake ACME client implementing the exact interface `*acme.Client` does — never
+  a real network call to Cloudflare or Let's Encrypt, staging or otherwise. See docs/TLS.md,
+  including the honest note on what a real live first issuance (a real Cloudflare account and
+  token, done separately and deliberately) would still need to confirm.
 - [docs/WATCH-MODE-COMPARISON.md](docs/WATCH-MODE-COMPARISON.md): a row-by-row, honest comparison of
   what the DNS-only baseline already covers versus what Watch mode (one-sided ARP interception, still
   a hand-run trial library, not wired into `cmd/shepherd` or the portal) would add once it ships —
