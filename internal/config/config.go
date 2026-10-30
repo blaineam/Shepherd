@@ -126,6 +126,11 @@ type List struct {
 
 type Portal struct {
 	Listen string `toml:"listen"`
+	// IdleLockMinutes is how long the portal may sit idle before it relocks
+	// to demo data and requires the token or a PIN again. 0 disables idle
+	// locking. The portal's own settings screen can override this at
+	// runtime; that override, once saved, wins over this value.
+	IdleLockMinutes int `toml:"idle_lock_minutes"`
 }
 
 // defaultList is the blocklist a fresh install protects with.
@@ -155,7 +160,7 @@ func Default() Config {
 			CacheSize:            20000,
 			LogSize:              20000,
 		},
-		Portal: Portal{Listen: "127.0.0.1:8787"},
+		Portal: Portal{Listen: "127.0.0.1:8787", IdleLockMinutes: 10},
 	}
 }
 
@@ -209,6 +214,9 @@ func (c Config) Validate() error {
 	}
 	if c.Classify.IntervalSeconds < 30 {
 		return errors.New("classify.interval_seconds must be at least 30")
+	}
+	if c.Portal.IdleLockMinutes < 0 {
+		return errors.New("portal.idle_lock_minutes must not be negative")
 	}
 	if s := c.Devices.ReverseDNSServer; s != "" {
 		host := s

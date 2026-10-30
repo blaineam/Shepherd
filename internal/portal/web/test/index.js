@@ -25,3 +25,4 @@ import './mgmt.test.js';
 import './demomgmt.test.js';
 import './names.test.js';
 import './wander.test.js';
+import './locking.test.js';

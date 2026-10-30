@@ -7,6 +7,7 @@ package portal
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
 	"encoding/hex"
@@ -64,6 +65,13 @@ type Deps struct {
 	DetectHome func(ctx context.Context) error
 	// Heartbeat is how often the live stream sends a keep-alive (default 15s).
 	Heartbeat time.Duration
+
+	// DataDir is where locking.json (the idle-lock override, the PIN and the
+	// trusted-browser registry) is persisted. Empty keeps it in memory only.
+	DataDir string
+	// IdleLockMinutes is the configured default idle-lock timeout (0 = never).
+	// A value saved from the portal's own settings screen wins over it.
+	IdleLockMinutes int
 }
 
 type Server struct {
@@ -73,6 +81,14 @@ type Server struct {
 
 	mu      sync.Mutex
 	memHome *settings.Home // used when no settings store is configured
+
+	clock     func() time.Time
+	sleep     func(time.Duration)
+	sessions  *sessionStore
+	lockStore *lockStore
+	// pinArgonTime/pinArgonMem override the PIN's Argon2id cost; zero (the
+	// production default) uses pinParams' strong default. Tests lower this.
+	pinArgonTime, pinArgonMem uint32
 }
 
 // LoadOrCreateToken returns the portal access token stored in dir, creating a
@@ -108,25 +124,48 @@ func New(d Deps) *Server {
 		d.Heartbeat = 15 * time.Second
 	}
 	s := &Server{Deps: d, started: time.Now(), mux: http.NewServeMux()}
+	s.clock = time.Now
+	s.sleep = time.Sleep
+	s.sessions = newSessionStore()
+	lockPath := ""
+	if d.DataDir != "" {
+		lockPath = filepath.Join(d.DataDir, "locking.json")
+	}
+	s.lockStore = openLockStore(lockPath, tokenHash(d.Token))
 	sub, _ := fs.Sub(webFS, "web")
 	s.mux.Handle("GET /", http.FileServerFS(sub))
 	s.mux.HandleFunc("POST /api/login", s.login)
-	s.mux.Handle("GET /api/status", s.auth(s.status))
-	s.mux.Handle("GET /api/queries", s.auth(s.queries))
+	s.mux.HandleFunc("POST /api/login/pin", s.loginPIN)
+	s.mux.Handle("POST /api/lock", s.auth(s.lockSession))
+	s.mux.Handle("POST /api/pin", s.auth(s.setPIN))
+	s.mux.Handle("DELETE /api/pin", s.auth(s.clearPIN))
+	s.mux.Handle("GET /api/trusted-devices", s.auth(s.listTrustedDevices))
+	s.mux.Handle("DELETE /api/trusted-devices/{id}", s.auth(s.revokeTrustedDevice))
+	// status, queries and stream are polled automatically; they must not
+	// themselves count as activity or idle locking would never trigger while
+	// a tab merely sits open (see sessionStore.valid).
+	s.mux.Handle("GET /api/status", s.authPassive(s.status))
+	s.mux.Handle("GET /api/queries", s.authPassive(s.queries))
 	s.mux.Handle("GET /api/rules", s.auth(s.getRules))
 	s.mux.Handle("POST /api/rules", s.auth(s.addRule))
 	s.mux.Handle("DELETE /api/rules", s.auth(s.delRule))
 	s.mux.Handle("POST /api/policies", s.auth(s.setPolicy))
 	s.mux.Handle("POST /api/lists/refresh", s.auth(s.refreshLists))
 	s.routes()
-	s.mux.Handle("GET /api/stream", s.auth(s.stream))
+	s.mux.Handle("GET /api/stream", s.authPassive(s.stream))
 	s.mux.Handle("GET /api/history", s.auth(s.historyQuery))
 	s.mux.Handle("POST /api/history/unlock", s.auth(s.historyUnlock))
 	s.mux.Handle("GET /api/settings", s.auth(s.getSettings))
 	s.mux.Handle("POST /api/settings/home", s.auth(s.setHome))
 	s.mux.Handle("DELETE /api/settings/home", s.auth(s.resetHome))
 	s.mux.Handle("POST /api/settings/home/detect", s.auth(s.detectHome))
+	s.mux.Handle("POST /api/settings/locking", s.auth(s.setLockingSettings))
 	return s
+}
+
+func tokenHash(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
 }
 
 // Handler returns the portal with security headers applied.
@@ -141,22 +180,45 @@ func (s *Server) Handler() http.Handler {
 	})
 }
 
-func (s *Server) tokenOK(r *http.Request) bool {
-	tok := ""
+// authorized checks the Authorization header (a stateless comparison against
+// the token, used by scripts and the command line, never affected by idle
+// locking) or the session cookie (a server-side session, subject to idle
+// locking). active is false for routes that are polled automatically: they
+// may ride an existing session, but must not themselves extend it, or a tab
+// merely left open would never go idle. See sessionStore.valid vs touch.
+func (s *Server) authorized(r *http.Request, active bool) bool {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-		tok = h[len("Bearer "):]
-	} else if c, err := r.Cookie(cookieName); err == nil {
-		tok = c.Value
+		return subtle.ConstantTimeCompare([]byte(h[len("Bearer "):]), []byte(s.Token)) == 1
 	}
-	return subtle.ConstantTimeCompare([]byte(tok), []byte(s.Token)) == 1
+	c, err := r.Cookie(cookieName)
+	if err != nil {
+		return false
+	}
+	now := s.clock()
+	if !s.sessions.valid(c.Value, s.idleLockMinutes(), now) {
+		return false
+	}
+	if active {
+		s.sessions.touch(c.Value, now)
+	}
+	return true
 }
 
-// auth requires a valid token. Anything that changes state must also carry the
-// X-Shepherd header, which a cross-site request cannot add without a CORS
-// preflight (the portal answers none).
-func (s *Server) auth(next http.HandlerFunc) http.Handler {
+// auth requires a valid token or session, sliding the session's idle window
+// forward. Anything that changes state must also carry the X-Shepherd
+// header, which a cross-site request cannot add without a CORS preflight
+// (the portal answers none).
+func (s *Server) auth(next http.HandlerFunc) http.Handler { return s.authMiddleware(next, true) }
+
+// authPassive is like auth but never extends a session's idle window; use it
+// for endpoints the frontend polls automatically (see the comment in New).
+func (s *Server) authPassive(next http.HandlerFunc) http.Handler {
+	return s.authMiddleware(next, false)
+}
+
+func (s *Server) authMiddleware(next http.HandlerFunc, active bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.tokenOK(r) {
+		if !s.authorized(r, active) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -189,15 +251,14 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(body.Token)), []byte(s.Token)) != 1 {
-		time.Sleep(400 * time.Millisecond)
+		s.sleep(400 * time.Millisecond)
 		http.Error(w, "wrong token", http.StatusUnauthorized)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: s.Token, Path: "/", HttpOnly: true,
-		SameSite: http.SameSiteStrictMode, MaxAge: 30 * 24 * 3600,
-	})
-	writeJSON(w, map[string]bool{"ok": true})
+	sess := s.sessions.create("", s.clock())
+	s.setSessionCookie(w, sess.id)
+	_, pinSet := s.lockStore.pin()
+	writeJSON(w, map[string]any{"ok": true, "pin_set": pinSet})
 }
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {

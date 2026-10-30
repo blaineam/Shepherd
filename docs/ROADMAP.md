@@ -19,7 +19,7 @@ Work ships in tested increments that are deployed to a real network as they land
 | 13 | **Scheduled access and allowlist mode:** time windows on a policy rule or switch at network, group or device scope (block or allow a category, app or list only during chosen hours/days); and an allowlist mode, settable at the same three scopes, that inverts the default to block everything except what is explicitly allowed, instead of today's block-list default | planned, next up (one design, one worktree — both change the same policy evaluation path) |
 | 14 | **Ports and exposure:** scheduled scans, per-device open ports, router port forwards, change alarms | planned, next up |
 | 15 | **Access:** reverse proxy, wildcard certificates on Cloudflare DNS, private service names, Cloudflare Tunnel; migrating off the current reverse-proxy manager | planned; higher-risk (touches live service reachability), designed carefully before any implementation touches the real NPM setup |
-| 16 | **Portal locking:** demo data until unlocked, idle auto-lock (configurable, including never), PIN bound to a trusted browser, passkeys once the portal has HTTPS | designed, not built |
+| 16 | **Portal locking:** demo data until unlocked, idle auto-lock (configurable, including never), PIN bound to a trusted browser | built; not yet deployed. Passkeys still wait on step 15 (HTTPS) |
 | 17 | **Inbound protection:** logging, rate limits and blocking at the proxy and tunnel, exposure alarms, host-level inbound tracking | planned |
 | 18 | **Mesh:** dataset sync, active-active DNS, standbys | planned |
 | 19 | **Self-maintenance:** signed self-update with rollback, retention budgets, digests | planned |

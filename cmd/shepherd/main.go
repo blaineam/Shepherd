@@ -116,7 +116,8 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		return err
 	}
 	deps := portal.Deps{Engine: engine, Lists: listMgr, Policy: policy, Devices: registry, Upstreams: ups,
-		Token: token, Version: version, Settings: prefs}
+		Token: token, Version: version, Settings: prefs,
+		DataDir: cfg.DataDir, IdleLockMinutes: cfg.Portal.IdleLockMinutes}
 
 	var asnLocator *geo.ASNLocator
 	if cfg.Map.Enabled {

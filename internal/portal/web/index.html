@@ -19,10 +19,12 @@
       <button type="button" role="tab" id="tab-blocking" aria-selected="false" aria-controls="view-blocking">Blocking</button>
       <button type="button" role="tab" id="tab-upstreams" aria-selected="false" aria-controls="view-upstreams">Upstreams</button>
       <button type="button" role="tab" id="tab-history" aria-selected="false" aria-controls="view-history">History</button>
+      <button type="button" role="tab" id="tab-locking" aria-selected="false" aria-controls="view-locking">Locking</button>
       <button type="button" role="tab" id="tab-details" aria-selected="false" aria-controls="view-details">Details</button>
     </nav>
     <span class="spacer"></span>
     <span class="clock mono" id="clock" aria-label="Clock"></span>
+    <button type="button" class="tbtn" id="btn-lock" title="Lock the portal now">Lock</button>
     <label class="switch demo-switch" title="Synthetic data generated in your browser. Makes no API calls."><input type="checkbox" id="demo-toggle"><span>Demo data</span></label>
     <span class="muted mono small hide-sm" id="version"></span>
     <span class="muted mono small hide-sm" id="uptime"></span>
@@ -164,6 +166,7 @@
   <main id="view-blocking" class="page" role="tabpanel" aria-labelledby="tab-blocking" hidden></main>
   <main id="view-upstreams" class="page" role="tabpanel" aria-labelledby="tab-upstreams" hidden></main>
   <main id="view-history" class="page" role="tabpanel" aria-labelledby="tab-history" hidden></main>
+  <main id="view-locking" class="page" role="tabpanel" aria-labelledby="tab-locking" hidden></main>
 
   <main id="view-details" role="tabpanel" aria-labelledby="tab-details" hidden>
     <p class="banner" id="details-banner" hidden></p>
@@ -231,14 +234,23 @@
   <div id="toasts" class="toasts" role="status" aria-live="polite" hidden></div>
 
   <div id="login" class="overlay" hidden>
-    <form id="login-form" class="modal">
+    <div class="modal">
       <img src="icon.png" alt="" class="logo big">
-      <h2>Sign in to Shepherd</h2>
-      <p class="muted small">Paste the portal token. It is in the data directory, or run <code>shepherd -print-token</code>.</p>
-      <input id="token" type="password" placeholder="Portal token" autocomplete="current-password" required>
-      <button>Sign in</button>
+      <h2>Locked</h2>
+      <p class="muted small">Shepherd is showing synthetic demo data, made up in your browser. Unlock to see your real network.</p>
+      <form id="pin-form">
+        <input id="pin" type="password" inputmode="numeric" placeholder="PIN" autocomplete="off">
+        <button>Unlock with PIN</button>
+      </form>
+      <p class="err" id="pin-err"></p>
+      <hr>
+      <form id="login-form">
+        <input id="token" type="password" placeholder="Portal token" autocomplete="current-password">
+        <button>Unlock with token</button>
+      </form>
+      <p class="muted small">The token is in the data directory, or run <code>shepherd -print-token</code>.</p>
       <p class="err" id="login-err"></p>
-    </form>
+    </div>
   </div>
 
   <script type="module" src="app.js"></script>

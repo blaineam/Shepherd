@@ -162,12 +162,18 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 		st := s.Geo.Status()
 		geoStatus = map[string]any{"enabled": true, "ready": st.Ready, "updated": st.Updated, "error": st.Error, "attribution": st.Attribution}
 	}
+	_, pinSet := s.lockStore.pin()
 	writeJSON(w, map[string]any{
 		"home": home, "auto_home": s.DetectHome != nil,
 		"history": map[string]any{
 			"mode": s.History.Mode(), "locked": s.History.Locked(), "initialized": s.History.Initialized(),
 		},
 		"geo": geoStatus,
+		"locking": map[string]any{
+			"idle_lock_minutes":    s.idleLockMinutes(),
+			"pin_set":              pinSet,
+			"trusted_device_count": len(s.lockStore.trustedDevices()),
+		},
 	})
 }
 

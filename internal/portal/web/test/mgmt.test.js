@@ -80,3 +80,19 @@ test('upstream, history and unlock endpoints', async () => {
   await m.settings();
   assert.equal(calls[8][0], '/api/settings');
 });
+
+test('locking endpoints', async () => {
+  const { calls, m } = rig();
+  await m.setLockingSettings(30);
+  assert.deepEqual([calls[0][0], calls[0][1].method, calls[0][1].body], ['/api/settings/locking', 'POST', '{"idle_lock_minutes":30}']);
+  await m.setPIN('a1b2c3');
+  assert.deepEqual([calls[1][0], calls[1][1].method, calls[1][1].body], ['/api/pin', 'POST', '{"pin":"a1b2c3"}']);
+  await m.clearPIN();
+  assert.deepEqual([calls[2][0], calls[2][1].method], ['/api/pin', 'DELETE']);
+  await m.trustedDevices();
+  assert.equal(calls[3][0], '/api/trusted-devices');
+  await m.revokeTrustedDevice('abc 123');
+  assert.deepEqual([calls[4][0], calls[4][1].method], ['/api/trusted-devices/abc%20123', 'DELETE']);
+  await m.lock();
+  assert.deepEqual([calls[5][0], calls[5][1].method], ['/api/lock', 'POST']);
+});

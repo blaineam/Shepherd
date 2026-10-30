@@ -25,10 +25,15 @@ import { createUpstreams } from './js/upstreamsview.js';
 import { createHistory } from './js/historyview.js';
 import { createDemoMgmt } from './js/demomgmt.js';
 import { DEVICE_BY_IP } from './js/demodata.js';
+import { createLocking } from './js/lockingview.js';
+import { lockedURL, unlockedURL } from './js/locking.js';
 
 const params = new URLSearchParams(location.search);
 const demoParam = params.get('demo');
 const DEMO = demoParam !== null && demoParam !== '0' && demoParam !== 'false';
+// LOCKED means the portal put itself here (first visit, idle relock, or the
+// Lock button), rather than someone choosing the demo-data toggle by hand.
+const LOCKED = params.get('locked') === '1';
 const DEBUG = params.get('debug') === '1';
 const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -59,9 +64,13 @@ function notify(msg) { toaster.show(msg); }
 // ---------------------------------------------------------------- api
 let api;
 let sources = null;
+// Losing a real session (idle relock, or the server restarting) bounces the
+// whole page into the locked demo view by reloading with ?demo=1&locked=1 -
+// the same "reload to switch modes" trick the manual demo toggle already
+// uses (see the demo-toggle listener below), rather than rewiring every
+// place DEMO is read at module load into something reactive.
 function showLogin() {
-  stopData();
-  $('#login').hidden = false;
+  location.assign(lockedURL(location.href));
 }
 if (DEMO) {
   api = createDemoApi({
@@ -73,6 +82,10 @@ if (DEMO) {
 } else {
   api = createApi({ onUnauthorized: showLogin });
 }
+// Login, PIN login and the explicit Lock always talk to the real backend,
+// never the in-browser demo fake, even while DEMO is showing the lock
+// screen's synthetic data behind it.
+const realApi = createApi({ onUnauthorized: () => {} });
 
 // ---------------------------------------------------------------- UI pieces
 const details = createDetails({ api, getRows: () => model.recentNewestFirst(400), notify, onRulesChanged: () => {}, names });
@@ -443,7 +456,7 @@ async function pollStatus() {
 // ---------------------------------------------------------------- management screens
 const mgmt = createMgmt(api);
 const policyStore = createPolicyStore({ mgmt });
-const VIEWS = ['hud', 'devices', 'blocking', 'upstreams', 'history', 'details'];
+const VIEWS = ['hud', 'devices', 'blocking', 'upstreams', 'history', 'locking', 'details'];
 
 const blocking = createBlocking({
   root: $('#view-blocking'), mgmt, store: policyStore, notify,
@@ -456,6 +469,7 @@ const devicesView = createDevices({
   onGroupsChanged: () => blocking.onGroupsChanged(),
 });
 const upstreamsView = createUpstreams({ root: $('#view-upstreams'), mgmt, notify });
+const lockingView = createLocking({ root: $('#view-locking'), mgmt, notify });
 const historyView = createHistory({
   root: $('#view-history'), mgmt, notify,
   onReplay: (t) => { showView('hud'); enterReplay(Math.max(0, t - 20000)); },
@@ -482,10 +496,12 @@ function showView(name) {
   try { history.replaceState(null, '', location.pathname + location.search + (hud ? '' : '#' + name)); } catch { /* ignore */ }
   if (name === 'details') details.renderRows();
   if (name !== 'upstreams') upstreamsView.hide();
+  if (name !== 'locking') lockingView.hide();
   if (name === 'devices') devicesView.show();
   else if (name === 'blocking') devicesView.reloadGroups().catch(() => {}).finally(() => blocking.show());
   else if (name === 'upstreams') upstreamsView.show();
   else if (name === 'history') historyView.show();
+  else if (name === 'locking') lockingView.show();
 }
 for (const v of VIEWS) $('#tab-' + v).addEventListener('click', () => showView(v));
 window.addEventListener('hashchange', () => { const h = location.hash.slice(1) || 'hud'; if (VIEWS.includes(h) && $('#view-' + h).hidden) showView(h); });
@@ -531,15 +547,28 @@ demoToggle.addEventListener('change', () => {
 });
 
 // ---------------------------------------------------------------- login
+// Both forms reload into the real, unlocked view on success (the same
+// mode-switch-by-reload pattern as the demo toggle), so there is no partial
+// in-place teardown of the demo pipeline to get wrong.
 $('#login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
-    await api('/api/login', { method: 'POST', body: JSON.stringify({ token: $('#token').value }) });
-    $('#login').hidden = true;
-    $('#login-err').textContent = '';
-    $('#token').value = '';
-    bootData();
+    const r = await realApi('/api/login', { method: 'POST', body: JSON.stringify({ token: $('#token').value }) });
+    const u = new URL(unlockedURL(location.href));
+    if (r && r.pin_set === false) u.searchParams.set('setup_pin', '1'); // offer a PIN right after the first token unlock
+    location.assign(u.toString());
   } catch { $('#login-err').textContent = 'That token did not work.'; }
+});
+$('#pin-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await realApi('/api/login/pin', { method: 'POST', body: JSON.stringify({ pin: $('#pin').value }), keep401: true });
+    location.assign(unlockedURL(location.href));
+  } catch (err) { $('#pin-err').textContent = err.message === 'unauthorized' ? 'Wrong PIN.' : err.message; }
+});
+$('#btn-lock').addEventListener('click', async () => {
+  try { await realApi('/api/lock', { method: 'POST' }); } catch { /* lock locally regardless of what the server says */ }
+  location.assign(lockedURL(location.href));
 });
 
 // ---------------------------------------------------------------- boot
@@ -580,6 +609,15 @@ async function main() {
   updateTimelineAvailability();
   legend.setMode('lookups');
   document.body.classList.toggle('demo', DEMO);
+  // The Locking screen and the Lock button manage a real session; they make
+  // no sense while showing synthetic data, locked or not. The demo-data
+  // toggle itself is hidden while locked so "unlock" only ever happens
+  // through the forms below, never by silently flipping that switch back.
+  $('#tab-locking').hidden = DEMO;
+  $('#btn-lock').hidden = DEMO;
+  $('.demo-switch').hidden = LOCKED;
+  if (LOCKED) $('#login').hidden = false;
+  if (params.get('setup_pin') === '1') { try { history.replaceState(null, '', location.pathname + location.search.replace(/[?&]setup_pin=1/, '').replace(/^&/, '?') + location.hash); } catch { /* ignore */ } showView('locking'); }
   { const h = location.hash.slice(1); if (VIEWS.includes(h) && h !== 'hud') showView(h); }
   try {
     await initGlobe();

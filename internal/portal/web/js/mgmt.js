@@ -38,5 +38,12 @@ export function createMgmt(api) {
     history: (params) => api('/api/history' + Q(params)),
     unlock: (passphrase) => api('/api/history/unlock', { method: 'POST', body: J({ passphrase }), keep401: true }),
     settings: () => api('/api/settings'),
+
+    setLockingSettings: (idleLockMinutes) => post('/api/settings/locking', { idle_lock_minutes: idleLockMinutes }),
+    setPIN: (pin) => post('/api/pin', { pin }),
+    clearPIN: () => api('/api/pin', { method: 'DELETE' }),
+    trustedDevices: () => api('/api/trusted-devices'),
+    revokeTrustedDevice: (id) => api('/api/trusted-devices/' + encodeURIComponent(id), { method: 'DELETE' }),
+    lock: () => post('/api/lock', {}),
   };
 }

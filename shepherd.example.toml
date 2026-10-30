@@ -80,6 +80,8 @@ interval_seconds = 300           # how often guesses are reconsidered
 
 [portal]
 listen = "127.0.0.1:8787"
+idle_lock_minutes = 10           # relock to demo data after this long idle; 0 = never auto-lock
+                                  # (the portal's own settings screen can override this at runtime)
 
 # The list a pre-policy install used, and the default for a new one. Defining
 # any [[lists]] replaces the recommended catalog lists on a new install.
