@@ -60,6 +60,21 @@ test('sampleLandPoints only returns points on land', () => {
   }
 });
 
+test('ringContains correctly handles a ring that crosses the antimeridian', () => {
+  // A thin 20-wide sliver straddling the dateline (170 to 180 to -170),
+  // raw coordinates jumping from +170 to -170. Read naively (no unwrap),
+  // this misreads as a huge rectangle spanning nearly the whole globe,
+  // reporting "inside" for points nowhere near the real sliver -- a false
+  // ring of "land" at this ring's latitude band, everywhere.
+  const ring = [[170, 10], [-170, 10], [-170, 20], [170, 20]];
+  assert.ok(!ringContains(ring, 0, 15), 'the opposite side of the globe must not read as inside');
+  assert.ok(!ringContains(ring, 90, 15), 'a point a quarter turn away must not read as inside');
+  assert.ok(ringContains(ring, 175, 15), 'a point just east of the dateline, inside the sliver, must read as inside');
+  assert.ok(ringContains(ring, -175, 15), 'a point just west of the dateline, inside the sliver, must read as inside');
+  assert.ok(!ringContains(ring, 165, 15), 'just outside the sliver to the east must not read as inside');
+  assert.ok(!ringContains(ring, -165, 15), 'just outside the sliver to the west must not read as inside');
+});
+
 test('coastSegments skips seams', () => {
   const polys = [[[[-180, 0], [-180, 10], [-170, 10], [-170, 0], [-180, 0]], ]];
   const seg = coastSegments(polys);

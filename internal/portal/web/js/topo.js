@@ -39,13 +39,47 @@ export function landPolygons(topo, objectName = 'land') {
   return out;
 }
 
-export function ringContains(ring, lon, lat) {
+function crossingsAt(ring, lon, lat) {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
     const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
     if ((yi > lat) !== (yj > lat) && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
   }
   return inside;
+}
+
+// Shifts each vertex by a running multiple of 360 so consecutive points
+// never jump by more than 180: a ring that crosses the antimeridian (for
+// example Russia, raw longitudes jumping between +179 and -179) becomes a
+// continuous shape in one unbroken coordinate range instead of one that
+// appears, read naively, to span almost the whole globe. Skipped (not
+// just a no-op: genuinely unnecessary) for the vast majority of rings
+// that never cross the seam.
+function unwrapRing(ring) {
+  let wraps = false;
+  for (let i = 1; i < ring.length; i++) if (Math.abs(ring[i][0] - ring[i - 1][0]) > 180) { wraps = true; break; }
+  if (!wraps) return ring;
+  const out = [ring[0]];
+  for (let i = 1; i < ring.length; i++) {
+    let x = ring[i][0];
+    const prevX = out[i - 1][0];
+    while (x - prevX > 180) x -= 360;
+    while (x - prevX < -180) x += 360;
+    out.push([x, ring[i][1]]);
+  }
+  return out;
+}
+
+// A ray-casting point-in-ring test, antimeridian-aware: the ring is
+// unwrapped into continuous coordinates once, then the candidate point is
+// tried at its own longitude and at +-360 of it, so whichever one lands in
+// the same unwrapped branch as the ring gives the right answer. Without
+// this, a ring crossing the seam makes the naive test see a crossing for
+// nearly every longitude along its latitude band -- a false "land" ring
+// spanning open ocean, not just a wrong answer right at the seam.
+export function ringContains(ring, lon, lat) {
+  const r = unwrapRing(ring);
+  return crossingsAt(r, lon, lat) || crossingsAt(r, lon + 360, lat) || crossingsAt(r, lon - 360, lat);
 }
 
 function bbox(ring) {
