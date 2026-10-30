@@ -1,0 +1,6 @@
+{
+  "name": "shepherd-portal-web",
+  "private": true,
+  "type": "module",
+  "description": "Portal front end. No dependencies; tests run with: node --test internal/portal/web/test/"
+}

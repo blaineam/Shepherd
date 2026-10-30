@@ -21,6 +21,8 @@ jobs:
         run: go vet ./...
       - name: Tests and coverage floor
         run: scripts/coverage
+      - name: Portal front-end tests
+        run: node --test internal/portal/web/test/
       - name: Leak guard self-test
         run: scripts/test-leakcheck
       - name: Leak guard on the whole tree
