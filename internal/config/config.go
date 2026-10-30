@@ -38,6 +38,7 @@ type Config struct {
 	Portscan       Portscan       `toml:"portscan"`
 	Vulnscan       Vulnscan       `toml:"vulnscan"`
 	TLS            TLS            `toml:"tls"`
+	Nethealth      Nethealth      `toml:"nethealth"`
 }
 
 // ARP controls the passive ARP monitor (docs/ARP.md): a read-only listener
@@ -254,6 +255,39 @@ type TLS struct {
 	CloudflareAPITokenFile string `toml:"cloudflare_api_token_file"`
 }
 
+// Nethealth schedules internal/nethealth's periodic latency, jitter,
+// packet-loss and reachability probes against the configured DNS
+// upstreams plus a couple of well-known public resolvers, and its
+// separate, much less frequent bufferbloat check (docs/NETHEALTH.md).
+// Unlike Portscan and Vulnscan, both Enabled and BufferbloatEnabled
+// default to false: Portscan/Vulnscan only ever contact devices this
+// Shepherd has already discovered on its own LAN, so building a Config
+// with Default() (as this project's own tests do throughout, to build a
+// real server end to end) never reaches outside the test's own loopback
+// fixtures. Nethealth's targets, by contrast, are inherently fixed public
+// internet addresses (9.9.9.10, 1.1.1.1, 8.8.8.8) — there is no "this
+// Shepherd's own devices" equivalent to scope them to. Defaulting this on
+// would make every one of this project's many Default()-based tests
+// silently dependent on real internet connectivity it never opted into,
+// which is exactly the kind of hermetic-testing violation this project
+// otherwise goes out of its way to avoid (see docs/NETHEALTH.md's "Should
+// this be on by default?" section for the full reasoning, including why
+// this is a genuinely different situation from Portscan/Vulnscan's own
+// default-on choice, not an inconsistency).
+type Nethealth struct {
+	Enabled bool `toml:"enabled"`
+	// IntervalSeconds is how often the latency/jitter/loss/reachability
+	// probe runs. Minutes, not hours: each cycle is cheap, and the whole
+	// point of this feature is a trend line dense enough to be useful.
+	IntervalSeconds int `toml:"interval_seconds"`
+	// BufferbloatEnabled turns on the separate, far less frequent
+	// bufferbloat check, which actually generates load. Off by default.
+	BufferbloatEnabled bool `toml:"bufferbloat_enabled"`
+	// BufferbloatIntervalSeconds is how often the bufferbloat check runs,
+	// when enabled.
+	BufferbloatIntervalSeconds int `toml:"bufferbloat_interval_seconds"`
+}
+
 // History controls what is remembered after the fact. "memory" (the default)
 // keeps recent queries in RAM only and writes nothing to disk. "encrypted"
 // keeps a searchable, AES-256-GCM encrypted record on disk.
@@ -337,6 +371,7 @@ func Default() Config {
 		Accountability: Accountability{Enabled: true, SMTP: AccountabilitySMTP{Port: 587, TLS: "starttls"}},
 		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600, WANExposure: WANExposure{Enabled: true, RefreshIntervalSeconds: 600}},
 		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600},
+		Nethealth:      Nethealth{Enabled: false, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
 		DataDir:        "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
@@ -451,6 +486,12 @@ func (c Config) Validate() error {
 		if c.TLS.CloudflareAPIToken != "" && c.TLS.CloudflareAPITokenFile != "" {
 			return errors.New("tls.cloudflare_api_token and tls.cloudflare_api_token_file must not both be set")
 		}
+	}
+	if c.Nethealth.Enabled && c.Nethealth.IntervalSeconds < 60 {
+		return errors.New("nethealth.interval_seconds must be at least 60")
+	}
+	if c.Nethealth.BufferbloatEnabled && c.Nethealth.BufferbloatIntervalSeconds < 600 {
+		return errors.New("nethealth.bufferbloat_interval_seconds must be at least 600")
 	}
 	if s := c.Devices.ReverseDNSServer; s != "" {
 		host := s

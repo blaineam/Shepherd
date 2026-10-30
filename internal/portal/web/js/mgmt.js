@@ -88,5 +88,11 @@ export function createMgmt(api) {
     vulnscanDevices: () => api('/api/vulnscan/devices'),
     vulnscanDevice: (id) => api('/api/vulnscan/devices/' + encodeURIComponent(id)),
     scanVulns: (deviceId) => post('/api/vulnscan/scan', deviceId ? { device_id: deviceId } : {}),
+
+    nethealthStatus: () => api('/api/nethealth'),
+    nethealthSeries: (params) => api('/api/nethealth/series' + Q(params)),
+    nethealthBufferbloat: (params) => api('/api/nethealth/bufferbloat' + Q(params)),
+    nethealthProbeNow: () => post('/api/nethealth/probe', {}),
+    nethealthBufferbloatRun: () => post('/api/nethealth/bufferbloat/run', {}),
   };
 }

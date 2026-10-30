@@ -156,6 +156,22 @@ refresh_interval_seconds = 600   # 10 minutes; the router's NAT table is cached 
 enabled = true
 interval_seconds = 86400        # once a day; the signature list itself is built in
 
+[nethealth]
+# Latency, jitter, packet loss and reachability, probed every couple of
+# minutes against the configured DNS upstreams plus a couple of well-known
+# public resolvers, kept over months with hourly/daily rollup so trends are
+# visible, not just this instant (docs/NETHEALTH.md). Off by default:
+# unlike portscan/vulnscan (which only ever contact devices already on
+# your own LAN), this probes fixed public internet addresses every cycle,
+# which deserved its own default-off decision rather than inheriting
+# portscan/vulnscan's default-on one (see docs/NETHEALTH.md for why).
+# bufferbloat_enabled is a separate, far less frequent check that
+# generates real load against your own uplink; also off by default.
+enabled = false
+interval_seconds = 120                 # 2 minutes; minimum 60
+bufferbloat_enabled = false
+bufferbloat_interval_seconds = 3600    # 1 hour; minimum 600 when enabled
+
 [portal]
 listen = "127.0.0.1:8787"
 idle_lock_minutes = 10           # relock to demo data after this long idle; 0 = never auto-lock

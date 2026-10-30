@@ -871,6 +871,30 @@ tr.a-error .h-dom { color: var(--amber); }
 .vuln-item p { margin: 4px 0 0; }
 .dr-vulns-resolved { margin-top: 10px; }
 .dr-vulns-resolved > summary { cursor: pointer; }
+
+/* ---------- Network (nethealth): latency/jitter/loss/reachability history, bufferbloat ---------- */
+.nh-body { display: flex; flex-direction: column; gap: 14px; }
+.nh-status-line { margin: 0 0 10px; font-weight: 600; }
+.nh-status-line.bad { color: var(--red); }
+.nh-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px 14px; margin: 0; }
+.nh-kv dt { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; margin: 0; }
+.nh-kv dd { margin: 2px 0 0; }
+.nh-range { display: flex; align-items: center; gap: 10px; }
+.nh-charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.nh-chart-wrap { position: relative; color: var(--teal); }
+.nh-svg { width: 100%; height: 100px; display: block; }
+.nh-chart-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; margin: 0; }
+.nh-bb-current { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.nh-bb-list { display: flex; flex-direction: column; gap: 6px; }
+.nh-bb-list li { display: flex; align-items: center; gap: 10px; }
+.nh-grade { display: inline-flex; align-items: center; font: 700 11px var(--mono); letter-spacing: .08em; padding: 2px 8px; border-radius: 3px; border: 1px solid var(--line2); color: var(--muted); }
+.nh-grade-a, .nh-grade-b { color: var(--teal); border-color: #16c7bd55; background: var(--teal-d); }
+.nh-grade-c { color: var(--amber); border-color: #f0b64a55; background: var(--amber-d); }
+.nh-grade-d, .nh-grade-f { color: var(--red); border-color: #f2706b66; background: var(--red-d); }
+.nh-grade-unknown { color: var(--muted); }
+@media (max-width: 1100px) {
+  .nh-charts { grid-template-columns: minmax(0, 1fr); }
+}
 .dr-vulns-resolved .dr-vulns { margin-top: 8px; }
 
 /* ---------- Vulnerabilities page (one row per device+finding) ---------- */

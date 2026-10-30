@@ -202,6 +202,19 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		log.Printf("vulnscan: disabled because portscan is disabled (vulnscan deepens portscan's own open-port findings and has nothing to probe without it)")
 	}
 
+	// startNethealth always builds the prober and its target list, even
+	// when [nethealth] is fully disabled (the default): only the
+	// background probe goroutines are gated on the config, so a manual
+	// "probe now" from the portal still works on an install that never
+	// turned the schedule on. See startNethealth's own doc comment.
+	prober, nhTargets, err := startNethealth(ctx, cfg, deps.Alarms)
+	if err != nil {
+		return err
+	}
+	deps.Nethealth, deps.NethealthTargets = prober, nhTargets
+	deps.NethealthEnabled = cfg.Nethealth.Enabled
+	deps.NethealthBufferbloatEnabled = cfg.Nethealth.BufferbloatEnabled
+
 	if cfg.History.Mode == "encrypted" {
 		store, err := openHistory(cfg)
 		if err != nil {

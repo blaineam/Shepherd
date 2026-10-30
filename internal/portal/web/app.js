@@ -24,6 +24,7 @@ import { createBlocking, createDevicePolicy } from './js/blocking.js';
 import { createUpstreams } from './js/upstreamsview.js';
 import { createAlarms } from './js/alarmsview.js';
 import { createVulnscan } from './js/vulnscanview.js';
+import { createNethealth } from './js/nethealthview.js';
 import { createHistory } from './js/historyview.js';
 import { createAccountability } from './js/accountability.js';
 import { createDemoMgmt } from './js/demomgmt.js';
@@ -459,7 +460,7 @@ async function pollStatus() {
 // ---------------------------------------------------------------- management screens
 const mgmt = createMgmt(api);
 const policyStore = createPolicyStore({ mgmt });
-const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'vulnscan', 'upstreams', 'history', 'accountability', 'locking', 'details'];
+const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'vulnscan', 'network', 'upstreams', 'history', 'accountability', 'locking', 'details'];
 
 const blocking = createBlocking({
   root: $('#view-blocking'), mgmt, store: policyStore, notify,
@@ -476,6 +477,7 @@ const vulnscanView = createVulnscan({
   root: $('#view-vulnscan'), mgmt, notify, toaster,
   onOpenDevice: (id) => { showView('devices'); devicesView.openDevice(id); },
 });
+const networkView = createNethealth({ root: $('#view-network'), mgmt, notify });
 const upstreamsView = createUpstreams({ root: $('#view-upstreams'), mgmt, notify });
 const lockingView = createLocking({ root: $('#view-locking'), mgmt, notify });
 const historyView = createHistory({
@@ -510,11 +512,13 @@ function showView(name) {
   if (name !== 'upstreams') upstreamsView.hide();
   if (name !== 'alarms') alarmsView.hide();
   if (name !== 'vulnscan') vulnscanView.hide();
+  if (name !== 'network') networkView.hide();
   if (name !== 'locking') lockingView.hide();
   if (name === 'devices') devicesView.show();
   else if (name === 'blocking') devicesView.reloadGroups().catch(() => {}).finally(() => blocking.show());
   else if (name === 'alarms') alarmsView.show();
   else if (name === 'vulnscan') vulnscanView.show();
+  else if (name === 'network') networkView.show();
   else if (name === 'upstreams') upstreamsView.show();
   else if (name === 'history') historyView.show();
   else if (name === 'accountability') devicesView.reloadGroups().catch(() => {}).finally(() => accountabilityView.show());
