@@ -13,6 +13,26 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Network health history (`internal/nethealth`):** latency, jitter, packet loss and reachability,
+  probed every 2 minutes by default against the configured DNS upstreams plus `1.1.1.1`/`8.8.8.8`, and an
+  occasional, tightly bounded bufferbloat check (idle vs. loaded latency against a bounded download
+  burst, off by default — see docs/NETHEALTH.md for why). Unlike `internal/portscan`/`internal/vulnscan`'s
+  gentle, mostly-stateless checks, this keeps real history: raw samples for 3 days, hourly rollups for 60
+  days, daily rollups indefinitely (capped at 8 MiB), so months of trend data stay available without disk
+  usage growing without bound. Latency is timed as a plain, unprivileged TCP connect to port 53 rather
+  than an ICMP raw socket (no `CAP_NET_RAW`, fully unit-testable with an injected dial function, the same
+  seam `internal/portscan.Scanner` uses) — see docs/NETHEALTH.md for the full reasoning. A new
+  `alarms.TypeNetworkDegraded` alarm raises after 3 consecutive bad probe cycles (not a single blip — the
+  same "don't cry wolf" discipline `wireUpstreamAlarms` already applies to upstream DNS health) and
+  resolves on the next healthy sample. Wired into `cmd/shepherd` (`[nethealth]`, probe enabled by default,
+  bufferbloat off by default) and the portal (`GET /api/nethealth`, `GET /api/nethealth/series`,
+  `GET /api/nethealth/bufferbloat`, `POST /api/nethealth/probe`, `POST /api/nethealth/bufferbloat/run`),
+  with a new top-level Network tab (current status plus latency/jitter/loss time-series charts). The
+  default gateway is added to the probe targets automatically when it can be determined (reusing
+  `internal/arp`'s `/proc/net/route` helper). Traceroute is deferred, for the same reason
+  `internal/portscan` deferred router port-forwarding discovery: it needs real router/path verification
+  this project's test environment cannot provide. See docs/NETHEALTH.md's "What is verified, and what is
+  not" section for exactly what was and was not checked against a real network.
 - **Vulnerability scanning (`internal/vulnscan`):** a real vulnerability-detection layer on top of
   `internal/portscan`'s open-port findings — not "port 23 is open" but "Telnet is open" or "this OpenSSH
   build is missing a specific named fix." A small, curated, built-in signature table (no external CVE API,
