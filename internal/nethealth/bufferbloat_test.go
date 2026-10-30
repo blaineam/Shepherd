@@ -134,6 +134,37 @@ func TestRunBufferbloatRecordsHistoryAndCallsHook(t *testing.T) {
 	}
 }
 
+func TestBufferbloatFallsBackToProberConfiguredLoadAndDuration(t *testing.T) {
+	// A manual "run bufferbloat test now" from the portal passes
+	// BufferbloatOptions{} (zero value): it must use whatever Load/
+	// BufferbloatDuration the Prober was constructed with, not some
+	// unrelated package-level default, since the portal has no access to
+	// cmd/shepherd's own configured load generator.
+	f := newFakeDial()
+	f.delayMS["a"] = 1
+	var called atomic.Bool
+	load := func(ctx context.Context) error {
+		called.Store(true)
+		<-ctx.Done()
+		return nil
+	}
+	p := New(Options{Dial: f.dial, Now: f.now, Burst: 1, Timeout: time.Second, Load: load, BufferbloatDuration: 10 * time.Millisecond})
+
+	start := time.Now()
+	b := p.Bufferbloat(context.Background(), "a", BufferbloatOptions{})
+	elapsed := time.Since(start)
+
+	if !called.Load() {
+		t.Fatal("expected the Prober's configured Load to be used")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("took %v, expected to be bounded by the Prober's configured 10ms BufferbloatDuration", elapsed)
+	}
+	if b.LoadError != "" {
+		t.Errorf("unexpected load error: %v", b.LoadError)
+	}
+}
+
 func TestRunBufferbloatStopsOnContextCancel(t *testing.T) {
 	f := newFakeDial()
 	p := New(Options{Dial: f.dial, Now: f.now, Burst: 1, Timeout: time.Second})

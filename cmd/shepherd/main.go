@@ -201,6 +201,15 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		log.Printf("vulnscan: disabled because portscan is disabled (vulnscan deepens portscan's own open-port findings and has nothing to probe without it)")
 	}
 
+	if cfg.Nethealth.Enabled {
+		prober, err := startNethealth(ctx, cfg, deps.Alarms)
+		if err != nil {
+			return err
+		}
+		deps.Nethealth, deps.NethealthEnabled = prober, true
+		deps.NethealthBufferbloatEnabled = cfg.Nethealth.BufferbloatEnabled
+	}
+
 	if cfg.History.Mode == "encrypted" {
 		store, err := openHistory(cfg)
 		if err != nil {

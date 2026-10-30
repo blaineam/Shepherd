@@ -251,6 +251,17 @@ other portal endpoint that triggers real work.
 | `POST /api/nethealth/probe` | runs one latency/jitter/loss/reachability cycle now and returns it, the same "scan now" convention `internal/portscan`/`internal/vulnscan` use |
 | `POST /api/nethealth/bufferbloat/run` | runs one bufferbloat check now (even if the scheduled check is disabled) and returns it |
 
+A manual probe or bufferbloat check reuses whatever target list the most recent *scheduled* cycle
+used — the portal does not itself own the configured upstream list (`cmd/shepherd` computes it once at
+startup, including the default gateway when available), so both manual endpoints answer 400 until the
+first scheduled cycle has actually run at least once. In practice this is a non-issue: the scheduled
+probe's own first cycle runs immediately on startup, before its interval ticker ever fires.
+
+The default load generator for a manual bufferbloat run is whatever `cmd/shepherd` configured the
+`Prober` with at construction (`nethealth.Options.Load`/`BufferbloatDuration`, defaulting to
+`DefaultLoadFunc` against `DefaultLoadURL` and a 5 second bound) — the same generator the scheduled check
+uses, not a separate one the portal would have no way to configure safely on its own.
+
 ## What is verified, and what is not
 
 Being explicit about this matters more for a feature like this than almost anywhere else in Shepherd,

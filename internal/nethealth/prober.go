@@ -73,6 +73,19 @@ type Options struct {
 	// Timeout bounds one probe connection attempt. Default: 1 second.
 	Timeout time.Duration
 	Now     func() time.Time
+
+	// Load generates a bufferbloat check's bounded traffic burst. Default:
+	// DefaultLoadFunc against DefaultLoadURL. Set once here, at
+	// construction, rather than per call, so a manual "run bufferbloat test
+	// now" from the portal (which has no access to cmd/shepherd's own
+	// configuration) uses exactly the same load generator the scheduled
+	// check does; BufferbloatOptions.Load can still override it per call,
+	// which is how tests inject a fake without touching this field.
+	Load LoadFunc
+	// BufferbloatDuration is the default bound for a bufferbloat check's
+	// load burst (see BufferbloatOptions.Duration, which overrides this per
+	// call). Default: 5 seconds.
+	BufferbloatDuration time.Duration
 }
 
 const (
@@ -89,6 +102,9 @@ type Prober struct {
 	burst   int
 	timeout time.Duration
 	now     func() time.Time
+
+	load                LoadFunc
+	bufferbloatDuration time.Duration
 
 	// OnSample, when set, is called with the result after every completed
 	// probe cycle, whether triggered by Run's schedule or a manual call.
@@ -110,12 +126,14 @@ type Prober struct {
 // it with saved history.
 func New(opts Options) *Prober {
 	p := &Prober{
-		dial:    opts.Dial,
-		port:    opts.Port,
-		burst:   opts.Burst,
-		timeout: opts.Timeout,
-		now:     opts.Now,
-		store:   NewStore(StoreOptions{Now: opts.Now}),
+		dial:                opts.Dial,
+		port:                opts.Port,
+		burst:               opts.Burst,
+		timeout:             opts.Timeout,
+		now:                 opts.Now,
+		load:                opts.Load,
+		bufferbloatDuration: opts.BufferbloatDuration,
+		store:               NewStore(StoreOptions{Now: opts.Now}),
 	}
 	if p.dial == nil {
 		p.dial = defaultDial
@@ -131,6 +149,12 @@ func New(opts Options) *Prober {
 	}
 	if p.now == nil {
 		p.now = time.Now
+	}
+	if p.load == nil {
+		p.load = DefaultLoadFunc(DefaultLoadURL)
+	}
+	if p.bufferbloatDuration <= 0 {
+		p.bufferbloatDuration = 5 * time.Second
 	}
 	return p
 }
@@ -272,6 +296,17 @@ func (p *Prober) runOnce(ctx context.Context, targets []string) Sample {
 		p.OnSample(s)
 	}
 	return s
+}
+
+// ProbeNow runs one probe cycle immediately against targets, recording it
+// into history and calling OnSample exactly as a scheduled cycle would.
+// This is what a manual "probe now" from the portal uses, so a manual
+// check contributes to the trend line the same as a scheduled one does
+// (see internal/portal's nethealthProbeNow); Probe itself stays a pure
+// measurement with no side effects, for callers (and tests) that want the
+// numbers without touching history.
+func (p *Prober) ProbeNow(ctx context.Context, targets []string) Sample {
+	return p.runOnce(ctx, targets)
 }
 
 // Latest returns the most recent completed sample, if any.

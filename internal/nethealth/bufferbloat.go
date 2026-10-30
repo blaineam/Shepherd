@@ -58,16 +58,25 @@ func gradeBufferbloat(increaseMS float64) string {
 	}
 }
 
-// BufferbloatOptions configures one RunBufferbloat schedule.
+// BufferbloatOptions overrides, for one call, what the Prober was
+// constructed with (Options.Load, Options.BufferbloatDuration). Leaving a
+// field at its zero value uses the Prober's own configured default for it,
+// which is what lets a manual "run bufferbloat test now" from the portal
+// (BufferbloatOptions{}) use exactly the same load generator the scheduled
+// check does, and what lets tests override just Load without touching the
+// Prober's own construction.
 type BufferbloatOptions struct {
-	// Load generates the bounded traffic burst. Default: DefaultLoadFunc
-	// against DefaultLoadURL.
+	// Load generates the bounded traffic burst. Zero value: the Prober's
+	// own configured Load (Options.Load, itself defaulting to
+	// DefaultLoadFunc against DefaultLoadURL).
 	Load LoadFunc
 	// Duration bounds how long the load burst (and the "loaded" ping
-	// measurement alongside it) is allowed to run. Default: 5 seconds. This
-	// is the hard safety bound: whatever Load does internally, its context
-	// is cancelled after this long, so a single bufferbloat check can never
-	// turn into an extended saturation of the maintainer's own uplink.
+	// measurement alongside it) is allowed to run. Zero value: the
+	// Prober's own configured BufferbloatDuration (default 5 seconds).
+	// This is the hard safety bound: whatever Load does internally, its
+	// context is cancelled after this long, so a single bufferbloat check
+	// can never turn into an extended saturation of the maintainer's own
+	// uplink.
 	Duration time.Duration
 	// IdleBurst/LoadedBurst are how many pings to send while idle and while
 	// loaded; both default to the Prober's own Burst.
@@ -88,10 +97,10 @@ func (p *Prober) Bufferbloat(ctx context.Context, pingTarget string, opts Buffer
 
 func (p *Prober) bufferbloatLocked(ctx context.Context, pingTarget string, opts BufferbloatOptions) Bufferbloat {
 	if opts.Load == nil {
-		opts.Load = DefaultLoadFunc(DefaultLoadURL)
+		opts.Load = p.load
 	}
 	if opts.Duration <= 0 {
-		opts.Duration = 5 * time.Second
+		opts.Duration = p.bufferbloatDuration
 	}
 	idleBurst := opts.IdleBurst
 	if idleBurst <= 0 {
@@ -186,6 +195,14 @@ func (p *Prober) runBufferbloatOnce(ctx context.Context, pingTarget string, opts
 		p.OnBufferbloat(b)
 	}
 	return b
+}
+
+// BufferbloatNow runs one bufferbloat check immediately against
+// pingTarget, recording it into history and calling OnBufferbloat exactly
+// as a scheduled check would. This is what a manual "run bufferbloat test
+// now" from the portal uses, even when the scheduled check is disabled.
+func (p *Prober) BufferbloatNow(ctx context.Context, pingTarget string, opts BufferbloatOptions) Bufferbloat {
+	return p.runBufferbloatOnce(ctx, pingTarget, opts)
 }
 
 // LatestBufferbloat returns the most recently recorded bufferbloat check.

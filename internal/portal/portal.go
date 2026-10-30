@@ -29,6 +29,7 @@ import (
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/geo"
 	"shepherd/internal/importers"
+	"shepherd/internal/nethealth"
 	"shepherd/internal/portscan"
 	"shepherd/internal/settings"
 	"shepherd/internal/vulnscan"
@@ -124,6 +125,18 @@ type Deps struct {
 	// VulnscanEnabled reports whether cmd/shepherd started Vulnscan's
 	// scheduled scan, for the status endpoint.
 	VulnscanEnabled bool
+
+	// Nethealth probes and remembers latency/jitter/loss/reachability and
+	// bufferbloat history (docs/NETHEALTH.md). Nil gives a prober that
+	// works (a manual probe is still possible) but is never run on a
+	// schedule and persists nothing.
+	Nethealth *nethealth.Prober
+	// NethealthEnabled reports whether cmd/shepherd started Nethealth's
+	// scheduled probe, for the status endpoint.
+	NethealthEnabled bool
+	// NethealthBufferbloatEnabled reports whether cmd/shepherd also started
+	// the separate, less frequent bufferbloat check.
+	NethealthBufferbloatEnabled bool
 }
 
 type Server struct {
@@ -182,6 +195,9 @@ func New(d Deps) *Server {
 	}
 	if d.Vulnscan == nil {
 		d.Vulnscan = vulnscan.New(vulnscan.Options{})
+	}
+	if d.Nethealth == nil {
+		d.Nethealth = nethealth.New(nethealth.Options{})
 	}
 	if d.Heartbeat <= 0 {
 		d.Heartbeat = 15 * time.Second
@@ -500,4 +516,10 @@ func (s *Server) routes() {
 	h("GET /api/vulnscan/devices", s.listVulnscanDevices)
 	h("GET /api/vulnscan/devices/{id}", s.getVulnscanDevice)
 	h("POST /api/vulnscan/scan", s.vulnscanNow)
+
+	h("GET /api/nethealth", s.getNethealth)
+	h("GET /api/nethealth/series", s.nethealthSeries)
+	h("GET /api/nethealth/bufferbloat", s.nethealthBufferbloat)
+	h("POST /api/nethealth/probe", s.nethealthProbeNow)
+	h("POST /api/nethealth/bufferbloat/run", s.nethealthBufferbloatNow)
 }
