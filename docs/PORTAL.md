@@ -29,6 +29,13 @@ Live entries come from `GET /api/stream` (Server-Sent Events, resuming from the 
 through the same token and CSRF protections as the rest of the API, and every value from the network is rendered
 as text, never HTML.
 
+## Management API
+
+The portal's management screens use these endpoints (all behind the token; every change needs the `X-Shepherd: 1` header; bodies are JSON and size limited):
+devices, groups, bulk edit and merge in [DEVICES.md](DEVICES.md); the catalog, scopes, rules, switches and custom lists in [POLICY.md](POLICY.md); and the
+upstream list, presets and bootstrap in [UPSTREAMS.md](UPSTREAMS.md). `GET /api/status` also reports `device_count`, `group_count`, `catalog_count`,
+`custom_list_count` and `network_item_count`. Query entries carry `device` and `device_id` when the device is known.
+
 ## Developing the front end
 
 The pure logic (geometry, lane weighting, replay clock, demo generator, data sources) lives in small modules under

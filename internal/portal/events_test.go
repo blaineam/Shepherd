@@ -59,13 +59,10 @@ func server(t *testing.T, mutate func(*Deps)) (*httptest.Server, *Server, *dnsen
 	t.Helper()
 	dir := t.TempDir()
 	filter := dnsengine.NewFilter()
-	rules, err := dnsengine.LoadRules(filepath.Join(dir, "rules.json"), filter, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	policy := testPolicy(t, filter, dir, "http://127.0.0.1:1")
 	pool, _ := dnsengine.NewPool([]string{"192.0.2.53"})
 	engine := &dnsengine.Engine{Filter: filter, Pool: pool, Cache: dnsengine.NewCache(10), Log: dnsengine.NewQueryLog(50), Stats: dnsengine.NewStats()}
-	d := Deps{Engine: engine, Lists: dnsengine.NewListManager(filter, dir, nil, nil), Rules: rules, Token: tok, Version: "test", Heartbeat: 20 * time.Millisecond}
+	d := Deps{Engine: engine, Lists: dnsengine.NewScopedListManager(filter, policy, dir, nil), Policy: policy, Token: tok, Version: "test", Heartbeat: 20 * time.Millisecond}
 	if mutate != nil {
 		mutate(&d)
 	}

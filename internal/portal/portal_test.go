@@ -5,7 +5,6 @@ package portal
 import (
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,22 +13,8 @@ import (
 
 func newTestServer(t *testing.T) (*httptest.Server, *dnsengine.Filter) {
 	t.Helper()
-	dir := t.TempDir()
-	filter := dnsengine.NewFilter()
-	rules, err := dnsengine.LoadRules(filepath.Join(dir, "rules.json"), filter, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pool, err := dnsengine.NewPool([]string{"192.0.2.53"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	engine := &dnsengine.Engine{Filter: filter, Pool: pool, Cache: dnsengine.NewCache(10), Log: dnsengine.NewQueryLog(10), Stats: dnsengine.NewStats()}
-	lists := dnsengine.NewListManager(filter, dir, nil, nil)
-	srv := New(Deps{Engine: engine, Lists: lists, Rules: rules, Token: strings.Repeat("t", 64), Version: "test"})
-	ts := httptest.NewServer(srv.Handler())
-	t.Cleanup(ts.Close)
-	return ts, filter
+	h := newHarness(t)
+	return h.ts, h.filter
 }
 
 func do(t *testing.T, method, url, token, body string, headers map[string]string) *http.Response {
