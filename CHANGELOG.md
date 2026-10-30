@@ -32,6 +32,27 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   what the DNS-only baseline already covers versus what Watch mode (one-sided ARP interception, still
   a hand-run trial library, not wired into `cmd/shepherd` or the portal) would add once it ships —
   written for the maintainer to point to when deciding how to present the two, not aspirational copy.
+- **Portal UX overhaul: a dedicated Vulnerabilities page, mobile reflow, and several maintainer-reported
+  rough edges.** `internal/vulnscan`'s full API had no page of its own, only a panel inside each device's
+  drawer; a new Vulnerabilities tab (`internal/portal/web/js/vulnscanview.js`) lists every finding across
+  every scanned device, worst severity first, filterable, with a "Scan all" action, and clicking a row
+  opens that device's drawer rather than duplicating the finding detail a second time — the drawer panel
+  stays as the quick per-device summary. The Devices screen gained a "Needs attention" panel above the
+  main list (`internal/portal/web/js/attention.js`): newly quarantined, wandering and excluded devices
+  pulled to the top instead of mixed into 91 otherwise near-identical rows. Mobile: the Alarms table (a
+  fixed 7-column grid with a >700px minimum width) now reflows into stacked cards below 760px, the same
+  technique Devices and History already used; the HUD's Legend panel no longer force-displays on mobile,
+  only behind a small "i" toggle; the top nav collapses behind a hamburger button into a vertical dropdown
+  once its tabs stop fitting in one row; pinch-to-zoom is pinned off and every text input kept at an
+  effective 16px so iOS Safari never force-zooms on focus; a duplicate "Wandering" badge next to a
+  device's name in the Devices list was removed (the Mode column's own badge, which carries the
+  countdown, already said it). The HUD inspector now shows "Blocked by" for a blocked query
+  (`dnsengine.Entry.Reason`), and a blocked History row offers a one-click, domain-specific "Allow"
+  (`POST /api/rules`, the same mechanism the HUD inspector's own block/allow buttons use). The Details
+  view now states plainly that Watch mode is a planned feature, not available in this build yet, instead
+  of leaving its absence to read as a bug (confirmed unwired: `cmd/shepherd` never imports
+  `internal/intercept`; see docs/ROADMAP.md step 11). See docs/PORTAL.md, docs/VULNSCAN.md,
+  docs/DEVICES.md and docs/HISTORY.md.
 - **Vulnerability scanning (`internal/vulnscan`):** a real vulnerability-detection layer on top of
   `internal/portscan`'s open-port findings — not "port 23 is open" but "Telnet is open" or "this OpenSSH
   build is missing a specific named fix." A small, curated, built-in signature table (no external CVE API,
@@ -157,6 +178,14 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- `scripts/coverage`'s floor check counted `cmd/intercept-trial` against the whole-repo total, but that
+  package is a hand-run, Linux-only CLI most of whose logic needs `CAP_NET_RAW`/`CAP_NET_ADMIN` and live
+  hardware to exercise — the same reason `internal/intercept`'s own raw-socket code is untestable
+  without it. On a non-Linux dev machine the package's Linux-build-tagged files never even compile, so a
+  local coverage run never saw this gap; CI's `ubuntu-latest` runner does, and the mismatch (a local
+  97.4% against CI's real 95.7%) sat below a floor that had just been raised assuming the two numbers
+  agreed. The floor calculation now excludes that one package's statements (its own tests still run,
+  same as before); only the floor check ignores them.
 - The Accountability screen showed a generic "update the server" message when nothing was
   configured (no SMTP relay set), which reads as broken rather than as a setup step — that copy is
   meant for a genuinely older server missing the API entirely, not a current one where the feature

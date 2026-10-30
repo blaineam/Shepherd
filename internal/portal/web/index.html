@@ -2,7 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <!-- Pinch-to-zoom is deliberately disabled and scale pinned to 1: the maintainer
+       uses this on a phone daily and asked for it explicitly, since an accidental
+       pinch mid-tap was worse than losing zoom. This is a real accessibility
+       tradeoff for anyone who relies on pinch-zoom; every text input on this page
+       is kept at an effective 16px+ (see style.css) specifically so iOS Safari
+       never force-zooms on focus instead, which was the usual reason to want zoom. -->
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <title>Shepherd</title>
   <link rel="icon" href="icon.png">
@@ -13,11 +19,13 @@
     <img src="icon.png" alt="" class="logo">
     <h1 class="wordmark">SHEPHERD</h1>
     <span class="pill live" id="live" role="status">connecting</span>
+    <button type="button" class="tbtn only-sm" id="btn-navmenu" aria-expanded="false" aria-label="Open menu">&#9776;</button>
     <nav class="tabs" role="tablist" aria-label="View">
       <button type="button" role="tab" id="tab-hud" aria-selected="true" aria-controls="view-hud">HUD</button>
       <button type="button" role="tab" id="tab-devices" aria-selected="false" aria-controls="view-devices">Devices</button>
       <button type="button" role="tab" id="tab-blocking" aria-selected="false" aria-controls="view-blocking">Blocking</button>
       <button type="button" role="tab" id="tab-alarms" aria-selected="false" aria-controls="view-alarms">Alarms</button>
+      <button type="button" role="tab" id="tab-vulnscan" aria-selected="false" aria-controls="view-vulnscan">Vulnerabilities</button>
       <button type="button" role="tab" id="tab-upstreams" aria-selected="false" aria-controls="view-upstreams">Upstreams</button>
       <button type="button" role="tab" id="tab-history" aria-selected="false" aria-controls="view-history">History</button>
       <button type="button" role="tab" id="tab-accountability" aria-selected="false" aria-controls="view-accountability">Accountability</button>
@@ -56,6 +64,7 @@
       <button type="button" class="tbtn" id="btn-recenter">Recenter</button>
       <button type="button" class="tbtn only-sm" id="btn-feed" aria-pressed="false">Feed</button>
       <button type="button" class="tbtn only-sm" id="btn-filters" aria-pressed="false">Filters</button>
+      <button type="button" class="tbtn only-sm tbtn-i" id="btn-legend" aria-pressed="false" aria-label="Legend" title="Legend">i</button>
     </div>
 
     <aside class="rail left" id="rail-left">
@@ -100,6 +109,7 @@
             <dt id="i-mode-k" hidden>Mode</dt><dd id="i-mode" hidden><span class="wbadge">Wandering</span> <span class="muted small">not filtered, still watched</span></dd>
             <dt>Domain</dt><dd class="mono" id="i-domain"></dd>
             <dt id="i-shadow-k" hidden>Shadow</dt><dd class="small shadow-note" id="i-shadow" hidden></dd>
+            <dt id="i-reason-k" hidden>Blocked by</dt><dd class="mono" id="i-reason" hidden></dd>
             <dt>Location</dt><dd id="i-loc"></dd>
             <dt id="i-count-k">Lookups</dt><dd class="mono" id="i-count"></dd>
             <dt>Last seen</dt><dd id="i-last"></dd>
@@ -167,6 +177,7 @@
   <main id="view-devices" class="page page-fill" role="tabpanel" aria-labelledby="tab-devices" hidden></main>
   <main id="view-blocking" class="page" role="tabpanel" aria-labelledby="tab-blocking" hidden></main>
   <main id="view-alarms" class="page page-fill" role="tabpanel" aria-labelledby="tab-alarms" hidden></main>
+  <main id="view-vulnscan" class="page page-fill" role="tabpanel" aria-labelledby="tab-vulnscan" hidden></main>
   <main id="view-upstreams" class="page" role="tabpanel" aria-labelledby="tab-upstreams" hidden></main>
   <main id="view-history" class="page" role="tabpanel" aria-labelledby="tab-history" hidden></main>
   <main id="view-accountability" class="page" role="tabpanel" aria-labelledby="tab-accountability" hidden></main>
@@ -181,6 +192,10 @@
       <div class="tile"><span class="k">Errors</span><span class="v" id="d-errors">0</span></div>
       <div class="tile"><span class="k">Listed domains</span><span class="v" id="d-listed">0</span></div>
     </section>
+    <!-- Honest status, not a bug report: Watch mode (ARP interception, internal/intercept)
+         is built but not wired into cmd/shepherd or the portal yet (docs/ROADMAP.md step 11),
+         so there is genuinely nothing live to report either way. -->
+    <p class="muted small watchmode-note">Watch mode is a planned feature — not available in this build yet. Everything above is from DNS-only Guard mode.</p>
 
     <section class="grid">
       <div class="card wide">

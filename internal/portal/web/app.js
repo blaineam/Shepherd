@@ -23,6 +23,7 @@ import { createDevices } from './js/devices.js';
 import { createBlocking, createDevicePolicy } from './js/blocking.js';
 import { createUpstreams } from './js/upstreamsview.js';
 import { createAlarms } from './js/alarmsview.js';
+import { createVulnscan } from './js/vulnscanview.js';
 import { createHistory } from './js/historyview.js';
 import { createAccountability } from './js/accountability.js';
 import { createDemoMgmt } from './js/demomgmt.js';
@@ -458,7 +459,7 @@ async function pollStatus() {
 // ---------------------------------------------------------------- management screens
 const mgmt = createMgmt(api);
 const policyStore = createPolicyStore({ mgmt });
-const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'upstreams', 'history', 'accountability', 'locking', 'details'];
+const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'vulnscan', 'upstreams', 'history', 'accountability', 'locking', 'details'];
 
 const blocking = createBlocking({
   root: $('#view-blocking'), mgmt, store: policyStore, notify,
@@ -471,10 +472,14 @@ const devicesView = createDevices({
   onGroupsChanged: () => { blocking.onGroupsChanged(); accountabilityView.onGroupsChanged(); },
 });
 const alarmsView = createAlarms({ root: $('#view-alarms'), mgmt, notify, toaster });
+const vulnscanView = createVulnscan({
+  root: $('#view-vulnscan'), mgmt, notify, toaster,
+  onOpenDevice: (id) => { showView('devices'); devicesView.openDevice(id); },
+});
 const upstreamsView = createUpstreams({ root: $('#view-upstreams'), mgmt, notify });
 const lockingView = createLocking({ root: $('#view-locking'), mgmt, notify });
 const historyView = createHistory({
-  root: $('#view-history'), mgmt, notify,
+  root: $('#view-history'), mgmt, notify, api,
   onReplay: (t) => { showView('hud'); enterReplay(Math.max(0, t - 20000)); },
   demo: DEMO ? { setLocked: (locked) => api('/api/demo/history-lock', { method: 'POST', body: JSON.stringify({ locked }) }) } : null,
 });
@@ -504,16 +509,38 @@ function showView(name) {
   if (name === 'details') details.renderRows();
   if (name !== 'upstreams') upstreamsView.hide();
   if (name !== 'alarms') alarmsView.hide();
+  if (name !== 'vulnscan') vulnscanView.hide();
   if (name !== 'locking') lockingView.hide();
   if (name === 'devices') devicesView.show();
   else if (name === 'blocking') devicesView.reloadGroups().catch(() => {}).finally(() => blocking.show());
   else if (name === 'alarms') alarmsView.show();
+  else if (name === 'vulnscan') vulnscanView.show();
   else if (name === 'upstreams') upstreamsView.show();
   else if (name === 'history') historyView.show();
   else if (name === 'accountability') devicesView.reloadGroups().catch(() => {}).finally(() => accountabilityView.show());
   else if (name === 'locking') lockingView.show();
 }
-for (const v of VIEWS) $('#tab-' + v).addEventListener('click', () => showView(v));
+// Below the width the horizontal .tabs row would otherwise scroll
+// sideways (10 tabs do not fit at phone widths), it becomes a
+// hamburger-triggered vertical dropdown instead (CSS only: the nav
+// itself, showView, hash routing and arrow-key navigation below are all
+// unchanged - closeNavMenu just also runs wherever the tab list should
+// dismiss itself on mobile).
+function closeNavMenu() {
+  $('.tabs').classList.remove('open');
+  $('#btn-navmenu').setAttribute('aria-expanded', 'false');
+}
+$('#btn-navmenu').addEventListener('click', () => {
+  const on = !$('.tabs').classList.contains('open');
+  $('.tabs').classList.toggle('open', on);
+  $('#btn-navmenu').setAttribute('aria-expanded', on ? 'true' : 'false');
+});
+document.addEventListener('click', (e) => {
+  if (!$('.tabs').classList.contains('open')) return;
+  if (e.target.closest('.tabs') || e.target.closest('#btn-navmenu')) return;
+  closeNavMenu();
+});
+for (const v of VIEWS) $('#tab-' + v).addEventListener('click', () => { showView(v); closeNavMenu(); });
 window.addEventListener('hashchange', () => { const h = location.hash.slice(1) || 'hud'; if (VIEWS.includes(h) && $('#view-' + h).hidden) showView(h); });
 $('.tabs').addEventListener('keydown', (e) => {
   if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
@@ -541,9 +568,19 @@ for (const [btn, panel] of [['#btn-feed', '#panel-feed'], ['#btn-filters', '#pan
     if (on) { $(panel).classList.add('show'); e.currentTarget.setAttribute('aria-pressed', 'true'); }
   });
 }
+// The Legend panel is its own toggle, independent of the Feed/Filters pair
+// above (it lives in the opposite rail and does not need to exclude them):
+// on mobile it otherwise takes up a disproportionate share of the screen, so
+// it starts hidden there and opens only behind this small "i" button.
+$('#btn-legend').addEventListener('click', (e) => {
+  const on = e.currentTarget.getAttribute('aria-pressed') !== 'true';
+  e.currentTarget.setAttribute('aria-pressed', on ? 'true' : 'false');
+  $('#legend').classList.toggle('show', on);
+});
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (homeMode) setHomeMode(false);
+  if ($('.tabs').classList.contains('open')) closeNavMenu();
+  else if (homeMode) setHomeMode(false);
   else if (inspector.selection) { inspector.clear(); if (globe) globe.setSelected(null); dirty = true; }
 });
 

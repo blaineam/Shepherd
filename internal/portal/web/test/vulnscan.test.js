@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { severityRank, sortFindings, activeFindings, resolvedFindings, findingTooltip } from '../js/vulnscan.js';
+import { severityRank, sortFindings, activeFindings, resolvedFindings, findingTooltip, flattenFindings, matchRow, scanSummary } from '../js/vulnscan.js';
 
 test('severityRank orders the five severities and handles unknowns', () => {
   assert.ok(severityRank('critical') > severityRank('high'));
@@ -50,4 +50,41 @@ test('findingTooltip combines evidence and resolution time', () => {
   const t = findingTooltip({ active: false, resolved_at: '2026-01-02T03:04:05Z', evidence: 'x' });
   assert.ok(t.startsWith('x — Resolved '));
   assert.equal(findingTooltip({ active: true, resolved_at: '2026-01-02T03:04:05Z' }), '');
+});
+
+const devA = { device_id: 'd1', name: 'Garage Camera', ip: '192.0.2.31', last_scanned: '2026-10-30T12:00:00Z', findings: [
+  { signature_id: 'telnet-exposed', name: 'Telnet exposed', description: 'plain text logins', severity: 'high', port: 23, active: true },
+  { signature_id: 'smb1-enabled', name: 'SMBv1 enabled', description: 'EternalBlue-era protocol', severity: 'critical', port: 445, active: true },
+] };
+const devB = { device_id: 'd2', name: 'NAS', ip: '192.0.2.40', last_scanned: '2026-10-30T11:00:00Z', findings: [
+  { signature_id: 'apache-outdated', name: 'Outdated Apache', description: 'missing fixes', severity: 'low', port: 80, active: false, resolved_at: '2026-10-29T00:00:00Z' },
+] };
+
+test('flattenFindings orders worst severity first across devices, then by device name', () => {
+  const rows = flattenFindings([devA, devB]);
+  assert.deepEqual(rows.map((r) => r.finding.signature_id), ['smb1-enabled', 'telnet-exposed', 'apache-outdated']);
+  assert.equal(rows[0].deviceName, 'Garage Camera');
+  assert.equal(rows[0].ip, '192.0.2.31');
+});
+
+test('flattenFindings tolerates missing input', () => {
+  assert.deepEqual(flattenFindings(undefined), []);
+  assert.deepEqual(flattenFindings([{ device_id: 'd1', name: 'X' }]), []);
+});
+
+test('matchRow filters by minimum severity, active/resolved state and free text', () => {
+  const rows = flattenFindings([devA, devB]);
+  const [smb, telnet, apache] = rows;
+  assert.deepEqual(rows.filter((r) => matchRow(r, { severity: 'critical' })), [smb]);
+  assert.deepEqual(rows.filter((r) => matchRow(r, { state: 'resolved' })), [apache]);
+  assert.deepEqual(rows.filter((r) => matchRow(r, { state: 'active' })), [smb, telnet]);
+  assert.deepEqual(rows.filter((r) => matchRow(r, { text: 'garage' })), [smb, telnet]);
+  assert.deepEqual(rows.filter((r) => matchRow(r, { text: 'eternalblue' })), [smb]);
+  assert.equal(rows.filter((r) => matchRow(r, {})).length, 3);
+});
+
+test('scanSummary counts devices scanned and active findings', () => {
+  assert.equal(scanSummary({ devices: [devA, devB] }), 'Scanned 2 devices — 2 active findings');
+  assert.equal(scanSummary({ devices: [devB] }), 'Scanned 1 device — 0 active findings');
+  assert.equal(scanSummary(null), 'Scanned 0 devices — 0 active findings');
 });

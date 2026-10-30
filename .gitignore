@@ -8,3 +8,4 @@ shepherd.toml
 /bin/
 /dist/
 coverage.out
+coverage.floor.out

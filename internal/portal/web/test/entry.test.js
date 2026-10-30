@@ -21,6 +21,15 @@ test('normalizeEntry coerces untrusted values', () => {
   assert.equal(toStr(undefined), '');
 });
 
+test('normalizeEntry keeps and caps the block reason', () => {
+  const e = normalizeEntry({ time: '2026-01-01T00:00:00Z', action: 'blocked', reason: 'ads-main' });
+  assert.equal(e.reason, 'ads-main');
+  const capped = normalizeEntry({ time: '2026-01-01T00:00:00Z', action: 'blocked', reason: 'x'.repeat(500) });
+  assert.equal(capped.reason.length, 160);
+  const none = normalizeEntry({ time: '2026-01-01T00:00:00Z', action: 'allowed' });
+  assert.equal(none.reason, '');
+});
+
 test('dests are filtered down to valid coordinates', () => {
   const e = normalizeEntry({ time: '2026-01-01T00:00:00Z', action: 'allowed', dests: [
     { lat: 10, lon: 20, city: 'A', country: 'US' }, { lat: 'x', lon: 1 }, { lat: 95, lon: 0 }, null,

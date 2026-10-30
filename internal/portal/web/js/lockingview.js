@@ -170,7 +170,7 @@ export function createLocking({ root, mgmt, notify }) {
     const ul = el('ul', 'list');
     for (const d of devices) {
       const li = el('li');
-      const main = el('div');
+      const main = el('div', 'grow');
       main.append(
         el('div', 'mono small', d.name || 'Unknown browser'),
         el('div', 'muted small', 'Added ' + relTime(d.created) + ' · last used ' + relTime(d.last_used))

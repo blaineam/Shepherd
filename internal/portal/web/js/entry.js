@@ -23,6 +23,7 @@ export function normalizeEntry(e) {
   e.device_id = toStr(e.device_id, 64);
   e.wandering = e.wandering === true;
   e.shadow = toStr(e.shadow, 160);
+  e.reason = toStr(e.reason, 160);
   if (!ACTIONS.includes(e.action)) e.action = 'error';
   if (Array.isArray(e.dests)) e.dests = e.dests.filter(validDest);
   else e.dests = null;

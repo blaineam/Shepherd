@@ -13,6 +13,7 @@ import { TIMER_CHOICES, MODES, deviceMode, countdown, countdownShort, modePatch,
 import { createImportModal } from './importview.js';
 import { severityLabel, severityBadgeClass } from './alarms.js';
 import { activeFindings, resolvedFindings, findingTooltip } from './vulnscan.js';
+import { mergeAttention, attentionReasonLabel } from './attention.js';
 
 const OVER = 6;
 const rowHeight = () => (window.matchMedia && window.matchMedia('(max-width: 760px)').matches ? 88 : 56);
@@ -20,6 +21,8 @@ const rowHeight = () => (window.matchMedia && window.matchMedia('(max-width: 760
 export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onOpenHistory, onGroupsChanged = () => {} }) {
   let groups = [];
   let allTotal = null;
+  let attention = []; // mergeAttention() result: devices needing a look, worst-first
+  let attentionGen = 0;
   let chips = []; // committed filters: [{key,value,neg}]
   let sort = 'recent';
   let active = -1;
@@ -61,6 +64,14 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
   const importBtn = button('Import', 'ghost only-md', () => importModal.open(), 'import');
   head.append(title, sbox, sortSeg.root, groupsToggle, importBtn);
 
+  // "Needs attention": devices that are brand new/quarantined, wandering or
+  // excluded, surfaced above the (alphabetical- or recency-sorted) main
+  // list instead of mixed into it - with 91 real devices the maintainer
+  // should not have to scan the whole table to spot these. See attention.js.
+  const attnWrap = el('section', 'dv-attn panel-lite');
+  attnWrap.hidden = true;
+  attnWrap.setAttribute('aria-label', 'Needs attention');
+
   const main = el('div', 'dv-main');
   const side = el('aside', 'dv-groups panel-lite');
   side.setAttribute('aria-label', 'Groups');
@@ -100,7 +111,7 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
   drawer.setAttribute('aria-label', 'Device details');
   const scrim = el('div', 'drawer-scrim');
   scrim.hidden = true;
-  root.append(head, main, scrim, drawer);
+  root.append(head, attnWrap, main, scrim, drawer);
 
   // ------------------------------------------------------------- list
   const list = createDeviceList({
@@ -300,6 +311,44 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     const r = await mgmt.groups();
     groups = Array.isArray(r && r.groups) ? r.groups : [];
     paintGroups();
+    loadAttention().catch(() => {});
+  }
+
+  // ------------------------------------------------------------- attention
+  async function loadAttention() {
+    const gen = ++attentionGen;
+    const quarantine = groups.find((g) => g.name.toLowerCase() === 'quarantine');
+    const q = (filters) => mgmt.devices({ q: stringifyQuery({ text: '', filters }), sort: 'recent', offset: 0, limit: 50 });
+    const jobs = [
+      q([{ key: 'wandering', value: 'true', neg: false }]).then((r) => ({ reason: 'wandering', devices: (r && r.devices) || [] })),
+      q([{ key: 'excluded', value: 'true', neg: false }]).then((r) => ({ reason: 'excluded', devices: (r && r.devices) || [] })),
+    ];
+    if (quarantine) jobs.push(q([{ key: 'group', value: quarantine.name, neg: false }]).then((r) => ({ reason: 'quarantine', devices: (r && r.devices) || [] })));
+    const settled = await Promise.allSettled(jobs);
+    if (gen !== attentionGen) return; // a newer load (or a reload of groups) superseded this one
+    attention = mergeAttention(settled.filter((s) => s.status === 'fulfilled').map((s) => s.value));
+    paintAttention();
+  }
+
+  function paintAttention() {
+    attnWrap.hidden = attention.length === 0;
+    if (!attention.length) { attnWrap.replaceChildren(); return; }
+    attnWrap.replaceChildren();
+    const h = el('div', 'dv-attn-head');
+    h.append(el('h3', 'ph', 'Needs attention'), el('span', 'pg-count mono', String(attention.length)));
+    attnWrap.append(h);
+    const row = el('div', 'dv-attn-row');
+    const shown = attention.slice(0, 16);
+    for (const { device: d, reasons } of shown) {
+      const b = el('button', 'dv-attn-chip');
+      b.type = 'button';
+      b.append(el('span', 'dv-attn-nm', d.name), el('span', 'dv-attn-reason', reasons.map(attentionReasonLabel).join(' · ')));
+      b.title = 'Open ' + d.name;
+      b.addEventListener('click', () => openDrawer(d.id, null));
+      row.append(b);
+    }
+    attnWrap.append(row);
+    if (attention.length > shown.length) attnWrap.append(el('p', 'muted small dv-attn-more', '+' + (attention.length - shown.length) + ' more - search wandering:true, excluded:true or group:Quarantine to see them all'));
   }
 
   // ------------------------------------------------------------- rows
@@ -334,12 +383,12 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     mb.type = 'button';
     mb.setAttribute('aria-haspopup', 'menu');
     cExc.append(mb);
-    const wb = el('span', 'wbadge', 'Wandering');
-    wb.hidden = true;
-    nameWrap.after(wb);
     row.append(cSel, cName, cIp, cGrp, cSeen, cExc);
     for (const c of row.children) c.setAttribute('role', 'cell');
-    const s = { row, cb, ico, nm, sub, pen, cIp, cGrp, cSeen, mb, wb, nameWrap, _i: -1, _d: null, _sig: '' };
+    // Wandering is announced once, by the Mode button below (it already
+    // carries the countdown, e.g. "Wandering 36m"); a second badge next to
+    // the name duplicated the same state on every row.
+    const s = { row, cb, ico, nm, sub, pen, cIp, cGrp, cSeen, mb, nameWrap, _i: -1, _d: null, _sig: '' };
     return s;
   }
 
@@ -380,7 +429,6 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     if (s.mb.textContent !== mt) s.mb.textContent = mt;
     s.mb.className = 'mode-btn m-' + mode;
     s.mb.setAttribute('aria-label', 'Mode for ' + d.name + ': ' + mt + '. Change');
-    s.wb.hidden = mode !== 'wandering';
     s.row.classList.toggle('excl', mode === 'excluded');
     s.row.classList.toggle('wand', mode === 'wandering');
     s.row.tabIndex = i === active ? 0 : -1;
