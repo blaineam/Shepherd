@@ -209,6 +209,13 @@ func (e *Engine) destsOf(ips []net.IP) []Dest {
 	return out
 }
 
+// done records entry in Log and Stats. Every caller runs this before writing
+// the response to the client (not after): a client that already has its
+// answer can immediately act on it (a test, or the portal's live query feed)
+// and check the log, and nothing then guarantees this goroutine has reached
+// its next line before that happens — the response left over the wire the
+// moment the write syscall returns, regardless of what Go code follows it.
+// Recording first closes that race entirely rather than narrowing it.
 func (e *Engine) done(entry Entry, start time.Time) {
 	entry.Ms = float64(time.Since(start).Microseconds()) / 1000
 	e.Log.Add(entry)
@@ -244,18 +251,18 @@ func (e *Engine) finishAllowed(w dns.ResponseWriter, r *dns.Msg, q dns.Question,
 			resp = e.sinkhole(r, q, false)
 			entry.Action, entry.Reason, entry.GeoCountry = "blocked", "geo", country
 			entry.Rcode = dns.RcodeToString[resp.Rcode]
-			e.write(w, r, resp)
 			e.reportAccess(entry)
 			e.done(entry, start)
+			e.write(w, r, resp)
 			return
 		}
 	}
 	if e.Observe != nil {
 		e.Observe(entry.Client, entry.Name, ips)
 	}
-	e.write(w, r, resp)
 	e.reportAccess(entry)
 	e.done(entry, start)
+	e.write(w, r, resp)
 }
 
 // ServeDNS implements dns.Handler.
@@ -305,9 +312,9 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	if d.Blocked {
 		resp := e.sinkhole(r, q, d.NXDOMAIN)
 		entry.Action, entry.Reason, entry.Rcode = "blocked", d.Reason, dns.RcodeToString[resp.Rcode]
-		e.write(w, r, resp)
 		e.reportAccess(entry)
 		e.done(entry, start)
+		e.write(w, r, resp)
 		return
 	}
 	entry.Reason = d.Reason // "allowlist" or empty
@@ -325,8 +332,8 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		fail := new(dns.Msg)
 		fail.SetRcode(r, dns.RcodeServerFailure)
 		entry.Action, entry.Reason, entry.Rcode = "error", err.Error(), "SERVFAIL"
-		e.write(w, r, fail)
 		e.done(entry, start)
+		e.write(w, r, fail)
 		return
 	}
 	e.Cache.Put(r, resp)

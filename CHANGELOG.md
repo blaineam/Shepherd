@@ -234,6 +234,14 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- `internal/dnsengine.Engine` wrote every DNS response to the client before recording the matching
+  query-log entry, in all four response paths (blocked, geo-blocked, error, allowed/cached). Nothing
+  synchronizes "the client's goroutine woke up because it got a UDP packet" with "this goroutine's next
+  few lines of Go code have run," so a client (or test) that reacts to its answer immediately can
+  observe the log before that entry exists. Caught CI-only (never locally, lower scheduling pressure
+  made the window far less likely) as a panic in `TestEngineUsesClientScopes`: `entries[len(entries)-1]`
+  on a still-empty log. Fixed by recording the entry before writing the response in every path, so the
+  ordering is actually guaranteed rather than merely likely.
 - `cmd/shepherd`'s DNS-01 propagation check (`dnsLookupTXT`) used `net.DefaultResolver`, which honors
   the host's own system resolver — and on a typical Shepherd deployment, the host's system resolver
   points at Shepherd itself (that is the point of running it). So the propagation check could end up
