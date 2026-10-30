@@ -424,10 +424,12 @@ func TestExcludedDeviceIsNotFiltered(t *testing.T) {
 	if got := resolve(t, r.dnsAddr, "x.ads.example."); got != "192.0.2.99" {
 		t.Errorf("an excluded device must not be filtered, got %q", got)
 	}
-	// ServeDNS writes the client's DNS response before it logs the query
-	// (see dnsengine.Engine.done), so the log entry for the resolve above
-	// can still be landing when this request fires; poll briefly rather
-	// than assuming it is already there.
+	// dnsengine.Engine.done records the query-log entry before ServeDNS
+	// ever writes the client's response (see its own doc comment), so the
+	// entry for the resolve above is already there by the time this
+	// query-log request fires. Still poll briefly rather than asserting
+	// on the very first read: this is a separate HTTP round trip to the
+	// portal API, with its own ordinary scheduling latency to allow for.
 	var reason string
 	waitUntil(t, "the allowed query to be logged", func() bool {
 		for _, e := range r.json("GET", "/api/queries?limit=50", "", 200)["entries"].([]any) {
