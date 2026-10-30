@@ -82,6 +82,7 @@ api = createDemoApi({
   getCounters: () => model.counters,
   topClients: () => [...model.clients.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([key, n]) => ({ key, n })),
   home: DEMO_HOME,
+  gen, // MARKETING-SITE DEMO BUILD ADDITION: lets a block/allow rule from the HUD Inspector or Details view actually change the live feed.
 });
 // Login, PIN login and the Lock button have no real backend to reach in this
 // static build. `realApi` is a no-op stub (never performs a network

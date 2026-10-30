@@ -2,7 +2,7 @@
 // and Details view work with zero network calls. All data is synthetic.
 import { ApiError } from './api.js';
 
-export function createDemoApi({ getCounters, topClients, home, mgmt = null }) {
+export function createDemoApi({ getCounters, topClients, home, mgmt = null, gen = null }) {
   const rules = { block: [], allow: [], policies: { 'apple-private-relay': true } };
   let settings = { home: { ...home }, history: { mode: 'memory' } };
   const started = Date.now();
@@ -40,11 +40,15 @@ export function createDemoApi({ getCounters, topClients, home, mgmt = null }) {
           const other = body.kind === 'block' ? 'allow' : 'block';
           rules[other] = rules[other].filter((x) => x !== d);
           if (!rules[body.kind].includes(d)) rules[body.kind].push(d);
+          // MARKETING-SITE DEMO BUILD ADDITION: make the rule actually take
+          // effect in the live synthetic feed — see DemoGenerator.setOverride.
+          if (gen) gen.setOverride(d, body.kind === 'block' ? 'block' : 'allow');
           return snapshot();
         }
         if (method === 'DELETE') {
           const k = url.searchParams.get('kind'), d = url.searchParams.get('domain');
           if (rules[k]) rules[k] = rules[k].filter((x) => x !== d);
+          if (gen) gen.setOverride(d, null);
           return snapshot();
         }
         break;

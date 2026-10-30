@@ -112,6 +112,32 @@ export class DemoGenerator {
     this.kind = 'live';
     this.cursor = null;
     this.stats = { total: 0, blocked: 0, cached: 0, errors: 0 };
+    // MARKETING-SITE DEMO BUILD ADDITION: a domain -> 'block'|'allow' map a
+    // visitor builds by using the real block/allow controls (the HUD
+    // Inspector, the Details view's rule form, the Blocking screen's
+    // network-scope rules). _make() consults it below so a rule a visitor
+    // sets is not just accepted and stored — it visibly changes what the
+    // live feed does next, the same way a real policy rule would. See
+    // demoapi.js and demomgmt.js for what calls setOverride().
+    this.overrides = new Map();
+  }
+
+  // Called by demoapi.js (POST/DELETE /api/rules) and demomgmt.js (POST/
+  // DELETE /api/policy/rules at network scope) whenever a visitor adds or
+  // removes a block/allow rule for a domain. Clearing the whole minute
+  // cache (rather than only the current minute) is deliberate and cheap —
+  // at most ~6 minutes of synthetic traffic are ever cached (see _minute's
+  // own size cap) — so the very next generated tick for this domain honors
+  // the new rule instead of waiting for the current minute to roll over.
+  // Already-drained (displayed) entries are never rewritten: drain()'s
+  // cursor only moves forward, so nothing already on screen changes.
+  setOverride(domain, kind) {
+    if (!domain) return;
+    const d = String(domain).trim().toLowerCase();
+    if (!d) return;
+    if (kind === 'block' || kind === 'allow') this.overrides.set(d, kind);
+    else this.overrides.delete(d);
+    this.cache.clear();
   }
 
   _make(rng, t, device, svcIdx, burst) {
@@ -137,6 +163,20 @@ export class DemoGenerator {
         const q = PLACE_DEF[places[(rng() * places.length) | 0]];
         if (q.city !== p.city) dests.push({ ip: q.ip, lat: q.lat, lon: q.lon, city: q.city, country: q.country });
       }
+    }
+    // MARKETING-SITE DEMO BUILD ADDITION: a visitor's explicit rule always
+    // wins over the random roll above, the same precedence the real policy
+    // engine gives an explicit rule over a catalog default.
+    const override = this.overrides.get(domain);
+    if (override === 'block' && action !== 'blocked') {
+      action = 'blocked'; dests = null; reason = 'rule: you blocked this domain';
+    } else if (override === 'allow' && action === 'blocked') {
+      action = r > 0.5 ? 'cached' : 'allowed'; reason = '';
+      const pi = places[(rng() * places.length) | 0];
+      const p = PLACE_DEF[pi];
+      dests = [{ ip: p.ip, lat: p.lat, lon: p.lon, city: p.city, country: p.country }];
+    } else if (override === 'block' && action === 'blocked' && !reason) {
+      reason = 'rule: you blocked this domain';
     }
     const e = {
       id: 0, time: new Date(t).toISOString(), t,

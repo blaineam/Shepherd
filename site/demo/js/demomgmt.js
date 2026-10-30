@@ -34,6 +34,89 @@ const LIST_STATUS = {
   cryptojacking: { count: 1790, size_bytes: 39000, ago: 26 }, 'adult-core': { count: 411980, size_bytes: 9100000, ago: 6 }, 'gambling-core': { count: 18188, size_bytes: 402000, ago: 6 },
 };
 
+// MARKETING-SITE DEMO BUILD ADDITION: the shipped demo mgmt fake (above)
+// never implemented /api/alarms - alarmsview.js handles a 404 there
+// gracefully with an "Alarms is not available on this version" card, which
+// is correct behavior against an older real server but makes a poor first
+// impression on a marketing site built specifically to show the feature
+// off. This block is local to the marketing site's copy of this file only
+// (internal/portal/web/js/demomgmt.js, which cmd/shepherd actually embeds,
+// is untouched) and gives the Alarms screen a small, realistic synthetic
+// data set so it demonstrates the real alarm engine's UI faithfully.
+const SEVERITY_ORDER = ['info', 'low', 'medium', 'high', 'critical'];
+
+function initialAlarms(now) {
+  const mk = (id, severity, type, title, body, deviceId, state, agoMin, count = 1) => ({
+    id, severity, type, title, body, device_id: deviceId || '', state, count,
+    last_seen: new Date(now - agoMin * 60000).toISOString(),
+    first_seen: new Date(now - (agoMin + 180) * 60000).toISOString(),
+  });
+  return [
+    mk('al-1', 'critical', 'vulnerability-found', 'Anonymous FTP login allowed', 'A device accepts anonymous FTP logins on port 21.', 'dev-0003', 'new', 6),
+    mk('al-2', 'high', 'vulnerability-found', 'SMBv1 still enabled', 'A device is still answering SMBv1 negotiate requests.', 'dev-0012', 'new', 24),
+    mk('al-3', 'high', 'arp-spoof', 'Gateway MAC address changed', "The gateway's MAC address changed unexpectedly — possible ARP spoofing.", '', 'new', 48),
+    mk('al-4', 'medium', 'port-opened', 'New port opened: 23 (Telnet)', 'A device opened Telnet, a specifically risky port.', 'dev-0010', 'acknowledged', 95, 2),
+    mk('al-5', 'medium', 'new-device', 'New device joined the network', 'An unrecognized device landed in Quarantine and is waiting for review.', 'dev-0038', 'new', 12),
+    mk('al-6', 'high', 'vulnerability-found', 'Outdated OpenSSH build', 'A device is running an OpenSSH version missing a named security fix.', 'dev-0008', 'acknowledged', 210),
+    mk('al-7', 'low', 'upstream-down', 'All DNS upstreams went unhealthy', 'Every configured upstream failed health checks for about 2 minutes.', '', 'resolved', 540),
+    mk('al-8', 'info', 'upstream-recovered', 'Upstream recovered', 'tls://dns1.example.net is healthy again.', '', 'resolved', 538),
+    mk('al-9', 'medium', 'geo-block', 'Blocked a connection to a geo-blocked country', 'A device attempted a connection answered from a blocked country.', 'dev-0004', 'muted', 300, 14),
+    mk('al-10', 'low', 'wandering-shadow', 'Would have been blocked, while wandering', "A device's wandering mode let a tracker domain through unfiltered.", 'dev-0006', 'new', 20, 5),
+  ];
+}
+
+// MARKETING-SITE DEMO BUILD ADDITION: port and vulnerability scanning, and a
+// device's starting findings, matching the alarms above by device id so a
+// visitor who opens, say, dev-0012's drawer after seeing its alarm finds
+// the exact same SMBv1 finding there — the cross-feature cohesion the
+// Devices, Alarms, Ports and Vulnerabilities panels are supposed to show.
+// "Scan now" on any other device has a real (seeded, so repeatable) chance
+// of discovering something new and raising a fresh alarm for it live.
+const RISK_NOTE = {
+  21: 'FTP sends credentials and data unencrypted.', 23: 'Telnet is unencrypted and a common default-credential target.',
+  445: 'SMB exposed beyond the devices that actually need it.', 3389: 'RDP exposed on the LAN is a common ransomware entry point.',
+  5900: 'VNC is often left with a weak or no password.', 2375: 'The Docker API with no TLS/auth means anyone on the LAN can run containers.',
+};
+function strHash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
+
+function initialPortscan(now) {
+  const mk = (id, ports, agoMin) => [id, { device_id: id, last_scanned: new Date(now - agoMin * 60000).toISOString(), ports }];
+  return new Map([
+    mk('dev-0010', [{ port: 80, open: true, risky: false, risk_note: '', newly_opened: false }, { port: 23, open: true, risky: true, risk_note: RISK_NOTE[23], newly_opened: true }], 95),
+    mk('dev-0008', [{ port: 22, open: true, risky: false, risk_note: '', newly_opened: false }, { port: 9100, open: true, risky: false, risk_note: '', newly_opened: false }], 210),
+    mk('dev-0012', [{ port: 445, open: true, risky: true, risk_note: RISK_NOTE[445], newly_opened: false }], 24),
+    mk('dev-0003', [{ port: 21, open: true, risky: true, risk_note: RISK_NOTE[21], newly_opened: false }], 6),
+  ]);
+}
+
+function initialVulnscan(now) {
+  const mk = (id, findings, agoMin) => [id, { device_id: id, last_scanned: new Date(now - agoMin * 60000).toISOString(), findings: findings.map((f) => ({ active: true, resolved_at: null, ...f })) }];
+  return new Map([
+    mk('dev-0003', [{ severity: 'critical', name: 'Anonymous FTP login allowed', port: 21, description: 'The FTP server accepts the "anonymous" account with no password.', evidence: '230 Login successful (anonymous / <blank>)' }], 6),
+    mk('dev-0012', [{ severity: 'high', name: 'SMBv1 still enabled', port: 445, description: 'The device still negotiates the obsolete, insecure SMBv1 dialect.', evidence: 'SMB1 dialect "NT LM 0.12" negotiated' }], 24),
+    mk('dev-0008', [{ severity: 'high', name: 'Outdated OpenSSH build', port: 22, description: 'This OpenSSH build is missing a named security fix.', evidence: 'banner: SSH-2.0-OpenSSH_7.2' }], 210),
+  ]);
+}
+
+const DISCOVERABLE_VULNS = [
+  { severity: 'high', name: 'Outdated web server banner', port: 8080, description: 'The HTTP banner reports an end-of-life server build.', evidence: 'banner: Server: lighttpd/1.4.28' },
+  { severity: 'critical', name: 'Unauthenticated Docker API', port: 2375, description: 'The Docker remote API answers with no authentication at all.', evidence: 'GET /version succeeded with no credentials' },
+  { severity: 'medium', name: 'Unencrypted FTP control channel', port: 21, description: 'FTP credentials are sent in the clear.', evidence: 'USER/PASS observed unencrypted' },
+];
+const DISCOVERABLE_PORTS = [
+  { port: 3389, risky: true }, { port: 5900, risky: true }, { port: 2375, risky: true }, { port: 8080, risky: false }, { port: 554, risky: false },
+];
+
+function alarmMatches(a, f) {
+  if (f.min_severity && SEVERITY_ORDER.indexOf(a.severity) < SEVERITY_ORDER.indexOf(f.min_severity)) return false;
+  if (f.states && f.states.length && !f.states.includes(a.state)) return false;
+  if (f.text) {
+    const t = f.text;
+    if (!(a.title.toLowerCase().includes(t) || (a.body || '').toLowerCase().includes(t) || (a.device_id || '').toLowerCase().includes(t))) return false;
+  }
+  return true;
+}
+
 export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', now = () => Date.now() } = {}) {
   let devices = buildDevices(count, now());
   let groups = DEMO_GROUPS.map((g) => ({ ...g }));
@@ -48,11 +131,66 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
   let bootstrap = ['198.51.100.2', '198.51.100.3'];
   const hist = { mode: history === 'memory' ? 'memory' : 'encrypted', locked: history === 'locked' || history === 'fresh', initialized: history !== 'fresh' };
   let lastBulk = 0;
+  // MARKETING-SITE DEMO BUILD ADDITION: see initialAlarms() above. IDs below
+  // 100 are reserved for the seeded alarms (al-1..al-10); live-created ones
+  // start at al-100 so they can never collide with a seed id.
+  let alarms = initialAlarms(now());
+  let alarmRules = [];
+  let alarmNextId = 100;
+  let lastAlarmUndo = null;
+  // MARKETING-SITE DEMO BUILD ADDITION: see initialPortscan/initialVulnscan above.
+  let portscanData = initialPortscan(now());
+  let vulnscanData = initialVulnscan(now());
+  let upstreamDownAlarm = new Map(); // upstream config -> currently-open 'upstream-down' alarm id
 
   const gname = (id) => (groups.find((g) => g.id === id) || {}).name || id;
   const withCount = (g) => ({ ...g, count: devices.filter((d) => d.groups.includes(g.id)).length });
   const dev = (id) => { const d = devices.find((x) => x.id === id); if (!d) throw err(404, 'device not found'); return d; };
   const setDev = (id, fn) => { const i = devices.findIndex((x) => x.id === id); if (i < 0) throw err(404, 'device not found'); devices[i] = fn(devices[i]); return devices[i]; };
+  const deviceLabel = (id) => { const d = devices.find((x) => x.id === id); return d ? d.name : id; };
+
+  // MARKETING-SITE DEMO BUILD ADDITION: a new alarm a live event (a scan
+  // finding something, an upstream flapping) raises, not a seeded one.
+  function pushAlarm({ severity, type, title, body, deviceId }) {
+    const id = 'al-' + alarmNextId++;
+    const t = now();
+    alarms.unshift({
+      id, severity, type, title, body, device_id: deviceId || '', state: 'new', count: 1,
+      last_seen: new Date(t).toISOString(), first_seen: new Date(t).toISOString(),
+    });
+    return id;
+  }
+
+  // MARKETING-SITE DEMO BUILD ADDITION: makes the Alarms tab feel like a
+  // live system reacting to the network, not a frozen dataset, even if a
+  // visitor never touches the Upstreams or Devices screens. The upstream
+  // seeded unhealthy in `upstreams` above recovers on the very first tick
+  // (guaranteed, not left to chance) so something real visibly happens
+  // within a few seconds of the page loading; later ticks are random and
+  // spaced out so a longer visit doesn't get noisy. See upstreamsview.js's
+  // own 4s poll (unchanged) for why the Upstreams tab picks this up live too.
+  function flapUpstreams() {
+    const healthy = upstreams.filter((u) => u.healthy);
+    const unhealthy = upstreams.filter((u) => !u.healthy);
+    if (unhealthy.length && (healthy.length < 2 || Math.random() < 0.55)) {
+      const u = unhealthy[(Math.random() * unhealthy.length) | 0];
+      u.healthy = true; u.consecutive_failures = 0; u.last_error = '';
+      const openId = upstreamDownAlarm.get(u.config);
+      if (openId) {
+        const i = alarms.findIndex((a) => a.id === openId);
+        if (i >= 0) alarms[i] = { ...alarms[i], state: 'resolved' };
+        upstreamDownAlarm.delete(u.config);
+      }
+      pushAlarm({ severity: 'info', type: 'upstream-recovered', title: 'Upstream recovered', body: u.config + ' is healthy again.' });
+    } else if (healthy.length > 1) {
+      const u = healthy[(Math.random() * healthy.length) | 0];
+      u.healthy = false; u.consecutive_failures = (u.consecutive_failures || 0) + 1; u.last_error = 'read udp: i/o timeout';
+      const id = pushAlarm({ severity: 'high', type: 'upstream-down', title: 'Upstream went unhealthy', body: u.config + ' failed its health check and was marked down.' });
+      upstreamDownAlarm.set(u.config, id);
+    }
+  }
+  function scheduleFlap(delayMs) { setTimeout(() => { flapUpstreams(); scheduleFlap(22000 + Math.random() * 23000); }, delayMs); }
+  scheduleFlap(7000 + Math.random() * 5000);
 
   function policyDoc() {
     return {
@@ -231,6 +369,13 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
         delete s.rule_schedules[other][d];
         if (!s.rules[body.kind].includes(d)) s.rules[body.kind].push(d);
         if (body.schedule) s.rule_schedules[body.kind][d] = body.schedule; else delete s.rule_schedules[body.kind][d];
+        // MARKETING-SITE DEMO BUILD ADDITION: a whole-network rule (no
+        // schedule — a scheduled rule's "sometimes on" nature doesn't map
+        // cleanly onto the generator) actually changes the live feed, the
+        // same way a rule set from the HUD Inspector does. Per-group/
+        // per-device rules are left alone: the generator has no per-scope
+        // traffic model to apply them to.
+        if (gen && s.scope.kind === 'network' && !body.schedule) gen.setOverride(d, body.kind);
         return policyDoc();
       }
       if (method === 'DELETE') {
@@ -238,6 +383,7 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
         const k = q.get('kind');
         if (s.rules[k]) s.rules[k] = s.rules[k].filter((x) => x !== q.get('domain'));
         if (s.rule_schedules[k]) delete s.rule_schedules[k][q.get('domain')];
+        if (gen && s.scope.kind === 'network') gen.setOverride(q.get('domain'), null);
         return policyDoc();
       }
     }
@@ -273,6 +419,149 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       return { ok: true };
     }
     if (path === '/api/policy/refresh' && method === 'POST') { await delay(250); return null; }
+    // ---- alarms (MARKETING-SITE DEMO BUILD ADDITION — see initialAlarms() above)
+    if (path === '/api/alarms' && method === 'GET') {
+      const f = { min_severity: q.get('min_severity') || '', states: q.get('states') ? [q.get('states')] : [], text: (q.get('text') || '').toLowerCase() };
+      const offset = Math.max(0, Number(q.get('offset')) || 0), limit = Math.min(200, Math.max(1, Number(q.get('limit')) || 50));
+      const all = alarms.filter((a) => alarmMatches(a, f)).sort((a, b) => Date.parse(b.last_seen) - Date.parse(a.last_seen));
+      return { alarms: all.slice(offset, offset + limit).map((a) => ({ ...a })), total: all.length };
+    }
+    if (path === '/api/alarms/summary' && method === 'GET') {
+      const by_severity = {}, by_state = {};
+      for (const a of alarms) { by_severity[a.severity] = (by_severity[a.severity] || 0) + 1; by_state[a.state] = (by_state[a.state] || 0) + 1; }
+      return { total: alarms.length, by_severity, by_state };
+    }
+    if (path === '/api/alarms/types' && method === 'GET') return { types: [...new Set(alarms.map((a) => a.type))] };
+    if (path === '/api/alarms/rules' && method === 'GET') return { rules: alarmRules.map((r) => ({ ...r })) };
+    if (path === '/api/alarms/rules' && method === 'POST') {
+      const r = { id: 'rule-' + alarmNextId++, name: String(body.name || '').trim() || '(unnamed rule)', match: body.match || {}, reason: body.reason || '', expires_at: null };
+      alarmRules.push(r);
+      return r;
+    }
+    if ((m = /^\/api\/alarms\/rules\/([^/]+)$/.exec(path)) && method === 'DELETE') {
+      alarmRules = alarmRules.filter((r) => r.id !== decodeURIComponent(m[1]));
+      return { ok: true };
+    }
+    if (path === '/api/alarms/bulk' && method === 'POST') {
+      let ids;
+      if (Array.isArray(body.ids)) ids = body.ids;
+      else if (body.all) {
+        const bf = body.filter || {};
+        const ff = { min_severity: bf.min_severity || '', states: bf.states ? [bf.states] : [], text: (bf.text || '').toLowerCase() };
+        ids = alarms.filter((a) => alarmMatches(a, ff)).map((a) => a.id);
+      } else ids = [];
+      const set = new Set(ids);
+      const snapshot = alarms.filter((a) => set.has(a.id)).map((a) => ({ ...a }));
+      let changed = 0;
+      if (body.op === 'delete') {
+        const before = alarms.length;
+        alarms = alarms.filter((a) => !set.has(a.id));
+        changed = before - alarms.length;
+      } else {
+        alarms = alarms.map((a) => {
+          if (!set.has(a.id)) return a;
+          changed++;
+          if (body.op === 'acknowledge') return { ...a, state: 'acknowledged' };
+          if (body.op === 'resolve') return { ...a, state: 'resolved' };
+          if (body.op === 'mute') return { ...a, state: 'muted' };
+          return a;
+        });
+      }
+      const handle = 'undo-' + alarmNextId++;
+      lastAlarmUndo = { handle, op: body.op, snapshot };
+      return { changed, skipped: 0, handle };
+    }
+    if (path === '/api/alarms/undo' && method === 'POST') {
+      if (!lastAlarmUndo || lastAlarmUndo.handle !== body.handle) return { ok: false };
+      const { op, snapshot } = lastAlarmUndo;
+      if (op === 'delete') {
+        const have = new Set(alarms.map((a) => a.id));
+        for (const a of snapshot) if (!have.has(a.id)) alarms.push(a);
+      } else {
+        const byId = new Map(snapshot.map((a) => [a.id, a]));
+        alarms = alarms.map((a) => (byId.has(a.id) ? byId.get(a.id) : a));
+      }
+      lastAlarmUndo = null;
+      return { ok: true };
+    }
+    if ((m = /^\/api\/alarms\/([^/]+)\/mute$/.exec(path)) && method === 'POST') {
+      const id = decodeURIComponent(m[1]);
+      const i = alarms.findIndex((x) => x.id === id);
+      if (i < 0) throw err(404, 'alarm not found');
+      alarms[i] = { ...alarms[i], state: 'muted' };
+      return { ...alarms[i] };
+    }
+    if ((m = /^\/api\/alarms\/([^/]+)$/.exec(path))) {
+      const id = decodeURIComponent(m[1]);
+      if (method === 'GET') { const a = alarms.find((x) => x.id === id); if (!a) throw err(404, 'alarm not found'); return { ...a }; }
+      if (method === 'PATCH') {
+        const i = alarms.findIndex((x) => x.id === id);
+        if (i < 0) throw err(404, 'alarm not found');
+        alarms[i] = { ...alarms[i], state: body.state || alarms[i].state };
+        return { ...alarms[i] };
+      }
+      if (method === 'DELETE') {
+        const before = alarms.length;
+        alarms = alarms.filter((x) => x.id !== id);
+        if (alarms.length === before) throw err(404, 'alarm not found');
+        return { ok: true };
+      }
+    }
+    // ---- portscan / vulnscan (MARKETING-SITE DEMO BUILD ADDITION — see
+    // initialPortscan()/initialVulnscan() above). "Scan now" on a device
+    // with no active finding has a real, seeded (so repeatable per device)
+    // chance of discovering something and raising a matching alarm live —
+    // the point being a visitor can cause this, not just watch it happen.
+    if (path === '/api/portscan' && method === 'GET') return { enabled: true, devices_scanned: portscanData.size };
+    if (path === '/api/portscan/devices' && method === 'GET') return { devices: [...portscanData.values()] };
+    if ((m = /^\/api\/portscan\/devices\/([^/]+)$/.exec(path)) && method === 'GET') {
+      const id = decodeURIComponent(m[1]);
+      return portscanData.get(id) || { device_id: id, last_scanned: null, ports: [] };
+    }
+    if (path === '/api/portscan/scan' && method === 'POST') {
+      await delay(500);
+      const targets = body.device_id ? [body.device_id] : devices.map((d) => d.id);
+      const results = [];
+      for (const id of targets) {
+        if (!devices.some((d) => d.id === id)) continue;
+        let rec = portscanData.get(id) || { device_id: id, last_scanned: null, ports: [] };
+        rec = { ...rec, last_scanned: new Date(now()).toISOString(), ports: rec.ports.map((p) => ({ ...p, newly_opened: false })) };
+        const h = strHash(id + ':port');
+        if (!rec.ports.some((p) => p.risky) && h % 100 < 30) {
+          const pick = DISCOVERABLE_PORTS[h % DISCOVERABLE_PORTS.length];
+          rec.ports.push({ port: pick.port, open: true, risky: pick.risky, risk_note: pick.risky ? (RISK_NOTE[pick.port] || 'Unexpected for a device like this.') : '', newly_opened: true });
+          if (pick.risky) pushAlarm({ severity: 'medium', type: 'port-opened', title: 'New port opened: ' + pick.port, body: deviceLabel(id) + ' opened a specifically risky port during a manual scan.', deviceId: id });
+        }
+        portscanData.set(id, rec);
+        results.push(rec);
+      }
+      return { devices: results };
+    }
+    if (path === '/api/vulnscan' && method === 'GET') return { enabled: true, devices_scanned: vulnscanData.size };
+    if (path === '/api/vulnscan/devices' && method === 'GET') return { devices: [...vulnscanData.values()] };
+    if ((m = /^\/api\/vulnscan\/devices\/([^/]+)$/.exec(path)) && method === 'GET') {
+      const id = decodeURIComponent(m[1]);
+      return vulnscanData.get(id) || { device_id: id, last_scanned: null, findings: [] };
+    }
+    if (path === '/api/vulnscan/scan' && method === 'POST') {
+      await delay(650);
+      const targets = body.device_id ? [body.device_id] : devices.map((d) => d.id);
+      const results = [];
+      for (const id of targets) {
+        if (!devices.some((d) => d.id === id)) continue;
+        let rec = vulnscanData.get(id) || { device_id: id, last_scanned: null, findings: [] };
+        rec = { ...rec, last_scanned: new Date(now()).toISOString() };
+        const h = strHash(id + ':vuln');
+        if (!rec.findings.some((f) => f.active) && h % 100 < 32) {
+          const pick = DISCOVERABLE_VULNS[h % DISCOVERABLE_VULNS.length];
+          rec.findings = [...rec.findings, { ...pick, active: true, resolved_at: null }];
+          pushAlarm({ severity: pick.severity, type: 'vulnerability-found', title: pick.name, body: deviceLabel(id) + ' — found during a manual scan.', deviceId: id });
+        }
+        vulnscanData.set(id, rec);
+        results.push(rec);
+      }
+      return { devices: results };
+    }
     // ---- upstreams
     if (path === '/api/upstreams') {
       if (method === 'GET') return upstreamDoc();
