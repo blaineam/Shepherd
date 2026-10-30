@@ -98,3 +98,33 @@ test('import endpoints build the documented requests', async () => {
   await m.importCSVApply('mac,name\n', true);
   assert.deepEqual([calls[6][0], calls[6][1].method], ['/api/import/csv/apply', 'POST']);
 });
+
+test('alarm endpoints build the documented requests', async () => {
+  const { calls, m } = rig();
+  await m.alarms({ types: 'new-device', offset: 0, limit: 50 });
+  assert.equal(calls[0][0], '/api/alarms?types=new-device&offset=0&limit=50');
+  await m.alarm('a1');
+  assert.equal(calls[1][0], '/api/alarms/a1');
+  await m.patchAlarm('a1', 'acknowledged');
+  assert.deepEqual([calls[2][0], calls[2][1].method, calls[2][1].body], ['/api/alarms/a1', 'PATCH', '{"state":"acknowledged"}']);
+  await m.deleteAlarm('a1');
+  assert.equal(calls[3][1].method, 'DELETE');
+  await m.muteAlarm('a1', { preset: '1h' });
+  assert.deepEqual([calls[4][0], calls[4][1].method, calls[4][1].body], ['/api/alarms/a1/mute', 'POST', '{"preset":"1h"}']);
+  await m.alarmsBulk({ all: true, op: 'acknowledge' });
+  assert.deepEqual([calls[5][0], calls[5][1].body], ['/api/alarms/bulk', '{"all":true,"op":"acknowledge"}']);
+  await m.undoAlarms('u1');
+  assert.equal(calls[6][1].body, '{"handle":"u1"}');
+  await m.alarmsSummary();
+  assert.equal(calls[7][0], '/api/alarms/summary');
+  await m.alarmTypes();
+  assert.equal(calls[8][0], '/api/alarms/types');
+  await m.alarmRules();
+  assert.equal(calls[9][0], '/api/alarms/rules');
+  await m.alarmRules(true);
+  assert.equal(calls[10][0], '/api/alarms/rules?all=1');
+  await m.createAlarmRule({ name: 'x' });
+  assert.equal(calls[11][1].body, '{"name":"x"}');
+  await m.deleteAlarmRule('r 1');
+  assert.deepEqual([calls[12][0], calls[12][1].method], ['/api/alarms/rules/r%201', 'DELETE']);
+});

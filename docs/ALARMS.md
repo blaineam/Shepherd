@@ -10,9 +10,11 @@ Go packages that depend only on the standard library:
 | `internal/webpush` | A Web Push sender: VAPID keys, RFC 8291 encryption, a subscription store. |
 | `internal/ntfy` | A client for publishing to an ntfy server. |
 
-This page describes what is built. The portal API, the portal UI, the service worker and mesh sync are
-not built yet; the last section lists them. Design background is in [DESIGN.md](DESIGN.md) ("Alarm
-system", "Mesh dataset sync"); the test approach is in [TESTING.md](TESTING.md).
+This page describes what is built. `cmd/shepherd` wiring, the portal API and the portal's Alarms tab are
+now built too (see "Wiring into `cmd/shepherd` and the portal" below); the service worker, Web Push
+subscribe UI and mesh sync are not built yet — the last section lists them. Design background is in
+[DESIGN.md](DESIGN.md) ("Alarm system", "Mesh dataset sync"); the test approach is in
+[TESTING.md](TESTING.md).
 
 ## Delivery channels at a glance
 
@@ -423,6 +425,55 @@ For the portal's live updates, stream `eng.Events(n)`: every `Change` has a `Kin
 `escalated`, `state`, `deleted`, `bulk`, `rule`, `prefs`) and the affected alarm. A full buffer drops changes
 rather than blocking the engine, so re-fetch with `List` after a `bulk` change or a reconnect.
 
+# Wiring into `cmd/shepherd` and the portal
+
+`[alarms]` in `shepherd.toml` (see `shepherd.example.toml`) turns the engine on (`enabled`, default
+true) and configures the one delivery channel wired in, ntfy (`[alarms.ntfy]`: `enabled`, `server`,
+`topic`, and `token` or `username`/`password`). `cmd/shepherd/alarms.go`'s `startAlarms` builds the
+engine under `<data_dir>/alarms`, builds a `Router` with an `ntfy.Client` adapter when
+`alarms.ntfy.enabled` is set (`nil` otherwise, so the channel simply carries nothing), subscribes and
+runs it, and is wired into `main.go` the same way `startDevices` and `startClassify` are. Web Push is
+not wired in: it needs a secure context (HTTPS) the portal does not have yet (see "Web Push in the
+browser" below), so `RouterOptions.Pusher` stays `nil` and `[alarms]` has no VAPID or subscription
+settings. This is a deliberate scope decision, not an oversight — adding it later needs no engine or
+Router change, only a `webpush.NewSender`/`Store` plugged into the same `Router`.
+
+**Upstream health events.** `TypeUpstreamDown` and `TypeUpstreamRecovered` are raised from a new,
+minimal hook on `dnsengine.Pool`: an `OnHealthChange func(addr string, healthy bool)` field, in the same
+style as `Engine.Observe` and `Engine.ClientSeen` (a plain callback field the DNS engine already uses to
+let other features observe its state without a parallel tracking system). `Upstream.record` — the single
+place the prober and `Pool.Exchange` already report success or failure — now detects a change in that
+upstream's own `healthy` flag and calls it, outside its lock. `wireUpstreamAlarms` in
+`cmd/shepherd/alarms.go` subscribes to it: a transition to unhealthy checks `Pool.Status()` for every
+other upstream and raises `TypeUpstreamDown` (severity high) only when none are healthy, matching the
+type's "every upstream resolver in a pool stopped answering" description exactly — a single flaky
+resolver in an otherwise healthy pool never pages anyone. A transition to healthy always raises
+`TypeUpstreamRecovered` (severity low) for that one resolver, without waiting for the whole pool: the
+type's low severity and the engine's own dedupe/storm control make per-resolver recovery noise
+acceptable, and it is useful signal on its own (a flapping resolver recovering is worth knowing even
+while a different one is still down). No parallel health tracker was added — this hook sits on top of the
+pool's own existing failover/health state.
+
+**Portal API**, under `/api/alarms`, follows the same conventions as `/api/devices`: `GET /api/alarms`
+(filters as query params: `types`, `severities`, `min_severity`, `states`, `device_id`, `group_id`,
+`since`/`until` as RFC3339, `text`, `include_children`, plus `sort`/`asc`/`offset`/`limit`), `GET
+/api/alarms/{id}` (with `children` when it is a storm bundle), `PATCH /api/alarms/{id}` (`{"state":
+"acknowledged"|"resolved"}`), `DELETE /api/alarms/{id}`, `POST /api/alarms/{id}/mute` (a `MuteSpec`
+body, snoozes just that alarm), `POST /api/alarms/bulk` (`{ids|filter|all, op: "acknowledge"|"resolve"|
+"delete"|"mute", mute: {by, duration, reason}}`, mirroring `/api/devices/bulk`'s op-based shape), `POST
+/api/alarms/undo` (`{"handle": "..."}`), `GET /api/alarms/summary`, `GET /api/alarms/types`, and rules
+CRUD at `GET`/`POST /api/alarms/rules` and `DELETE /api/alarms/rules/{id}`. Every handler goes through
+the same token-and-CSRF-header `auth` middleware as the rest of the portal.
+
+**Portal UI.** A new Alarms tab (`internal/portal/web/js/alarmsview.js`, pure helpers in `js/alarms.js`)
+matches the Devices tab's structure: a `pg-head` with a severity/state filter and search box, a
+`panel-lite` table with per-row severity badges, state and relative last-seen time, single-row
+acknowledge/resolve/mute/delete, a `Selection`-backed checkbox column with a `bulkbar` for batch
+acknowledge/resolve/mute/delete (mute offers the same scopes as `alarms.MuteBy`, with sensible default
+durations — the Rules sub-view gives full control over match criteria and duration), and toasts with an
+Undo action for batch changes that return a handle. A segmented control switches to a Rules sub-view:
+create a mute rule (name, types, device IDs, domains, duration, reason) and remove existing ones.
+
 # Web Push in the browser
 
 Web Push is not something the server can do alone; the portal side is still to be built, and these are the
@@ -449,17 +500,28 @@ constraints it must respect.
 
 # Not built yet
 
-- **Portal API and UI.** No HTTP handlers exist for listing alarms, batch actions, mute rules, preferences,
-  push subscribe and unsubscribe, the delivery log or "send a test notification" (`TypeTest` and `RaiseSync`
-  are ready for it). The alarm list, badge, mute and snooze controls and settings screens do not exist.
-- **Service worker and manifest.** The `push` and `notificationclick` handlers, the subscribe flow and the
-  home-screen web app manifest are not written.
-- **Wiring into `cmd/shepherd`.** Nothing raises alarms yet, the Router is not started and the VAPID keys,
-  subscriptions and ntfy settings have no config or portal home.
+- **Web Push end to end: deferred on purpose, not forgotten.** The sender, VAPID keys and subscription
+  store (`internal/webpush`) are fully built and tested, but nothing in `cmd/shepherd` or the portal uses
+  them: no VAPID key generation/config, no `RouterOptions.Pusher`, no subscribe endpoint, no service
+  worker, no manifest, no home-screen install prompt. The reason is simple and will not change until the
+  portal is served over HTTPS: browsers only expose the Push API in a secure context (see "Web Push in the
+  browser" below), and the portal today is plain HTTP (loopback/LAN). Wiring it up before then would be
+  dead code that cannot work in production. ntfy is the one working delivery channel in the meantime.
+  Revisit once the portal has TLS (the tailnet's automatic HTTPS, or the planned reverse proxy).
+- **Preferences API and UI.** `Engine.Preferences`/`SetPreferences` (channels, digest, quiet hours,
+  learning mode, per-type switches, time zone, portal URL) have no `/api/alarms/preferences` endpoint or
+  settings screen yet; they currently only take the engine's own defaults (`DefaultPreferences`).
+- **"Send a test notification."** `TypeTest` and `RaiseSync` are ready for it, but no endpoint or button
+  calls them yet.
+- **Delivery log and channel status in the portal.** `Router.Log` and `Router.Status` are not exposed over
+  the API or shown anywhere in the UI yet, so a failing ntfy delivery is currently only visible in the
+  server's own logs.
 - **Mesh sync.** Records carry HLC stamps and `Export`/`Import` merge by last-writer-wins, but there is no
   transport, no high-water-mark exchange, and no audit log of mutes and rule changes. A pending retry or
-  digest queue lives on one node only. Replicas should also agree on which node delivers, or each will notify.
+  digest queue lives on one node only. Replicas should also agree on which node delivers, or each will
+  notify.
 - **Encryption at rest.** The `Codec` seam exists; the encrypted implementation (shared with encrypted
   history) does not.
-- **A real-device check.** Everything is tested against fakes and loopback servers. Nothing here has been
-  sent to a real push service or ntfy server.
+- **A real-device check.** Everything is tested against fakes, loopback servers and (for the upstream
+  health hook) real but local UDP listeners. Nothing here has been sent to a real push service or a real
+  ntfy server.

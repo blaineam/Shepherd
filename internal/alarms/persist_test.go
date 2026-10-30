@@ -196,23 +196,32 @@ func TestAutosaveIsThrottled(t *testing.T) {
 }
 
 func TestWorkerTickSweepsAndSaves(t *testing.T) {
-	e, clk, rec := newTestEngine(t, func(o *Options) { o.TickEvery = time.Minute })
+	// afterTick must be set via Options, before New starts the worker
+	// goroutine: assigning e.afterTick directly, after the engine is
+	// already running, races with the worker's unsynchronized read of that
+	// field. That assignment order, combined with a separate bug where the
+	// worker's own ticker was registered with the FakeClock asynchronously
+	// (on the worker goroutine, after New had already returned), is what
+	// made this test flaky under load, including in CI: Advance could run
+	// before the ticker was registered at all, permanently missing the one
+	// tick the test relies on rather than merely running it late. Both are
+	// now fixed structurally (New registers the ticker itself, synchronously,
+	// before spawning the worker), so this no longer needs a generous
+	// timeout to paper over either race.
+	ticked := make(chan struct{}, 1)
+	e, clk, rec := newTestEngine(t, func(o *Options) {
+		o.TickEvery = time.Minute
+		o.afterTick = func() { ticked <- struct{}{} }
+	})
 	a := mustRaise(t, e, Event{Type: "custom", Key: "k"})
 	e.Snooze(a.ID, MuteSpec{Preset: MuteHour})
 	rec.reset()
 
-	// Synchronize with the worker loop deterministically via afterTick
-	// instead of polling a real wall-clock deadline against a
-	// FakeClock-advanced tick: that polling was reliable alone but flaky
-	// under full-suite load (the goroutine simply wasn't scheduled in
-	// time), including in CI, even at a 10s deadline.
-	ticked := make(chan struct{}, 1)
-	e.afterTick = func() { ticked <- struct{}{} }
 	clk.Advance(2 * time.Hour) // fires the worker's ticker
 
 	select {
 	case <-ticked:
-	case <-time.After(20 * time.Second):
+	case <-time.After(2 * time.Second):
 		t.Fatal("the worker tick never ran")
 	}
 	if got, _ := e.Get(a.ID); got.State != StateNew {

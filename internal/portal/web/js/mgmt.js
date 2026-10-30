@@ -46,5 +46,18 @@ export function createMgmt(api) {
     importEeroCancel: (sessionId) => post('/api/import/eero/cancel', { session_id: sessionId }),
     importCSVPreview: (csv, overwriteNames) => post('/api/import/csv/preview', { csv, overwrite_names: overwriteNames }),
     importCSVApply: (csv, overwriteNames) => post('/api/import/csv/apply', { csv, overwrite_names: overwriteNames }),
+
+    alarms: (params) => api('/api/alarms' + Q(params)),
+    alarm: (id) => api('/api/alarms/' + encodeURIComponent(id)),
+    patchAlarm: (id, state) => api('/api/alarms/' + encodeURIComponent(id), { method: 'PATCH', body: J({ state }) }),
+    deleteAlarm: (id) => api('/api/alarms/' + encodeURIComponent(id), { method: 'DELETE' }),
+    muteAlarm: (id, duration) => post('/api/alarms/' + encodeURIComponent(id) + '/mute', duration),
+    alarmsBulk: (req) => post('/api/alarms/bulk', req),
+    undoAlarms: (handle) => post('/api/alarms/undo', { handle }),
+    alarmsSummary: () => api('/api/alarms/summary'),
+    alarmTypes: () => api('/api/alarms/types'),
+    alarmRules: (all) => api('/api/alarms/rules' + Q({ all: all ? '1' : '' })),
+    createAlarmRule: (body) => post('/api/alarms/rules', body),
+    deleteAlarmRule: (id) => api('/api/alarms/rules/' + encodeURIComponent(id), { method: 'DELETE' }),
   };
 }

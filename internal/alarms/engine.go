@@ -68,6 +68,11 @@ type Options struct {
 	// Preferences are the initial preferences when none were saved; default
 	// DefaultPreferences.
 	Preferences *Preferences
+	// afterTick is a test-only hook forwarded to the new Engine's own
+	// afterTick field; see its doc comment. Unexported, so nothing outside
+	// this package can set it; only this package's own (white-box) tests
+	// construct an Options literal with it set.
+	afterTick func()
 }
 
 type item struct {
@@ -132,7 +137,10 @@ type Engine struct {
 	// exactly what made TestWorkerTickSweepsAndSaves flaky under load
 	// (reliable alone, occasionally too slow to land within even a
 	// generous real-time budget when the whole suite runs concurrently).
-	// Nothing in this package's public API sets it.
+	// Set once, from Options.afterTick, before the worker goroutine starts
+	// (never reassigned after): the worker reads it with no synchronization
+	// of its own, so changing it after New returns would race. Nothing in
+	// this package's public API sets it.
 	afterTick func()
 }
 
@@ -152,7 +160,7 @@ func New(o Options) (*Engine, error) {
 		alarms: map[string]*Alarm{}, byKey: map[string]string{}, children: map[string][]string{},
 		buckets: map[string][]member{}, rules: map[string]*Rule{}, types: map[string]AlarmType{},
 		deviceSeen: map[string]time.Time{}, undos: map[string]*undoEntry{}, subs: map[int]func(Change){},
-		quit: make(chan struct{}),
+		quit: make(chan struct{}), afterTick: o.afterTick,
 	}
 	if e.node == "" {
 		e.node = "local"
@@ -220,8 +228,16 @@ func New(o Options) (*Engine, error) {
 		e.installedAt = e.clock.Now()
 		e.dirty = true
 	}
+	// The ticker is created here, synchronously, rather than inside worker's
+	// own goroutine: a caller (a test with a FakeClock, in particular) can
+	// otherwise advance the clock before the newly spawned goroutine has
+	// even reached its NewTicker call, registering a ticker whose first
+	// deadline is already in the past relative to the advance that was
+	// meant to fire it -- permanently missing that tick rather than merely
+	// running late.
+	tk := e.clock.NewTicker(e.tickEvery)
 	e.wg.Add(1)
-	go e.worker()
+	go e.worker(tk)
 	return e, nil
 }
 
@@ -246,9 +262,8 @@ func (e *Engine) Close() error {
 	return err
 }
 
-func (e *Engine) worker() {
+func (e *Engine) worker(tk Ticker) {
 	defer e.wg.Done()
-	tk := e.clock.NewTicker(e.tickEvery)
 	defer tk.Stop()
 	for {
 		select {

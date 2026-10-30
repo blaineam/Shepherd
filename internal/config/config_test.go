@@ -337,3 +337,73 @@ func TestQuarantineCanBeOptedOut(t *testing.T) {
 		t.Errorf("quarantine_new_devices = false must only turn that off: %+v", cfg.Devices)
 	}
 }
+
+func TestAlarmsDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Alarms.Enabled {
+		t.Error("the alarm engine must be on by default")
+	}
+	if cfg.Alarms.Ntfy.Enabled {
+		t.Error("ntfy delivery needs a server address, so it must be off by default")
+	}
+	if cfg.Alarms.Ntfy.Topic != "shepherd-alarms" {
+		t.Errorf("default ntfy topic = %q", cfg.Alarms.Ntfy.Topic)
+	}
+}
+
+func TestAlarmsOverrides(t *testing.T) {
+	cfg := writeCfg(t, `[alarms]
+enabled = false
+[alarms.ntfy]
+enabled = true
+server = "https://ntfy.example.com"
+topic = "my-shepherd"
+token = "secret"
+`)
+	a := cfg.Alarms
+	if a.Enabled || !a.Ntfy.Enabled || a.Ntfy.Server != "https://ntfy.example.com" || a.Ntfy.Topic != "my-shepherd" || a.Ntfy.Token != "secret" {
+		t.Errorf("alarms overrides = %+v", a)
+	}
+}
+
+func TestAlarmsValidation(t *testing.T) {
+	cases := map[string]string{
+		"[alarms.ntfy]\nenabled = true\nserver = \"\"\ntopic = \"x\"":                                  "alarms.ntfy.server",
+		"[alarms.ntfy]\nenabled = true\nserver = \"not a url\"\ntopic = \"x\"":                         "alarms.ntfy.server",
+		"[alarms.ntfy]\nenabled = true\nserver = \"https://ntfy.example.com\"\ntopic = \"\"":           "alarms.ntfy.topic",
+		"[alarms.ntfy]\nenabled = true\nserver = \"https://ntfy.example.com\"\ntopic = \"bad topic!\"": "alarms.ntfy.topic",
+	}
+	for body, want := range cases {
+		path := filepath.Join(t.TempDir(), "c.toml")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("config %q: error %v, want mention of %q", body, err, want)
+		}
+	}
+	okPath := filepath.Join(t.TempDir(), "c.toml")
+	os.WriteFile(okPath, []byte("[alarms]\nenabled = true\n"), 0o600)
+	if _, err := Load(okPath); err != nil {
+		t.Errorf("alarms enabled with ntfy left off must be valid: %v", err)
+	}
+	// alarms.enabled = false must skip ntfy validation entirely.
+	offPath := filepath.Join(t.TempDir(), "c.toml")
+	os.WriteFile(offPath, []byte("[alarms]\nenabled = false\n[alarms.ntfy]\nenabled = true\n"), 0o600)
+	if _, err := Load(offPath); err != nil {
+		t.Errorf("alarms.enabled = false must skip ntfy validation: %v", err)
+	}
+}
+
+func TestExampleConfigShowsTheAlarmsDefaults(t *testing.T) {
+	ex, err := Load("../../shepherd.example.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.Alarms != Default().Alarms {
+		t.Errorf("example %+v differs from the defaults %+v", ex.Alarms, Default().Alarms)
+	}
+}

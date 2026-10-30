@@ -87,6 +87,21 @@ interval_seconds = 300           # how often guesses are reconsidered
 enabled = true
 interface = ""                   # empty auto-detects the default route's interface
 
+[alarms]
+# The alarm engine (docs/ALARMS.md): new device, upstream DNS down/recovered,
+# list update rejected, and more. Always recorded in the portal when enabled.
+enabled = true
+
+[alarms.ntfy]
+# ntfy delivery is off until you point it at a server: Web Push needs HTTPS,
+# which the portal does not have yet, so ntfy is the one channel wired in.
+enabled = false
+server = ""                # e.g. "https://ntfy.example.com" (self-hosted or public)
+topic = "shepherd-alarms"
+token = ""                 # bearer token, or leave empty and use username/password
+username = ""
+password = ""
+
 [portal]
 listen = "127.0.0.1:8787"
 
