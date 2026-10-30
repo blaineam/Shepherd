@@ -440,8 +440,18 @@ with the maintainer's explicit go-ahead.
 ## Tests
 
 `go test -race ./internal/intercept`: every scenario in this document, plus concurrent
-`Steer`/`Unsteer`/`Status`, a fuzz test proving IPv6 is never relayed under any input, and a property
-test proving the Spoofer's frame builder never produces anything but a plain IPv4 ARP reply. No real
+`Steer`/`Unsteer`/`Status`, a fuzz test proving IPv6 is never relayed under any input, a property
+test proving the Spoofer's frame builder never produces anything but a plain IPv4 ARP reply, and the
+capture filter run through x/net/bpf's interpreter against the Go Relay frame for frame. No real
 interface and no real network anywhere; `FakeSender` and `FakeClock` throughout. `open_linux.go`
 needs `CAP_NET_RAW` and cannot run unprivileged, so it is the one file this package's coverage floor
 excludes, same as `internal/arp`'s equivalent file.
+
+The XDP relay is the exception to "no real kernel anywhere", because there is no other way to run an
+eBPF program: `xdp_linux_test.go` loads the real program (so the kernel's verifier has to accept it)
+and runs it through `BPF_PROG_TEST_RUN` on the same frames the Go Relay is tested with, insisting the
+two agree; `xdp_attach_linux_test.go` goes end to end on a veth pair — attach, `Steer`, inject frames
+on the peer, read the relayed frames back with both MACs rewritten, see the counters reach `Status()`
+and `Stats()`, `Unsteer`, see relaying stop at once. Both need root (or `CAP_BPF`+`CAP_NET_ADMIN`)
+and skip without it; `make test-xdp` runs them for real in a privileged Linux container (Docker
+required, any host OS), which is also how they were run during development.

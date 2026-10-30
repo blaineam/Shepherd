@@ -233,6 +233,12 @@ type Controller struct {
 	// removed deviceState's counters again.
 	steered atomic.Pointer[map[arp.MAC]*deviceState]
 
+	// observer, when set, is told (outside mu, after the snapshot above
+	// has been republished) every time the steered set changes, so an
+	// in-kernel data plane (AttachXDP) can mirror it at once instead of
+	// finding out on its next poll. One at a time; nil means none.
+	observer atomic.Pointer[steeredSetObserver]
+
 	// Packet-rate diagnostics (ControllerStats), updated from every Relay's
 	// hot path without taking mu, like the per-device counters in
 	// deviceState: nothing on the relay's per-frame path takes a lock.
@@ -344,6 +350,77 @@ func (c *Controller) lookupSteered(mac arp.MAC) (netip.Addr, bool) {
 	return ds.ip, true
 }
 
+// steeredSetObserver mirrors the Controller's steered set somewhere else
+// (the XDP program's map). steeredSetChanged is called outside mu after
+// every Steer, Unsteer, trial expiry, health unsteer, PanicStop and Close,
+// with the complete current set; it must be quick and must not call back
+// into the Controller.
+type steeredSetObserver interface {
+	steeredSetChanged(macs []arp.MAC)
+}
+
+// setObserver installs (or, with nil, removes) the steered-set observer
+// and immediately tells a new one the current set.
+func (c *Controller) setObserver(o steeredSetObserver) {
+	if o == nil {
+		c.observer.Store(nil)
+		return
+	}
+	c.observer.Store(&o)
+	c.notifySteeredChanged()
+}
+
+// steeredMACs returns the currently steered MACs from the lock-free
+// snapshot, in no particular order.
+func (c *Controller) steeredMACs() []arp.MAC {
+	m := c.steered.Load()
+	if m == nil {
+		return nil
+	}
+	out := make([]arp.MAC, 0, len(*m))
+	for mac := range *m {
+		out = append(out, mac)
+	}
+	return out
+}
+
+func (c *Controller) notifySteeredChanged() {
+	if o := c.observer.Load(); o != nil {
+		(*o).steeredSetChanged(c.steeredMACs())
+	}
+}
+
+// recordRelayedBatch is recordRelayed for a data plane that counts in bulk
+// (AttachXDP reads the kernel's per-device counters once a second): it
+// credits packets and bytes to mac and marks it verified as of now, which
+// is what the health loop needs. A zero packets is a no-op.
+func (c *Controller) recordRelayedBatch(mac arp.MAC, packets, bytes uint64, now time.Time) {
+	if packets == 0 {
+		return
+	}
+	c.framesRelayed.Add(packets)
+	c.bytesRelayedTotal.Add(bytes)
+	m := c.steered.Load()
+	if m == nil {
+		return
+	}
+	if ds, ok := (*m)[mac]; ok {
+		ds.bytesRelayed.Add(bytes)
+		ds.packetsRelayed.Add(packets)
+		ds.lastVerifiedNanos.Store(now.UnixNano())
+		ds.everVerified.Store(true)
+		ds.healthy.Store(true)
+	}
+}
+
+// recordExaminedBatch adds to the examined-frame counters in bulk, for a
+// data plane that counts in the kernel. bytes may be zero when the data
+// plane does not track it.
+func (c *Controller) recordExaminedBatch(frames, bytes uint64) {
+	c.framesExamined.Add(frames)
+	c.bytesExamined.Add(bytes)
+}
+
 // recordRelayed is the Relay's per-frame hook, and with lookupSteered the
 // whole of what the hot path does on the Controller. Neither takes mu:
 // the global counters are atomics, and the device's own counters live in
@@ -447,6 +524,7 @@ func (c *Controller) Steer(dev DeviceRef, opts SteerOptions) error {
 	c.devices[dev.MAC] = ds
 	c.publishSnapshotLocked()
 	c.mu.Unlock()
+	c.notifySteeredChanged()
 
 	sp := NewSpoofer(SpooferConfig{
 		Sender:      c.cfg.Sender,
@@ -522,6 +600,7 @@ func (c *Controller) unsteer(mac arp.MAC, reason string) bool {
 	now := c.cfg.Clock.Now()
 	c.recordHistoryLocked(UnsteerRecord{MAC: mac, Reason: reason, Time: now})
 	c.mu.Unlock()
+	c.notifySteeredChanged()
 
 	ds.cancel()
 	select {
@@ -619,6 +698,10 @@ func (c *Controller) PanicStop() {
 		c.recordHistoryLocked(UnsteerRecord{MAC: mac, Reason: "panic stop", Time: now})
 	}
 	c.mu.Unlock()
+	// Before anything else, PanicStop included: an in-kernel data plane
+	// must stop relaying the moment the steered set is emptied, not on its
+	// next poll.
+	c.notifySteeredChanged()
 
 	for mac, ds := range devs {
 		ds.cancel()
