@@ -8,20 +8,13 @@ import {
 import { weightScale, widthPx, baseAlpha } from './weight.js';
 import { landPolygons, sampleLandPoints, coastSegments } from './topo.js';
 import * as SH from './shaders.js';
+import { LANE_CAP, COMET_CAP, PULSE_CAP, COLORS } from './palette.js';
 
-export const LANE_CAP = 300;
-export const COMET_CAP = 600;
-export const PULSE_CAP = 192;
+export { LANE_CAP, COMET_CAP, PULSE_CAP, COLORS };
 const SEG = 40;
 const INSTANCES = LANE_CAP + COMET_CAP;
 const FOV = 36;
 
-export const COLORS = {
-  allowed: [0.086, 0.78, 0.741],
-  cached: [0.416, 0.651, 0.949],
-  blocked: [0.949, 0.439, 0.42],
-  error: [0.941, 0.714, 0.29],
-};
 const WHITE = [1, 1, 1];
 
 export function webglAvailable() {
