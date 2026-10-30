@@ -13,6 +13,10 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- [docs/WATCH-MODE-COMPARISON.md](docs/WATCH-MODE-COMPARISON.md): a row-by-row, honest comparison of
+  what the DNS-only baseline already covers versus what Watch mode (one-sided ARP interception, still
+  a hand-run trial library, not wired into `cmd/shepherd` or the portal) would add once it ships —
+  written for the maintainer to point to when deciding how to present the two, not aspirational copy.
 - **Vulnerability scanning (`internal/vulnscan`):** a real vulnerability-detection layer on top of
   `internal/portscan`'s open-port findings — not "port 23 is open" but "Telnet is open" or "this OpenSSH
   build is missing a specific named fix." A small, curated, built-in signature table (no external CVE API,

@@ -9,7 +9,9 @@ with a different risk profile: this one transmits.
 `cmd/shepherd`, `internal/portal`, or any startup path constructs a `Controller` or calls `Steer`.
 The only thing that ever invokes a real `Sender` outside this package's own tests is the maintainer,
 later, deliberately, by wiring a trial UI or API — and that wiring is out of scope for this change.
-Everything below documents what the package *can* do once something chooses to use it.
+Everything below documents what the package *can* do once something chooses to use it. For what
+Watch mode would actually add over the DNS-only baseline, row by row, see
+[WATCH-MODE-COMPARISON.md](WATCH-MODE-COMPARISON.md).
 
 ## What one-sided ARP steering does
 
