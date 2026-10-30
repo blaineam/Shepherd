@@ -171,6 +171,33 @@ func TestDedupeEscalation(t *testing.T) {
 	}
 }
 
+// TestEscalationUnarchives: an archived alarm that comes back worse deserves
+// to resurface, so a dedupe repeat that escalates its severity also clears
+// Archived (see Alarm.Archived's doc comment).
+func TestEscalationUnarchives(t *testing.T) {
+	e, clk, _ := newTestEngine(t)
+	a := mustRaise(t, e, Event{Type: "custom", Key: "k", Severity: SeverityLow})
+	if _, err := e.Archive(Selector{IDs: []string{a.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := e.Get(a.ID); !got.Archived {
+		t.Fatalf("archive did not stick: %+v", got)
+	}
+	clk.Advance(time.Minute)
+	b := mustRaise(t, e, Event{Type: "custom", Key: "k", Severity: SeverityCritical})
+	if b.ID != a.ID || b.Archived || !b.ArchivedAt.IsZero() {
+		t.Fatalf("escalated repeat must unarchive: %+v", b)
+	}
+	// A repeat at the same or a lower severity leaves an archived alarm alone.
+	if _, err := e.Archive(Selector{IDs: []string{a.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	c := mustRaise(t, e, Event{Type: "custom", Key: "k", Severity: SeverityCritical})
+	if !c.Archived {
+		t.Fatalf("non-escalating repeat should leave Archived alone: %+v", c)
+	}
+}
+
 // Property: for any sequence of events over a few keys, with storm control
 // off, every event is accounted for in exactly one alarm's count, every alarm
 // notified exactly once, and an alarm is never created while an open alarm

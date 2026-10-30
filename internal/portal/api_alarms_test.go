@@ -79,6 +79,63 @@ func TestListAlarmsFiltersAndPages(t *testing.T) {
 	h.expect("GET", "/api/alarms?until=not-a-time", "", 400)
 }
 
+func TestListAlarmsExcludesArchivedByDefault(t *testing.T) {
+	h := newHarness(t)
+	id1 := h.raiseTestAlarm(alarms.TypeNewDevice, "dev1")
+	h.raiseTestAlarm(alarms.TypeUpstreamDown, "")
+	h.ok("POST", "/api/alarms/bulk", `{"ids":["`+id1+`"],"op":"archive"}`, 200)
+
+	out := h.ok("GET", "/api/alarms", "", 200)
+	if int(out["total"].(float64)) != 1 {
+		t.Fatalf("default list must hide the archived alarm: %+v", out)
+	}
+	out = h.ok("GET", "/api/alarms?include_archived=1", "", 200)
+	if int(out["total"].(float64)) != 2 {
+		t.Fatalf("include_archived=1 must reveal it: %+v", out)
+	}
+
+	outGet := h.ok("GET", "/api/alarms/"+id1, "", 200)
+	a := outGet["alarm"].(map[string]any)
+	if a["archived"] != true || a["archived_at"] == nil {
+		t.Fatalf("archived alarm fields = %+v", a)
+	}
+
+	// Summary must not count the archived alarm either.
+	sum := h.ok("GET", "/api/alarms/summary", "", 200)
+	if int(sum["total"].(float64)) != 1 {
+		t.Fatalf("summary must exclude the archived alarm: %+v", sum)
+	}
+}
+
+func TestAlarmsBulkArchiveAndUnarchive(t *testing.T) {
+	h := newHarness(t)
+	id := h.raiseTestAlarm(alarms.TypeNewDevice, "dev1")
+
+	out := h.ok("POST", "/api/alarms/bulk", `{"ids":["`+id+`"],"op":"archive"}`, 200)
+	if int(out["changed"].(float64)) != 1 {
+		t.Fatalf("bulk archive = %+v", out)
+	}
+	handle, _ := out["handle"].(string)
+	if handle == "" {
+		t.Fatalf("bulk archive did not return a handle: %+v", out)
+	}
+	got := h.ok("GET", "/api/alarms/"+id, "", 200)["alarm"].(map[string]any)
+	if got["archived"] != true || got["state"] != "new" {
+		t.Fatalf("archived alarm = %+v (archiving must not change state)", got)
+	}
+
+	out = h.ok("POST", "/api/alarms/bulk", `{"ids":["`+id+`"],"op":"unarchive"}`, 200)
+	if int(out["changed"].(float64)) != 1 {
+		t.Fatalf("bulk unarchive = %+v", out)
+	}
+	got = h.ok("GET", "/api/alarms/"+id, "", 200)["alarm"].(map[string]any)
+	if got["archived"] == true {
+		t.Fatalf("still archived: %+v", got)
+	}
+
+	h.expect("POST", "/api/alarms/bulk", `{"all":true,"op":"bogus"}`, 400)
+}
+
 func TestGetAlarmAndChildrenOfABundle(t *testing.T) {
 	h := newHarness(t)
 	id := h.raiseTestAlarm(alarms.TypeNewDevice, "dev1")

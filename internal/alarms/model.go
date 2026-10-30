@@ -136,6 +136,15 @@ type Alarm struct {
 	ParentID string `json:"parent_id,omitempty"`
 	// Notified is when the engine last decided to notify for this alarm.
 	Notified time.Time `json:"notified,omitzero"`
+	// Archived hides the alarm from the default list and summary counts
+	// without changing its State: unlike Resolve ("this is fixed"), Archive
+	// says "I don't want to see this," so a New alarm can be archived without
+	// claiming the underlying problem went away. ArchivedAt is when it was
+	// archived (zero when it is not). An escalated repeat (see
+	// Engine.foldLocked) clears it, since a bigger version of the same
+	// problem deserves to resurface.
+	Archived   bool      `json:"archived,omitempty"`
+	ArchivedAt time.Time `json:"archived_at,omitzero"`
 
 	// Sync-ready fields, as in the device registry.
 	Updated HLC    `json:"updated"`

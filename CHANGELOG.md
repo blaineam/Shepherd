@@ -13,6 +13,21 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Alarm archiving:** the Alarms view had no way to dismiss a handled alarm from the default list short
+  of resolving it (which means "this is fixed," a different claim) or waiting for retention's age/count
+  pruning to remove it outright. A new `Archived bool`/`ArchivedAt time.Time` on `alarms.Alarm`,
+  independent of `State` (an alarm in any state, including New, can be archived without claiming anything
+  was fixed), plumbed through as one more `Filter` dimension (`IncludeArchived`, excluded by default the
+  same way storm-bundle members need `IncludeChildren`) and two new batch verbs, `Engine.Archive`/
+  `Unarchive`, following the exact `selectLocked`/mutate/`emitBatch`/undo-handle pattern every other batch
+  verb already uses. An escalating repeat (a dedupe fold with a higher severity) clears `Archived`, since a
+  bigger version of a dismissed problem deserves to resurface. `GET /api/alarms` gets `include_archived`
+  (off by default — the default view is actually quieter now, not just capable of being asked to be);
+  `POST /api/alarms/bulk` gets `op: "archive"|"unarchive"` (a single alarm archives through this too,
+  `{"ids":["id"],"op":"archive"}`, rather than a dedicated route); `GET /api/alarms/summary` excludes
+  archived alarms from every count. The Alarms tab gets a "Show archived" toggle, a bulk Archive/Unarchive
+  button, and a per-row archive action next to acknowledge/resolve/mute/delete. See docs/ALARMS.md
+  ("Archiving") for the Option A vs. Option B design reasoning.
 - [docs/WATCH-MODE-COMPARISON.md](docs/WATCH-MODE-COMPARISON.md): a row-by-row, honest comparison of
   what the DNS-only baseline already covers versus what Watch mode (one-sided ARP interception, still
   a hand-run trial library, not wired into `cmd/shepherd` or the portal) would add once it ships —

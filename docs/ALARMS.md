@@ -163,9 +163,9 @@ res, err := c.Publish(ctx, ntfy.Message{
 An `Alarm` has: `ID`, `Type`, `Severity`, `Title`, `Body`, `Key` (the dedupe key), `Source`, `DeviceID`,
 `DeviceClass`, `GroupIDs`, `Domain`, `Evidence` (a list of label and value pairs), `URL` (the portal route to
 open, defaulting to `/alarms/<id>`), `State`, `FirstSeen`, `LastSeen`, `Count`, `AckedAt`, `ResolvedAt`,
-`MutedBy` (a rule ID, or `snooze`), `MutedUntil`, `Learning`, `Bundle` and `ParentID`, plus the
-sync-ready fields of the device registry: an HLC stamp (`Updated`), the writing `Node` and a `Deleted`
-tombstone.
+`MutedBy` (a rule ID, or `snooze`), `MutedUntil`, `Learning`, `Bundle`, `ParentID`, `Archived` and
+`ArchivedAt` (see "Archiving" below), plus the sync-ready fields of the device registry: an HLC stamp
+(`Updated`), the writing `Node` and a `Deleted` tombstone.
 
 **Severities**, lowest first: `info`, `low`, `medium`, `high`, `critical`.
 
@@ -174,6 +174,56 @@ notified) and `resolved` (closed; a resolved alarm fires again, as a new alarm, 
 raised).
 
 Alarms are values: the engine returns copies.
+
+## Archiving
+
+The Alarms view used to have no way to make a handled alarm go away: once resolved, it just sat in the
+default list forever (until retention's age/count pruning eventually removed it outright — see
+"Persistence" below). Archiving adds a way to dismiss an alarm from the default view without pruning it
+and without touching anything else about it.
+
+**The design decision.** Two shapes were considered:
+
+- **Option A — reuse the state model.** Treat "archived" as "the alarm is Resolved," and just change the
+  default list filter to exclude resolved (or resolved-or-muted) alarms, with a toggle to see them again.
+  Minimal: no new field, no new batch verb. Rejected because it conflates two different facts: "I fixed
+  this" (Resolve, which a repeat of the same key legitimately reopens) and "I don't want to see this
+  anymore" (dismiss from view). The maintainer's own example makes the gap concrete: a New alarm someone
+  has decided is not worth acting on (a noisy but harmless device, say) has nothing to resolve — nothing
+  was fixed — but should still be dismissible. Forcing Resolve to carry that meaning would make "resolved"
+  stop reliably meaning "fixed," which the rest of the engine (dedupe reopening a resolved alarm's key,
+  retention pruning resolved alarms sooner) relies on.
+- **Option B — a separate `Archived bool` / `ArchivedAt time.Time`, independent of `State` (chosen).**
+  Archiving is orthogonal to state: an alarm in any state (new, acknowledged, muted, even resolved) can be
+  archived or unarchived without its state changing. This is more surface area — one more field to
+  persist and sync, one more batch verb, one more `Filter` dimension — but it is honest about the actual
+  use case ("dismiss from view" is a different action from "mark resolved") and, importantly, it *composes*
+  with what already exists instead of special-casing it: `Filter` already has several independent
+  dimensions (`Types`, `Severities`, `States`, `DeviceID`, `GroupID`, a time range, `Text`, and
+  `IncludeChildren` for storm-bundle members) that each narrow a `matches` check with one more `if`;
+  `IncludeArchived` is one more of those, not a parallel code path. The batch side mirrors `Acknowledge`/
+  `Resolve` exactly: `Archive`/`Unarchive` go through the same `selectLocked` → mutate-under-lock →
+  `emitBatch` → undo-handle pipeline as every other batch verb, because they *are* just another verb.
+
+**What archiving does and does not do.** `Engine.Archive(Selector)` sets `Archived` (and `ArchivedAt`) on
+every selected alarm — and, for a storm bundle, its live members, the same way every other batch op treats
+a bundle as one unit — without touching `State`, `AckedAt`, `ResolvedAt` or mute fields. `Unarchive` clears
+it. Both return a `BatchResult` with an undo `Handle` like every other batch verb. `Filter.IncludeArchived`
+(default `false`) is the one new filter dimension: the default list and `Summary` exclude archived alarms
+exactly the way they already exclude storm-bundle members (`IncludeChildren`), so "dismiss from view" is
+the actual default behavior, not an unused query parameter nobody sets. An alarm can still be acted on
+(acknowledged, resolved, muted, deleted, or selected explicitly by ID) while archived — archiving only
+affects what the default list and the badge-counting `Summary` show.
+
+One escalation wrinkle: when a dedupe repeat raises an alarm's severity (see "Dedupe and storm control"),
+the repeat also clears `Archived`. A worse version of a problem someone dismissed deserves to resurface;
+a same-or-lower-severity repeat (the common case — most dedupe folds do not escalate) leaves `Archived`
+alone, so a dismissed alarm does not keep popping back into view just because it recurred at its original
+severity.
+
+Archived alarms are not specially retained or specially pruned: an archived New alarm still ages out after
+twice `Retention.MaxAge` like any other New alarm, an archived Resolved alarm after `Retention.MaxAge` like
+any other Resolved one. Archiving only changes what the default view shows, not how long the record lives.
 
 ## Alarm types
 
@@ -311,21 +361,26 @@ eng.Undo(res.Handle)
 ```
 
 - `Acknowledge`: new alarms become acknowledged. `Resolve`: closes alarms of any open state.
+- `Archive`/`Unarchive` set or clear `Archived` (see "Archiving" above) without touching `State`; they work
+  on an alarm in any state.
 - `Mute` builds rules from the selection by `MuteBy`: `alarm` (snooze each, no rule), `key` (one rule per
   key), `type`, `device`, `type+device` (one rule per pair), or `domain`. It mutes the other new alarms the
   rules match as well, and returns `ErrNothingToMute` when the selection has nothing to build a rule from
   (a device mute over alarms with no device).
 - `Delete` tombstones (so the deletion replicates); retention purges them later. It cannot be undone.
-- `Undo(handle)` reverses an acknowledge, resolve, mute, snooze or `CreateRule`. It removes created rules and
-  restores each alarm's previous state, but leaves alone any alarm changed again since (counted in
-  `Skipped`). A handle works once and lives for 10 minutes (the last 50 are kept).
+- `Undo(handle)` reverses an acknowledge, resolve, archive, unarchive, mute, snooze or `CreateRule`. It
+  removes created rules and restores each alarm's previous state (state and archived both), but leaves
+  alone any alarm changed again since (counted in `Skipped`). A handle works once and lives for 10 minutes
+  (the last 50 are kept).
 - Filters match `Types`, `Severities` or `MinSeverity`, `States`, `DeviceID`, `GroupID`, a `Since`/`Until`
-  time range (alarms whose first-to-last sighting overlaps it) and `Text` (case-insensitive over title, body,
-  key, source, domain, device, type and evidence).
+  time range (alarms whose first-to-last sighting overlaps it), `Text` (case-insensitive over title, body,
+  key, source, domain, device, type and evidence) and `IncludeArchived` (archived alarms are excluded by
+  default, the same way `IncludeChildren` is needed to see storm-bundle members).
 - `List(Query)` filters, sorts (`last_seen` default, `first_seen`, `severity`, `count`, `title`; newest or
   highest first unless `Asc`), and pages (`Offset`, `Limit` default 50, at most 500) with a stable order.
   `Summary()` returns counts by state, counts by severity of the new alarms (the badge numbers), the highest
-  new severity, the active rule count and the drop counter in one call.
+  new severity, the active rule count and the drop counter in one call — archived alarms are excluded from
+  all of it, so archiving a new alarm also takes it out of the badge count.
 - Large batches (over 100 alarms) emit one `ChangeBulk` instead of one change per alarm.
 
 ## Delivery
@@ -400,7 +455,7 @@ defer eng.Close()
 eng.Raise(ev) bool;  eng.RaiseSync(ev) (Alarm, error);  eng.Drain();  eng.Dropped() uint64
 eng.Subscribe(func(alarms.Change)) (unsubscribe func());  eng.Events(buffer) (<-chan Change, cancel func())
 eng.List(Query) Page;  eng.Get(id);  eng.Children(id);  eng.Summary() Summary
-eng.Acknowledge / Resolve / Delete(Selector) (BatchResult, error)
+eng.Acknowledge / Resolve / Archive / Unarchive / Delete(Selector) (BatchResult, error)
 eng.Mute(Selector, MuteRequest);  eng.Snooze(id, MuteSpec);  eng.Undo(handle)
 eng.CreateRule(RuleSpec);  eng.ListRules(includeInactive);  eng.RemoveRule(id)
 eng.Preferences();  eng.SetPreferences(p);  eng.LearningUntil();  eng.NoteDeviceSeen(id, at)
@@ -457,23 +512,32 @@ pool's own existing failover/health state.
 
 **Portal API**, under `/api/alarms`, follows the same conventions as `/api/devices`: `GET /api/alarms`
 (filters as query params: `types`, `severities`, `min_severity`, `states`, `device_id`, `group_id`,
-`since`/`until` as RFC3339, `text`, `include_children`, plus `sort`/`asc`/`offset`/`limit`), `GET
-/api/alarms/{id}` (with `children` when it is a storm bundle), `PATCH /api/alarms/{id}` (`{"state":
-"acknowledged"|"resolved"}`), `DELETE /api/alarms/{id}`, `POST /api/alarms/{id}/mute` (a `MuteSpec`
+`since`/`until` as RFC3339, `text`, `include_children`, `include_archived`, plus
+`sort`/`asc`/`offset`/`limit`; archived alarms are excluded unless `include_archived=1` is given — this is
+the one query parameter that changes the *default* response, which is the point: the default view gets
+quieter without anyone having to opt in), `GET /api/alarms/{id}` (with `children` when it is a storm
+bundle; its JSON carries `archived`/`archived_at` like any other field), `PATCH /api/alarms/{id}`
+(`{"state": "acknowledged"|"resolved"}`; archiving deliberately has no single-alarm endpoint of its own —
+see the bulk endpoint below), `DELETE /api/alarms/{id}`, `POST /api/alarms/{id}/mute` (a `MuteSpec`
 body, snoozes just that alarm), `POST /api/alarms/bulk` (`{ids|filter|all, op: "acknowledge"|"resolve"|
-"delete"|"mute", mute: {by, duration, reason}}`, mirroring `/api/devices/bulk`'s op-based shape), `POST
-/api/alarms/undo` (`{"handle": "..."}`), `GET /api/alarms/summary`, `GET /api/alarms/types`, and rules
-CRUD at `GET`/`POST /api/alarms/rules` and `DELETE /api/alarms/rules/{id}`. Every handler goes through
-the same token-and-CSRF-header `auth` middleware as the rest of the portal.
+"delete"|"mute"|"archive"|"unarchive", mute: {by, duration, reason}}`, mirroring `/api/devices/bulk`'s
+op-based shape — a single alarm is archived by sending `{"ids":["<id>"],"op":"archive"}` here rather than
+through a dedicated route, the same way the portal UI's own per-row archive button works), `POST
+/api/alarms/undo` (`{"handle": "..."}`), `GET /api/alarms/summary` (excludes archived alarms from every
+count, so an archived alarm cannot keep contributing to a badge number elsewhere in the portal), `GET
+/api/alarms/types`, and rules CRUD at `GET`/`POST /api/alarms/rules` and `DELETE /api/alarms/rules/{id}`.
+Every handler goes through the same token-and-CSRF-header `auth` middleware as the rest of the portal.
 
 **Portal UI.** A new Alarms tab (`internal/portal/web/js/alarmsview.js`, pure helpers in `js/alarms.js`)
-matches the Devices tab's structure: a `pg-head` with a severity/state filter and search box, a
-`panel-lite` table with per-row severity badges, state and relative last-seen time, single-row
-acknowledge/resolve/mute/delete, a `Selection`-backed checkbox column with a `bulkbar` for batch
-acknowledge/resolve/mute/delete (mute offers the same scopes as `alarms.MuteBy`, with sensible default
-durations — the Rules sub-view gives full control over match criteria and duration), and toasts with an
-Undo action for batch changes that return a handle. A segmented control switches to a Rules sub-view:
-create a mute rule (name, types, device IDs, domains, duration, reason) and remove existing ones.
+matches the Devices tab's structure: a `pg-head` with a severity/state filter, a search box and a "Show
+archived" checkbox (off by default, so the default view is the quieter one), a `panel-lite` table with
+per-row severity badges, state and relative last-seen time, single-row
+acknowledge/resolve/mute/archive-or-unarchive/delete, a `Selection`-backed checkbox column with a `bulkbar`
+for batch acknowledge/resolve/mute/archive (or unarchive, when "Show archived" is on)/delete (mute offers
+the same scopes as `alarms.MuteBy`, with sensible default durations — the Rules sub-view gives full control
+over match criteria and duration), and toasts with an Undo action for batch changes that return a handle.
+A segmented control switches to a Rules sub-view: create a mute rule (name, types, device IDs, domains,
+duration, reason) and remove existing ones.
 
 # Web Push in the browser
 
