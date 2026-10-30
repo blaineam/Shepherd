@@ -13,6 +13,20 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **WAN exposure for open ports (`internal/upnpigd`):** `internal/portscan` now tells you not just that a
+  port is open on the LAN, but whether your router also forwards it from the internet — the far more
+  dangerous case for the same open port. A new, read-only UPnP IGD client discovers the router over SSDP,
+  finds its WANIPConnection/WANPPPConnection control URL, and enumerates its NAT port-mapping table (never
+  calling AddPortMapping or DeletePortMapping), cached for 10 minutes by default so a slower, more fragile
+  router round trip never runs on every scan. Every open `PortRecord` gains `Exposure`: `"lan_only"`,
+  `"wan_forwarded"` or `"unknown"` — `"unknown"`, never a guess, whenever the router does not cooperate
+  (UPnP IGD disabled, or not implemented the same way by some consumer mesh systems), and the field is left
+  out entirely when the new `[portscan.wan_exposure]` config is disabled. Enabled by default, alongside
+  `[portscan]` itself (see docs/PORTSCAN.md's "Should this be on by default?" for the reasoning). The
+  portal's `GET /api/portscan*` endpoints and each device's Ports panel now surface it, with a small "WAN"
+  badge on a forwarded port's chip. See docs/PORTSCAN.md's new "WAN exposure" section for the full
+  limits — in particular, that this is best-effort and will read `unknown` for every port on any router
+  that does not answer UPnP IGD discovery at all.
 - **Vulnerability scanning (`internal/vulnscan`):** a real vulnerability-detection layer on top of
   `internal/portscan`'s open-port findings — not "port 23 is open" but "Telnet is open" or "this OpenSSH
   build is missing a specific named fix." A small, curated, built-in signature table (no external CVE API,

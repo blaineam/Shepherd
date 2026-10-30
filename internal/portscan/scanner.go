@@ -45,6 +45,14 @@ type PortRecord struct {
 	// it is newly opened.
 	Risky    bool   `json:"risky,omitempty"`
 	RiskNote string `json:"risk_note,omitempty"`
+	// Exposure is set, on every scan this port is found open, when an
+	// ExposureChecker is configured (see Options.Exposure): one of
+	// ExposureLANOnly, ExposureWANForwarded or ExposureUnknown. It is left
+	// empty — not ExposureUnknown — when no checker is configured at all,
+	// the same way Risky stays false for a port that was never on the
+	// risky list, and it is reset to empty whenever the port is not
+	// currently open: exposure is a live reading, not history.
+	Exposure Exposure `json:"exposure,omitempty"`
 }
 
 // DeviceScan is one device's scan history: its address as of the last scan,
@@ -76,6 +84,11 @@ type Options struct {
 	Concurrency int
 	// Timeout bounds one connection attempt. Default: 750ms.
 	Timeout time.Duration
+	// Exposure, when set, is asked about every port found open this scan
+	// (see Exposure, ExposureChecker and docs/PORTSCAN.md's "WAN exposure"
+	// section). Left nil (the default), WAN-exposure checking is disabled
+	// entirely and PortRecord.Exposure stays empty for every port.
+	Exposure ExposureChecker
 }
 
 // Scanner runs gentle TCP connect scans and keeps the resulting history. It
@@ -85,6 +98,7 @@ type Scanner struct {
 	ports       []int
 	concurrency int
 	timeout     time.Duration
+	exposure    ExposureChecker
 
 	// OnScan, when set, is called with the result after every completed
 	// Scan, whether triggered by Run's schedule or a manual call. Set it
@@ -127,6 +141,7 @@ func New(opts Options) *Scanner {
 		ports:       dedupeSortedInts(ports),
 		concurrency: opts.Concurrency,
 		timeout:     opts.Timeout,
+		exposure:    opts.Exposure,
 		history:     map[string]*DeviceScan{},
 	}
 	if s.dial == nil {
@@ -207,7 +222,7 @@ func (s *Scanner) Scan(ctx context.Context, targets []Target) []DeviceScan {
 		}
 		ports := open[i]
 		sort.Ints(ports)
-		out = append(out, s.recordDevice(t.DeviceID, t.IP, ports, now))
+		out = append(out, s.recordDevice(ctx, t.DeviceID, t.IP, ports, now))
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].DeviceID < out[b].DeviceID })
 
@@ -219,7 +234,7 @@ func (s *Scanner) Scan(ctx context.Context, targets []Target) []DeviceScan {
 
 // recordDevice folds one device's freshly observed open ports into its
 // stored history and returns the updated, caller-owned copy.
-func (s *Scanner) recordDevice(id, ip string, open []int, now time.Time) DeviceScan {
+func (s *Scanner) recordDevice(ctx context.Context, id, ip string, open []int, now time.Time) DeviceScan {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -271,9 +286,20 @@ func (s *Scanner) recordDevice(id, ip string, open []int, now time.Time) DeviceS
 		}
 		rec.NewlyOpened = isOpen && !wasOpen && !firstScan
 		rec.Risky, rec.RiskNote = false, ""
+		rec.Exposure = ""
 		if isOpen {
 			if note, risky := IsRisky(p); risky {
 				rec.Risky, rec.RiskNote = true, note
+			}
+			if s.exposure != nil {
+				rec.Exposure = ExposureUnknown
+				if wan, ok := s.exposure.Exposure(ctx, ip, p); ok {
+					if wan {
+						rec.Exposure = ExposureWANForwarded
+					} else {
+						rec.Exposure = ExposureLANOnly
+					}
+				}
 			}
 		}
 		next = append(next, rec)

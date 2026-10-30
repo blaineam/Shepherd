@@ -20,16 +20,9 @@ is built to be gentle and unmistakably non-aggressive, even to your own router o
 
 ### What it does not do (yet)
 
-**Router port-forwarding discovery is not built.** Knowing what Shepherd's scanner finds on the LAN is
-only half the exposure picture: the other half is what your router forwards from the internet to a LAN
-device, which is a completely different question this feature does not answer. There is no reliable,
-generic API across home routers for reading forwarding rules, so this was deliberately left out of this
-pass rather than faked or guessed at from one specific router's unofficial API. It needs real router API
-support, which does not exist yet; see the [roadmap](ROADMAP.md).
-
-Also not built: no vulnerability scanning, no credential checking, no service version detection. A device
-reported as having port 23 open just means something answered a TCP connection on port 23. Shepherd does
-not try to find out what.
+Not built: no vulnerability scanning (see [VULNSCAN.md](VULNSCAN.md), which deepens this feature's own
+findings), no credential checking, no service version detection. A device reported as having port 23 open
+just means something answered a TCP connection on port 23. Shepherd does not try to find out what.
 
 ## The port list
 
@@ -94,11 +87,73 @@ Per device, per port, Shepherd keeps:
 - when it was first ever found open, and when it was last found open;
 - whether it was newly opened **this scan** (closed or unseen last time, open now — never set on a
   device's very first scan, since there is nothing yet to compare against);
-- whether it is on the risky list, and why.
+- whether it is on the risky list, and why;
+- its WAN exposure, when `[portscan.wan_exposure]` is enabled (below).
 
 A port that has never been found open has no record at all: history only grows for what is actually there.
 A port that closes again keeps its record (open: false, with its first/last-seen times) rather than being
 forgotten, so "this was open for a while and is now closed" stays visible.
+
+## WAN exposure
+
+Knowing what the scanner finds on the LAN is only half the exposure picture. The other half, and the far
+more dangerous one, is whether the internet can reach that same port: an exposed Telnet or Docker API on
+the LAN is bad; the same thing reachable from the WAN is much worse. `internal/upnpigd` is a small,
+read-only client for one real, standard signal for this: **UPnP IGD** (Internet Gateway Device), the
+protocol a huge range of home routers already speak on the LAN, and the same one game consoles, torrent
+clients and VoIP apps already use to ask "what's forwarded right now." It:
+
+1. discovers the router's IGD over SSDP (a UDP multicast `M-SEARCH` to the standard SSDP address, `239.255.255.250:1900` — the same on every network, not a detail of any one install); <!-- leakcheck:allow -->
+2. fetches and parses its device description to find the `WANIPConnection` or `WANPPPConnection` control URL;
+3. calls that service's `GetGenericPortMappingEntry` SOAP action repeatedly to enumerate the router's whole
+   NAT port-mapping table.
+
+It never calls `AddPortMapping` or `DeletePortMapping`. Shepherd only ever asks what is already forwarded;
+it never changes it.
+
+For every port a scan finds open, `internal/portscan.PortRecord.Exposure` is then set to one of:
+
+| Value | Meaning |
+|---|---|
+| `lan_only` | The router's NAT table was read successfully and this exact LAN IP:port is not in it. |
+| `wan_forwarded` | The router's NAT table has an enabled mapping forwarding this exact LAN IP:port from the WAN. |
+| `unknown` | The check could not be made this round. See below. |
+
+The field is simply **absent** (not `unknown`) for a port on a device when `[portscan.wan_exposure]` is
+disabled: absence always means "not checked," never "safe."
+
+### Why "unknown" will show up, and what it does not mean
+
+This is a best-effort signal with two real limits, stated as plainly as the rest of this page:
+
+- **UPnP IGD can only ever report what was forwarded *through it*.** A port made reachable from the WAN by
+  any other means — a manual NAT rule configured outside UPnP, a DMZ host, a device with its own direct
+  public address — is invisible to this check, and indistinguishable here from a port that genuinely is not
+  exposed at all. `lan_only` means "not forwarded via UPnP," not "not reachable from the internet."
+- **Not every router answers UPnP IGD discovery from a LAN client at all.** Some disable it by default;
+  some consumer mesh systems (eero, among others) are known not to implement the classic IGD control
+  surface the way a traditional router does, or restrict it. When nothing answers SSDP, or discovery
+  succeeds but the device description has no `WANIPConnection`/`WANPPPConnection` service, or a SOAP call
+  fails, every port gets `unknown` — not a guess at `lan_only` or `wan_forwarded`. For a household on one of
+  those routers, **every port will show `unknown`, every time, forever**, and that is the honest answer,
+  not a bug. This feature was not verified against the maintainer's own router hardware; the realistic
+  expectation, going in, is that a meaningful fraction of installs will see `unknown` across the board.
+
+A failed check never falls back to a previously cached table, either: once a refresh fails, every lookup
+reports `unknown` until a refresh succeeds again, so exposure is never shown stale (see "Caching," below).
+The first time the router stops answering, Shepherd logs it once ("log once, never spam," the same
+convention `cmd/shepherd/geoblock.go` uses for its own always-on dependency check); it does not repeat that
+log line on every later failure.
+
+### Caching
+
+A UPnP discovery-and-enumerate round trip is slower and far more fragile than internal/portscan's own TCP
+connect probes, so it is not repeated on every scan or every port. `internal/upnpigd.Checker` queries the
+router's whole NAT table at once and caches it for `refresh_interval_seconds` (10 minutes by default);
+every `Exposure` lookup for every open port on every device, in between, is answered from that cache at no
+network cost. Enumerating the whole table once per refresh, rather than looking up each open port
+individually, is also the cheaper approach once more than one device has open ports to check, since it is
+one router round trip no matter how many ports or devices a scan cycle covers.
 
 ## Should this be on by default?
 
