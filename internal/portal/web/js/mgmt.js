@@ -82,5 +82,10 @@ export function createMgmt(api) {
     trustedDevices: () => api('/api/trusted-devices'),
     revokeTrustedDevice: (id) => api('/api/trusted-devices/' + encodeURIComponent(id), { method: 'DELETE' }),
     lock: () => post('/api/lock', {}),
+
+    vulnscanStatus: () => api('/api/vulnscan'),
+    vulnscanDevices: () => api('/api/vulnscan/devices'),
+    vulnscanDevice: (id) => api('/api/vulnscan/devices/' + encodeURIComponent(id)),
+    scanVulns: (deviceId) => post('/api/vulnscan/scan', deviceId ? { device_id: deviceId } : {}),
   };
 }

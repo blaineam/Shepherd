@@ -193,3 +193,17 @@ test('locking endpoints', async () => {
   await m.lock();
   assert.deepEqual([calls[5][0], calls[5][1].method], ['/api/lock', 'POST']);
 });
+
+test('vulnscan endpoints', async () => {
+  const { calls, m } = rig();
+  await m.vulnscanStatus();
+  assert.equal(calls[0][0], '/api/vulnscan');
+  await m.vulnscanDevices();
+  assert.equal(calls[1][0], '/api/vulnscan/devices');
+  await m.vulnscanDevice('d 1');
+  assert.equal(calls[2][0], '/api/vulnscan/devices/d%201');
+  await m.scanVulns();
+  assert.deepEqual([calls[3][0], calls[3][1].method, calls[3][1].body], ['/api/vulnscan/scan', 'POST', '{}']);
+  await m.scanVulns('d1');
+  assert.equal(calls[4][1].body, '{"device_id":"d1"}');
+});

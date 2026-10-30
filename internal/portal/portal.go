@@ -31,6 +31,7 @@ import (
 	"shepherd/internal/importers"
 	"shepherd/internal/portscan"
 	"shepherd/internal/settings"
+	"shepherd/internal/vulnscan"
 )
 
 // Only what the browser needs is embedded: the page, its modules and vendored
@@ -113,6 +114,16 @@ type Deps struct {
 	// IdleLockMinutes is the configured default idle-lock timeout (0 = never).
 	// A value saved from the portal's own settings screen wins over it.
 	IdleLockMinutes int
+
+	// Vulnscan runs and remembers the gentle vulnerability-signature probes
+	// of ports Portscan found open (docs/VULNSCAN.md). Nil gives a scanner
+	// that works (a manual scan is still possible, though it will have
+	// nothing to probe without Portscan feeding it) but is never run on a
+	// schedule and persists nothing.
+	Vulnscan *vulnscan.Scanner
+	// VulnscanEnabled reports whether cmd/shepherd started Vulnscan's
+	// scheduled scan, for the status endpoint.
+	VulnscanEnabled bool
 }
 
 type Server struct {
@@ -168,6 +179,9 @@ func New(d Deps) *Server {
 	}
 	if d.GeoBlock == nil {
 		d.GeoBlock, _ = dnsengine.OpenGeoBlockStore("") // empty path never errors
+	}
+	if d.Vulnscan == nil {
+		d.Vulnscan = vulnscan.New(vulnscan.Options{})
 	}
 	if d.Heartbeat <= 0 {
 		d.Heartbeat = 15 * time.Second
@@ -481,4 +495,9 @@ func (s *Server) routes() {
 	h("GET /api/portscan/devices", s.listPortscanDevices)
 	h("GET /api/portscan/devices/{id}", s.getPortscanDevice)
 	h("POST /api/portscan/scan", s.scanNow)
+
+	h("GET /api/vulnscan", s.getVulnscan)
+	h("GET /api/vulnscan/devices", s.listVulnscanDevices)
+	h("GET /api/vulnscan/devices/{id}", s.getVulnscanDevice)
+	h("POST /api/vulnscan/scan", s.vulnscanNow)
 }

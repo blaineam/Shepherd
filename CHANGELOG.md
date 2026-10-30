@@ -13,6 +13,22 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Vulnerability scanning (`internal/vulnscan`):** a real vulnerability-detection layer on top of
+  `internal/portscan`'s open-port findings — not "port 23 is open" but "Telnet is open" or "this OpenSSH
+  build is missing a specific named fix." A small, curated, built-in signature table (no external CVE API,
+  matching this project's no-paid-API convention) covers SSH protocol 1 and outdated OpenSSH, unencrypted/
+  anonymous FTP and the vsftpd 2.3.4 backdoor, outdated Apache/nginx/lighttpd banners, an unauthenticated
+  Docker API and SMBv1 still being enabled. Every signature needs a gentle, protocol-appropriate probe to
+  actually confirm exposure (a banner read, one HTTP request, one well-known anonymous FTP login, one raw
+  SMBv1 negotiate packet) through the same injectable-dial-function seam `internal/portscan.Scanner`
+  already uses, so tests touch zero real sockets. Wired into `cmd/shepherd` (`[vulnscan]`, enabled by
+  default, needs `[portscan]` enabled too — see docs/VULNSCAN.md for why), a new `alarms.TypeVulnerabilityFound`
+  alarm type (raised once per newly-found vulnerability per device, never suppressed by learning mode —
+  this feature's whole point is telling the owner about exposure found on day one; a finding that clears
+  resolves the alarm rather than leaving it to linger), and the portal (`GET /api/vulnscan`, `GET
+  /api/vulnscan/devices[/{id}]`, `POST /api/vulnscan/scan`), with a Vulnerabilities panel in each device's
+  drawer (reusing the Ports panel's layout and a scan-now button) showing active findings with a severity
+  badge, description and evidence, plus a collapsed "N resolved" history. See docs/VULNSCAN.md.
 - **Import wired into the portal:** the Devices screen's new "Import" modal drives `internal/importers`
   end to end — CSV upload or eero login (phone/email, then the code eero sends, then a network), a
   dry-run preview of what would be created or changed, and an apply step, matching the Devices tab's

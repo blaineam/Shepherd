@@ -36,6 +36,7 @@ type Config struct {
 	Alarms         Alarms         `toml:"alarms"`
 	Accountability Accountability `toml:"accountability"`
 	Portscan       Portscan       `toml:"portscan"`
+	Vulnscan       Vulnscan       `toml:"vulnscan"`
 }
 
 // ARP controls the passive ARP monitor (docs/ARP.md): a read-only listener
@@ -169,6 +170,24 @@ type Portscan struct {
 	IntervalSeconds int `toml:"interval_seconds"`
 }
 
+// Vulnscan schedules internal/vulnscan's deeper probe of every open port
+// internal/portscan already found: a banner or minimal protocol exchange,
+// matched against a small, curated, built-in vulnerability signature list
+// (no external CVE API — see docs/VULNSCAN.md). Enabled defaults true, for
+// the same reason Portscan does (the whole value of the feature is the
+// owner learning about exposure they did not expect), weighed again for
+// this feature's own, slightly deeper probing in docs/VULNSCAN.md's "Should
+// this be on by default?" section. It needs Portscan enabled: with no
+// open-port data to deepen, cmd/shepherd logs a warning and does not start
+// it (see cmd/shepherd/vulnscan.go).
+type Vulnscan struct {
+	Enabled bool `toml:"enabled"`
+	// IntervalSeconds is how often every device with open ports is
+	// reprobed. Daily by default: this is a deeper, slower probe than
+	// Portscan's own connect scan.
+	IntervalSeconds int `toml:"interval_seconds"`
+}
+
 // History controls what is remembered after the fact. "memory" (the default)
 // keeps recent queries in RAM only and writes nothing to disk. "encrypted"
 // keeps a searchable, AES-256-GCM encrypted record on disk.
@@ -251,6 +270,7 @@ func Default() Config {
 		Alarms:         Alarms{Enabled: true, Ntfy: AlarmsNtfy{Topic: "shepherd-alarms"}},
 		Accountability: Accountability{Enabled: true, SMTP: AccountabilitySMTP{Port: 587, TLS: "starttls"}},
 		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600},
+		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600},
 		DataDir:        "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
@@ -345,6 +365,9 @@ func (c Config) Validate() error {
 	}
 	if c.Portal.IdleLockMinutes < 0 {
 		return errors.New("portal.idle_lock_minutes must not be negative")
+	}
+	if c.Vulnscan.IntervalSeconds < 300 {
+		return errors.New("vulnscan.interval_seconds must be at least 300")
 	}
 	if s := c.Devices.ReverseDNSServer; s != "" {
 		host := s

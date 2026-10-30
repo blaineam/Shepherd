@@ -199,6 +199,7 @@ alarm is recorded at medium severity on all channels, so a typo never loses an a
 | `new-inbound-exposure` (future) | critical | all | no |
 | `threat-match` (future) | critical | all | no |
 | `self-update` (future) | low | all | no |
+| `vulnerability-found` (internal/vulnscan) | high (the finding's own severity overrides this per event) | all | no |
 | `test` | high | all | no, and it **bypasses** mute rules, quiet hours and learning mode |
 
 "Install and device" means the type is also suppressed for a device that was first seen recently (see

@@ -189,6 +189,16 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 			return err
 		}
 		deps.Portscan, deps.PortscanEnabled = scanner, true
+
+		if cfg.Vulnscan.Enabled {
+			vulnScanner, err := startVulnscan(ctx, cfg, registry, scanner, deps.Alarms)
+			if err != nil {
+				return err
+			}
+			deps.Vulnscan, deps.VulnscanEnabled = vulnScanner, true
+		}
+	} else if cfg.Vulnscan.Enabled {
+		log.Printf("vulnscan: disabled because portscan is disabled (vulnscan deepens portscan's own open-port findings and has nothing to probe without it)")
 	}
 
 	if cfg.History.Mode == "encrypted" {
