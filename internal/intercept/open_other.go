@@ -15,3 +15,6 @@ var ErrUnsupported = errors.New("intercept: raw frame injection is not supported
 // reports that a real Sender is unavailable; the rest of this package
 // (Spoofer, Relay, Controller) works everywhere against FakeSender.
 func Open(iface string) (Sender, error) { return nil, ErrUnsupported }
+
+// OpenMany, like Open, is Linux only.
+func OpenMany(iface string, n int) ([]Sender, error) { return nil, ErrUnsupported }

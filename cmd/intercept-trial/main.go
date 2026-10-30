@@ -20,11 +20,16 @@
 //     CAP_NET_ADMIN as well as CAP_NET_RAW) and always restored on exit, so
 //     a real captured frame is never a kernel-coalesced super-frame larger
 //     than the wire allows — see the comment above the GRO handling below.
+//
+// Capture and relay run across -workers parallel goroutines via
+// Controller.ParallelRelay (internal/intercept/capture_linux.go), not one:
+// a real, sustained transfer through a single capture/relay goroutine was
+// observed to cut a steered device's throughput to roughly a third, and
+// PACKET_FANOUT-based parallelism is the fix. See docs/INTERCEPT.md.
 package main
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
@@ -58,6 +63,7 @@ func run() error {
 	targetIPFlag := flag.String("target-ip", "", "IPv4 address of the one device to steer (required)")
 	confirmFlag := flag.String("confirm", "", "must exactly repeat -target-mac, as a typo guard")
 	duration := flag.Duration("duration", 45*time.Second, "trial duration; auto-reverts on its own, capped at 5m")
+	workers := flag.Int("workers", intercept.DefaultParallelism, "parallel capture/relay workers (PACKET_FANOUT); more cores, more throughput")
 	flag.Parse()
 
 	if *gatewayIPFlag == "" || *gatewayMACFlag == "" || *targetMACFlag == "" || *targetIPFlag == "" {
@@ -137,12 +143,6 @@ func run() error {
 		log.Printf("GRO already off on %s", *iface)
 	}
 
-	rawCap, err := openCapture(*iface)
-	if err != nil {
-		return fmt.Errorf("intercept-trial: capture: %w", err)
-	}
-	defer rawCap.Close()
-
 	ctrl, err := intercept.NewController(intercept.ControllerConfig{
 		Sender:      sender,
 		ShepherdMAC: shepherdMAC,
@@ -159,9 +159,19 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	go pumpCapture(ctx, rawCap, ctrl)
+	// ParallelRelay opens its own n capture sockets and n Senders (a
+	// PACKET_FANOUT group, one goroutine each), independent of the single
+	// sender above (which only ever carries the Spoofer's low-volume
+	// periodic ARP claims). This is what makes the relay path itself use
+	// more than one core; see internal/intercept/capture_linux.go.
+	go func() {
+		if err := ctrl.ParallelRelay(ctx, *iface, *workers); err != nil && ctx.Err() == nil {
+			log.Printf("ParallelRelay: %v", err)
+		}
+	}()
 
 	log.Printf("shepherd: %s (%s)  gateway: %s (%s)", shepherdMAC, *iface, gatewayMAC, gatewayIP)
+	log.Printf("relaying across %d parallel workers", *workers)
 	log.Printf("steering %s (%s) for %s, trial mode (auto-revert)", targetMAC, targetIP, *duration)
 
 	if err := ctrl.Steer(intercept.DeviceRef{MAC: targetMAC, IP: targetIP}, intercept.SteerOptions{
@@ -244,68 +254,4 @@ func formatSince(t time.Time) string {
 		return "never"
 	}
 	return time.Since(t).Round(time.Millisecond).String() + " ago"
-}
-
-// capture is a read-only AF_PACKET SOCK_RAW socket bound to one interface
-// with EtherType ETH_P_ALL, used only to feed Controller.HandleFrame. It
-// never sends anything; sending is Sender's job, opened separately above.
-type capture struct {
-	fd int
-}
-
-const ethPAll = 0x0003
-
-func openCapture(iface string) (*capture, error) {
-	ifc, err := net.InterfaceByName(iface)
-	if err != nil {
-		return nil, err
-	}
-	fd, err := syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW|syscall.SOCK_CLOEXEC, int(htons(ethPAll)))
-	if err != nil {
-		return nil, fmt.Errorf("raw socket (needs CAP_NET_RAW): %w", err)
-	}
-	addr := &syscall.SockaddrLinklayer{Protocol: htons(ethPAll), Ifindex: ifc.Index}
-	if err := syscall.Bind(fd, addr); err != nil {
-		syscall.Close(fd)
-		return nil, fmt.Errorf("bind %q: %w", iface, err)
-	}
-	return &capture{fd: fd}, nil
-}
-
-func htons(v uint16) uint16 {
-	b := make([]byte, 2)
-	binary.BigEndian.PutUint16(b, v)
-	return binary.LittleEndian.Uint16(b)
-}
-
-func (c *capture) Close() error { return syscall.Close(c.fd) }
-
-// pumpCapture reads frames off the wire and feeds every one to the
-// Controller until ctx is done. HandleFrame itself ignores anything that
-// isn't addressed to Shepherd's MAC from a currently steered device, so
-// feeding it unfiltered traffic (including our own ARP and relayed frames
-// looping back) is safe and cheap.
-func pumpCapture(ctx context.Context, rawCap *capture, ctrl *intercept.Controller) {
-	buf := make([]byte, 65536)
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-		tv := syscall.Timeval{Sec: 0, Usec: 250000}
-		_ = syscall.SetsockoptTimeval(rawCap.fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
-		n, _, err := syscall.Recvfrom(rawCap.fd, buf, 0)
-		if err != nil {
-			if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
-				continue
-			}
-			if ctx.Err() != nil {
-				return
-			}
-			time.Sleep(50 * time.Millisecond)
-			continue
-		}
-		if _, err := ctrl.HandleFrame(buf[:n]); err != nil {
-			log.Printf("relay error: %v", err)
-		}
-	}
 }

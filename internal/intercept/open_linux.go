@@ -26,6 +26,38 @@ import (
 
 // Open binds a send-only raw Ethernet Sender to the named interface.
 func Open(iface string) (Sender, error) {
+	s, err := openOne(iface)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// OpenMany opens n independent send-only raw Ethernet Senders on the same
+// interface, each its own socket with no shared state (no mutex, no fd) so
+// n callers can send concurrently without ever contending on each other.
+// It exists for ParallelRelay: one Sender per capture worker, so a packet
+// relayed by worker 2 never waits on worker 1's send. If any socket fails
+// to open, every socket already opened in this call is closed first.
+func OpenMany(iface string, n int) ([]Sender, error) {
+	if n < 1 {
+		n = 1
+	}
+	out := make([]Sender, 0, n)
+	for i := 0; i < n; i++ {
+		s, err := openOne(iface)
+		if err != nil {
+			for _, prior := range out {
+				_ = prior.(*rawSender).Close()
+			}
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+func openOne(iface string) (*rawSender, error) {
 	ifc, err := net.InterfaceByName(iface)
 	if err != nil {
 		return nil, fmt.Errorf("intercept: interface %q: %w", iface, err)

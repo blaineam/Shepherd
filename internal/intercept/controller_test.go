@@ -214,6 +214,41 @@ func TestSteerRelayFlowIncreasesByteCountersAndStaysHealthy(t *testing.T) {
 	}
 }
 
+func TestNewRelaySharesControllerStateAcrossSeparateSenders(t *testing.T) {
+	onUnsteer, unsteerCh := onUnsteerChan()
+	c, _, _ := newTestController(t, func(cfg *ControllerConfig) { cfg.OnUnsteer = onUnsteer })
+	if err := c.Steer(DeviceRef{MAC: devMAC, IP: devIP}, SteerOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A second Relay, on a completely separate Sender, as ParallelRelay
+	// builds one per capture worker: it must still see (and feed into)
+	// the same steered set, byte counters and health as the Controller's
+	// own relay, with nothing routed through the first Sender at all.
+	otherSender := NewFakeSender()
+	other := c.NewRelay(otherSender)
+
+	frame := ethFrame(shepherdMAC, devMAC, 0x0800, []byte("via the second relay"))
+	ok, err := other.HandleFrame(frame)
+	if err != nil || !ok {
+		t.Fatalf("HandleFrame via NewRelay: ok=%v err=%v", ok, err)
+	}
+	if got := len(otherSender.Frames()); got != 1 {
+		t.Fatalf("otherSender got %d frames, want 1", got)
+	}
+
+	st := c.Status()
+	if len(st) != 1 || st[0].BytesRelayed != uint64(len(frame)) || !st[0].Healthy {
+		t.Fatalf("Status() = %+v, want one healthy device with %d bytes relayed", st, len(frame))
+	}
+
+	select {
+	case r := <-unsteerCh:
+		t.Fatalf("device was unsteered unexpectedly: %+v", r)
+	default:
+	}
+}
+
 func TestHandleFrameOnUnsteeredControllerIgnoresEverything(t *testing.T) {
 	c, sender, _ := newTestController(t, nil)
 	ok, err := c.HandleFrame(ethFrame(shepherdMAC, devMAC, 0x0800, []byte("x")))

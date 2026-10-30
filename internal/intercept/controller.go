@@ -234,6 +234,34 @@ func (c *Controller) HandleFrame(raw []byte) (bool, error) {
 	return c.relay.HandleFrame(raw)
 }
 
+// NewRelay returns an additional Relay wired to this Controller's own
+// internal state (the same Lookup, OnRelayed, OnRelayError and Now as the
+// Controller's own relay) but sending through sender instead of the
+// Controller's own Sender. Every Relay returned this way, and the
+// Controller's own, publish into and read from the same steered set,
+// byte counters and health state; Steer, Unsteer, PanicStop and Status
+// see them as one thing.
+//
+// This exists so a caller that wants to spread one steered device's
+// traffic across several concurrent readers and senders (several raw
+// sockets, each on its own goroutine, for real multi-core throughput
+// instead of one serialized path) can build one Relay per sender and run
+// them in parallel, without the Controller's safety-critical state ever
+// being duplicated or raced. ParallelRelay (Linux only) is the ready-made
+// version of exactly this.
+func (c *Controller) NewRelay(sender Sender) *Relay {
+	return &Relay{
+		Sender:       sender,
+		ShepherdMAC:  c.cfg.ShepherdMAC,
+		GatewayMAC:   c.cfg.GatewayMAC,
+		SendTimeout:  c.cfg.SendTimeout,
+		Lookup:       c.lookupSteered,
+		OnRelayed:    c.recordRelayed,
+		OnRelayError: c.recordRelayError,
+		Now:          c.cfg.Clock.Now,
+	}
+}
+
 func (c *Controller) lookupSteered(mac arp.MAC) (netip.Addr, bool) {
 	m := c.steered.Load()
 	if m == nil {

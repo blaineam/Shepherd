@@ -33,6 +33,26 @@ to fix.** One-sided ARP steering gives upload/outbound-direction visibility and 
 - Two-sided interception (spoofing the device's IP to the gateway too) or Gateway mode would close
   this gap; that is tracked as future work in DESIGN.md, not something this package attempts.
 
+## Throughput: a real cost while a device is steered
+
+Measured live, against a real phone pushing a sustained transfer: a single capture-and-relay
+goroutine capped that device's throughput at roughly a third of its unsteered speed (observed
+~1.1 Gbps unsteered, ~370 Mbps while steered on a single goroutine). Nothing broke — every frame was
+still relayed correctly, with zero errors — it was simply slower, because every outbound frame now
+makes an extra hop through one user-space Go process doing one blocking read, one lookup, and one
+blocking write, in sequence, for every single packet.
+
+`Controller.ParallelRelay` fixes this by splitting one interface's capture across several
+`PACKET_FANOUT` workers (`capture_linux.go`), each with its own capture socket and its own `Sender`
+(`OpenMany`), so several goroutines read, decide, and send truly in parallel instead of one
+serializing everything. `cmd/intercept-trial` uses it by default (`-workers`, default
+`DefaultParallelism`); so should anything that wires Watch mode into `cmd/shepherd` later.
+
+Still true even with that fix: this is a software relay, not a hardware switch, so steering a device
+will never be perfectly free. Treat a short, deliberate trial as the right scope for paying that
+cost today; making Watch mode something left on indefinitely needs this measured again, at the
+parallelism level that actually ships, before it is trusted the way the DNS engine is.
+
 ## IPv4 only, no exceptions
 
 IPv6 and NDP are never touched anywhere in this package. This is a hard rule carried over from
@@ -120,13 +140,11 @@ exist yet):
 ## The one-off trial harness
 
 `cmd/intercept-trial` is exactly that first trial, made runnable: a standalone CLI (Linux-only,
-build-tagged) that wires a `Controller` as above, adds its own minimal `AF_PACKET`/`ETH_P_ALL`
-capture loop to feed `HandleFrame` (the only piece the library itself does not provide — see
-`sender.go`'s comment on why `internal/arp`'s read side is ARP-only), and steers exactly one device
-named twice on the command line (`-target-mac` and `-confirm`, which must match byte for byte) for a
-mandatory, capped (5 minutes max) trial duration. It is **not** built, run, or shipped by anything in
-`cmd/shepherd`; it is a separate binary the maintainer builds and runs by hand, once, watching
-`Status()` scroll by, with Ctrl-C wired to `PanicStop` + `Close`.
+build-tagged) that wires a `Controller` as above, relays through `ParallelRelay` (see "Throughput"
+above), and steers exactly one device named twice on the command line (`-target-mac` and `-confirm`,
+which must match byte for byte) for a mandatory, capped (5 minutes max) trial duration. It is **not**
+built, run, or shipped by anything in `cmd/shepherd`; it is a separate binary the maintainer builds
+and runs by hand, once, watching `Status()` scroll by, with Ctrl-C wired to `PanicStop` + `Close`.
 
 It also disables GRO (generic-receive-offload) on the interface for the trial's duration and always
 restores it on exit, including on a signal: GRO coalesces several inbound TCP segments into one
@@ -149,10 +167,16 @@ with the maintainer's explicit go-ahead.
 - `sender.go` — the `Sender` interface (`Send(Frame) error`, the one-method mirror of
   `internal/arp`'s `Source.Next`), `FakeSender` for tests, and the bounded `sendWithTimeout` helper
   every send in this package goes through.
-- `open_linux.go` *(build-tagged `linux`)* — the only code that touches a socket: an `AF_PACKET`
-  `SOCK_RAW` sender, write-only, needing `CAP_NET_RAW`. Thin by necessity and not exercised by this
-  package's own tests, the same pattern `internal/arp/open_linux.go` already uses on the read side.
-  `open_other.go` reports `ErrUnsupported` everywhere else.
+- `open_linux.go` *(build-tagged `linux`)* — the only code that touches a send socket: `AF_PACKET`
+  `SOCK_RAW` senders, write-only, needing `CAP_NET_RAW`. `Open` returns one; `OpenMany` returns `n`
+  independent ones (no shared fd, no shared mutex), for `ParallelRelay`. Thin by necessity and not
+  exercised by this package's own tests, the same pattern `internal/arp/open_linux.go` already uses
+  on the read side. `open_other.go` reports `ErrUnsupported` everywhere else.
+- `capture_linux.go` *(build-tagged `linux`)* — the read side: `n` `AF_PACKET` sockets joined to one
+  `PACKET_FANOUT` group (hashed by flow, so one connection never gets reordered across workers), and
+  `Controller.ParallelRelay`, which pairs each capture socket with one of `OpenMany`'s senders via
+  `NewRelay` and runs each pair on its own goroutine. This is what makes the relay path use more than
+  one core; see "Throughput" above. `capture_other.go` reports `ErrUnsupported` everywhere else.
 - `clock.go` — the `Clock` interface and `FakeClock`, so the Spoofer's periodic resend and the
   Controller's health loop and trial timers are all tested with no real sleeps.
 - `spoofer.go` — `Spoofer`: one device's periodic claim and its corrective revert on stop, panic, or
@@ -160,7 +184,9 @@ with the maintainer's explicit go-ahead.
 - `relay.go` — `Relay`: rewrites and retransmits a steered device's outbound frames; filters out ARP
   and IPv6 before anything else runs.
 - `controller.go` — `Controller`: the safety-governed authority described above. `Steer`, `Unsteer`,
-  `PanicStop`, `Rearm`, `Status`, `History`, `Close`, `HandleFrame`.
+  `PanicStop`, `Rearm`, `Status`, `History`, `Close`, `HandleFrame`, and `NewRelay` (an additional
+  `Relay` sharing this Controller's state but with its own `Sender`, which is all `ParallelRelay` is
+  built from).
 
 ## Tests
 
