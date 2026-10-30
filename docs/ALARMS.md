@@ -120,3 +120,36 @@ malicious subscription must not make the server call an internal address.
   also forces no-redirect on any client injected into it.
 - Tests inject `webpush.AllowAnyEndpoint` and an `httptest` TLS client to reach loopback. Never use that
   override outside tests.
+
+# ntfy (`internal/ntfy`)
+
+ntfy is a simple publish-subscribe notification service with phone apps. It is
+Shepherd's fallback channel and can run self-hosted on the LAN or the tailnet.
+
+```go
+c := &ntfy.Client{Server: "https://ntfy.example.com", Token: token} // or Username and Password
+res, err := c.Publish(ctx, ntfy.Message{
+    Topic: "shepherd-alarms", Title: "New device", Body: "A device joined.",
+    Priority: ntfy.PriorityHigh, Tags: []string{"rotating_light"},
+    Click: "https://shepherd.example.com/alarms/a1",
+    Actions: []ntfy.Action{{Kind: "view", Label: "Open", URL: "https://shepherd.example.com/alarms/a1"}},
+})
+```
+
+- The message is the request body of a `POST` to `{server}/{topic}`; `Title`, `Priority`, `Tags`, `Click`
+  and `Actions` are headers. A server URL with a path prefix works (`https://host/ntfy`).
+- `Authorization` is a bearer token, or basic auth when only a username and password are set.
+- **Header injection safety.** Every value that becomes a header (title, tags, click URL, action label
+  and URL, token, username, password) is rejected if it contains a control character, CR and LF
+  included. Non-ASCII text is sent RFC 2047 encoded, which ntfy decodes. Topics are 1 to 64 letters,
+  digits, `-` or `_`. Click and action URLs must be `http(s)`. Bodies over 4096 bytes are cut on a rune
+  boundary.
+- **Severity mapping:** `ntfy.PriorityFor` maps `info`, `low`, `medium`, `high`, `critical` to `min`,
+  `low`, `default`, `high`, `urgent`. `ntfy.TagsFor` adds emoji short codes: `information_source`,
+  `white_check_mark`, `warning`, `rotating_light`, and `rotating_light` plus `skull` for critical.
+- **Errors** are `*ntfy.Error` with a `Kind` (invalid, auth, not-found, too-large, rate-limited, server,
+  network, rejected), the HTTP status and `RetryAfter`; `ntfy.IsRetryable(err)` is true for rate limits,
+  5xx and network failures. Network errors never include the URL. A publish times out after 10 seconds
+  by default.
+- The server URL is operator configuration, so unlike Web Push this client does not refuse private
+  addresses: a self-hosted ntfy normally lives on one.
