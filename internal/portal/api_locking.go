@@ -88,6 +88,19 @@ func (s *Server) setTrustedCookie(w http.ResponseWriter, id string, secret []byt
 	})
 }
 
+// verifyPIN checks submitted against the currently-set PIN using the same
+// Argon2id comparison every PIN check in this file needs (loginPIN and
+// trustPIN). pinSet is false when no PIN exists yet, in which case ok is
+// always false too.
+func (s *Server) verifyPIN(submitted string) (ok, pinSet bool) {
+	pin, pinSet := s.lockStore.pin()
+	if !pinSet {
+		return false, false
+	}
+	hash := argon2.IDKey([]byte(submitted), pin.Salt, pin.ArgonTime, pin.ArgonMem, 1, uint32(len(pin.Hash)))
+	return subtle.ConstantTimeCompare(hash, pin.Hash) == 1, true
+}
+
 // loginPIN unlocks with a PIN, which only works together with a trusted-
 // browser cookie: either alone is useless to an attacker.
 func (s *Server) loginPIN(w http.ResponseWriter, r *http.Request) {
@@ -123,13 +136,12 @@ func (s *Server) loginPIN(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "too many wrong PINs; try again later", http.StatusLocked)
 		return
 	}
-	pin, ok := s.lockStore.pin()
-	if !ok {
+	ok, pinSet := s.verifyPIN(body.PIN)
+	if !pinSet {
 		http.Error(w, "no PIN is set", http.StatusUnauthorized)
 		return
 	}
-	hash := argon2.IDKey([]byte(body.PIN), pin.Salt, pin.ArgonTime, pin.ArgonMem, 1, uint32(len(pin.Hash)))
-	if subtle.ConstantTimeCompare(hash, pin.Hash) != 1 {
+	if !ok {
 		fails, revoked, err := s.lockStore.recordPINFailure(id, now)
 		if err == nil {
 			s.sleep(time.Duration(min(fails, pinFailsLockout)*300) * time.Millisecond)
@@ -146,6 +158,56 @@ func (s *Server) loginPIN(w http.ResponseWriter, r *http.Request) {
 	sess := s.sessions.create(id, now)
 	s.setSessionCookie(w, sess.id)
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// trustPIN lets an already-signed-in browser that is not yet PIN-trusted
+// join using the PIN that is already set, without changing that PIN at all
+// (docs/LOCKING.md: the PIN is shared across up to 20 trusted browsers).
+// This is setPIN's second-device counterpart: setPIN's old behavior silently
+// overwrote the shared PIN for every other trusted browser just to register
+// a new one, which is the bug this endpoint exists to avoid.
+//
+// This sits behind s.auth, so the caller already has a real session (signed
+// in with the token, most likely) — it is not a bare, unauthenticated entry
+// point like /api/login/pin. That is a meaningful barrier on its own, but
+// unlike loginPIN there is no trusted-device record yet for this browser to
+// hang a per-device lockout counter on (that is the whole point: it has
+// none). Rather than invent new per-session or per-IP state to track failed
+// attempts, a flat delay on a wrong guess — the same approach already used
+// for a login/pin call with no trusted cookie at all, and for a wrong
+// history passphrase in historyUnlock — is the simplest thing that still
+// meaningfully slows down guessing without new state to manage, reset or
+// leak information through.
+func (s *Server) trustPIN(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		PIN string `json:"pin"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if devID := s.currentTrustedDeviceID(r); devID != "" {
+		// Already trusted: treat it as success rather than an error, so a
+		// stale UI state or a double click is harmless.
+		writeJSON(w, map[string]any{"ok": true, "device_id": devID})
+		return
+	}
+	ok, pinSet := s.verifyPIN(body.PIN)
+	if !pinSet {
+		http.Error(w, "no PIN is set", http.StatusUnauthorized)
+		return
+	}
+	if !ok {
+		s.sleep(400 * time.Millisecond)
+		http.Error(w, "wrong PIN", http.StatusUnauthorized)
+		return
+	}
+	id, secret, err := s.lockStore.addTrustedDevice(browserName(r), s.clock())
+	if err != nil {
+		conflict(w, err.Error())
+		return
+	}
+	s.setTrustedCookie(w, id, secret)
+	writeJSON(w, map[string]any{"ok": true, "device_id": id})
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, id string) {
@@ -166,10 +228,14 @@ func (s *Server) lockSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-// setPIN creates or changes the PIN. The first time it is called for a given
-// browser it also registers that browser as trusted; a browser that already
-// holds a valid trusted cookie keeps it (changing the PIN does not need a new
-// trusted device, since the PIN is shared across every trusted browser).
+// setPIN creates the very first PIN (registering this browser as trusted,
+// same as always) or changes the PIN for every already-trusted browser at
+// once. It is deliberately NOT how a second or later browser joins: once a
+// PIN exists, an untrusted browser must go through trustPIN (/api/pin/trust)
+// instead, which proves it already knows the PIN rather than silently
+// replacing it. Without this guard, a second device "setting" its own PIN
+// here would quietly invalidate every other trusted browser's PIN — that
+// was the original bug this split fixes.
 func (s *Server) setPIN(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		PIN string `json:"pin"`
@@ -183,6 +249,12 @@ func (s *Server) setPIN(w http.ResponseWriter, r *http.Request) {
 	}
 	now := s.clock()
 	devID := s.currentTrustedDeviceID(r)
+	if devID == "" {
+		if _, pinSet := s.lockStore.pin(); pinSet {
+			http.Error(w, "a PIN is already set; trust this browser with the existing PIN first", http.StatusForbidden)
+			return
+		}
+	}
 	var secret []byte
 	if devID == "" {
 		id, sec, err := s.lockStore.addTrustedDevice(browserName(r), now)

@@ -173,6 +173,11 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 			"idle_lock_minutes":    s.idleLockMinutes(),
 			"pin_set":              pinSet,
 			"trusted_device_count": len(s.lockStore.trustedDevices()),
+			// this_device_trusted tells the frontend which of the three PIN
+			// cards to show: no PIN at all, a PIN this browser already has
+			// (change it), or a PIN this browser does not hold yet (join
+			// with it instead of changing it). See lockingview.js paintPIN.
+			"this_device_trusted": s.currentTrustedDeviceID(r) != "",
 		},
 	})
 }

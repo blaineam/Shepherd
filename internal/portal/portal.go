@@ -205,6 +205,7 @@ func New(d Deps) *Server {
 	s.mux.Handle("POST /api/lock", s.auth(s.lockSession))
 	s.mux.Handle("POST /api/pin", s.auth(s.setPIN))
 	s.mux.Handle("DELETE /api/pin", s.auth(s.clearPIN))
+	s.mux.Handle("POST /api/pin/trust", s.auth(s.trustPIN))
 	s.mux.Handle("GET /api/trusted-devices", s.auth(s.listTrustedDevices))
 	s.mux.Handle("DELETE /api/trusted-devices/{id}", s.auth(s.revokeTrustedDevice))
 	// status, queries and stream are polled automatically; they must not
