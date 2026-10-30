@@ -31,6 +31,7 @@ import (
 	"shepherd/internal/importers"
 	"shepherd/internal/nethealth"
 	"shepherd/internal/portscan"
+	"shepherd/internal/reverseproxy"
 	"shepherd/internal/settings"
 	"shepherd/internal/vulnscan"
 )
@@ -146,6 +147,13 @@ type Deps struct {
 	// NethealthBufferbloatEnabled reports whether cmd/shepherd also started
 	// the separate, less frequent bufferbloat check.
 	NethealthBufferbloatEnabled bool
+
+	// ReverseProxy holds the hosts the [reverseproxy] listener forwards
+	// (docs/REVERSEPROXY.md). Nil gets a memory-only store, so the API
+	// still works but nothing persists.
+	ReverseProxy *reverseproxy.Store
+	// ReverseProxyStatus describes that listener; the zero value is "off".
+	ReverseProxyStatus ReverseProxyStatus
 }
 
 type Server struct {
@@ -207,6 +215,9 @@ func New(d Deps) *Server {
 	}
 	if d.Nethealth == nil {
 		d.Nethealth = nethealth.New(nethealth.Options{})
+	}
+	if d.ReverseProxy == nil {
+		d.ReverseProxy, _ = reverseproxy.Open("") // empty path never errors
 	}
 	if d.Heartbeat <= 0 {
 		d.Heartbeat = 15 * time.Second
@@ -532,4 +543,10 @@ func (s *Server) routes() {
 	h("GET /api/nethealth/bufferbloat", s.nethealthBufferbloat)
 	h("POST /api/nethealth/probe", s.nethealthProbeNow)
 	h("POST /api/nethealth/bufferbloat/run", s.nethealthBufferbloatNow)
+
+	h("GET /api/reverseproxy", s.getReverseProxy)
+	h("GET /api/reverseproxy/hosts", s.listProxyHosts)
+	h("POST /api/reverseproxy/hosts", s.addProxyHost)
+	h("PUT /api/reverseproxy/hosts/{id}", s.putProxyHost)
+	h("DELETE /api/reverseproxy/hosts/{id}", s.deleteProxyHost)
 }

@@ -18,7 +18,10 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   [ROADMAP.md](docs/ROADMAP.md) step 18. `internal/reverseproxy` holds the proxied hosts (`Store`,
   persisted to `<data_dir>/reverseproxy.json`) and forwards with `httputil.ReverseProxy`, WebSocket
   upgrades included. `internal/tlscert.Obtainer` is proven to issue a wildcard (`*.example.com`) end to
-  end. Off by default.
+  end. `cmd/shepherd/reverseproxy.go` serves the hosts on `reverseproxy.listen` behind that one wildcard
+  certificate (kept in `<data_dir>/reverseproxy/tls`, apart from `[tls]`'s), and the portal edits them
+  over `GET/POST /api/reverseproxy/hosts` and `PUT/DELETE /api/reverseproxy/hosts/{id}`, with the
+  listener and certificate state on `GET /api/reverseproxy`. Off by default.
 - **Marketing site (`site/`):** a public, vanilla-HTML/CSS/JS landing page — hero, the real shipped feature
   set (DNS filtering and the 95-list catalog, devices, the globe HUD, alarms, port and vulnerability
   scanning, geo-block, portal locking, self-healing upstreams and more), an honest "what's coming" section
