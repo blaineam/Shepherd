@@ -7,5 +7,7 @@ shepherd.toml
 .leakcheck.local
 /bin/
 /dist/
+/shepherd
+/shepherd-*
 coverage.out
 coverage.floor.out

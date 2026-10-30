@@ -29,3 +29,4 @@ import './alarms.test.js';
 import './locking.test.js';
 import './vulnscan.test.js';
 import './nethealth.test.js';
+import './reverseproxy.test.js';

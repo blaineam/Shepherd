@@ -22,6 +22,9 @@ additive step of [ROADMAP.md](ROADMAP.md) item 18 ("Access") — it does not tou
   is tracked separately as [ROADMAP.md](ROADMAP.md) item 18 and is deliberately out of scope here.
   This change is the first, safe, low-risk slice: the portal gets a real certificate, nothing else
   changes, and nothing here assumes or depends on the rest of that plan landing.
+  Reverse-proxying other services has since landed separately as `[reverseproxy]`
+  ([REVERSEPROXY.md](REVERSEPROXY.md)), which reuses this page's DNS-01 machinery for a wildcard
+  certificate kept in its own directory; `[tls]` itself is unchanged by it.
 
 ## Why Cloudflare DNS-01
 

@@ -25,6 +25,7 @@ import { createUpstreams } from './js/upstreamsview.js';
 import { createAlarms } from './js/alarmsview.js';
 import { createVulnscan } from './js/vulnscanview.js';
 import { createNethealth } from './js/nethealthview.js';
+import { createReverseProxy } from './js/reverseproxyview.js';
 import { createHistory } from './js/historyview.js';
 import { createAccountability } from './js/accountability.js';
 import { createDemoMgmt } from './js/demomgmt.js';
@@ -460,7 +461,7 @@ async function pollStatus() {
 // ---------------------------------------------------------------- management screens
 const mgmt = createMgmt(api);
 const policyStore = createPolicyStore({ mgmt });
-const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'vulnscan', 'network', 'upstreams', 'history', 'accountability', 'locking', 'details'];
+const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'vulnscan', 'network', 'upstreams', 'proxy', 'history', 'accountability', 'locking', 'details'];
 
 const blocking = createBlocking({
   root: $('#view-blocking'), mgmt, store: policyStore, notify,
@@ -479,6 +480,7 @@ const vulnscanView = createVulnscan({
 });
 const networkView = createNethealth({ root: $('#view-network'), mgmt, notify });
 const upstreamsView = createUpstreams({ root: $('#view-upstreams'), mgmt, notify });
+const proxyView = createReverseProxy({ root: $('#view-proxy'), mgmt, notify });
 const lockingView = createLocking({ root: $('#view-locking'), mgmt, notify });
 const historyView = createHistory({
   root: $('#view-history'), mgmt, notify, api,
@@ -510,6 +512,7 @@ function showView(name) {
   try { history.replaceState(null, '', location.pathname + location.search + (hud ? '' : '#' + name)); } catch { /* ignore */ }
   if (name === 'details') details.renderRows();
   if (name !== 'upstreams') upstreamsView.hide();
+  if (name !== 'proxy') proxyView.hide();
   if (name !== 'alarms') alarmsView.hide();
   if (name !== 'vulnscan') vulnscanView.hide();
   if (name !== 'network') networkView.hide();
@@ -520,6 +523,7 @@ function showView(name) {
   else if (name === 'vulnscan') vulnscanView.show();
   else if (name === 'network') networkView.show();
   else if (name === 'upstreams') upstreamsView.show();
+  else if (name === 'proxy') proxyView.show();
   else if (name === 'history') historyView.show();
   else if (name === 'accountability') devicesView.reloadGroups().catch(() => {}).finally(() => accountabilityView.show());
   else if (name === 'locking') lockingView.show();
