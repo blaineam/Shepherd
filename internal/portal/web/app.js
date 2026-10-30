@@ -541,6 +541,15 @@ for (const [btn, panel] of [['#btn-feed', '#panel-feed'], ['#btn-filters', '#pan
     if (on) { $(panel).classList.add('show'); e.currentTarget.setAttribute('aria-pressed', 'true'); }
   });
 }
+// The Legend panel is its own toggle, independent of the Feed/Filters pair
+// above (it lives in the opposite rail and does not need to exclude them):
+// on mobile it otherwise takes up a disproportionate share of the screen, so
+// it starts hidden there and opens only behind this small "i" button.
+$('#btn-legend').addEventListener('click', (e) => {
+  const on = e.currentTarget.getAttribute('aria-pressed') !== 'true';
+  e.currentTarget.setAttribute('aria-pressed', on ? 'true' : 'false');
+  $('#legend').classList.toggle('show', on);
+});
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (homeMode) setHomeMode(false);

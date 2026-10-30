@@ -80,6 +80,7 @@ button.mini:hover { color: var(--text); border-color: var(--muted); }
 .tbtn { background: var(--panel); color: var(--muted); border: 1px solid var(--line2); font: 600 10.5px var(--mono); letter-spacing: .14em; text-transform: uppercase; padding: 6px 11px; }
 .tbtn:hover { color: var(--text); border-color: var(--muted); }
 .tbtn[aria-pressed="true"] { color: var(--teal); border-color: var(--line); background: #16c7bd12; }
+.tbtn-i { min-width: 30px; text-align: center; padding-left: 0; padding-right: 0; font-style: italic; }
 .only-sm { display: none; }
 
 /* filters */
@@ -249,7 +250,11 @@ tr:hover td { background: #ffffff06; }
   .rail { top: auto; bottom: var(--foot); left: 8px !important; right: 8px; width: auto !important; max-height: 52vh; }
   .rail .panel { display: none; }
   .rail .panel.show, .rail .panel.open { display: flex; flex-direction: column; overflow: auto; }
-  .rail.right #legend { display: block; padding: 8px 12px; }
+  /* Hidden by default (the general ".rail .panel { display: none }" rule
+     above applies), opened only via the "i" toggle button: at 375px the
+     full legend (colors, thickness scale, attribution) was eating a large,
+     fixed share of the screen permanently. */
+  .rail.right #legend.show { padding: 8px 12px; }
   .rail.right #legend .thick, .rail.right #legend .ph { display: none; }
   .rail.right #legend .leg { grid-template-columns: repeat(4, auto); margin: 0 0 4px; font-size: 10.5px; gap: 4px 10px; }
   .rail.right #legend .leg .muted { display: none; }
