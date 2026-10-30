@@ -12,6 +12,7 @@ import (
 
 const (
 	ethHeaderLen  = 14
+	etherTypeIPv4 = 0x0800
 	etherTypeARP  = 0x0806
 	etherTypeIPv6 = 0x86dd
 )
@@ -23,6 +24,29 @@ const (
 // out before anything else runs, regardless of what Lookup says, so
 // Shepherd can run this against a mixed, unfiltered capture and trust it
 // to leave everything else alone.
+//
+// A relayed frame leaves with BOTH Ethernet addresses rewritten: the
+// destination to the real gateway's MAC (so it gets there) and the source
+// to Shepherd's own MAC (so the switches in between stay sane). The second
+// rewrite is not cosmetic. Every Ethernet switch and every Wi-Fi/LAN bridge
+// (a consumer mesh router is one) learns which port a MAC lives behind from
+// the source address of the frames it sees. Retransmitting a device's frame
+// with the device's own source MAC teaches the switch that the device lives
+// on Shepherd's port; the device's next Wi-Fi frame teaches it the opposite.
+// Every relayed frame flips that entry, and while it points at Shepherd,
+// the device's inbound traffic (the download direction Watch mode never
+// even sees) is delivered to Shepherd's port and lost. That is packet
+// loss, in bursts, on the one direction that carries the bytes, and TCP
+// and QUIC respond to it exactly as they should: by slowing down.
+// docs/INTERCEPT.md's "Throughput" section has the live evidence. With
+// Shepherd's MAC as the source, the device's MAC is only ever seen on
+// its own port and Shepherd's only on Shepherd's; nothing flaps.
+//
+// The IP packet inside is still untouched, so this is still a pure
+// Ethernet-layer relay with no NAT: the gateway sees the device's own
+// source IP, answers to it through its own (never spoofed) ARP entry, and
+// the reply goes straight to the device, same as before. One-sided scope
+// is unchanged.
 type Relay struct {
 	Sender      Sender
 	ShepherdMAC arp.MAC
@@ -78,15 +102,17 @@ func (r *Relay) timeout() time.Duration {
 // wire. It reports whether the frame was relayed.
 //
 // A frame that is too short to have an Ethernet header, not addressed to
-// Shepherd's MAC, ARP, IPv6, or whose Ethernet source MAC is not a
-// currently steered device is ignored (false, nil) and left completely
-// untouched. Matching is by source MAC only — MAC is Shepherd's device
+// Shepherd's MAC, not plain IPv4 (so ARP, IPv6, VLAN-tagged, anything
+// else), or whose Ethernet source MAC is not a currently steered device
+// is ignored (false, nil) and left completely untouched. Matching is by source MAC only — MAC is Shepherd's device
 // identity key everywhere else (docs/DESIGN.md, "Device identity") — so a
 // device that gets a new IP from DHCP is still relayed without a gap.
 //
 // A matched frame has its destination MAC rewritten to the real gateway
-// MAC; the source MAC, the source IP, and everything else in the frame is
-// untouched, so this is a pure Ethernet-layer relay, not NAT.
+// MAC and its source MAC rewritten to Shepherd's own (see the type
+// comment for why that second rewrite matters); the IP packet inside,
+// source IP included, is untouched, so this is a pure Ethernet-layer
+// relay, not NAT. The caller's buffer is never modified.
 func (r *Relay) HandleFrame(raw []byte) (bool, error) {
 	if r.OnFrameExamined != nil {
 		r.OnFrameExamined(len(raw))
@@ -105,7 +131,13 @@ func (r *Relay) HandleFrame(raw []byte) (bool, error) {
 		}
 		return false, nil
 	}
-	if etherType == etherTypeARP || etherType == etherTypeIPv6 {
+	// Positive match on IPv4, not a denylist of ARP and IPv6: a denylist
+	// let a VLAN-tagged (0x8100) frame through, and the ethertype of what
+	// it wraps could be anything, IPv6 included — a hole in docs/IPV6.md's
+	// hard rule. Plain IPv4-over-Ethernet is the only thing one-sided ARP
+	// steering can ever deliver here on purpose, and the only thing the
+	// kernel-side capture filter (capture_filter.go) admits.
+	if etherType != etherTypeIPv4 {
 		return false, nil
 	}
 	if r.Lookup == nil || r.Sender == nil {
@@ -118,6 +150,7 @@ func (r *Relay) HandleFrame(raw []byte) (bool, error) {
 	out := make([]byte, len(raw))
 	copy(out, raw)
 	copy(out[0:6], r.GatewayMAC[:])
+	copy(out[6:12], r.ShepherdMAC[:])
 
 	if err := sendWithTimeout(r.Sender, Frame(out), r.timeout()); err != nil {
 		if r.OnRelayError != nil {

@@ -13,6 +13,34 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Watch mode: in-kernel XDP relay (`internal/intercept.Controller.AttachXDP`, Linux).** The same
+  one-sided ARP relay as an eBPF/XDP program on the interface: a steered device's IPv4 frame to
+  Shepherd's MAC gets both MACs rewritten and is bounced straight back out (`XDP_TX`) without ever
+  reaching the kernel stack or userspace; everything else, including the device's traffic for
+  Shepherd itself, is passed through untouched. The Controller stays the only authority on what is
+  steered; the program only consults a map kept in step with it. Native (driver) mode with a
+  generic-mode fallback. `cmd/intercept-trial -xdp auto` uses it in place of `ParallelRelay`. The
+  program is compiled by `go generate` (needs a clang with the BPF backend); the generated objects
+  are committed so `go build` needs nothing new. See docs/INTERCEPT.md, "Beyond userspace".
+
+### Fixed
+- **Watch mode relayed frames with the steered device's own source MAC**, which taught every switch
+  and Wi-Fi/LAN bridge in between that the device lived on Shepherd's port and misdelivered the
+  device's *inbound* traffic there until its next frame flipped the entry back. This is the first
+  explanation that fits every live measurement of the ~300 Mbps ceiling while steered (near-zero
+  relayed packets, loss-shaped slowdown, the `not_for_shepherd` burst). Relayed frames now carry
+  Shepherd's MAC as source; the IP packet inside is untouched. Not yet re-measured live. See
+  docs/INTERCEPT.md, "The cause the evidence points at".
+- **Watch mode's Relay let VLAN-tagged frames through.** It filtered by denylist (not ARP, not IPv6),
+  and a VLAN tag hides the real ethertype one header in, so it could wrap IPv6. `Relay.HandleFrame`
+  now positively matches plain IPv4 only. Found by the new capture-filter agreement test.
+
+### Changed
+- **Watch mode's capture sockets filter in the kernel.** Each `PACKET_FANOUT` socket carries a
+  classic BPF filter (IPv4, destination MAC is Shepherd's) so frames the Relay would discard are
+  dropped before being copied to userspace; attached before bind so nothing slips in ahead of it.
+  Per-device relay counters are now atomics, so the parallel relay workers no longer serialize on a
+  mutex for every frame.
 - **Marketing site (`site/`):** a public, vanilla-HTML/CSS/JS landing page — hero, the real shipped feature
   set (DNS filtering and the 95-list catalog, devices, the globe HUD, alarms, port and vulnerability
   scanning, geo-block, portal locking, self-healing upstreams and more), an honest "what's coming" section

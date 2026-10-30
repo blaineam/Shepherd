@@ -161,16 +161,46 @@ func usableDeviceIP(ip netip.Addr) bool {
 	return b[0] != 0 && ip != netip.AddrFrom4([4]byte{255, 255, 255, 255})
 }
 
+// deviceState is one steered device's bookkeeping. The fields the
+// Relay's hot path writes (bytes, packets, last-verified, healthy) are
+// atomics, updated by every ParallelRelay worker on every relayed frame
+// without taking Controller.mu: at a real transfer's packet rate (tens to
+// hundreds of thousands of frames per second, split across workers) a
+// shared mutex on that path is contention the relay cannot afford, and
+// the health loop and Status read these fields only occasionally. The
+// rest (ip, since, cancel, done) is written once, under mu, in Steer.
 type deviceState struct {
-	ip             netip.Addr
-	since          time.Time
-	bytesRelayed   uint64
-	packetsRelayed uint64
-	lastVerified   time.Time
-	healthy        bool
+	ip    netip.Addr
+	since time.Time
+
+	bytesRelayed   atomic.Uint64
+	packetsRelayed atomic.Uint64
+	// lastVerifiedNanos is the wall-clock UnixNano of the last relayed
+	// frame; everVerified says whether there has been one at all, so a
+	// clock that happens to sit at the Unix epoch is not mistaken for
+	// "never" (and the zero time's UnixNano, which is undefined, is never
+	// stored). lastVerified() turns the pair back into a time.Time.
+	lastVerifiedNanos atomic.Int64
+	everVerified      atomic.Bool
+	healthy           atomic.Bool
 
 	cancel context.CancelFunc
 	done   chan struct{}
+}
+
+func (ds *deviceState) lastVerified() time.Time {
+	if !ds.everVerified.Load() {
+		return time.Time{}
+	}
+	return time.Unix(0, ds.lastVerifiedNanos.Load())
+}
+
+func (ds *deviceState) recordRelayed(n int, now time.Time) {
+	ds.bytesRelayed.Add(uint64(n))
+	ds.packetsRelayed.Add(1)
+	ds.lastVerifiedNanos.Store(now.UnixNano())
+	ds.everVerified.Store(true)
+	ds.healthy.Store(true)
 }
 
 // Controller is the safety-governed steering authority: the only thing in
@@ -193,12 +223,19 @@ type Controller struct {
 	devices  map[arp.MAC]*deviceState
 	history  []UnsteerRecord
 
-	steered atomic.Pointer[map[arp.MAC]netip.Addr]
+	// steered is the lock-free snapshot of c.devices that every Relay's
+	// hot path reads: Lookup (is this source MAC steered, and to which
+	// IP) and recordRelayed (bump this device's counters) both go through
+	// it and never take mu. It is rebuilt, under mu, on every Steer,
+	// Unsteer and PanicStop (publishSnapshotLocked). A worker that loaded
+	// the snapshot just before an unsteer may bump a deviceState that is
+	// no longer in c.devices; that is harmless, since nothing reads a
+	// removed deviceState's counters again.
+	steered atomic.Pointer[map[arp.MAC]*deviceState]
 
 	// Packet-rate diagnostics (ControllerStats), updated from every Relay's
-	// hot path without taking mu: a lock-free counter bump is cheap enough
-	// to leave on unconditionally, unlike the per-device bookkeeping in
-	// recordRelayed, which needs mu to find the right deviceState anyway.
+	// hot path without taking mu, like the per-device counters in
+	// deviceState: nothing on the relay's per-frame path takes a lock.
 	framesExamined       atomic.Uint64
 	bytesExamined        atomic.Uint64
 	framesNotForShepherd atomic.Uint64
@@ -235,7 +272,7 @@ func NewController(cfg ControllerConfig) (*Controller, error) {
 		cancel:  cancel,
 		devices: map[arp.MAC]*deviceState{},
 	}
-	empty := map[arp.MAC]netip.Addr{}
+	empty := map[arp.MAC]*deviceState{}
 	c.steered.Store(&empty)
 
 	c.relay = &Relay{
@@ -300,21 +337,27 @@ func (c *Controller) lookupSteered(mac arp.MAC) (netip.Addr, bool) {
 	if m == nil {
 		return netip.Addr{}, false
 	}
-	ip, ok := (*m)[mac]
-	return ip, ok
+	ds, ok := (*m)[mac]
+	if !ok {
+		return netip.Addr{}, false
+	}
+	return ds.ip, true
 }
 
+// recordRelayed is the Relay's per-frame hook, and with lookupSteered the
+// whole of what the hot path does on the Controller. Neither takes mu:
+// the global counters are atomics, and the device's own counters live in
+// the deviceState reached through the lock-free snapshot. See deviceState.
 func (c *Controller) recordRelayed(mac arp.MAC, n int, now time.Time) {
 	c.framesRelayed.Add(1)
 	c.bytesRelayedTotal.Add(uint64(n))
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if ds, ok := c.devices[mac]; ok {
-		ds.bytesRelayed += uint64(n)
-		ds.packetsRelayed++
-		ds.lastVerified = now
-		ds.healthy = true
+	m := c.steered.Load()
+	if m == nil {
+		return
+	}
+	if ds, ok := (*m)[mac]; ok {
+		ds.recordRelayed(n, now)
 	}
 }
 
@@ -342,9 +385,9 @@ func (c *Controller) recordRelayError(mac arp.MAC, err error) {
 // publishSnapshotLocked rebuilds the lock-free snapshot the Relay's hot
 // path reads. Callers must hold c.mu.
 func (c *Controller) publishSnapshotLocked() {
-	m := make(map[arp.MAC]netip.Addr, len(c.devices))
+	m := make(map[arp.MAC]*deviceState, len(c.devices))
 	for mac, ds := range c.devices {
-		m[mac] = ds.ip
+		m[mac] = ds
 	}
 	c.steered.Store(&m)
 }
@@ -523,13 +566,13 @@ func (c *Controller) checkHealth(now time.Time) {
 	c.mu.Lock()
 	var tasks []unsteerTask
 	for mac, ds := range c.devices {
-		baseline, grace := ds.lastVerified, c.cfg.IdleGrace
+		baseline, grace := ds.lastVerified(), c.cfg.IdleGrace
 		if baseline.IsZero() {
 			baseline, grace = ds.since, c.cfg.StartupGrace
 		}
 		age := now.Sub(baseline)
 		healthy := age < grace
-		ds.healthy = healthy
+		ds.healthy.Store(healthy)
 		if !healthy {
 			tasks = append(tasks, unsteerTask{mac, fmt.Sprintf("no relayed traffic observed for %s (grace %s)", age, grace)})
 		}
@@ -600,9 +643,9 @@ func (c *Controller) Status() []SteeredDevice {
 	out := make([]SteeredDevice, 0, len(c.devices))
 	for mac, ds := range c.devices {
 		out = append(out, SteeredDevice{
-			MAC: mac, IP: ds.ip, Since: ds.since, Healthy: ds.healthy,
-			BytesRelayed: ds.bytesRelayed, PacketsRelayed: ds.packetsRelayed,
-			LastVerified: ds.lastVerified,
+			MAC: mac, IP: ds.ip, Since: ds.since, Healthy: ds.healthy.Load(),
+			BytesRelayed: ds.bytesRelayed.Load(), PacketsRelayed: ds.packetsRelayed.Load(),
+			LastVerified: ds.lastVerified(),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].MAC.String() < out[j].MAC.String() })

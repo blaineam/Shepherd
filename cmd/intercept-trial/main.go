@@ -231,12 +231,13 @@ func reportStatus(ctx context.Context, ctrl *intercept.Controller) {
 // one-line summary: packets and bytes per second actually relayed, the
 // examined rate (everything the capture sockets handed to a Relay, matched
 // or not), and not_for_shepherd — the count of frames in that window whose
-// destination was not Shepherd's own MAC. On a non-promiscuous capture
-// socket that is overwhelmingly Shepherd's own transmitted frames looping
-// back (see PACKET_IGNORE_OUTGOING in capture_linux.go and
-// docs/INTERCEPT.md); a number here close to the relayed count is exactly
-// the shape of the avoidable overhead that fix targets, and this line is
-// how a live trial would notice it without a separate packet capture.
+// destination was not Shepherd's own MAC. The capture sockets now carry a
+// kernel-side BPF filter that only admits IPv4 frames addressed to
+// Shepherd (capture_filter.go), so this should read zero or nearly so;
+// anything else means the filter did not attach (an old kernel) and the
+// Relay is paying in userspace for frames the kernel should have dropped.
+// Before that filter existed, a burst here that tracked a transfer was
+// the clue that pointed at the source-MAC problem in docs/INTERCEPT.md.
 func statsRate(prev, cur intercept.ControllerStats, elapsed time.Duration) string {
 	if elapsed <= 0 {
 		return "n/a (no time elapsed)"
