@@ -51,6 +51,10 @@ type Upstream struct {
 	lastErr string
 	queries uint64
 	errors  uint64
+
+	// onHealth, when set by the owning Pool, is called outside the lock
+	// whenever record() changes healthy. See Pool.OnHealthChange.
+	onHealth func(addr string, healthy bool)
 }
 
 type UpstreamStatus struct {
@@ -317,7 +321,7 @@ func (u *Upstream) exchangeDoT(ctx context.Context, m *dns.Msg, timeout time.Dur
 
 func (u *Upstream) record(ok bool, rtt time.Duration, err error) {
 	u.mu.Lock()
-	defer u.mu.Unlock()
+	was := u.healthy
 	u.queries++
 	if ok {
 		u.fails, u.healthy, u.lastErr = 0, true, ""
@@ -326,16 +330,23 @@ func (u *Upstream) record(ok bool, rtt time.Duration, err error) {
 		} else {
 			u.rtt = (u.rtt*4 + rtt) / 5
 		}
-		return
+	} else {
+		u.errors++
+		u.fails++
+		u.lastErr = "SERVFAIL"
+		if err != nil {
+			u.lastErr = err.Error()
+		}
+		if u.fails >= 2 {
+			u.healthy = false
+		}
 	}
-	u.errors++
-	u.fails++
-	u.lastErr = "SERVFAIL"
-	if err != nil {
-		u.lastErr = err.Error()
-	}
-	if u.fails >= 2 {
-		u.healthy = false
+	now, cb := u.healthy, u.onHealth
+	u.mu.Unlock()
+	// Called outside the lock: a callback that queries the pool (as the alarm
+	// wiring does, to see every upstream's current state) must not deadlock.
+	if cb != nil && now != was {
+		cb(u.Addr, now)
 	}
 }
 
@@ -396,6 +407,15 @@ func WithBootstrap(servers ...string) PoolOption {
 // Pool forwards queries to the healthiest upstream and fails over on error.
 // It is safe for concurrent use; the upstream list can change at runtime.
 type Pool struct {
+	// OnHealthChange, when set, is called every time one upstream's health
+	// flips, with its configuration string and whether it is now healthy.
+	// It must be cheap and non-blocking; it runs on whatever goroutine probed
+	// or queried the upstream (Exchange or Probe). Set it before Probe starts
+	// to avoid missing early transitions. This is the hook alarm wiring (see
+	// cmd/shepherd/alarms.go) uses to raise upstream-down and
+	// upstream-recovered alarms; nothing else in this package reads it.
+	OnHealthChange func(addr string, healthy bool)
+
 	mu      sync.RWMutex
 	ups     []*Upstream
 	timeout time.Duration
@@ -433,9 +453,19 @@ func (p *Pool) parseAll(addrs []string) ([]*Upstream, error) {
 		}
 		seen[u.key()] = u.Addr
 		u.env = p.env
+		u.onHealth = p.notifyHealth
 		out = append(out, u)
 	}
 	return out, nil
+}
+
+// notifyHealth forwards one upstream's health transition to OnHealthChange,
+// read fresh on every call so it may be set after the pool (and its
+// upstreams) are created.
+func (p *Pool) notifyHealth(addr string, healthy bool) {
+	if cb := p.OnHealthChange; cb != nil {
+		cb(addr, healthy)
+	}
 }
 
 func (p *Pool) wake() {
@@ -483,6 +513,7 @@ func (p *Pool) Add(addr string) error {
 		return err
 	}
 	u.env = p.env
+	u.onHealth = p.notifyHealth
 	p.mu.Lock()
 	for _, e := range p.ups {
 		if e.key() == u.key() {

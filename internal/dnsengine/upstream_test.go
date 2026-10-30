@@ -4,6 +4,7 @@ package dnsengine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -235,6 +236,66 @@ func TestPoolTestResults(t *testing.T) {
 	servfail := startServfail(t)
 	if r := p.Test(ctx, servfail); r.OK || r.Rcode != "SERVFAIL" || !strings.Contains(r.Err, "SERVFAIL") {
 		t.Errorf("servfail: %+v", r)
+	}
+}
+
+// TestOnHealthChangeFiresOnTransitions exercises the hook cmd/shepherd/alarms.go
+// uses to raise upstream-down and upstream-recovered alarms (see
+// Pool.OnHealthChange): it must fire exactly once per transition, not once
+// per failed or successful query.
+func TestOnHealthChangeFiresOnTransitions(t *testing.T) {
+	p, err := NewPool([]string{"192.0.2.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var events []string
+	p.OnHealthChange = func(addr string, healthy bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, fmt.Sprintf("%s=%v", addr, healthy))
+	}
+	snapshot := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), events...)
+	}
+
+	u := p.ups[0]
+	u.record(false, 0, errors.New("boom")) // one failure: still healthy, no event
+	if got := snapshot(); len(got) != 0 {
+		t.Fatalf("a single failure must not fire yet: %v", got)
+	}
+	u.record(false, 0, errors.New("boom")) // the second failure crosses the threshold
+	if got := snapshot(); len(got) != 1 || got[0] != "192.0.2.1=false" {
+		t.Fatalf("down event = %v", got)
+	}
+	u.record(true, 5*time.Millisecond, nil) // recovers immediately
+	if got := snapshot(); len(got) != 2 || got[1] != "192.0.2.1=true" {
+		t.Fatalf("recovery event = %v", got)
+	}
+	u.record(true, 5*time.Millisecond, nil) // steady health: no re-fire
+	if got := snapshot(); len(got) != 2 {
+		t.Fatalf("steady health must not re-fire: %v", got)
+	}
+}
+
+// TestOnHealthChangeWiredForAddedUpstream checks Add wires the callback the
+// same way Set and NewPool do.
+func TestOnHealthChangeWiredForAddedUpstream(t *testing.T) {
+	p, err := NewPool([]string{"192.0.2.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	p.OnHealthChange = func(addr string, healthy bool) { got = addr }
+	if err := p.Add("192.0.2.2"); err != nil {
+		t.Fatal(err)
+	}
+	p.ups[1].record(false, 0, nil)
+	p.ups[1].record(false, 0, nil)
+	if got != "192.0.2.2" {
+		t.Errorf("Add did not wire OnHealthChange: got %q", got)
 	}
 }
 

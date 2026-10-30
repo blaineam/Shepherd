@@ -38,5 +38,18 @@ export function createMgmt(api) {
     history: (params) => api('/api/history' + Q(params)),
     unlock: (passphrase) => api('/api/history/unlock', { method: 'POST', body: J({ passphrase }), keep401: true }),
     settings: () => api('/api/settings'),
+
+    alarms: (params) => api('/api/alarms' + Q(params)),
+    alarm: (id) => api('/api/alarms/' + encodeURIComponent(id)),
+    patchAlarm: (id, state) => api('/api/alarms/' + encodeURIComponent(id), { method: 'PATCH', body: J({ state }) }),
+    deleteAlarm: (id) => api('/api/alarms/' + encodeURIComponent(id), { method: 'DELETE' }),
+    muteAlarm: (id, duration) => post('/api/alarms/' + encodeURIComponent(id) + '/mute', duration),
+    alarmsBulk: (req) => post('/api/alarms/bulk', req),
+    undoAlarms: (handle) => post('/api/alarms/undo', { handle }),
+    alarmsSummary: () => api('/api/alarms/summary'),
+    alarmTypes: () => api('/api/alarms/types'),
+    alarmRules: (all) => api('/api/alarms/rules' + Q({ all: all ? '1' : '' })),
+    createAlarmRule: (body) => post('/api/alarms/rules', body),
+    deleteAlarmRule: (id) => api('/api/alarms/rules/' + encodeURIComponent(id), { method: 'DELETE' }),
   };
 }

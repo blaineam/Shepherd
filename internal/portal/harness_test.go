@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"shepherd/internal/alarms"
 	"shepherd/internal/devices"
 	"shepherd/internal/dnsengine"
 )
@@ -54,6 +55,7 @@ type harness struct {
 	pool    *dnsengine.Pool
 	engine  *dnsengine.Engine
 	ups     *dnsengine.UpstreamStore
+	alarms  *alarms.Engine
 	dir     string
 	listSrv *httptest.Server
 }
@@ -84,11 +86,16 @@ func newHarness(t *testing.T) *harness {
 	lists := dnsengine.NewScopedListManager(filter, policy, dir, nil)
 	reg := devices.New(devices.Options{NodeID: "test", Vendor: func(string) string { return "" }})
 	ups := dnsengine.OpenUpstreamStore(filepath.Join(dir, "upstreams.json"), pool)
-	srv := New(Deps{Engine: engine, Lists: lists, Policy: policy, Devices: reg, Upstreams: ups, Token: strings.Repeat("t", 64), Version: "test"})
+	alarmEngine, err := alarms.New(alarms.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { alarmEngine.Close() })
+	srv := New(Deps{Engine: engine, Lists: lists, Policy: policy, Devices: reg, Upstreams: ups, Alarms: alarmEngine, Token: strings.Repeat("t", 64), Version: "test"})
 	engine.Clients = reg
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	return &harness{t: t, ts: ts, srv: srv, filter: filter, policy: policy, reg: reg, lists: lists, pool: pool, engine: engine, ups: ups, dir: dir, listSrv: listSrv}
+	return &harness{t: t, ts: ts, srv: srv, filter: filter, policy: policy, reg: reg, lists: lists, pool: pool, engine: engine, ups: ups, alarms: alarmEngine, dir: dir, listSrv: listSrv}
 }
 
 // call sends an authenticated request with the CSRF header.

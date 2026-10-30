@@ -13,6 +13,18 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Alarms wired into `cmd/shepherd` and the portal:** the alarm engine (previously a library only) now
+  runs for real. `[alarms]` config (`shepherd.example.toml`) turns it on and configures ntfy, the one
+  delivery channel wired in (`[alarms.ntfy]`: server, topic, token or basic auth). A new, minimal
+  `dnsengine.Pool.OnHealthChange` hook, in the same plain-callback style as `Engine.Observe`, raises
+  `upstream-down` when every configured upstream has gone unhealthy (a true total outage, not one flaky
+  resolver) and `upstream-recovered` per resolver as it comes back. Portal API under `/api/alarms`: list
+  with filters, get one, acknowledge/resolve/delete (single and batch via a `Selector`), mute (single
+  snooze or batch by alarm/type/device/domain/key), undo, a summary and mute-rule CRUD. A new Alarms tab
+  matches the Devices tab's structure: severity/state filters, search, single and bulk actions with a
+  bulkbar and undo toasts, and a Rules sub-view. **Web Push is explicitly deferred, not forgotten:** it
+  needs a secure context (HTTPS), which the portal does not have yet; wiring it up today would be
+  unreachable code. See docs/ALARMS.md ("Wiring into `cmd/shepherd` and the portal", "Not built yet").
 - **`cmd/intercept-trial`:** a standalone, Linux-only, hand-run CLI for a one-off controlled trial of Watch mode's ARP interception engine against exactly one named device, for a mandatory, capped trial duration, with Ctrl-C wired to a panic stop; disables GRO on the interface for the trial and always restores it on exit (a GRO-coalesced frame can be larger than the wire allows, which the health loop correctly fails open on but which is a capture artifact, not a real fault), needing `CAP_NET_ADMIN` alongside `CAP_NET_RAW`. Not part of `cmd/shepherd`; not run automatically. Run clean against a disposable VM and, with the maintainer's explicit go-ahead, against the maintainer's own phone (confirming the maintainer's eero 7 Max accepts one-sided ARP steering). See docs/INTERCEPT.md.
 - **`Controller.ParallelRelay` and `NewRelay` (`internal/intercept`):** a real, measured throughput problem — a single capture-and-relay goroutine cut a steered device's throughput to roughly a third in a live test — addressed by splitting capture across several `PACKET_FANOUT` workers (`OpenMany` for independent per-worker senders, `NewRelay` for additional `Relay`s sharing one `Controller`'s state), each on its own goroutine. `cmd/intercept-trial` uses it by default (`-workers`). See docs/INTERCEPT.md's "Throughput" section — this alone did not fix the slowdown.
 - **`rawSender`'s kernel-level `SO_SNDTIMEO` and the `selfBounded` fast path (`internal/intercept`):** the real packet-rate cost turned out to be `sendWithTimeout`'s per-packet goroutine and `time.After` timer, there to bound a `Sender.Send` that might hang — unnecessary once the real socket enforces its own send timeout at the kernel level. `sendWithTimeout` now skips its defensive wrapper entirely for a Sender that reports itself `selfBounded`, taking a direct call (still panic-recovered) instead; `FakeSender` does not report it, so every existing wedged/panicking-Sender safety test is unchanged. Root cause found by live-testing each hypothesis in turn (parallelism, GRO, then this) rather than assuming the first one. See docs/INTERCEPT.md.

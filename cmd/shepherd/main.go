@@ -118,6 +118,15 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	deps := portal.Deps{Engine: engine, Lists: listMgr, Policy: policy, Devices: registry, Upstreams: ups,
 		Token: token, Version: version, Settings: prefs}
 
+	if cfg.Alarms.Enabled {
+		alarmEngine, err := startAlarms(ctx, cfg, pool)
+		if err != nil {
+			return err
+		}
+		defer alarmEngine.Close()
+		deps.Alarms = alarmEngine
+	}
+
 	var asnLocator *geo.ASNLocator
 	if cfg.Map.Enabled {
 		var locator geo.Locator

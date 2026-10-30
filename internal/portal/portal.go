@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"shepherd/internal/alarms"
 	"shepherd/internal/devices"
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/geo"
@@ -64,6 +65,11 @@ type Deps struct {
 	DetectHome func(ctx context.Context) error
 	// Heartbeat is how often the live stream sends a keep-alive (default 15s).
 	Heartbeat time.Duration
+
+	// Alarms is the alarm engine (docs/ALARMS.md). Nil gives an unwired,
+	// in-memory engine that nothing raises alarms through, so the API still
+	// works (and returns no alarms).
+	Alarms *alarms.Engine
 }
 
 type Server struct {
@@ -106,6 +112,9 @@ func New(d Deps) *Server {
 	}
 	if d.Heartbeat <= 0 {
 		d.Heartbeat = 15 * time.Second
+	}
+	if d.Alarms == nil {
+		d.Alarms, _ = alarms.New(alarms.Options{}) // in-memory; zero Options never errors
 	}
 	s := &Server{Deps: d, started: time.Now(), mux: http.NewServeMux()}
 	sub, _ := fs.Sub(webFS, "web")
@@ -330,4 +339,17 @@ func (s *Server) routes() {
 	h("DELETE /api/upstreams", s.deleteUpstream)
 	h("PUT /api/upstreams", s.putUpstreams)
 	h("PUT /api/upstreams/bootstrap", s.putBootstrap)
+
+	h("GET /api/alarms", s.listAlarms)
+	h("GET /api/alarms/summary", s.alarmsSummary)
+	h("GET /api/alarms/types", s.alarmTypes)
+	h("GET /api/alarms/rules", s.listAlarmRules)
+	h("POST /api/alarms/rules", s.createAlarmRule)
+	h("DELETE /api/alarms/rules/{id}", s.deleteAlarmRule)
+	h("POST /api/alarms/bulk", s.alarmsBulk)
+	h("POST /api/alarms/undo", s.undoAlarms)
+	h("GET /api/alarms/{id}", s.getAlarm)
+	h("PATCH /api/alarms/{id}", s.patchAlarm)
+	h("DELETE /api/alarms/{id}", s.deleteAlarm)
+	h("POST /api/alarms/{id}/mute", s.muteAlarm)
 }

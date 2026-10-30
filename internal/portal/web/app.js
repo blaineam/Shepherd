@@ -22,6 +22,7 @@ import { createPolicyStore } from './js/policystore.js';
 import { createDevices } from './js/devices.js';
 import { createBlocking, createDevicePolicy } from './js/blocking.js';
 import { createUpstreams } from './js/upstreamsview.js';
+import { createAlarms } from './js/alarmsview.js';
 import { createHistory } from './js/historyview.js';
 import { createDemoMgmt } from './js/demomgmt.js';
 import { DEVICE_BY_IP } from './js/demodata.js';
@@ -443,7 +444,7 @@ async function pollStatus() {
 // ---------------------------------------------------------------- management screens
 const mgmt = createMgmt(api);
 const policyStore = createPolicyStore({ mgmt });
-const VIEWS = ['hud', 'devices', 'blocking', 'upstreams', 'history', 'details'];
+const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'upstreams', 'history', 'details'];
 
 const blocking = createBlocking({
   root: $('#view-blocking'), mgmt, store: policyStore, notify,
@@ -455,6 +456,7 @@ const devicesView = createDevices({
   onOpenHistory: (d) => { showView('history'); historyView.showFor(d); },
   onGroupsChanged: () => blocking.onGroupsChanged(),
 });
+const alarmsView = createAlarms({ root: $('#view-alarms'), mgmt, notify, toaster });
 const upstreamsView = createUpstreams({ root: $('#view-upstreams'), mgmt, notify });
 const historyView = createHistory({
   root: $('#view-history'), mgmt, notify,
@@ -482,8 +484,10 @@ function showView(name) {
   try { history.replaceState(null, '', location.pathname + location.search + (hud ? '' : '#' + name)); } catch { /* ignore */ }
   if (name === 'details') details.renderRows();
   if (name !== 'upstreams') upstreamsView.hide();
+  if (name !== 'alarms') alarmsView.hide();
   if (name === 'devices') devicesView.show();
   else if (name === 'blocking') devicesView.reloadGroups().catch(() => {}).finally(() => blocking.show());
+  else if (name === 'alarms') alarmsView.show();
   else if (name === 'upstreams') upstreamsView.show();
   else if (name === 'history') historyView.show();
 }

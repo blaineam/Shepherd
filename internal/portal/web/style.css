@@ -732,3 +732,32 @@ tr.a-error .h-dom { color: var(--amber); }
 .feed-row.wand .f-dot { background: transparent; border: 1px dashed var(--wander); box-shadow: none; width: 7px; height: 7px; }
 .feed-row.wand .f-dev { color: var(--wander); }
 .f-shadow { grid-column: 3 / -1; font-size: 10px; color: #b9a8f5; font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: -2px; }
+
+/* ---------- Alarms ---------- */
+.al-tablewrap { display: flex; flex-direction: column; min-height: 0; min-width: 0; position: relative; }
+.al-row { display: grid; grid-template-columns: 40px 92px minmax(220px, 2.2fr) 140px 112px 108px 128px; align-items: center; column-gap: 12px; padding: 10px 14px 10px 6px; min-width: 0; border-bottom: 1px solid #ffffff0b; }
+.al-thead { height: 34px; font: 600 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line2); padding: 0 14px 0 6px; flex: none; }
+.al-thead > div { white-space: nowrap; }
+.al-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
+.al-rows .al-row:hover { background: #ffffff07; }
+.al-rows .al-row.sel { background: #16c7bd12; box-shadow: inset 2px 0 0 var(--teal); }
+.has-bulk .al-scroll { padding-bottom: 72px; }
+.al-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.al-title .nm { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.al-title .sub { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.al-dev { font-size: 12px; color: #b9ccd7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.al-seen { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.al-acts { display: flex; gap: 4px; justify-content: flex-end; }
+.al-row.muted .nm { opacity: .6; }
+.al-empty { padding: 48px 16px; text-align: center; }
+.al-rules { display: flex; flex-direction: column; gap: 10px; }
+.al-rule { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line2); background: var(--panel); }
+.al-rule-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.al-rule-name { font-weight: 600; font-size: 13px; }
+.al-rule-match { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.al-rule-form { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--line2); background: var(--panel); margin-bottom: 14px; }
+.al-rule-form .row { display: flex; gap: 10px; flex-wrap: wrap; }
+.al-rule-form .row > label { flex: 1 1 160px; }
+.al-rules-wrap { padding: 16px; overflow: auto; }
+.al-loadmore { display: flex; justify-content: center; padding: 14px; }
+.al-main { display: flex; flex-direction: column; gap: 14px; flex: 1; min-height: 0; }

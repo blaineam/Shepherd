@@ -14,6 +14,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"shepherd/internal/dnsengine"
+	"shepherd/internal/ntfy"
 )
 
 type Config struct {
@@ -31,6 +32,7 @@ type Config struct {
 	Map            Map      `toml:"map"`
 	Devices        Devices  `toml:"devices"`
 	Classify       Classify `toml:"classify"`
+	Alarms         Alarms   `toml:"alarms"`
 }
 
 // ListsAreDefault reports whether [[lists]] is exactly the built-in default,
@@ -70,6 +72,32 @@ type Devices struct {
 type Classify struct {
 	Enabled         bool `toml:"enabled"`
 	IntervalSeconds int  `toml:"interval_seconds"` // how often guesses are reconsidered
+}
+
+// Alarms controls Shepherd's alarm engine (docs/ALARMS.md): the engine itself
+// (dedupe, mute rules, quiet hours, learning mode) always records alarms when
+// enabled; Ntfy is the one delivery channel wired in so far. Web Push needs a
+// secure context (HTTPS) the portal does not have yet, so it stays
+// unconfigured; see docs/ALARMS.md.
+type Alarms struct {
+	Enabled bool       `toml:"enabled"`
+	Ntfy    AlarmsNtfy `toml:"ntfy"`
+}
+
+// AlarmsNtfy configures the ntfy delivery channel: a self-hosted or public
+// ntfy server Shepherd publishes alarm notifications to. Off by default
+// because it needs a server address only you can provide.
+type AlarmsNtfy struct {
+	Enabled bool `toml:"enabled"`
+	// Server is the ntfy base URL, e.g. "https://ntfy.example.com".
+	Server string `toml:"server"`
+	// Topic is the ntfy topic to publish to.
+	Topic string `toml:"topic"`
+	// Token authenticates with a bearer token; it wins over Username and Password.
+	Token string `toml:"token"`
+	// Username and Password authenticate with basic auth when Token is empty.
+	Username string `toml:"username"`
+	Password string `toml:"password"`
 }
 
 // History controls what is remembered after the fact. "memory" (the default)
@@ -145,6 +173,7 @@ func Default() Config {
 		Map:      Map{Enabled: true, AutoHome: true},
 		Devices:  Devices{Enabled: true, DNS: true, Neighbors: true, NeighborIntervalSeconds: 30, MDNS: true, ReverseDNS: true, SaveIntervalSeconds: 60, QuarantineNewDevices: true},
 		Classify: Classify{Enabled: true, IntervalSeconds: 300},
+		Alarms:   Alarms{Enabled: true, Ntfy: AlarmsNtfy{Topic: "shepherd-alarms"}},
 		DataDir:  "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
@@ -209,6 +238,14 @@ func (c Config) Validate() error {
 	}
 	if c.Classify.IntervalSeconds < 30 {
 		return errors.New("classify.interval_seconds must be at least 30")
+	}
+	if c.Alarms.Enabled && c.Alarms.Ntfy.Enabled {
+		if _, err := ntfy.BaseURL(c.Alarms.Ntfy.Server); err != nil {
+			return fmt.Errorf("alarms.ntfy.server: %w", err)
+		}
+		if !ntfy.ValidTopic(c.Alarms.Ntfy.Topic) {
+			return fmt.Errorf("alarms.ntfy.topic must be 1 to 64 letters, digits, - or _, got %q", c.Alarms.Ntfy.Topic)
+		}
 	}
 	if s := c.Devices.ReverseDNSServer; s != "" {
 		host := s
