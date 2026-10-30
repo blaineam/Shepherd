@@ -38,6 +38,10 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - `[history]` and `[map]` configuration sections, including a database mirror URL.
 - Roadmap and design for the reverse proxy with wildcard certificates and tunnels, port and exposure management, and inbound monitoring and protection.
 
+- **The globe HUD** is the portal's new home view: a dot-matrix 3D globe with traffic arcs from home to every destination, weighted so heavy lanes are visibly thicker and brighter, color coded by allowed, cached, blocked and error, with blocked queries pulsing a shield at home. Click an arc to inspect it and block or allow the domain with undo, filter by device, action or domain, set home by clicking the globe, and replay any retained period with a timeline scrubber and speed control. It runs from the live stream, falls back to polling, works offline (the globe library and land outlines are bundled), respects reduced motion and falls back to the Details view without WebGL. `?demo=1` shows synthetic data with no API calls. The earlier dashboard lives on in the Details tab.
+- Front-end unit tests (94, `node --test`), run in CI.
+- `docs/PORTAL.md` and `docs/THIRD-PARTY.md`.
+
 ### Fixed
 - The portal kept polling the API every second while signed out, flooding the console with 401 errors. It now stops until you sign in.
 - The example config's blocklist URL returned HTTP 404. It now points at a working list, and a weekly CI job (`scripts/check-list-urls`) fails if any example blocklist URL stops resolving.

@@ -18,6 +18,13 @@
 
 ---
 
+<p align="center">
+  <img src="docs/images/hud-demo.jpg" alt="Shepherd's globe HUD: arcs from home to destinations around a dot-matrix globe, with a live feed, filters, inspector and replay timeline" width="900"><br>
+  <sub>The portal's globe HUD, shown with synthetic demo data.</sub>
+</p>
+
+---
+
 ## Your network is a flock. Right now you can't see it.
 
 Every phone, TV, camera, thermostat, laptop and light bulb in your home is quietly talking to
@@ -63,14 +70,18 @@ Shepherd is early and built in public. This is real, tested and running on a rea
 - [x] **Guarded blocklist updates.** A broken or hostile list is rejected and the last good one stays active.
 - [x] **Apple iCloud Private Relay blocking**, the way Apple documents for networks, with every attempt logged by device.
 - [x] **Protected out of the box.** A blocklist and the Private Relay policy are on by default; opt out of either in the config or the portal.
+- [x] **The globe HUD.** Live traffic arcs around a 3D globe, heavy lanes thicker, replay with a timeline, click-to-block, filters, and your home found automatically (override it any time). Runs offline and ships a demo mode.
+- [x] **Encrypted, searchable history** (opt-in): AES-256-GCM segments you can query after the fact, plus a live event stream.
 - [x] **Live portal** with per-device queries, one-click allow and block, upstream health, rules and policy switches.
 - [x] **Tailscale integration** for private remote access, validated on a live exit node and subnet router.
 - [x] **Thread, Matter and IPv6 safe by design**, written down as hard rules ([IPV6.md](docs/IPV6.md)).
 - [x] **97% test coverage** with the race detector, enforced by a floor that only rises.
 
-What is coming, in order: devices and alarms, the mesh, signed self-updates, per-device traffic
-control, **the globe**, replay, scans and threat feeds, the local AI, and one-click installers.
-See the [roadmap](docs/ROADMAP.md).
+Built and being wired in: a catalog of 95 lists, apps and categories you can block for the whole
+network, a group or one device; DoH and DoT upstreams; named, searchable, groupable devices.
+Coming next: alarms, port and exposure management, a reverse proxy with certificates and tunnels,
+inbound protection, per-device traffic control, the mesh, signed self-updates, the local AI and
+one-click installers. See the [roadmap](docs/ROADMAP.md).
 
 ## How it fits together
 

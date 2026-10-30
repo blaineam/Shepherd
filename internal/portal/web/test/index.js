@@ -1,0 +1,14 @@
+// Lets `node --test internal/portal/web/test/` work on Node versions that do
+// not expand a directory argument: importing the suites here runs them all.
+import './geo.test.js';
+import './weight.test.js';
+import './topo.test.js';
+import './entry.test.js';
+import './lanes.test.js';
+import './model.test.js';
+import './clock.test.js';
+import './replay.test.js';
+import './demo.test.js';
+import './sources.test.js';
+import './api.test.js';
+import './format.test.js';
