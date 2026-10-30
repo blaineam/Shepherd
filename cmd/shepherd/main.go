@@ -152,15 +152,24 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		}
 	}
 
-	// onEvent is nil for now: nothing in cmd/shepherd consumes arp.Event yet,
-	// so startARP logs each one. A future alarm engine wiring passes a
-	// non-nil callback here instead.
+	// onEvent is nil for now: nothing consumes arp.Event itself yet (the
+	// alarm engine above is wired to upstream DNS health, not the ARP
+	// layer), so startARP just logs each one.
 	arpMon, err := startARP(ctx, cfg, registry, nil)
 	if err != nil {
 		return err
 	}
 	if arpMon != nil { // avoid handing the portal a non-nil interface over a nil *arp.Monitor
 		deps.ARP = arpMon
+	}
+
+	acctEngine, err := startAccountability(ctx, cfg, engine, registry)
+	if err != nil {
+		return err
+	}
+	if acctEngine != nil {
+		defer acctEngine.Close()
+		deps.Accountability = acctEngine
 	}
 
 	if cfg.History.Mode == "encrypted" {

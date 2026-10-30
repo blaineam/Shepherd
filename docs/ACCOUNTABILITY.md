@@ -260,9 +260,8 @@ domain the device queried, which is exactly what `"detailed"` mode is for and ex
 
 ## SMTP configuration shape
 
-This package needs the following from Shepherd's configuration file; **`internal/config` is not
-touched by this package** — wiring the two together, including parsing a new `[accountability.smtp]`
-(or similar) section of `shepherd.toml`, is left to the maintainer.
+This package itself needs only the shape below; **`internal/config` is not touched by this
+package**. The shape is:
 
 ```go
 type SMTPConfig struct {
@@ -283,6 +282,48 @@ already has — a Gmail app password, an iCloud app-specific password, a self-ho
 Postfix. `SMTPSender` (`internal/accountability/sender.go`) speaks SMTP with only the standard
 library (`net/smtp`), supporting STARTTLS (port 587 convention), implicit TLS (port 465 convention),
 or no TLS at all (only sane against a local, trusted relay).
+
+### SMTP secret handling (the wiring's choice)
+
+`internal/config`'s `Accountability.SMTP` (`internal/config/config.go`) is now the real
+`[accountability.smtp]` section of `shepherd.toml`:
+
+```toml
+[accountability]
+enabled = true          # default; inert until smtp.host is also set
+
+[accountability.smtp]
+host = ""                # empty = feature stays inert, no matter what else is set
+port = 587
+username = ""
+password = ""            # a real secret, see below
+password_file = ""       # alternative to password; mutually exclusive with it
+from = ""
+tls = "starttls"         # "starttls" | "tls" | "none"
+```
+
+This project has one existing precedent for a secret in configuration: `internal/history`'s
+encryption key, which is *generated* by Shepherd itself and stored in a key file
+(`history.KeySource = "file"`) or derived from a passphrase typed at unlock time
+(`history.KeySource = "passphrase"`, `SHEPHERD_HISTORY_PASSPHRASE`). Neither fits here: an SMTP
+password is not something Shepherd can generate — it is an existing credential from the person's
+own mail provider, needed the moment the process starts (there is no "locked until someone types a
+passphrase in the portal" state for outgoing mail the way there is for reading past history). So
+the wiring (`cmd/shepherd/accountability.go`) uses the simplest option the brief allows: a plain
+`password` field alongside a `password_file` field that, when set, is read fresh (and
+whitespace-trimmed) on every startup instead. `internal/config.Validate` rejects setting both.
+
+**The tradeoff, plainly:** `password` set directly in `shepherd.toml` is protected only by that
+file's own permissions — exactly the same honest limit this document already states for the
+password field itself (see "Honest limits" below) and the same one `docs/DEVICES.md` and
+`docs/HISTORY.md` note for other secrets in this project. `password_file` does not encrypt
+anything either; it only keeps the secret out of `shepherd.toml` itself, so a config file shared,
+backed up, or pasted into an issue does not also leak the SMTP password, and the password file can
+be given narrower permissions or live on a separate volume. Neither option is "secure at rest" in
+any stronger sense — there is no precedent in this project for encrypting a bring-your-own
+credential like this, unlike the random key `internal/history` generates for itself. Encrypting it
+the way `history.json` can be encrypted (a key file or passphrase, Argon2id) remains a reasonable
+future improvement, exactly as already noted below; it is not built here.
 
 ### Send-outcome classification
 
@@ -320,28 +361,64 @@ package's own `Engine.SendLog`) can tell "this will never work until the configu
   held for a retry (`TestSendFailureIsLoggedAndWindowCleared`). This is a deliberate simplicity choice
   given the explicit non-goal of guaranteed delivery; a future version could add bounded retries if
   that trade-off ever changes.
-- **The SMTP password is a real secret, protected today only by file permissions.** `SMTPConfig` is
-  configuration the maintainer's wiring will load from `shepherd.toml` (or equivalent) and hand to
-  `NewSMTPSender`; wherever it is stored at rest, the only protection today is the file's own
-  permissions (0600, the same convention as `devices.json` and `policy.json`) — there is no
-  encryption. This is the same gap `docs/DEVICES.md` and `docs/HISTORY.md` already note for other
-  secrets in this project (an API token, an encryption passphrase). Encrypting it the way
-  `history.json` can be encrypted (a key file or passphrase, Argon2id) is a reasonable future
-  improvement; it is not built here, and this package's own `Codec` interface (the same shape used
-  throughout the project) is where that encryption would plug in without changing anything else.
+- **The SMTP password is a real secret, protected today only by file permissions.** `cmd/shepherd`
+  loads `SMTPConfig.Password` from `shepherd.toml`'s `[accountability.smtp]` (directly, or from a
+  separate file via `password_file`) and hands it to `NewSMTPSender`; wherever it is stored at
+  rest, the only protection today is the file's own permissions (0600, the same convention as
+  `devices.json` and `policy.json`) — there is no encryption. This is the same gap `docs/DEVICES.md`
+  and `docs/HISTORY.md` already note for other secrets in this project (an API token, an encryption
+  passphrase); see "SMTP secret handling" below for exactly what `password_file` does and does not
+  buy you. Encrypting it the way `history.json` can be encrypted (a key file or passphrase,
+  Argon2id) is a reasonable future improvement; it is not built here, and this package's own `Codec`
+  interface (the same shape used throughout the project) is where that encryption would plug in
+  without changing anything else.
+
+## Wiring: the DNS engine, `cmd/shepherd` and the portal
+
+This package itself still has no dependency on `internal/dnsengine` or `internal/devices` (see
+`doc.go`); everything below lives in the callers that feed it.
+
+- **`dnsengine.Engine.OnAccess` (`internal/dnsengine/engine.go`).** A new, additive field,
+  `func(AccessInfo)`, called by `ServeDNS` for every *completed* query — blocked, allowed or
+  cached, never one that errored, since nothing was actually accessed then — whose name matches at
+  least one catalog or custom list item (`Filter.ItemsFor`, which ignores scope on purpose: a
+  category can be watched whether or not it is actually blocked for that client, exactly this
+  package's design rule 6). This is the opposite filter from the existing `Observe` field, which
+  exists for the automatic classifier and deliberately *skips* blocked queries; `Observe` itself is
+  untouched; `OnAccess` is a new, separate hook. `AccessInfo` carries the time, client IP, every
+  matched item ID, the domain and the action, from which a caller builds one `AccessEvent` per
+  matched item.
+- **`cmd/shepherd/accountability.go`'s `startAccountability`.** Builds the `SMTPSender` and
+  `accountability.Engine` from `cfg.Accountability`, and wires `Engine.OnAccess` to a closure that
+  resolves `ClientID`/`GroupIDs` from the device registry's `ScopesFor` (already lock-free and
+  built for the hot path) and then hands the resulting `AccessEvent`s to a small buffered channel
+  drained by one worker goroutine, which is what actually calls `Engine.Record`. This indirection
+  exists because `Record` can write the pending digest to disk (`fsync` + rename) on every call
+  that matches a subscription, and `OnAccess` itself runs synchronously inside `ServeDNS` — on the
+  DNS hot path, a disk write must never happen inline. A full queue drops the event rather than
+  blocking a DNS response, the same choice `ClientSeen` and `Observe` already make elsewhere in
+  `dnsengine`. Gated by `cfg.Accountability.Enabled` *and* an SMTP host actually being configured:
+  with either absent, `startAccountability` returns `(nil, nil)` — not wired, not an error — which
+  is how `enabled = true` by default stays safe (see "SMTP secret handling" above).
+- **Portal API (`internal/portal/api_accountability.go`), routes under `/api/accountability/...`:**
+  `GET`/`POST /contacts`, `DELETE /contacts/{id}`, `GET`/`POST /subscriptions` (optionally filtered
+  by `?contact_id=`), `DELETE /subscriptions/{id}`. A subscription's scope accepts only `"group"`
+  or `"device"` (never `"network"` — this package has no network-wide scope, design rule 4) and is
+  resolved against the device registry the same way `/api/policy/*` resolves a blocking scope.
+  Items are validated against the catalog and custom lists (`Server.knownItem`, reused from
+  `api_policy.go`) or the wildcard `"*"`. When `Deps.Accountability` is nil (not wired up), every
+  route answers 404, the same "not available on this version" shape the portal's own frontend
+  already recognises (`mgmt.js`'s `unavailable()`), not a panic.
+- **Portal UI (`internal/portal/web/js/accountability.js`), a new Accountability tab:** add or
+  remove a contact (name, email), and per contact, add or remove a subscription — a scope picker
+  (group or device), an item picker (every catalog entry, plus a "watch anything" wildcard toggle),
+  and detail/mode/trigger selectors, with the SMTP relay the only thing it cannot configure (that
+  stays in `shepherd.toml`, matching every other secret in this project). Built in the same style
+  as the Blocking screen's panels and list rows, not a copy of `scope.js` (that module computes
+  blocking-policy "effective" status, which has no meaning for a subscription).
 
 ## What is not built here
 
-- **No portal screens or API.** Managing contacts and subscriptions today is Go API only
-  (`Engine.AddContact`, `AddSubscription`, etc.); a `/api/accountability/...` surface and the portal
-  UI to drive it are future work, built the same way `docs/POLICY.md`'s and `docs/DEVICES.md`'s APIs
-  were.
-- **No wiring to the DNS engine.** Nothing in `internal/dnsengine` was touched. Turning a
-  `dnsengine.Entry` (or the live decision path, for the "watched items" filter this package needs) into
-  calls to `Engine.Record` is the maintainer's integration work, matching the brief's instruction not
-  to modify that package here.
-- **No `[accountability]` section in `internal/config`.** The configuration shape above is documented,
-  not parsed anywhere; `internal/config` is untouched.
 - **No acknowledgement mechanism.** The brief allows for "a one-way, unauthenticated-safe
   acknowledgement" in the email that must not leak anything beyond what the email already states.
   That is optional, and building it well (a one-way confirmation link with no session, no portal
@@ -349,6 +426,8 @@ package's own `Engine.SendLog`) can tell "this will never work until the configu
   its own security review; it is left as a clearly scoped future addition rather than rushed in here.
 - **No multi-user portal authentication of any kind**, by design rule 5 — the accountability partner
   never gets anything but email.
+- **No encryption of the SMTP password at rest**, beyond the file-permission and
+  keep-it-out-of-`shepherd.toml` choices in "SMTP secret handling" above.
 
 ## Go API for wiring
 
@@ -370,11 +449,12 @@ sub, err := eng.AddSubscription(accountability.Subscription{
 	Mode: accountability.ModeImmediate, Trigger: accountability.TriggerAny,
 })
 
-// Wiring (not built here): for every query the DNS engine decides on, where the
-// matched item is one being watched, call:
+// The wiring (cmd/shepherd/accountability.go): dnsengine.Engine.OnAccess fires for
+// every completed query matching a watched item, blocked or allowed; a worker
+// goroutine drains a small queue and calls, once per matched item:
 eng.Record(accountability.AccessEvent{
-	Time: entry.Time, ClientID: entry.DeviceID, GroupIDs: groupIDsFor(entry.DeviceID),
-	Item: matchedItem, Domain: entry.Name, Action: entry.Action,
+	Time: info.Time, ClientID: deviceID, GroupIDs: groupIDs,
+	Item: item, Domain: info.Domain, Action: info.Action,
 })
 
 eng.Contacts() []Contact;         eng.Contact(id) (Contact, error);         eng.RemoveContact(id) error

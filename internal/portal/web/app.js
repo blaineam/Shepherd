@@ -24,6 +24,7 @@ import { createBlocking, createDevicePolicy } from './js/blocking.js';
 import { createUpstreams } from './js/upstreamsview.js';
 import { createAlarms } from './js/alarmsview.js';
 import { createHistory } from './js/historyview.js';
+import { createAccountability } from './js/accountability.js';
 import { createDemoMgmt } from './js/demomgmt.js';
 import { DEVICE_BY_IP } from './js/demodata.js';
 
@@ -444,7 +445,7 @@ async function pollStatus() {
 // ---------------------------------------------------------------- management screens
 const mgmt = createMgmt(api);
 const policyStore = createPolicyStore({ mgmt });
-const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'upstreams', 'history', 'details'];
+const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'upstreams', 'history', 'accountability', 'details'];
 
 const blocking = createBlocking({
   root: $('#view-blocking'), mgmt, store: policyStore, notify,
@@ -454,7 +455,7 @@ const devicesView = createDevices({
   root: $('#view-devices'), mgmt, notify, toaster,
   renderBlocking: createDevicePolicy({ store: policyStore, notify, openBlocking: (scope, d) => openBlocking(scope, d) }),
   onOpenHistory: (d) => { showView('history'); historyView.showFor(d); },
-  onGroupsChanged: () => blocking.onGroupsChanged(),
+  onGroupsChanged: () => { blocking.onGroupsChanged(); accountabilityView.onGroupsChanged(); },
 });
 const alarmsView = createAlarms({ root: $('#view-alarms'), mgmt, notify, toaster });
 const upstreamsView = createUpstreams({ root: $('#view-upstreams'), mgmt, notify });
@@ -462,6 +463,10 @@ const historyView = createHistory({
   root: $('#view-history'), mgmt, notify,
   onReplay: (t) => { showView('hud'); enterReplay(Math.max(0, t - 20000)); },
   demo: DEMO ? { setLocked: (locked) => api('/api/demo/history-lock', { method: 'POST', body: JSON.stringify({ locked }) }) } : null,
+});
+const accountabilityView = createAccountability({
+  root: $('#view-accountability'), mgmt, notify,
+  getGroups: () => devicesView.groups,
 });
 
 function openBlocking(scope, device) {
@@ -490,6 +495,7 @@ function showView(name) {
   else if (name === 'alarms') alarmsView.show();
   else if (name === 'upstreams') upstreamsView.show();
   else if (name === 'history') historyView.show();
+  else if (name === 'accountability') devicesView.reloadGroups().catch(() => {}).finally(() => accountabilityView.show());
 }
 for (const v of VIEWS) $('#tab-' + v).addEventListener('click', () => showView(v));
 window.addEventListener('hashchange', () => { const h = location.hash.slice(1) || 'hud'; if (VIEWS.includes(h) && $('#view-' + h).hidden) showView(h); });

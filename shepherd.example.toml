@@ -102,6 +102,32 @@ token = ""                 # bearer token, or leave empty and use username/passw
 username = ""
 password = ""
 
+[accountability]
+# Accountability-partner email alerts (docs/ACCOUNTABILITY.md): email a
+# trusted contact when a device in a group or scope they chose accesses a
+# category they chose, whether or not it was blocked. Enabled by default is
+# safe: the library starts with no contacts and no subscriptions (manage both
+# from the portal's Accountability screen), and smtp.host below is empty by
+# default too, so a fresh install sends no mail until you add a subscription
+# AND configure an SMTP relay here.
+enabled = true
+
+[accountability.smtp]
+# A relay you already have: a Gmail or iCloud app password, a self-hosted
+# Postfix. An empty host (the default) leaves the whole feature inert.
+host = ""               # e.g. "smtp.example.com"
+port = 587
+username = ""
+# The password is a real secret. Either set it here directly (protected only
+# by this file's own 0600 permissions, like every other secret in this
+# project today), or point password_file at a separate 0600 file holding just
+# the password, so the secret need not live inside shepherd.toml itself.
+# Setting both is a configuration error. See docs/ACCOUNTABILITY.md.
+password = ""
+password_file = ""      # e.g. "/etc/shepherd/accountability-smtp-password"
+from = ""               # e.g. "shepherd@example.com"
+tls = "starttls"        # "starttls" (port 587 convention), "tls" (port 465) or "none"
+
 [portal]
 listen = "127.0.0.1:8787"
 

@@ -745,6 +745,11 @@ tr.a-error .h-dom { color: var(--amber); }
 .chip.shadow[aria-pressed="true"] { color: #b9a8f5; border-color: #a78bfa66; background: #a78bfa10; }
 .feed-row.wand .f-dot { background: transparent; border: 1px dashed var(--wander); box-shadow: none; width: 7px; height: 7px; }
 .feed-row.wand .f-dev { color: var(--wander); }
+
+/* ---------- Accountability ---------- */
+.acct-content { max-width: 900px; }
+.acct-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 14px; border: 1px solid var(--line2); background: var(--panel2); padding: 10px; max-height: 220px; overflow-y: auto; }
+.acct-item-row { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .f-shadow { grid-column: 3 / -1; font-size: 10px; color: #b9a8f5; font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: -2px; }
 
 /* ---------- Alarms ---------- */

@@ -277,7 +277,10 @@ func TestEngineEndToEnd(t *testing.T) {
 		t.Errorf("www.icloud.com rcode = %s", dns.RcodeToString[r.Rcode])
 	}
 
-	// Log and stats saw it all.
+	// Log and stats saw it all. Wait for every query's entry to land (see
+	// waitForLogEntries) before reading Stats, which Engine.done updates
+	// right alongside the log, in the same call.
+	waitForLogEntries(t, e.Log, 8)
 	entries, _ := e.Log.After(0, 100)
 	var relay int
 	for _, en := range entries {

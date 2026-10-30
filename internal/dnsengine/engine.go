@@ -36,6 +36,31 @@ type Engine struct {
 	// classifier can learn what a device talks to. Must be cheap; the
 	// classifier's own Observe is non-blocking.
 	Observe func(clientIP, qname string, answers []net.IP)
+	// OnAccess is called for every completed query (blocked, allowed or
+	// cached — never one that errored, since nothing was actually accessed)
+	// whose name matches at least one catalog or custom list item, whatever
+	// the policy engine decided to do about it. This is the opposite filter
+	// from Observe, which exists for the automatic classifier and
+	// deliberately skips blocked queries; accountability-partner alerts
+	// (docs/ACCOUNTABILITY.md) want to know about a watched access whether
+	// or not it was blocked. Must be cheap; nil disables it.
+	OnAccess func(AccessInfo)
+}
+
+// AccessInfo is what OnAccess receives for one query matching a watched
+// catalog or custom list item.
+type AccessInfo struct {
+	Time     time.Time
+	ClientIP string
+	// Items are every catalog or custom list ID that name (or a parent
+	// domain) belongs to, regardless of whether any of them is enabled for
+	// this client's scope (see Filter.ItemsFor). Never empty: OnAccess is
+	// not called otherwise.
+	Items []string
+	// Domain is the exact name queried.
+	Domain string
+	// Action is what ServeDNS decided: "blocked", "allowed" or "cached".
+	Action string
 }
 
 // DeviceInfo is what the device registry knows about a client address.
@@ -181,6 +206,21 @@ func (e *Engine) done(entry Entry, start time.Time) {
 	e.Stats.Record(entry)
 }
 
+// reportAccess calls OnAccess when entry's name matches a watched item.
+// Filter.ItemsFor ignores scope on purpose (unlike the Decision that chose
+// entry.Action): accountability's whole point is that a category can be
+// watched whether or not it is actually blocked for this client.
+func (e *Engine) reportAccess(entry Entry) {
+	if e.OnAccess == nil {
+		return
+	}
+	items := e.Filter.ItemsFor(entry.Name)
+	if len(items) == 0 {
+		return
+	}
+	e.OnAccess(AccessInfo{Time: entry.Time, ClientIP: entry.Client, Items: items, Domain: entry.Name, Action: entry.Action})
+}
+
 // ServeDNS implements dns.Handler.
 func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	start := time.Now()
@@ -229,6 +269,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		resp := e.sinkhole(r, q, d.NXDOMAIN)
 		entry.Action, entry.Reason, entry.Rcode = "blocked", d.Reason, dns.RcodeToString[resp.Rcode]
 		e.write(w, r, resp)
+		e.reportAccess(entry)
 		e.done(entry, start)
 		return
 	}
@@ -242,6 +283,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			e.Observe(entry.Client, entry.Name, ips)
 		}
 		e.write(w, r, resp)
+		e.reportAccess(entry)
 		e.done(entry, start)
 		return
 	}
@@ -265,6 +307,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		e.Observe(entry.Client, entry.Name, ips)
 	}
 	e.write(w, r, resp)
+	e.reportAccess(entry)
 	e.done(entry, start)
 }
 

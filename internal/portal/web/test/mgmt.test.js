@@ -62,6 +62,25 @@ test('policy endpoints', async () => {
   assert.equal(calls[10][1].body, '{"item":"ads"}');
 });
 
+test('accountability endpoints', async () => {
+  const { calls, m } = rig();
+  await m.contacts();
+  assert.equal(calls[0][0], '/api/accountability/contacts');
+  await m.addContact('Jordan', 'jordan@example.net');
+  assert.deepEqual([calls[1][0], calls[1][1].method, calls[1][1].body], ['/api/accountability/contacts', 'POST', '{"name":"Jordan","email":"jordan@example.net"}']);
+  await m.deleteContact('c 1');
+  assert.deepEqual([calls[2][0], calls[2][1].method], ['/api/accountability/contacts/c%201', 'DELETE']);
+  await m.subscriptions();
+  assert.equal(calls[3][0], '/api/accountability/subscriptions');
+  await m.subscriptions('c1');
+  assert.equal(calls[4][0], '/api/accountability/subscriptions?contact_id=c1');
+  const body = { contact_id: 'c1', scope: { kind: 'device', id: 'd1' }, items: ['ads'] };
+  await m.addSubscription(body);
+  assert.deepEqual([calls[5][0], calls[5][1].method, calls[5][1].body], ['/api/accountability/subscriptions', 'POST', JSON.stringify(body)]);
+  await m.deleteSubscription('s1');
+  assert.deepEqual([calls[6][0], calls[6][1].method], ['/api/accountability/subscriptions/s1', 'DELETE']);
+});
+
 test('upstream, history and unlock endpoints', async () => {
   const { calls, m } = rig();
   await m.upstreams();

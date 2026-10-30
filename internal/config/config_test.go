@@ -407,3 +407,71 @@ func TestExampleConfigShowsTheAlarmsDefaults(t *testing.T) {
 		t.Errorf("example %+v differs from the defaults %+v", ex.Alarms, Default().Alarms)
 	}
 }
+
+func TestAccountabilityDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cfg.Accountability
+	if !a.Enabled {
+		t.Error("accountability is enabled by default (the library itself has zero subscriptions, so this is inert)")
+	}
+	if a.SMTP.Host != "" || a.SMTP.From != "" || a.SMTP.Password != "" || a.SMTP.PasswordFile != "" {
+		t.Errorf("a fresh install must configure no SMTP relay: %+v", a.SMTP)
+	}
+	if a.SMTP.Port != 587 || a.SMTP.TLS != "starttls" {
+		t.Errorf("port/tls defaults = %d %q, want 587 starttls (an empty host still leaves the feature inert)", a.SMTP.Port, a.SMTP.TLS)
+	}
+}
+
+func TestAccountabilityOverridesAndValidation(t *testing.T) {
+	cfg := writeCfg(t, `[accountability]
+enabled = false
+[accountability.smtp]
+host = "smtp.example.com"
+port = 587
+username = "shepherd@example.com"
+password = "hunter2"
+from = "shepherd@example.com"
+tls = "tls"
+`)
+	if cfg.Accountability.Enabled {
+		t.Error("enabled = false must turn the feature off")
+	}
+	s := cfg.Accountability.SMTP
+	if s.Host != "smtp.example.com" || s.Port != 587 || s.Username != "shepherd@example.com" || s.Password != "hunter2" || s.From != "shepherd@example.com" || s.TLS != "tls" {
+		t.Errorf("smtp overrides = %+v", s)
+	}
+
+	bad := map[string]string{
+		"[accountability.smtp]\nhost = \"h\"\nport = 0\nfrom = \"f\"":                                                 "port",
+		"[accountability.smtp]\nhost = \"h\"\nport = 70000\nfrom = \"f\"":                                             "port",
+		"[accountability.smtp]\nhost = \"h\"\nport = 587":                                                             "from",
+		"[accountability.smtp]\nhost = \"h\"\nport = 587\nfrom = \"f\"\ntls = \"ssl\"":                                "tls",
+		"[accountability.smtp]\nhost = \"h\"\nport = 587\nfrom = \"f\"\npassword = \"a\"\npassword_file = \"/tmp/x\"": "not both",
+	}
+	for body, want := range bad {
+		path := filepath.Join(t.TempDir(), "c.toml")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", body, err, want)
+		}
+	}
+	// An unconfigured host (the default) skips every other check.
+	if _, err := Load(filepath.Join(t.TempDir(), "absent.toml")); err != nil {
+		t.Errorf("an empty smtp host must need no other field: %v", err)
+	}
+}
+
+func TestExampleConfigShowsTheAccountabilityDefaults(t *testing.T) {
+	ex, err := Load("../../shepherd.example.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.Accountability != Default().Accountability {
+		t.Errorf("example %+v differs from the defaults %+v", ex.Accountability, Default().Accountability)
+	}
+}

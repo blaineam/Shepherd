@@ -275,3 +275,59 @@ func TestObserveHookSeesRealAnswersNotBlockedSinkholes(t *testing.T) {
 	e.Observe = nil
 	e.ServeDNS(udpWriter(), query("other.example.", dns.TypeA))
 }
+
+func TestOnAccessSeesBlockedAndAllowedQueriesThatMatchAWatchedItem(t *testing.T) {
+	var hits atomicInt
+	up := fakeUpstreamAnswering(t, "198.51.100.7", &hits)
+	pool, _ := NewPool([]string{up})
+	e := &Engine{Filter: NewFilter(), Pool: pool, Cache: NewCache(10), Log: NewQueryLog(20), Stats: NewStats()}
+	e.Filter.SetList("ads", set("ads.example"))
+	e.Filter.SetList("gaming", set("roblox.example"))
+	// Configured (non-legacy) mode, network scope: "ads" is blocked, but
+	// "gaming" is loaded and matchable yet never turned on anywhere — the
+	// accountability library's own motivating example, a watched category
+	// that is never blocked at all (docs/ACCOUNTABILITY.md).
+	e.Filter.SetScopes(map[string]ScopeConfig{
+		NetworkScope().String(): {Items: map[string]bool{"ads": true}},
+	})
+
+	var calls []AccessInfo
+	e.OnAccess = func(info AccessInfo) { calls = append(calls, info) }
+
+	e.ServeDNS(udpWriter(), query("x.ads.example.", dns.TypeA))  // blocked, matches "ads" (blocked queries bypass the cache)
+	e.ServeDNS(udpWriter(), query("site.example.", dns.TypeA))   // allowed, no list match: no call
+	e.ServeDNS(udpWriter(), query("roblox.example.", dns.TypeA)) // allowed, matches "gaming" (never blocked)
+	e.ServeDNS(udpWriter(), query("roblox.example.", dns.TypeA)) // cached, matches "gaming"
+
+	if len(calls) != 3 {
+		t.Fatalf("OnAccess called %d times, want 3 (blocked + allowed-but-watched + cached), got %+v", len(calls), calls)
+	}
+	if calls[0].Action != "blocked" || calls[0].Domain != "x.ads.example" || len(calls[0].Items) != 1 || calls[0].Items[0] != "ads" {
+		t.Errorf("blocked call = %+v", calls[0])
+	}
+	if calls[1].Action != "allowed" || calls[1].Domain != "roblox.example" || calls[1].Items[0] != "gaming" {
+		t.Errorf("an allowed, never-blocked, watched access must still be reported: %+v", calls[1])
+	}
+	if calls[2].Action != "cached" || calls[2].Items[0] != "gaming" {
+		t.Errorf("cached call = %+v", calls[2])
+	}
+	for _, c := range calls {
+		if c.ClientIP == "" {
+			t.Errorf("ClientIP must be set: %+v", c)
+		}
+	}
+
+	// A nil OnAccess must never be called (no panic).
+	e.OnAccess = nil
+	e.ServeDNS(udpWriter(), query("x.ads.example.", dns.TypeA))
+
+	// An upstream error must never report an access, even for a watched item.
+	errPool, _ := NewPool([]string{"127.0.0.1:1"}) // nothing listening: upstream error
+	e2 := &Engine{Filter: e.Filter, Pool: errPool, Cache: NewCache(10), Log: NewQueryLog(20), Stats: NewStats()}
+	var errCalls []AccessInfo
+	e2.OnAccess = func(info AccessInfo) { errCalls = append(errCalls, info) }
+	e2.ServeDNS(udpWriter(), query("roblox.example.", dns.TypeA)) // matches "gaming", but upstream fails
+	if len(errCalls) != 0 {
+		t.Errorf("an upstream error must never report an access: %+v", errCalls)
+	}
+}

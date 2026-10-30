@@ -23,17 +23,18 @@ type Config struct {
 	// install (the catalog's recommended items). Lists you define yourself are
 	// always kept. It only matters the first time Shepherd runs in a data
 	// directory: after that policy.json, edited in the portal, is the truth.
-	NoDefaultLists bool     `toml:"no_default_lists"`
-	DNS            DNS      `toml:"dns"`
-	Lists          []List   `toml:"lists"`
-	Portal         Portal   `toml:"portal"`
-	Privacy        Privacy  `toml:"privacy"`
-	History        History  `toml:"history"`
-	Map            Map      `toml:"map"`
-	Devices        Devices  `toml:"devices"`
-	Classify       Classify `toml:"classify"`
-	ARP            ARP      `toml:"arp"`
-	Alarms         Alarms   `toml:"alarms"`
+	NoDefaultLists bool           `toml:"no_default_lists"`
+	DNS            DNS            `toml:"dns"`
+	Lists          []List         `toml:"lists"`
+	Portal         Portal         `toml:"portal"`
+	Privacy        Privacy        `toml:"privacy"`
+	History        History        `toml:"history"`
+	Map            Map            `toml:"map"`
+	Devices        Devices        `toml:"devices"`
+	Classify       Classify       `toml:"classify"`
+	ARP            ARP            `toml:"arp"`
+	Alarms         Alarms         `toml:"alarms"`
+	Accountability Accountability `toml:"accountability"`
 }
 
 // ARP controls the passive ARP monitor (docs/ARP.md): a read-only listener
@@ -113,6 +114,42 @@ type AlarmsNtfy struct {
 	Password string `toml:"password"`
 }
 
+// Accountability controls accountability-partner email alerts
+// (docs/ACCOUNTABILITY.md): emailing a trusted contact when a device accesses
+// something they chose to watch. Enabled by default is safe: the library
+// itself starts with no contacts and no subscriptions, and this section's
+// SMTP.Host is empty by default too, so a fresh install sends no mail until
+// both a subscription is added in the portal and an SMTP relay is configured
+// here.
+type Accountability struct {
+	Enabled bool               `toml:"enabled"`
+	SMTP    AccountabilitySMTP `toml:"smtp"`
+}
+
+// AccountabilitySMTP is the outgoing mail relay accountability alerts send
+// through: a relay you already have (a Gmail or iCloud app password, a
+// self-hosted Postfix), matching this project's free, keyless,
+// bring-your-own-credentials convention. Password is the plaintext secret
+// kept directly in shepherd.toml (protected only by that file's own 0600
+// permissions, the same honest limit docs/DEVICES.md and docs/HISTORY.md
+// already note for other secrets); PasswordFile instead points at a separate
+// 0600 file holding just the password, so the secret need not live inside
+// the configuration file people might paste into an issue or back up more
+// widely. Setting both is a configuration error (Validate rejects it), so
+// there is never an ambiguous "which one wins". See docs/ACCOUNTABILITY.md's
+// "SMTP secret handling" section for the tradeoff this leaves.
+type AccountabilitySMTP struct {
+	Host         string `toml:"host"`
+	Port         int    `toml:"port"`
+	Username     string `toml:"username"`
+	Password     string `toml:"password"`
+	PasswordFile string `toml:"password_file"`
+	From         string `toml:"from"`
+	// TLS is "starttls" (default, port 587 convention), "tls" (implicit TLS,
+	// port 465 convention) or "none" (only sane against a local, trusted relay).
+	TLS string `toml:"tls"`
+}
+
 // History controls what is remembered after the fact. "memory" (the default)
 // keeps recent queries in RAM only and writes nothing to disk. "encrypted"
 // keeps a searchable, AES-256-GCM encrypted record on disk.
@@ -180,15 +217,16 @@ var defaultList = List{
 // Network addresses stay on loopback so it is safe to start on any machine.
 func Default() Config {
 	return Config{
-		Lists:    []List{defaultList},
-		Privacy:  Privacy{BlockPrivateRelay: true},
-		History:  History{Mode: "memory", RetentionDays: 30, MaxMB: 2048, KeySource: "file"},
-		Map:      Map{Enabled: true, AutoHome: true},
-		Devices:  Devices{Enabled: true, DNS: true, Neighbors: true, NeighborIntervalSeconds: 30, MDNS: true, ReverseDNS: true, SaveIntervalSeconds: 60, QuarantineNewDevices: true},
-		Classify: Classify{Enabled: true, IntervalSeconds: 300},
-		ARP:      ARP{Enabled: true},
-		Alarms:   Alarms{Enabled: true, Ntfy: AlarmsNtfy{Topic: "shepherd-alarms"}},
-		DataDir:  "data",
+		Lists:          []List{defaultList},
+		Privacy:        Privacy{BlockPrivateRelay: true},
+		History:        History{Mode: "memory", RetentionDays: 30, MaxMB: 2048, KeySource: "file"},
+		Map:            Map{Enabled: true, AutoHome: true},
+		Devices:        Devices{Enabled: true, DNS: true, Neighbors: true, NeighborIntervalSeconds: 30, MDNS: true, ReverseDNS: true, SaveIntervalSeconds: 60, QuarantineNewDevices: true},
+		Classify:       Classify{Enabled: true, IntervalSeconds: 300},
+		ARP:            ARP{Enabled: true},
+		Alarms:         Alarms{Enabled: true, Ntfy: AlarmsNtfy{Topic: "shepherd-alarms"}},
+		Accountability: Accountability{Enabled: true, SMTP: AccountabilitySMTP{Port: 587, TLS: "starttls"}},
+		DataDir:        "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
 			Upstreams:            []string{"9.9.9.10", "149.112.112.10", "1.1.1.1"},
@@ -259,6 +297,22 @@ func (c Config) Validate() error {
 		}
 		if !ntfy.ValidTopic(c.Alarms.Ntfy.Topic) {
 			return fmt.Errorf("alarms.ntfy.topic must be 1 to 64 letters, digits, - or _, got %q", c.Alarms.Ntfy.Topic)
+		}
+	}
+	if smtp := c.Accountability.SMTP; smtp.Host != "" {
+		if smtp.Port <= 0 || smtp.Port > 65535 {
+			return fmt.Errorf("accountability.smtp.port %d is invalid", smtp.Port)
+		}
+		if smtp.From == "" {
+			return errors.New("accountability.smtp.from is required once accountability.smtp.host is set")
+		}
+		switch smtp.TLS {
+		case "starttls", "tls", "none":
+		default:
+			return fmt.Errorf(`accountability.smtp.tls must be "starttls", "tls" or "none", got %q`, smtp.TLS)
+		}
+		if smtp.Password != "" && smtp.PasswordFile != "" {
+			return errors.New("accountability.smtp.password and accountability.smtp.password_file must not both be set")
 		}
 	}
 	if s := c.Devices.ReverseDNSServer; s != "" {

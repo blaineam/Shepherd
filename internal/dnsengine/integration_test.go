@@ -12,9 +12,31 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/miekg/dns"
 )
+
+// waitForLogEntries polls for the query log to reach at least n entries.
+// ServeDNS writes the client's UDP response before it records the log entry
+// (see Engine.done), so a test's own client can observe the response and
+// race ahead of the server goroutine's trailing e.Log.Add call -- no data
+// race (the log's own mutex is sound), just no happens-before edge between
+// "the UDP packet was received" and "the log entry was written". Reliable
+// in isolation; occasionally not under full-suite CI load.
+func waitForLogEntries(t *testing.T, log *QueryLog, n int) []Entry {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if all := log.All(); len(all) >= n {
+			return all
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("log never reached %d entries", n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
 
 type fakeNamer struct {
 	mu sync.Mutex
@@ -58,7 +80,7 @@ func TestEngineLabelsQueriesWithTheDeviceAndHonorsExclusion(t *testing.T) {
 	if r := ask(t, addr, "x.ads.example.", dns.TypeA); len(r.Answer) != 1 || r.Answer[0].(*dns.A).A.String() != "0.0.0.0" {
 		t.Fatalf("blocked answer = %v", r.Answer)
 	}
-	last := e.Log.All()[0]
+	last := waitForLogEntries(t, e.Log, 1)[0]
 	if last.Device != "Kitchen tablet" || last.DeviceID != "d-1" || last.Action != "blocked" {
 		t.Errorf("entry = %+v", last)
 	}
@@ -75,7 +97,7 @@ func TestEngineLabelsQueriesWithTheDeviceAndHonorsExclusion(t *testing.T) {
 	if len(r.Answer) != 1 || r.Answer[0].(*dns.A).A.String() != "192.0.2.9" {
 		t.Fatalf("excluded device must be answered: %v", r.Answer)
 	}
-	all := e.Log.All()
+	all := waitForLogEntries(t, e.Log, 2)
 	if got := all[len(all)-1]; got.Action != "allowed" || got.Reason != "excluded" || got.Device != "Kitchen tablet" {
 		t.Errorf("excluded entry = %+v", got)
 	}
