@@ -18,6 +18,49 @@ import (
 // Attribution is the credit the database's license (CC BY 4.0) requires us to show.
 const Attribution = "IP geolocation by DB-IP.com (CC BY 4.0)"
 
+// reader holds a replaceable MaxMind-format database. The zero value is
+// usable and finds nothing until a database is opened. Locator and ASNLocator
+// share it so both keep the same swap-on-success guarantee.
+type reader struct {
+	mu sync.RWMutex
+	db *maxminddb.Reader
+}
+
+// open loads the database at path, replacing any previous one. On error the
+// previous database stays in use.
+func (r *reader) open(path string) error {
+	db, err := maxminddb.Open(path)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	old := r.db
+	r.db = db
+	r.mu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+	return nil
+}
+
+func (r *reader) ready() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.db != nil
+}
+
+// decode looks addr up and decodes the record into v. It reports false when
+// no database is loaded, the address is absent or the record cannot be read.
+func (r *reader) decode(addr netip.Addr, v any) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.db == nil {
+		return false
+	}
+	res := r.db.Lookup(addr.Unmap())
+	return res.Found() && res.Decode(v) == nil
+}
+
 type record struct {
 	City struct {
 		Names map[string]string `maxminddb:"names"`
@@ -33,34 +76,14 @@ type record struct {
 
 // Locator answers lookups from a memory-mapped GeoIP database. The zero value
 // is usable and simply finds nothing until a database is opened.
-type Locator struct {
-	mu sync.RWMutex
-	db *maxminddb.Reader
-}
+type Locator struct{ reader }
 
 // Open loads the database at path, replacing any previous one. On error the
 // previous database stays in use.
-func (l *Locator) Open(path string) error {
-	r, err := maxminddb.Open(path)
-	if err != nil {
-		return err
-	}
-	l.mu.Lock()
-	old := l.db
-	l.db = r
-	l.mu.Unlock()
-	if old != nil {
-		_ = old.Close()
-	}
-	return nil
-}
+func (l *Locator) Open(path string) error { return l.open(path) }
 
 // Ready reports whether a database is loaded.
-func (l *Locator) Ready() bool {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return l.db != nil
-}
+func (l *Locator) Ready() bool { return l.ready() }
 
 // Locate implements dnsengine.Geo.
 func (l *Locator) Locate(ip net.IP) (dnsengine.Dest, bool) {
@@ -68,14 +91,8 @@ func (l *Locator) Locate(ip net.IP) (dnsengine.Dest, bool) {
 	if !ok {
 		return dnsengine.Dest{}, false
 	}
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	if l.db == nil {
-		return dnsengine.Dest{}, false
-	}
 	var rec record
-	res := l.db.Lookup(addr.Unmap())
-	if !res.Found() || res.Decode(&rec) != nil {
+	if !l.decode(addr, &rec) {
 		return dnsengine.Dest{}, false
 	}
 	if rec.Location.Latitude == 0 && rec.Location.Longitude == 0 {
