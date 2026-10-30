@@ -35,23 +35,49 @@ to fix.** One-sided ARP steering gives upload/outbound-direction visibility and 
 
 ## Throughput: a real cost while a device is steered
 
-Measured live, against a real phone pushing a sustained transfer: a single capture-and-relay
-goroutine capped that device's throughput at roughly a third of its unsteered speed (observed
-~1.1 Gbps unsteered, ~370 Mbps while steered on a single goroutine). Nothing broke — every frame was
-still relayed correctly, with zero errors — it was simply slower, because every outbound frame now
-makes an extra hop through one user-space Go process doing one blocking read, one lookup, and one
-blocking write, in sequence, for every single packet.
+Measured live, against a real phone pushing a sustained transfer: throughput dropped sharply while
+steered (observed ~1.1 Gbps unsteered, down to roughly a third to a quarter while steered) and came
+straight back the instant the trial ended. Nothing broke in any of this — every frame was still
+relayed correctly, with zero errors — it was simply slower.
 
-`Controller.ParallelRelay` fixes this by splitting one interface's capture across several
-`PACKET_FANOUT` workers (`capture_linux.go`), each with its own capture socket and its own `Sender`
-(`OpenMany`), so several goroutines read, decide, and send truly in parallel instead of one
-serializing everything. `cmd/intercept-trial` uses it by default (`-workers`, default
-`DefaultParallelism`); so should anything that wires Watch mode into `cmd/shepherd` later.
+Three things were investigated in turn, live, against the real finding each time rather than the
+first plausible guess:
 
-Still true even with that fix: this is a software relay, not a hardware switch, so steering a device
-will never be perfectly free. Treat a short, deliberate trial as the right scope for paying that
-cost today; making Watch mode something left on indefinitely needs this measured again, at the
-parallelism level that actually ships, before it is trusted the way the DNS engine is.
+1. **A single capture-and-relay goroutine**, suspected first since it serializes every packet
+   through one blocking read, one lookup, and one blocking write. `Controller.ParallelRelay` fixes
+   that real inefficiency by splitting capture across several `PACKET_FANOUT` workers
+   (`capture_linux.go`), each with its own socket and its own `Sender` (`OpenMany`). It did measurably
+   increase the total bytes relayed in a fixed window — but the slowdown the phone showed did not
+   go away, which was the signal that this was not the dominant cause.
+2. **GRO on the capturing interface**, ruled out directly: disabling it by hand, with no steering at
+   all running, produced no slowdown whatsoever. Still a correct, necessary fix for the separate
+   `EMSGSIZE` problem it causes (see below), just not the throughput explanation.
+3. **TCP acknowledgment packets are outbound.** Watch mode only steers a device's outbound traffic,
+   but that includes every ACK for a connection whose actual data is flowing *inbound* — a download's
+   data never goes near Shepherd, but the steady stream of tiny ACK packets telling the sender "keep
+   going" does. Measured relayed-byte totals during the slow runs were far too small to explain the
+   speed drop by volume alone (tens of megabytes over two minutes, not the gigabytes a saturated link
+   implies), which is consistent with a *packet-rate*, not *byte-volume*, bottleneck: a great many
+   small ACKs, each one adding latency on its way through the relay, throttling the sender's own
+   congestion window the normal way TCP responds to a slow or lossy path — even though the download
+   itself never touched Shepherd.
+
+The packet-rate cost that matters most turned out to be inside the relay's own send path, not the
+raw syscalls: every relayed frame went through `sendWithTimeout`'s goroutine-and-timer wrapper (a
+fresh goroutine and a fresh `time.After` timer, per packet), there to bound a `Sender.Send` call that
+might hang forever. For the real `rawSender`, it cannot: its socket now carries a kernel-enforced
+`SO_SNDTIMEO`, set once when the socket opens, so `Sendto` itself is already bounded. `rawSender`
+reports this (the `selfBounded` interface in `sender.go`), and `sendWithTimeout` skips its wrapper
+entirely for a Sender that reports it — a direct call, with only a cheap `defer`/`recover` for a
+genuine panic, instead of a goroutine and a timer allocation on every single packet. `FakeSender`
+does not report `selfBounded`, so every existing safety test (a deliberately wedged Sender, a
+panicking one) still exercises the slow, fully defensive path unchanged.
+
+This is the current best explanation and fix, not yet re-measured live against a real sustained
+transfer at the time of writing — do that before trusting the number. Even once it holds up: this is
+a software relay, not a hardware switch, so steering a device will never be perfectly free, and
+making Watch mode something left on indefinitely needs this measured again, at whatever the shipped
+configuration turns out to be, before it is trusted the way the DNS engine is.
 
 ## IPv4 only, no exceptions
 

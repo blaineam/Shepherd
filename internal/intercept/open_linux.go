@@ -9,15 +9,19 @@ import (
 	"net"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // This file is the only code in this package that touches a socket. It
 // opens an AF_PACKET SOCK_RAW socket bound to one interface and only ever
-// calls sendto on it: no promiscuous mode, no setsockopt that changes
-// kernel behaviour, no receive. It needs CAP_NET_RAW, so it cannot run in
-// an unprivileged test; everything that decides what to send (Spoofer,
-// Relay, Controller) is tested against FakeSender instead, same pattern
-// as internal/arp/open_linux.go on the read side.
+// calls sendto on it: no promiscuous mode, no receive, and no setsockopt
+// that changes what the NIC does or what anything else on the system
+// sees — the one exception is SO_SNDTIMEO (below), which only bounds how
+// long a blocking Sendto on this one process's own socket can take and
+// touches nothing else's behaviour. It needs CAP_NET_RAW, so it cannot
+// run in an unprivileged test; everything that decides what to send
+// (Spoofer, Relay, Controller) is tested against FakeSender instead, same
+// pattern as internal/arp/open_linux.go on the read side.
 //
 // Sending a complete, already-addressed Ethernet frame through an
 // AF_PACKET SOCK_RAW socket bypasses the kernel's IP stack entirely: it
@@ -71,6 +75,17 @@ func openOne(iface string) (*rawSender, error) {
 		syscall.Close(fd)
 		return nil, fmt.Errorf("intercept: bind %q: %w", iface, err)
 	}
+	// A kernel-enforced send timeout, set once here, is what lets
+	// sendWithTimeout skip its own goroutine-and-timer wrapper for every
+	// single frame this socket ever sends (see selfBounded in sender.go):
+	// Sendto itself cannot block past this, so wrapping it again would
+	// only add overhead with no further protection.
+	secs := int64(DefaultSendTimeout / time.Second)
+	tv := syscall.Timeval{Sec: secs, Usec: int64((DefaultSendTimeout % time.Second) / time.Microsecond)}
+	if err := syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_SNDTIMEO, &tv); err != nil {
+		syscall.Close(fd)
+		return nil, fmt.Errorf("intercept: set send timeout on %q: %w", iface, err)
+	}
 	return &rawSender{fd: fd, addr: addr}, nil
 }
 
@@ -97,4 +112,11 @@ func (s *rawSender) Close() error {
 	return syscall.Close(s.fd)
 }
 
-var _ Sender = (*rawSender)(nil)
+// selfBounded marks rawSender for sendWithTimeout's fast path: see
+// SO_SNDTIMEO in openOne and the selfBounded doc comment in sender.go.
+func (s *rawSender) selfBounded() {}
+
+var (
+	_ Sender      = (*rawSender)(nil)
+	_ selfBounded = (*rawSender)(nil)
+)

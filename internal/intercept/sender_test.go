@@ -124,3 +124,51 @@ func TestSendWithTimeoutDefaultsNonPositiveTimeout(t *testing.T) {
 		t.Fatal("frame not sent")
 	}
 }
+
+// selfBoundedFakeSender is a FakeSender that also claims to be
+// selfBounded, so sendWithTimeout takes the direct, no-goroutine path for
+// it exactly as it would for a real rawSender.
+type selfBoundedFakeSender struct{ *FakeSender }
+
+func (selfBoundedFakeSender) selfBounded() {}
+
+func TestSendWithTimeoutTakesTheDirectPathForASelfBoundedSender(t *testing.T) {
+	s := selfBoundedFakeSender{NewFakeSender()}
+	if err := sendWithTimeout(s, Frame{1, 2, 3}, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	got := s.FakeSender.Frames()
+	if len(got) != 1 || !bytesEqual(got[0], Frame{1, 2, 3}) {
+		t.Fatalf("Frames() = %v, want one frame {1,2,3}", got)
+	}
+}
+
+func TestSendWithTimeoutDirectPathStillRecoversAPanic(t *testing.T) {
+	err := sendWithTimeout(struct {
+		panickingSender
+		selfBounded
+	}{}, Frame{1}, time.Second)
+	if err == nil {
+		t.Fatal("expected an error from the panic")
+	}
+}
+
+func TestSendWithTimeoutDirectPathStillReportsAnError(t *testing.T) {
+	s := selfBoundedFakeSender{NewFakeSender()}
+	s.SetError(errors.New("send failed"))
+	if err := sendWithTimeout(s, Frame{1}, time.Second); err == nil {
+		t.Fatal("expected the Sender's own error")
+	}
+}
+
+func bytesEqual(a, b Frame) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

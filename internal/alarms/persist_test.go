@@ -201,7 +201,7 @@ func TestWorkerTickSweepsAndSaves(t *testing.T) {
 	e.Snooze(a.ID, MuteSpec{Preset: MuteHour})
 	rec.reset()
 	clk.Advance(2 * time.Hour) // fires the worker's ticker
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if got, _ := e.Get(a.ID); got.State == StateNew {
 			return

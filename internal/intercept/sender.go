@@ -117,6 +117,20 @@ func (s *FakeSender) Watch() (<-chan Frame, func()) {
 
 var _ Sender = (*FakeSender)(nil)
 
+// selfBounded is implemented by a Sender whose own Send call already
+// cannot block past some bound it enforces itself — rawSender's socket
+// carries a kernel-level SO_SNDTIMEO, set once at Open time, so a single
+// Sendto can never hang. sendWithTimeout checks for this and, when
+// present, skips its own goroutine and timer: wrapping an already-bounded
+// call in another one only adds a goroutine spawn and a timer allocation
+// to every single packet, for no further protection. At the relay's real
+// packet rate (tens of thousands of frames per second during a sustained
+// transfer) that per-packet overhead was measured to matter far more than
+// the raw syscalls underneath it. FakeSender does not implement this, so
+// every existing safety test (Block(), a deliberately wedged Sender) goes
+// on exercising the slow, fully defensive path unchanged.
+type selfBounded interface{ selfBounded() }
+
 // sendWithTimeout calls sender.Send(f) but never blocks the caller longer
 // than timeout, even if Send never returns and even if Send panics. This
 // is what keeps a wedged or broken Sender out of the Controller's safety
@@ -135,6 +149,9 @@ func sendWithTimeout(sender Sender, f Frame, timeout time.Duration) error {
 	if timeout <= 0 {
 		timeout = DefaultSendTimeout
 	}
+	if _, ok := sender.(selfBounded); ok {
+		return sendRecovered(sender, f)
+	}
 	done := make(chan error, 1)
 	go func() {
 		defer func() {
@@ -150,4 +167,16 @@ func sendWithTimeout(sender Sender, f Frame, timeout time.Duration) error {
 	case <-time.After(timeout):
 		return fmt.Errorf("intercept: Send timed out after %s", timeout)
 	}
+}
+
+// sendRecovered calls sender.Send(f) directly (no goroutine, no timer),
+// recovering a panic the same way the defensive path does. Only ever used
+// for a Sender that reports selfBounded — see its doc comment.
+func sendRecovered(sender Sender, f Frame) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("intercept: Send panicked: %v", r)
+		}
+	}()
+	return sender.Send(f)
 }

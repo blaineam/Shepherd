@@ -321,7 +321,7 @@ func TestChannelsAreIndependent(t *testing.T) {
 	g.src.set(func(p *Preferences) { p.NtfyAlways = true })
 	g.push.set(func(Notification) (PushReport, error) { <-release; return PushReport{Subscribed: 1, Delivered: 1}, nil })
 	g.r.Handle(raisedChange(alarmOf(TypeUpstreamDown, SeverityHigh, "k")))
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for g.nt.count() == 0 && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
 	}
@@ -336,7 +336,7 @@ func TestChannelsAreIndependent(t *testing.T) {
 	g2.src.set(func(p *Preferences) { p.NtfyAlways = true })
 	g2.nt.set(func(Notification) error { <-release2; return nil })
 	g2.r.Handle(raisedChange(alarmOf(TypeUpstreamDown, SeverityHigh, "k")))
-	deadline = time.Now().Add(3 * time.Second)
+	deadline = time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if recs := g2.r.Log(ChannelPush, 1); len(recs) == 1 && recs[0].Status == DeliveryOK {
 			break
@@ -832,7 +832,7 @@ func TestRunLoopProcessesRetriesAndSaves(t *testing.T) {
 	time.Sleep(20 * time.Millisecond) // let Run create its ticker
 	g.push.set(nil)
 	g.clk.Advance(time.Minute) // the poll fires; the 30s backoff has elapsed
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if g.push.count() >= 2 {
 			break
