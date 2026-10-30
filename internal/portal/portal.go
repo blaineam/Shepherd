@@ -46,6 +46,10 @@ type Deps struct {
 	Policy  *dnsengine.PolicyStore
 	Token   string
 	Version string
+	// GeoBlock owns the per-scope blocked-country lists, an additive check
+	// layered outside Policy (see dnsengine.Engine.CountryBlock). Nil gets a
+	// memory-only store, so the API still works but nothing persists.
+	GeoBlock *dnsengine.GeoBlockStore
 
 	// Devices is the device registry. Nil gives an empty registry that no
 	// source feeds (the API still works).
@@ -103,6 +107,9 @@ func New(d Deps) *Server {
 	}
 	if d.Upstreams == nil {
 		d.Upstreams = dnsengine.OpenUpstreamStore("", d.Engine.Pool)
+	}
+	if d.GeoBlock == nil {
+		d.GeoBlock, _ = dnsengine.OpenGeoBlockStore("") // empty path never errors
 	}
 	if d.Heartbeat <= 0 {
 		d.Heartbeat = 15 * time.Second
@@ -323,6 +330,9 @@ func (s *Server) routes() {
 	h("POST /api/policy/custom-lists", s.addCustomList)
 	h("DELETE /api/policy/custom-lists/{id}", s.deleteCustomList)
 	h("POST /api/policy/refresh", s.refreshPolicy)
+
+	h("GET /api/geoblock", s.getGeoBlock)
+	h("POST /api/geoblock", s.setGeoBlock)
 
 	h("GET /api/upstreams", s.getUpstreams)
 	h("POST /api/upstreams/test", s.testUpstream)

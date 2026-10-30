@@ -28,6 +28,9 @@ export function createMgmt(api) {
     delCustomList: (id) => api('/api/policy/custom-lists/' + encodeURIComponent(id), { method: 'DELETE' }),
     refreshLists: (item) => post('/api/policy/refresh', item ? { item } : {}),
 
+    geoBlock: () => api('/api/geoblock'),
+    setCountries: (scope, countries) => post('/api/geoblock', { scope, countries }),
+
     upstreams: () => api('/api/upstreams'),
     testUpstream: (addr) => post('/api/upstreams/test', { addr }),
     addUpstream: (addr) => post('/api/upstreams', { addr }),

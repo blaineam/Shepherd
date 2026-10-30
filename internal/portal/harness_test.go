@@ -44,18 +44,19 @@ func testPolicy(t *testing.T, f *dnsengine.Filter, dir, base string) *dnsengine.
 }
 
 type harness struct {
-	t       *testing.T
-	ts      *httptest.Server
-	srv     *Server
-	filter  *dnsengine.Filter
-	policy  *dnsengine.PolicyStore
-	reg     *devices.Registry
-	lists   *dnsengine.ListManager
-	pool    *dnsengine.Pool
-	engine  *dnsengine.Engine
-	ups     *dnsengine.UpstreamStore
-	dir     string
-	listSrv *httptest.Server
+	t        *testing.T
+	ts       *httptest.Server
+	srv      *Server
+	filter   *dnsengine.Filter
+	policy   *dnsengine.PolicyStore
+	geoBlock *dnsengine.GeoBlockStore
+	reg      *devices.Registry
+	lists    *dnsengine.ListManager
+	pool     *dnsengine.Pool
+	engine   *dnsengine.Engine
+	ups      *dnsengine.UpstreamStore
+	dir      string
+	listSrv  *httptest.Server
 }
 
 func newHarness(t *testing.T) *harness {
@@ -84,11 +85,15 @@ func newHarness(t *testing.T) *harness {
 	lists := dnsengine.NewScopedListManager(filter, policy, dir, nil)
 	reg := devices.New(devices.Options{NodeID: "test", Vendor: func(string) string { return "" }})
 	ups := dnsengine.OpenUpstreamStore(filepath.Join(dir, "upstreams.json"), pool)
-	srv := New(Deps{Engine: engine, Lists: lists, Policy: policy, Devices: reg, Upstreams: ups, Token: strings.Repeat("t", 64), Version: "test"})
+	geoBlock, err := dnsengine.OpenGeoBlockStore(filepath.Join(dir, "geoblock.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := New(Deps{Engine: engine, Lists: lists, Policy: policy, Devices: reg, Upstreams: ups, GeoBlock: geoBlock, Token: strings.Repeat("t", 64), Version: "test"})
 	engine.Clients = reg
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	return &harness{t: t, ts: ts, srv: srv, filter: filter, policy: policy, reg: reg, lists: lists, pool: pool, engine: engine, ups: ups, dir: dir, listSrv: listSrv}
+	return &harness{t: t, ts: ts, srv: srv, filter: filter, policy: policy, geoBlock: geoBlock, reg: reg, lists: lists, pool: pool, engine: engine, ups: ups, dir: dir, listSrv: listSrv}
 }
 
 // call sends an authenticated request with the CSRF header.

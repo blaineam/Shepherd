@@ -207,12 +207,17 @@ func validType(t string) bool {
 	return ok
 }
 
-// forgetDeviceScopes drops policy kept for devices that no longer exist.
+// forgetDeviceScopes drops policy and geo-block settings kept for devices
+// that no longer exist.
 func (s *Server) forgetDeviceScopes(ids ...string) {
 	snap := s.Policy.Snapshot()
+	geoSnap := s.GeoBlock.Snapshot()
 	for _, id := range ids {
 		if _, has := snap.Devices[id]; has {
 			_ = s.Policy.DeleteScope(dnsengine.DeviceScope(id))
+		}
+		if _, has := geoSnap.Devices[id]; has {
+			_ = s.GeoBlock.DeleteScope(dnsengine.DeviceScope(id))
 		}
 	}
 }
@@ -427,6 +432,9 @@ func (s *Server) deleteGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, has := s.Policy.Snapshot().Groups[id]; has {
 		_ = s.Policy.DeleteScope(dnsengine.GroupScope(id))
+	}
+	if _, has := s.GeoBlock.Snapshot().Groups[id]; has {
+		_ = s.GeoBlock.DeleteScope(dnsengine.GroupScope(id))
 	}
 	writeJSON(w, map[string]bool{"ok": true})
 }

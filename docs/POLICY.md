@@ -87,6 +87,12 @@ or the TV's groups.
 *A blocklist of your own.* Add a custom list from a URL or paste domains (hosts, one-per-line or adblock `||domain^` form, up to 1 MiB).
 It is enabled on the network and can then be switched on or off per group or device like any catalog entry.
 
+## Country blocking
+
+Blocking a country is **not** one of this policy's rules. It is a separate, additive check that runs after
+this policy has already allowed a query, using the same network/group/device scopes but its own store and
+its own API — see [GEOBLOCK.md](GEOBLOCK.md).
+
 ## Excluded devices
 
 A device marked **excluded** has opted out of protection: its queries are answered without any blocking (the log shows reason

@@ -62,6 +62,15 @@ test('policy endpoints', async () => {
   assert.equal(calls[10][1].body, '{"item":"ads"}');
 });
 
+test('geoblock endpoints', async () => {
+  const { calls, m } = rig();
+  await m.geoBlock();
+  assert.equal(calls[0][0], '/api/geoblock');
+  const scope = { kind: 'group', id: 'kids' };
+  await m.setCountries(scope, ['FR', 'DE']);
+  assert.deepEqual([calls[1][0], calls[1][1].method, calls[1][1].body], ['/api/geoblock', 'POST', '{"scope":{"kind":"group","id":"kids"},"countries":["FR","DE"]}']);
+});
+
 test('upstream, history and unlock endpoints', async () => {
   const { calls, m } = rig();
   await m.upstreams();
