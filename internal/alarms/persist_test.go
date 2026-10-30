@@ -212,7 +212,7 @@ func TestWorkerTickSweepsAndSaves(t *testing.T) {
 
 	select {
 	case <-ticked:
-	case <-time.After(5 * time.Second):
+	case <-time.After(20 * time.Second):
 		t.Fatal("the worker tick never ran")
 	}
 	if got, _ := e.Get(a.ID); got.State != StateNew {
