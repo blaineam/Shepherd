@@ -165,37 +165,50 @@ without any separate `tcpdump`, whether packet rate itself is spiking abnormally
 roughly how much of the capture socket's work was ever the self-loopback `PACKET_IGNORE_OUTGOING` now
 asks the kernel to stop delivering.
 
-### What to test live next, in order
+### Live result: `PACKET_IGNORE_OUTGOING` measured, does not fix it — and a new, more specific lead
 
-None of the above has been confirmed against real hardware — that is the whole point of writing it
-down here rather than claiming it fixed anything. In priority order, against the real device and the
-real eero:
+Re-measured live (2-minute trial, real phone, real eero, `-workers` default, `PACKET_IGNORE_OUTGOING`
+active alongside the existing `ParallelRelay` and `sendWithTimeout` fixes): **300–400 Mbps while
+steered**, the same range as every earlier measurement, down from the ~1.1 Gbps unsteered baseline.
+All three fixes shipped so far are real, individually-justified improvements — none of them, alone or
+combined, closes the gap. Self-capture overhead was not the dominant cost after all.
 
-1. **Re-measure throughput with this change alone** (`PACKET_IGNORE_OUTGOING`, on top of the existing
-   `ParallelRelay` and `sendWithTimeout` fixes). If the drop is unchanged, self-capture overhead was
-   not the dominant cost and the `not_for_shepherd` rate from the new `rate:` log line will say so
-   directly (a high rate with no throughput change rules this out cleanly).
-2. **Watch the new `rate:` log line during a slow run**, specifically `examined` vs `relayed` pps. If
-   `examined` is far higher than `relayed` and growing, that is the retransmission storm happening in
-   real time, visible from Shepherd's own counters — confirm it lines up with a fresh `tcpdump` instead
-   of needing the capture to find it first.
-3. **Narrow hypothesis (a) vs (b) directly**: with `PACKET_IGNORE_OUTGOING` active, `not_for_shepherd`
-   should drop to near zero (only broadcast/ARP noise, not the self-loopback). If the retransmission
-   storm in a fresh packet capture is still present at the same rate, that is evidence against
-   duplication inside Shepherd (consistent with this audit finding none) and more evidence for (a): the
-   device or the eero reacting to the ARP change itself, not anything Shepherd is doing to the frames.
-4. **If (a) still looks live, test the eero's own behavior directly**: steer the device, then capture
-   on the eero's own uplink (not just at Shepherd) during a slow run, to see whether the eero itself is
-   re-sending or mis-switching frames in response to the ARP change — this audit only covered
-   Shepherd's own code and could not rule the eero in or out.
-5. **Only after 1–4**, if a syscall-rate ceiling still looks like the bottleneck, consider batched I/O
-   (`recvmmsg`/`sendmmsg`) — deliberately not attempted in this change; see above.
+The new `rate:` log line (`examined`/`relayed` pps, `not_for_shepherd`), watched live for the first
+time this trial, narrows the search meaningfully. During the two windows that line up with the
+maintainer's own speed tests (roughly 22s and 18s long, `examined` spiking as high as 5,700 pkt/s),
+**`relayed` never left the single digits — the entire trial, bursts included** — and total bytes
+actually relayed over the full two minutes was ~226 KB, far too little to be the outbound side of a
+sustained 300–400 Mbps transfer by itself (the ACK-storm theory from the first investigation). Almost
+everything the capture socket saw during the bursts was `not_for_shepherd`: traffic that was never
+addressed to Shepherd's MAC at all, not a duplicate of something Shepherd itself sent (that specific
+case is exactly what `PACKET_IGNORE_OUTGOING` already removes, and it was active for this run).
+
+That rules out the self-capture loopback as the burst's source and weakens the pure ACK-storm framing
+(if outbound ACKs for the download were the whole story, they would show up as `relayed`, since they
+are addressed to Shepherd by design once a device is steered). It does not yet say what the
+`not_for_shepherd` burst traffic actually is. Two live-testable explanations remain open, not yet
+distinguished:
+
+1. **The eero's own bridging/MAC-learning reacts to the ARP change** in a way that sends Shepherd's
+   switch port more traffic than it would otherwise see during a transfer — consistent with hypothesis
+   (a) from the first investigation (the device or the network path "looking broken" to something), but
+   now with a concrete signature to look for (a `not_for_shepherd` spike that tracks the transfer, not
+   just a vague retransmission concern).
+2. **Something about the capture itself amplifies under load** in a way this audit did not predict —
+   less likely given the code-level audit above found no duplication, but not fully excluded without a
+   fresh packet capture to identify what the burst frames actually are (source/destination MACs,
+   whether they are the steered device's own frames at all).
+
+**Next, in order**: a fresh `tcpdump` on Shepherd's own interface during exactly this kind of burst,
+filtered to show source/destination MACs on the high-rate frames, to identify what `not_for_shepherd`
+actually contains; then, only if the eero itself looks implicated, a capture on the eero's own uplink
+(not just at Shepherd) during the same kind of burst, which this audit could not do since it only
+covered Shepherd's own code. Batched I/O (`recvmmsg`/`sendmmsg`) stays deliberately not attempted —
+this result does not point at a syscall-rate ceiling in Shepherd's own relay, it points away from it.
 
 This is a software relay, not a hardware switch, so steering a device will never be perfectly free —
-but the live finding (a ~70% throughput drop) is still far larger than ordinary relay overhead should
-explain, which is why this section keeps being rewritten rather than closed. Making Watch mode
-something left on indefinitely needs all of this measured again, live, at whatever the shipped
-configuration turns out to be, before it is trusted the way the DNS engine is.
+but a drop this large, confirmed unchanged across three real fixes, is not ordinary relay overhead.
+Watch mode stays a trial-only tool, not something left on indefinitely, until this is understood.
 
 ## IPv4 only, no exceptions
 
