@@ -131,6 +131,15 @@ type Deps struct {
 	// works (a manual probe is still possible) but is never run on a
 	// schedule and persists nothing.
 	Nethealth *nethealth.Prober
+	// NethealthTargets is the target list cmd/shepherd computed for
+	// Nethealth at startup (the configured DNS upstreams plus the public
+	// resolvers and, when available, the default gateway — see
+	// cmd/shepherd/nethealth.go). It is what a manual "probe now"/"run
+	// bufferbloat test now" uses when Nethealth has not completed a
+	// scheduled probe yet (including when the schedule is disabled
+	// entirely, the default — see docs/NETHEALTH.md). Empty when cmd/
+	// shepherd did not wire this feature in at all.
+	NethealthTargets []string
 	// NethealthEnabled reports whether cmd/shepherd started Nethealth's
 	// scheduled probe, for the status endpoint.
 	NethealthEnabled bool

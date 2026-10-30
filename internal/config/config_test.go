@@ -408,7 +408,7 @@ func TestNethealthDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Nethealth.Enabled || cfg.Nethealth.IntervalSeconds != 120 {
+	if cfg.Nethealth.Enabled || cfg.Nethealth.IntervalSeconds != 120 {
 		t.Errorf("nethealth defaults = %+v", cfg.Nethealth)
 	}
 	if cfg.Nethealth.BufferbloatEnabled || cfg.Nethealth.BufferbloatIntervalSeconds != 3600 {
@@ -430,9 +430,16 @@ func TestNethealthOverridesAndValidation(t *testing.T) {
 		t.Errorf("nethealth bufferbloat overrides = %+v", cfg.Nethealth)
 	}
 
-	os.WriteFile(path, []byte("[nethealth]\ninterval_seconds = 59\n"), 0o600)
+	os.WriteFile(path, []byte("[nethealth]\nenabled = true\ninterval_seconds = 59\n"), 0o600)
 	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "interval_seconds must be at least 60") {
 		t.Errorf("too-short interval: %v", err)
+	}
+
+	// The same too-short interval is fine while nethealth itself stays
+	// disabled: Validate only cares once it would actually run.
+	os.WriteFile(path, []byte("[nethealth]\ninterval_seconds = 59\n"), 0o600)
+	if _, err := Load(path); err != nil {
+		t.Errorf("disabled nethealth should not validate its interval: %v", err)
 	}
 
 	os.WriteFile(path, []byte("[nethealth]\nbufferbloat_enabled = true\nbufferbloat_interval_seconds = 599\n"), 0o600)

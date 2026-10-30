@@ -33,12 +33,25 @@ var (
 )
 
 // startNethealth builds the network-health prober, restores its saved
-// history from <data>/nethealth.json, and starts its periodic
-// latency/jitter/loss/reachability probe and, if configured, its separate
-// bufferbloat check (docs/NETHEALTH.md). eng may be nil (the alarm engine
-// is disabled); samples are still probed, persisted and logged either way,
-// just never raised as alarms.
-func startNethealth(ctx context.Context, cfg config.Config, eng *alarms.Engine) (*nethealth.Prober, error) {
+// history from <data>/nethealth.json, wires persistence and alerting, and,
+// if configured, starts the periodic latency/jitter/loss/reachability
+// probe and the separate bufferbloat check (docs/NETHEALTH.md). eng may be
+// nil (the alarm engine is disabled); samples are still probed, persisted
+// and logged either way, just never raised as alarms.
+//
+// The Prober itself, its target list and its persistence hooks are built
+// unconditionally, even when [nethealth] is fully disabled (the default —
+// see docs/NETHEALTH.md's "Should this be on by default?"): only the two
+// background goroutines that actually run probes on a schedule are gated
+// on cfg.Nethealth.Enabled/BufferbloatEnabled. This is what lets the
+// portal's manual "probe now" and "run bufferbloat test now" (which rely
+// on this same target list — see internal/portal/api_nethealth.go's
+// currentNethealthTargets) work even on an install that never turned the
+// schedule on, mirroring internal/portscan/internal/vulnscan's own "nil
+// gives a scanner that works, a manual scan is still possible" convention.
+// The returned target list is handed to the portal (deps.NethealthTargets)
+// for exactly that purpose.
+func startNethealth(ctx context.Context, cfg config.Config, eng *alarms.Engine) (*nethealth.Prober, []string, error) {
 	p := nethealth.New(nethealth.Options{Dial: nethealthDial, Load: nethealthLoad, BufferbloatDuration: nethealthBufferbloatDuration})
 	path := filepath.Join(cfg.DataDir, "nethealth.json")
 	if err := p.Load(path); err != nil && !os.IsNotExist(err) {
@@ -57,24 +70,31 @@ func startNethealth(ctx context.Context, cfg config.Config, eng *alarms.Engine) 
 		}
 		reportNethealthSample(eng, tracker, s)
 	}
-
-	every := time.Duration(cfg.Nethealth.IntervalSeconds) * time.Second
-	if nethealthEvery > 0 {
-		every = nethealthEvery
+	// Wired unconditionally, the same as OnSample above: a manual "run
+	// bufferbloat test now" from the portal calls Prober.BufferbloatNow
+	// directly and relies on this same hook to persist its result, the
+	// same way a manual portscan/vulnscan "scan now" persists through
+	// OnScan regardless of whether the scheduled scan is running.
+	p.OnBufferbloat = func(b nethealth.Bufferbloat) {
+		if err := p.Save(path); err != nil {
+			log.Printf("nethealth: saving history: %v", err)
+		}
+		log.Printf("nethealth: bufferbloat check against %s: idle %.0fms, loaded %.0fms, grade %s", b.PingTarget, b.IdleMS, b.LoadedMS, b.Grade)
 	}
-	lister := func() []string { return targets }
-	go p.Run(ctx, lister, every)
+
+	if cfg.Nethealth.Enabled {
+		every := time.Duration(cfg.Nethealth.IntervalSeconds) * time.Second
+		if nethealthEvery > 0 {
+			every = nethealthEvery
+		}
+		lister := func() []string { return targets }
+		go p.Run(ctx, lister, every)
+	}
 
 	if cfg.Nethealth.BufferbloatEnabled {
 		bevery := time.Duration(cfg.Nethealth.BufferbloatIntervalSeconds) * time.Second
 		if nethealthBufferbloatEvery > 0 {
 			bevery = nethealthBufferbloatEvery
-		}
-		p.OnBufferbloat = func(b nethealth.Bufferbloat) {
-			if err := p.Save(path); err != nil {
-				log.Printf("nethealth: saving history: %v", err)
-			}
-			log.Printf("nethealth: bufferbloat check against %s: idle %.0fms, loaded %.0fms, grade %s", b.PingTarget, b.IdleMS, b.LoadedMS, b.Grade)
 		}
 		pingTarget := func() string {
 			if len(targets) == 0 {
@@ -85,7 +105,7 @@ func startNethealth(ctx context.Context, cfg config.Config, eng *alarms.Engine) 
 		go p.RunBufferbloat(ctx, pingTarget, bevery, nethealth.BufferbloatOptions{})
 	}
 
-	return p, nil
+	return p, targets, nil
 }
 
 // reportNethealthSample logs the sample's own headline numbers, feeds it

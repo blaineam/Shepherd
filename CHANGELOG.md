@@ -14,9 +14,14 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Added
 - **Network health history (`internal/nethealth`):** latency, jitter, packet loss and reachability,
-  probed every 2 minutes by default against the configured DNS upstreams plus `1.1.1.1`/`8.8.8.8`, and an
+  probed every 2 minutes once enabled against the configured DNS upstreams plus `1.1.1.1`/`8.8.8.8`, and an
   occasional, tightly bounded bufferbloat check (idle vs. loaded latency against a bounded download
-  burst, off by default — see docs/NETHEALTH.md for why). Unlike `internal/portscan`/`internal/vulnscan`'s
+  burst). Both the probe and bufferbloat default **off** — unlike `[portscan]`/`[vulnscan]`, which only
+  ever contact devices already on your own LAN, this probes fixed public internet addresses on a timer,
+  which is a real behavioral difference worth an owner's explicit opt-in rather than inheriting
+  portscan/vulnscan's default-on reasoning (see docs/NETHEALTH.md for the full reasoning, including a
+  concrete hermetic-testing problem the default-on version of this caused in this project's own test
+  suite before the default was flipped). Unlike `internal/portscan`/`internal/vulnscan`'s
   gentle, mostly-stateless checks, this keeps real history: raw samples for 3 days, hourly rollups for 60
   days, daily rollups indefinitely (capped at 8 MiB), so months of trend data stay available without disk
   usage growing without bound. Latency is timed as a plain, unprivileged TCP connect to port 53 rather
@@ -24,8 +29,8 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   seam `internal/portscan.Scanner` uses) — see docs/NETHEALTH.md for the full reasoning. A new
   `alarms.TypeNetworkDegraded` alarm raises after 3 consecutive bad probe cycles (not a single blip — the
   same "don't cry wolf" discipline `wireUpstreamAlarms` already applies to upstream DNS health) and
-  resolves on the next healthy sample. Wired into `cmd/shepherd` (`[nethealth]`, probe enabled by default,
-  bufferbloat off by default) and the portal (`GET /api/nethealth`, `GET /api/nethealth/series`,
+  resolves on the next healthy sample. Wired into `cmd/shepherd` (`[nethealth]`, both off by default) and
+  the portal (`GET /api/nethealth`, `GET /api/nethealth/series`,
   `GET /api/nethealth/bufferbloat`, `POST /api/nethealth/probe`, `POST /api/nethealth/bufferbloat/run`),
   with a new top-level Network tab (current status plus latency/jitter/loss time-series charts). The
   default gateway is added to the probe targets automatically when it can be determined (reusing

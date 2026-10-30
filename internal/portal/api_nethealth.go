@@ -73,14 +73,12 @@ func (s *Server) getNethealth(w http.ResponseWriter, r *http.Request) {
 	}
 	if cur, ok := s.Nethealth.Latest(); ok {
 		out["current"] = sampleJSON(cur)
-		targets := make([]string, len(cur.Targets))
-		for i, t := range cur.Targets {
-			targets[i] = t.Host
-		}
-		out["targets"] = targets
-	} else {
-		out["targets"] = []string{}
 	}
+	targets, _ := s.currentNethealthTargets()
+	if targets == nil {
+		targets = []string{}
+	}
+	out["targets"] = targets
 	writeJSON(w, out)
 }
 
@@ -166,7 +164,7 @@ func (s *Server) nethealthBufferbloat(w http.ResponseWriter, r *http.Request) {
 func (s *Server) nethealthProbeNow(w http.ResponseWriter, r *http.Request) {
 	targets, ok := s.currentNethealthTargets()
 	if !ok {
-		bad(w, "no targets configured yet (nethealth has not probed anything so far); wait for the scheduled probe or restart with [nethealth] enabled")
+		bad(w, "no nethealth targets are configured (cmd/shepherd did not wire this feature in)")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), nethealthProbeTimeout)
@@ -175,27 +173,30 @@ func (s *Server) nethealthProbeNow(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, sampleJSON(sample))
 }
 
-// currentNethealthTargets reuses whatever targets the most recent scheduled
-// probe used, since the portal does not itself own the configured upstream
-// list (cmd/shepherd computed it once at startup — see docs/NETHEALTH.md).
-// A manual probe before the very first scheduled one has run has nothing
-// to go on yet.
+// currentNethealthTargets is the target list a manual probe or bufferbloat
+// run uses: the most recent scheduled probe's own targets when one has
+// run, falling back to s.NethealthTargets (what cmd/shepherd computed at
+// startup — see docs/NETHEALTH.md) so manual checks work even when the
+// scheduled probe is disabled, which is the default. Only truly empty
+// (ok=false) when cmd/shepherd never wired Nethealth in at all.
 func (s *Server) currentNethealthTargets() ([]string, bool) {
-	cur, ok := s.Nethealth.Latest()
-	if !ok || len(cur.Targets) == 0 {
-		return nil, false
+	if cur, ok := s.Nethealth.Latest(); ok && len(cur.Targets) > 0 {
+		out := make([]string, len(cur.Targets))
+		for i, t := range cur.Targets {
+			out[i] = t.Host
+		}
+		return out, true
 	}
-	out := make([]string, len(cur.Targets))
-	for i, t := range cur.Targets {
-		out[i] = t.Host
+	if len(s.NethealthTargets) > 0 {
+		return append([]string(nil), s.NethealthTargets...), true
 	}
-	return out, true
+	return nil, false
 }
 
 func (s *Server) nethealthBufferbloatNow(w http.ResponseWriter, r *http.Request) {
 	targets, ok := s.currentNethealthTargets()
 	if !ok || len(targets) == 0 {
-		bad(w, "no targets configured yet (nethealth has not probed anything so far)")
+		bad(w, "no nethealth targets are configured (cmd/shepherd did not wire this feature in)")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), nethealthBufferbloatTimeout)

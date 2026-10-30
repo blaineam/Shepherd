@@ -207,3 +207,17 @@ test('vulnscan endpoints', async () => {
   await m.scanVulns('d1');
   assert.equal(calls[4][1].body, '{"device_id":"d1"}');
 });
+
+test('nethealth endpoints', async () => {
+  const { calls, m } = rig();
+  await m.nethealthStatus();
+  assert.equal(calls[0][0], '/api/nethealth');
+  await m.nethealthSeries({ from: '2026-01-01T00:00:00Z', to: '2026-01-02T00:00:00Z', bucket: 'hour' });
+  assert.equal(calls[1][0], '/api/nethealth/series?from=2026-01-01T00%3A00%3A00Z&to=2026-01-02T00%3A00%3A00Z&bucket=hour');
+  await m.nethealthBufferbloat({ from: '2026-01-01T00:00:00Z' });
+  assert.equal(calls[2][0], '/api/nethealth/bufferbloat?from=2026-01-01T00%3A00%3A00Z');
+  await m.nethealthProbeNow();
+  assert.deepEqual([calls[3][0], calls[3][1].method, calls[3][1].body], ['/api/nethealth/probe', 'POST', '{}']);
+  await m.nethealthBufferbloatRun();
+  assert.deepEqual([calls[4][0], calls[4][1].method, calls[4][1].body], ['/api/nethealth/bufferbloat/run', 'POST', '{}']);
+});

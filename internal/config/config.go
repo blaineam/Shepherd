@@ -193,14 +193,21 @@ type Vulnscan struct {
 // packet-loss and reachability probes against the configured DNS
 // upstreams plus a couple of well-known public resolvers, and its
 // separate, much less frequent bufferbloat check (docs/NETHEALTH.md).
-// Unlike Portscan and Vulnscan, Enabled's own default (true) and
-// BufferbloatEnabled's default (false) are deliberately different: the
-// probe itself only ever opens tiny, gentle TCP connections (no heavier
-// than internal/portscan's own connect scans), but bufferbloat generates
-// real, deliberate load against the maintainer's own uplink and reaches
-// one external endpoint this project has not verified end to end — see
-// docs/NETHEALTH.md's "Should this be on by default?" section for the
-// full reasoning on both halves of that decision.
+// Unlike Portscan and Vulnscan, both Enabled and BufferbloatEnabled
+// default to false: Portscan/Vulnscan only ever contact devices this
+// Shepherd has already discovered on its own LAN, so building a Config
+// with Default() (as this project's own tests do throughout, to build a
+// real server end to end) never reaches outside the test's own loopback
+// fixtures. Nethealth's targets, by contrast, are inherently fixed public
+// internet addresses (9.9.9.10, 1.1.1.1, 8.8.8.8) — there is no "this
+// Shepherd's own devices" equivalent to scope them to. Defaulting this on
+// would make every one of this project's many Default()-based tests
+// silently dependent on real internet connectivity it never opted into,
+// which is exactly the kind of hermetic-testing violation this project
+// otherwise goes out of its way to avoid (see docs/NETHEALTH.md's "Should
+// this be on by default?" section for the full reasoning, including why
+// this is a genuinely different situation from Portscan/Vulnscan's own
+// default-on choice, not an inconsistency).
 type Nethealth struct {
 	Enabled bool `toml:"enabled"`
 	// IntervalSeconds is how often the latency/jitter/loss/reachability
@@ -298,7 +305,7 @@ func Default() Config {
 		Accountability: Accountability{Enabled: true, SMTP: AccountabilitySMTP{Port: 587, TLS: "starttls"}},
 		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600},
 		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600},
-		Nethealth:      Nethealth{Enabled: true, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
+		Nethealth:      Nethealth{Enabled: false, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
 		DataDir:        "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},

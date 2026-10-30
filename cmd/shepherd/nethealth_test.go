@@ -82,12 +82,16 @@ func TestStartNethealthProbesAndPersists(t *testing.T) {
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
 	cfg.DNS.Upstreams = []string{"9.9.9.10"}
+	cfg.Nethealth.Enabled = true
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	p, err := startNethealth(ctx, cfg, nil)
+	p, targets, err := startNethealth(ctx, cfg, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(targets) == 0 {
+		t.Fatal("expected a non-empty target list")
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -132,8 +136,9 @@ func TestStartNethealthIncludesGatewayWhenAvailable(t *testing.T) {
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
 	cfg.DNS.Upstreams = []string{"9.9.9.10"}
+	cfg.Nethealth.Enabled = true
 	ctx, cancel := context.WithCancel(context.Background())
-	if _, err := startNethealth(ctx, cfg, nil); err != nil {
+	if _, _, err := startNethealth(ctx, cfg, nil); err != nil {
 		cancel()
 		t.Fatal(err)
 	}
@@ -169,8 +174,9 @@ func TestStartNethealthSkipsGatewayWhenUnavailable(t *testing.T) {
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
 	cfg.DNS.Upstreams = []string{"9.9.9.10"}
+	cfg.Nethealth.Enabled = true
 	ctx, cancel := context.WithCancel(context.Background())
-	if _, err := startNethealth(ctx, cfg, nil); err != nil {
+	if _, _, err := startNethealth(ctx, cfg, nil); err != nil {
 		cancel()
 		t.Fatal(err)
 	}
@@ -195,6 +201,7 @@ func TestStartNethealthRaisesAndResolvesDegradedAlarm(t *testing.T) {
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
 	cfg.DNS.Upstreams = []string{"9.9.9.10"}
+	cfg.Nethealth.Enabled = true
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -204,7 +211,7 @@ func TestStartNethealthRaisesAndResolvesDegradedAlarm(t *testing.T) {
 	}
 	defer eng.Close()
 
-	if _, err := startNethealth(ctx, cfg, eng); err != nil {
+	if _, _, err := startNethealth(ctx, cfg, eng); err != nil {
 		t.Fatal(err)
 	}
 
@@ -246,10 +253,11 @@ func TestStartNethealthWorksWithoutAnAlarmEngine(t *testing.T) {
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
 	cfg.DNS.Upstreams = []string{"9.9.9.10"}
+	cfg.Nethealth.Enabled = true
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	p, err := startNethealth(ctx, cfg, nil)
+	p, _, err := startNethealth(ctx, cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,6 +273,49 @@ func TestStartNethealthWorksWithoutAnAlarmEngine(t *testing.T) {
 	}
 	cancel()
 	time.Sleep(20 * time.Millisecond)
+}
+
+// TestStartNethealthBuildsTargetsAndWorksManuallyWhileFullyDisabled covers
+// the scenario the default config leaves everyone in: [nethealth] is off
+// (cfg.Nethealth.Enabled defaults false — see docs/NETHEALTH.md), so the
+// scheduled Run loop never starts and Latest() never has anything on its
+// own, but the Prober itself, its target list and its persistence hooks
+// must still be built so a manual probe (what the portal's "Probe now"
+// uses, via ProbeNow) still works and persists.
+func TestStartNethealthBuildsTargetsAndWorksManuallyWhileFullyDisabled(t *testing.T) {
+	withNethealthSeams(t, time.Hour, time.Hour, fakeNethealthDial, nil, noGateway)
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DNS.Upstreams = []string{"9.9.9.10"}
+	// cfg.Nethealth.Enabled and BufferbloatEnabled are left at their
+	// default (false) deliberately.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	p, targets, err := startNethealth(ctx, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) == 0 {
+		t.Fatal("expected a non-empty target list even while disabled")
+	}
+	if _, ok := p.Latest(); ok {
+		t.Fatal("expected no sample yet: the schedule must not have started")
+	}
+
+	sample := p.ProbeNow(ctx, targets)
+	if sample.ReachableTargets == 0 {
+		t.Fatalf("manual probe found nothing reachable: %+v", sample)
+	}
+	path := filepath.Join(cfg.DataDir, "nethealth.json")
+	waitForFile(t, path)
+	reloaded := nethealth.New(nethealth.Options{})
+	if err := reloaded.Load(path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := reloaded.Latest(); !ok {
+		t.Fatal("manual probe's result was not persisted")
+	}
 }
 
 func TestStartNethealthBufferbloatScheduledWhenEnabled(t *testing.T) {
@@ -283,7 +334,7 @@ func TestStartNethealthBufferbloatScheduledWhenEnabled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	p, err := startNethealth(ctx, cfg, nil)
+	p, _, err := startNethealth(ctx, cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +364,7 @@ func TestStartNethealthBufferbloatNotScheduledWhenDisabled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	p, err := startNethealth(ctx, cfg, nil)
+	p, _, err := startNethealth(ctx, cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,11 +380,12 @@ func TestStartNethealthIgnoresUnreadableHistory(t *testing.T) {
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
 	cfg.DNS.Upstreams = []string{"9.9.9.10"}
+	cfg.Nethealth.Enabled = true
 	if err := os.WriteFile(filepath.Join(cfg.DataDir, "nethealth.json"), []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	if _, err := startNethealth(ctx, cfg, nil); err != nil {
+	if _, _, err := startNethealth(ctx, cfg, nil); err != nil {
 		cancel()
 		t.Fatalf("startNethealth must tolerate a corrupt history file: %v", err)
 	}

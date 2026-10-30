@@ -168,26 +168,40 @@ Two independent schedules, because they have very different costs:
 
 ## Should this be on by default?
 
-**The latency/jitter/loss/reachability probe defaults to `enabled = true`.** It costs essentially nothing
-(a handful of TCP connects every couple of minutes, against servers that already exist specifically to
-answer connection attempts), and, as with `internal/portscan`'s own default-on reasoning, a feature whose
-entire value is "the owner can see a trend they could not see before" is a feature almost nobody turns on
-by hand if it starts off.
+**Both `[nethealth].enabled` and `bufferbloat_enabled` default to `false`.** This needed its own honest
+decision rather than inheriting `[portscan]`/`[vulnscan]`'s default-on reasoning, and it ended up in the
+opposite place, for a reason specific to this feature's shape:
 
-**Bufferbloat defaults to `bufferbloat_enabled = false`**, and this one *did* need the opposite default,
-for reasons specific to it rather than inherited automatically from portscan/vulnscan's own reasoning:
+**Every other active-probing feature in Shepherd only ever contacts devices this Shepherd has already
+discovered on its own LAN.** `internal/portscan` and `internal/vulnscan` build their target list from the
+device registry — on a network with no devices registered yet, they contact nothing at all.
+`internal/nethealth`'s targets, by design, are a short list of **fixed public internet addresses**
+(the configured DNS upstreams, plus `1.1.1.1`/`8.8.8.8`) — there is no "this Shepherd's own devices"
+equivalent to scope them to; the whole point is testing the path *to* the internet, not the LAN. That is
+a materially different kind of default-on decision for a self-hosted, privacy-first home-network tool:
+every other thing Shepherd reaches out to on its own (blocklist downloads, the optional monthly GeoIP
+database) is a occasional, one-shot fetch, not a connection repeated every couple of minutes forever to
+the same fixed addresses. An owner should opt into that pattern, not discover it after the fact.
 
-- Unlike every other probe in Shepherd — a bare TCP connect-and-close, a banner read — a bufferbloat
-  check **actually uses meaningful bandwidth** on purpose, by design, every time it runs. That is real
-  data use on a metered or capped connection, not a negligible side effect.
-- The production load generator (`DefaultLoadFunc`, against Cloudflare's public speed-test endpoint) is,
-  as noted above, unverified end to end in this project's own test environment. Defaulting a feature on
-  that reaches an external endpoint this project has never actually watched behave in practice, on every
-  Shepherd install everywhere, is a materially bigger leap than defaulting on a feature (portscan,
-  vulnscan) that only ever talks to the maintainer's own already-known devices.
-- Turning it on is one line in `[nethealth]`, and the portal exposes a "run bufferbloat test now" action
-  either way, so nothing about the feature is hidden from an owner who wants it — it just is not forced
-  on someone who has not made that choice.
+This also turned out to matter concretely during development: this project's own test suite builds a
+real, full `cmd/shepherd` server from `config.Default()` throughout (`cmd/shepherd/e2e_test.go` and
+friends) specifically so tests exercise real wiring, not mocks. The first version of this feature
+defaulted `enabled = true`, which meant dozens of unrelated existing tests silently started making real
+TCP connections to the public internet as a side effect of just building a config — a genuine hermetic-
+testing violation (tests should never depend on network access they did not explicitly ask for), and it
+measurably added load and at least one observed flake to an unrelated, previously-stable test. That is a
+symptom of the same underlying issue the paragraph above describes, not a separate reason on its own, but
+it is a very concrete demonstration of why "this reaches the real internet unconditionally" deserves a
+more conservative default than "this reaches a device already found on your own LAN".
+
+Bufferbloat stays off by default for the additional, bufferbloat-specific reason `internal/portscan`'s own
+docs convention asks to be named explicitly: it **actually uses meaningful bandwidth** on purpose, by
+design, every time it runs (a real, if brief and bounded, download burst), which is a materially bigger
+default-on ask than a handful of bare TCP connects.
+
+Turning either on is one line in `[nethealth]`, and the portal exposes manual "probe now" and "run
+bufferbloat test now" actions either way, so nothing about the feature is hidden from an owner who wants
+it — it just is not forced on someone who has not made that choice.
 
 ## Alerting
 
@@ -227,8 +241,8 @@ dedicated look rather than being bolted onto the latency/loss alarm's threshold 
 
 ```toml
 [nethealth]
-enabled = true
-interval_seconds = 120               # 2 minutes; minimum 60
+enabled = false               # see "Should this be on by default?" above
+interval_seconds = 120        # 2 minutes; minimum 60
 bufferbloat_enabled = false
 bufferbloat_interval_seconds = 3600  # 1 hour; minimum 600 when bufferbloat_enabled
 ```
@@ -274,21 +288,43 @@ across repeated folds, age-based pruning, the size cap dropping the oldest daily
 tracker's "don't cry wolf" state machine (sustained vs. transient badness, immediate recovery), the
 bufferbloat comparison and grading, and the portal API's request/response shapes.
 
-**Not verified against real hardware or a real network, because none was available in this project's test
-environment:**
+**Verified live, against the real internet, from this project's own development sandbox** (which, somewhat
+unexpectedly, turned out to have outbound network access): a real `cmd/shepherd` binary, built from this
+branch, with `[nethealth]` enabled and a short interval, ran for real and produced sane numbers —
 
-- Whether TCP-connect timing to port 53 against real DNS upstreams and `1.1.1.1`/`8.8.8.8` actually
-  behaves the way this document claims — a real resolver might answer TCP:53 more slowly than it answers
-  UDP, behind a load balancer, in a way that would read as consistently higher latency than a true ICMP
-  ping would show.
-- Whether `DefaultLoadFunc` against `speed.cloudflare.com` actually downloads the requested byte count in
-  practice, how its real RTT compares to the configured `Duration`, and whether the maintainer's own
-  uplink shows a visible bufferbloat delta when this runs against it.
-- Whether the default gateway, once genuinely determined from a real `/proc/net/route` on real hardware,
-  behaves as a sensible reachability target (some consumer routers rate-limit or deprioritize traffic to
-  themselves).
-- The overall "does this feel like a trustworthy trend line" verdict, which can only come from watching it
-  run for real, over real days, against a real network.
+- TCP-connect timing to port 53 against the real `9.9.9.10` (Quad9), `1.1.1.1` (Cloudflare) and `8.8.8.8`
+  (Google) succeeded for every probe, with latency in the 11-16ms range and jitter well under 3ms, which
+  is exactly the shape a healthy, nearby-upstream connection should produce.
+- `GET /api/nethealth`, `GET /api/nethealth/series`, `POST /api/nethealth/probe` and
+  `POST /api/nethealth/bufferbloat/run` were all exercised through the real portal API (curl, with the
+  real token) and the real browser UI (the Network tab), end to end.
+- `DefaultLoadFunc` against the real `speed.cloudflare.com` completed a real bounded download and produced
+  a real bufferbloat reading (idle ~14ms, loaded ~13ms, grade A — the sandbox's own connection showed no
+  measurable bloat, which is itself a believable result for a well-provisioned connection).
+- History correctly persisted to `<data_dir>/nethealth.json` and reloaded, including a real bug this live
+  check caught and fixed: a manual bufferbloat run was not being persisted when the *scheduled* bufferbloat
+  check was disabled, because the save hook was wired only inside that schedule's own `if` block. It is now
+  wired unconditionally, the same as the latency probe's own save hook, so a manual run always persists
+  regardless of whether the schedule is on.
+- A second, purely cosmetic bug this live check caught: the Network screen's chart axis labels and the
+  bufferbloat "increase" text used a formatter that printed an em dash for a legitimately-zero reading
+  (treating "0ms added latency, grade A" the same as "no reading at all"); fixed with a dedicated
+  always-numeric formatter for those specific spots.
 
-This should be treated as a real, working implementation that is ready for exactly that live check, not as
-something already confirmed end to end.
+**Still not verified, because this sandbox is not the maintainer's actual home network or hardware:**
+
+- Behavior against the maintainer's own real DNS upstreams, their own router, and their own uplink's real
+  bufferbloat characteristics under real load (the sandbox's own connection showed no measurable bloat,
+  which says nothing about a residential connection with actual cable/DSL-modem buffering).
+- The default gateway target: this sandbox had no `/proc/net/route` default route to find (not a real Linux
+  host with a real LAN gateway), so `nethealthGateway`'s happy path is unit-tested with a fake, but the real
+  `arp.DefaultGatewayFunc` call against a real home router was not exercised here.
+- Whether a real consumer router rate-limits or deprioritizes traffic addressed to itself in a way that
+  would make the gateway a misleading reachability target.
+- Days- or weeks-long behavior: the rollup/retention logic is verified by unit tests with a fake clock
+  advancing years in milliseconds, not by actually watching raw samples age into hourly and then daily
+  aggregates in real time.
+
+This is a real, working implementation that has now been checked against the real internet once, from one
+sandbox, for a few minutes — a meaningfully stronger starting point than "unit tests only", but still well
+short of "confirmed reliable on the maintainer's own network over time."
