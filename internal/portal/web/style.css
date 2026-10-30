@@ -932,3 +932,20 @@ tr.a-error .h-dom { color: var(--amber); }
   .vs-row .vs-dev { grid-area: dev; }
   .vs-thead { display: none; }
 }
+
+/* ---------- Reverse proxy: listener status, add/edit form, proxied hosts ---------- */
+.rp-body { display: flex; flex-direction: column; gap: 14px; max-width: 1100px; }
+.rp-note { margin: 12px 0 0; max-width: 80ch; }
+.rp-tone-good { color: var(--teal); } .rp-tone-warn { color: var(--amber); } .rp-tone-bad { color: var(--red); } .rp-tone-muted { color: var(--muted); }
+.rp-form-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.rp-form-row input { flex: 1 1 220px; min-width: 0; font-size: 16px; }
+.rp-arrow { flex: none; }
+.rp-skip { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.rp-edit { align-items: stretch; }
+.list-row.rp-off .lr-name a { color: var(--muted); }
+.lr-name a { color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
+.lr-name a:hover, .lr-name a:focus-visible { text-decoration: underline; }
+@media (max-width: 600px) {
+  .rp-arrow { display: none; }
+  .rp-form-row input { flex-basis: 100%; }
+}

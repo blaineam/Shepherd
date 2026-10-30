@@ -21,7 +21,9 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   end. `cmd/shepherd/reverseproxy.go` serves the hosts on `reverseproxy.listen` behind that one wildcard
   certificate (kept in `<data_dir>/reverseproxy/tls`, apart from `[tls]`'s), and the portal edits them
   over `GET/POST /api/reverseproxy/hosts` and `PUT/DELETE /api/reverseproxy/hosts/{id}`, with the
-  listener and certificate state on `GET /api/reverseproxy`. Off by default.
+  listener and certificate state on `GET /api/reverseproxy`. A new Proxy tab
+  (`internal/portal/web/js/reverseproxyview.js`) adds, edits, toggles and removes hosts from the browser,
+  and flags a name the wildcard cannot cover or a backend whose certificate is not verified. Off by default.
 - **Marketing site (`site/`):** a public, vanilla-HTML/CSS/JS landing page — hero, the real shipped feature
   set (DNS filtering and the 95-list catalog, devices, the globe HUD, alarms, port and vulnerability
   scanning, geo-block, portal locking, self-healing upstreams and more), an honest "what's coming" section

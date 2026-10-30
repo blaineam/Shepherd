@@ -288,3 +288,28 @@ test('unknown paths fall through and the demo api wires settings and delegation'
   await assert.rejects(plain('/api/groups'), (e) => e.status === 404);
   assert.equal(d.bulkChanged, 0);
 });
+
+test('reverse proxy: status, hosts, add, edit, toggle, remove', async () => {
+  const { call } = rig();
+  const st = await call('GET', '/api/reverseproxy');
+  assert.equal(st.enabled, true);
+  assert.equal(st.wildcard, '*.example.com');
+  assert.ok(Date.parse(st.certificate.not_after) > NOW);
+  const list = await call('GET', '/api/reverseproxy/hosts');
+  assert.ok(list.hosts.length >= 3);
+  for (const h of list.hosts) assert.match(h.domain, /\.example\.com$/);
+  const added = await call('POST', '/api/reverseproxy/hosts', { domain: 'Wiki.Example.com', target_scheme: 'http', target_host: '192.0.2.40', target_port: 2283, skip_tls_verify: false });
+  assert.equal(added.domain, 'wiki.example.com');
+  assert.equal(added.enabled, true);
+  assert.ok(added.id);
+  await fails(call('POST', '/api/reverseproxy/hosts', { domain: 'wiki.example.com', target_scheme: 'http', target_host: '192.0.2.41', target_port: 80 }), 409);
+  await fails(call('POST', '/api/reverseproxy/hosts', { domain: 'nope', target_scheme: 'http', target_host: '192.0.2.41', target_port: 80 }), 400);
+  const off = await call('PUT', '/api/reverseproxy/hosts/' + added.id, { domain: 'wiki.example.com', target_scheme: 'https', target_host: '192.0.2.40', target_port: 2284, skip_tls_verify: true, enabled: false });
+  assert.deepEqual([off.enabled, off.target_port, off.skip_tls_verify], [false, 2284, true]);
+  const kept = await call('PUT', '/api/reverseproxy/hosts/' + added.id, { domain: 'wiki.example.com', target_scheme: 'https', target_host: '192.0.2.40', target_port: 2284 });
+  assert.equal(kept.enabled, false, 'leaving enabled out keeps it, as the server does');
+  await fails(call('PUT', '/api/reverseproxy/hosts/nope', { domain: 'x.example.com', target_scheme: 'http', target_host: '192.0.2.1', target_port: 80 }), 404);
+  await fails(call('PUT', '/api/reverseproxy/hosts/' + added.id, { domain: list.hosts[0].domain, target_scheme: 'http', target_host: '192.0.2.1', target_port: 80 }), 409);
+  assert.deepEqual(await call('DELETE', '/api/reverseproxy/hosts/' + added.id), { ok: true });
+  await fails(call('DELETE', '/api/reverseproxy/hosts/' + added.id), 404);
+});

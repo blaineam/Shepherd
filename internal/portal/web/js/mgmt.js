@@ -94,5 +94,11 @@ export function createMgmt(api) {
     nethealthBufferbloat: (params) => api('/api/nethealth/bufferbloat' + Q(params)),
     nethealthProbeNow: () => post('/api/nethealth/probe', {}),
     nethealthBufferbloatRun: () => post('/api/nethealth/bufferbloat/run', {}),
+
+    reverseProxy: () => api('/api/reverseproxy'),
+    proxyHosts: () => api('/api/reverseproxy/hosts'),
+    addProxyHost: (body) => post('/api/reverseproxy/hosts', body),
+    updateProxyHost: (id, body) => api('/api/reverseproxy/hosts/' + encodeURIComponent(id), { method: 'PUT', body: J(body) }),
+    deleteProxyHost: (id) => api('/api/reverseproxy/hosts/' + encodeURIComponent(id), { method: 'DELETE' }),
   };
 }
