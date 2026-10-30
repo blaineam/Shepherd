@@ -129,6 +129,95 @@ func waitForFile(t *testing.T, path string) {
 	t.Fatalf("%s was never written", path)
 }
 
+// fakeExposure is a portscan.ExposureChecker that always reports
+// wan_forwarded, without ever touching a real IGD.
+type fakeExposure struct{}
+
+func (fakeExposure) Exposure(ctx context.Context, ip string, port int) (bool, bool) {
+	return true, true
+}
+
+func TestStartPortscanUsesTheExposureSeam(t *testing.T) {
+	oldEvery, oldDial, oldExposure := portscanEvery, portscanDial, portscanExposure
+	portscanEvery = 20 * time.Millisecond
+	portscanDial = fakeScanDial(map[string]bool{net.JoinHostPort("203.0.113.60", "23"): true})
+	portscanExposure = fakeExposure{}
+	t.Cleanup(func() { portscanEvery, portscanDial, portscanExposure = oldEvery, oldDial, oldExposure })
+
+	reg := devices.New(devices.Options{NodeID: "t", AllowLoopback: true})
+	id := reg.Observe(devices.Observation{Source: devices.SourceNeighbor, MAC: "02:00:00:00:02:01", IP: "203.0.113.60", Time: time.Now()})
+	if id == "" {
+		t.Fatal("observation was rejected")
+	}
+
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	// The seam must win even when the configuration disables the feature:
+	// a test never needs to build a real upnpigd.Checker to exercise this
+	// wiring.
+	cfg.Portscan.WANExposure.Enabled = false
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, err := startPortscan(ctx, cfg, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ds, ok := s.Result(id); ok && len(ds.Ports) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ds, ok := s.Result(id)
+	if !ok || len(ds.Ports) != 1 {
+		t.Fatalf("Result(%q) = %+v, %v", id, ds, ok)
+	}
+	if ds.Ports[0].Exposure != portscan.ExposureWANForwarded {
+		t.Fatalf("Exposure = %q, want %q (the seam checker always says WAN-forwarded)", ds.Ports[0].Exposure, portscan.ExposureWANForwarded)
+	}
+}
+
+func TestStartPortscanWANExposureDisabledNeverSetsExposure(t *testing.T) {
+	oldEvery, oldDial, oldExposure := portscanEvery, portscanDial, portscanExposure
+	portscanEvery = 20 * time.Millisecond
+	portscanDial = fakeScanDial(map[string]bool{net.JoinHostPort("203.0.113.61", "23"): true})
+	portscanExposure = nil // no seam: startPortscan must honor cfg instead
+	t.Cleanup(func() { portscanEvery, portscanDial, portscanExposure = oldEvery, oldDial, oldExposure })
+
+	reg := devices.New(devices.Options{NodeID: "t", AllowLoopback: true})
+	id := reg.Observe(devices.Observation{Source: devices.SourceNeighbor, MAC: "02:00:00:00:02:02", IP: "203.0.113.61", Time: time.Now()})
+	if id == "" {
+		t.Fatal("observation was rejected")
+	}
+
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.Portscan.WANExposure.Enabled = false
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, err := startPortscan(ctx, cfg, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ds, ok := s.Result(id); ok && len(ds.Ports) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ds, ok := s.Result(id)
+	if !ok || len(ds.Ports) != 1 {
+		t.Fatalf("Result(%q) = %+v, %v", id, ds, ok)
+	}
+	if ds.Ports[0].Exposure != "" {
+		t.Fatalf("Exposure = %q, want empty: wan_exposure is disabled and no seam was set", ds.Ports[0].Exposure)
+	}
+}
+
 func TestStartPortscanIgnoresUnreadableHistory(t *testing.T) {
 	oldEvery, oldDial := portscanEvery, portscanDial
 	portscanEvery = time.Hour

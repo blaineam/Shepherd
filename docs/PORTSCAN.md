@@ -171,16 +171,31 @@ short port list, a real rate limit), the risk of leaving it on is low enough tha
 benefit by default is the worse trade. You can turn it off in `[portscan]` if you would rather it never ran
 automatically; a manual scan from the portal still works even then.
 
+**`[portscan.wan_exposure].enabled` also defaults to `true`, for the same reasoning, weighed again on its
+own terms.** This sub-feature adds its own small amount of active LAN traffic — one SSDP multicast
+discovery and, at most, a handful of SOAP calls per `refresh_interval_seconds`, never per scan and never per
+port — on top of what `[portscan]` itself already does. That traffic is no more active on the network than
+an owner's own UPnP-enabled game console, smart speaker or torrent client already is, and it talks only to
+the router, never to another device. Given that, and that WAN-forwarded is specifically the more dangerous
+half of the exposure picture this whole feature exists to surface, withholding it by default would repeat
+the same mistake `[portscan]` itself already decided not to make. It needs `[portscan]` enabled: with no
+open-port data to deepen, there is nothing for it to check.
+
 ## Configuration
 
 ```toml
 [portscan]
 enabled = true
 interval_seconds = 21600   # 6 hours; the port list itself is built in, not configurable yet
+
+[portscan.wan_exposure]
+enabled = true
+refresh_interval_seconds = 600   # 10 minutes; the router's NAT table is cached in between
 ```
 
-`interval_seconds` must be at least 300 (5 minutes). The port list is `portscan.DefaultPorts` and is not
-yet exposed in the configuration file.
+`interval_seconds` must be at least 300 (5 minutes). `refresh_interval_seconds` must be at least 300 too,
+when `wan_exposure` is enabled (a too-short value is accepted while it is disabled, since it then does
+nothing). The port list is `portscan.DefaultPorts` and is not yet exposed in the configuration file.
 
 ## API
 

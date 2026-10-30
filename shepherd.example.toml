@@ -133,9 +133,19 @@ tls = "starttls"        # "starttls" (port 587 convention), "tls" (port 465) or 
 # so you can see exposure you did not expect (docs/PORTSCAN.md). Unlike the
 # passive sources above, this one actively opens connections to your own
 # devices; it is kept deliberately gentle (plain connect scans, a short port
-# list, bounded concurrency). It knows nothing about router port forwarding.
+# list, bounded concurrency).
 enabled = true
 interval_seconds = 21600         # 6 hours; the port list itself is built in
+
+[portscan.wan_exposure]
+# For every port found open above, a best-effort read of whether the router
+# also forwards it from the internet, via the router's own UPnP IGD
+# port-mapping table (docs/PORTSCAN.md's "WAN exposure" section). Not every
+# router cooperates (UPnP IGD disabled, or not implemented the same way by
+# some consumer mesh systems); when it does not, exposure just reads
+# "unknown" — never guessed safe or unsafe. Needs [portscan] enabled.
+enabled = true
+refresh_interval_seconds = 600   # 10 minutes; the router's NAT table is cached in between
 
 [vulnscan]
 # Deepens portscan's open-port findings into named, concrete vulnerability
