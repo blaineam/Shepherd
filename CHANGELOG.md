@@ -28,6 +28,9 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design, roadmap, IPv6/Thread rules, Contributor Covenant code of conduct, security policy, contributing guide and issue templates.
 - Icon: the black sheep, reused from the Lamdi app.
 
+### Fixed
+- The example config's blocklist URL returned HTTP 404. It now points at a working list, and a weekly CI job (`scripts/check-list-urls`) fails if any example blocklist URL stops resolving.
+
 ### Changed
 - Licensed AGPL-3.0-or-later.
 - Direction: a native single binary with a Go control plane and a Rust data plane (Wave 6), instead of containers.

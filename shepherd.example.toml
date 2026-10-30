@@ -26,4 +26,4 @@ listen = "127.0.0.1:8787"
 
 [[lists]]
 name = "hagezi-pro"
-url = "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/pro.txt"
+url = "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt"

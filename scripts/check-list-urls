@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# check-list-urls: every blocklist URL in the example config must still be reachable.
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+fail=0
+for url in $(grep -E '^url *= *"https?://' shepherd.example.toml | sed -E 's/^url *= *"([^"]+)".*/\1/'); do
+  if curl -fsL -m 30 -r 0-0 -o /dev/null "$url"; then echo "ok   $url"; else echo "FAIL $url"; fail=1; fi
+done
+exit $fail
