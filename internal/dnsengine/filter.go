@@ -5,7 +5,7 @@
 package dnsengine
 
 import (
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -13,65 +13,95 @@ import (
 // Decision is the outcome of checking a name against the filter.
 type Decision struct {
 	Blocked bool
-	// Reason names the matching list, "custom rule", "allowlist", or a policy.
+	// Reason names what matched: a catalog or custom list ID, "custom rule",
+	// "allowlist", or a policy name.
 	Reason string
 	// NXDOMAIN is set for policy blocks that must answer NXDOMAIN, not 0.0.0.0.
 	NXDOMAIN bool
+	// Scope says where the decision was made: "network", "group:<id>" or
+	// "device:<id>". Empty when nothing matched.
+	Scope string
 }
 
-// Filter matches names and all their parent domains against blocklists and
-// user rules. Allow rules win over every block source.
+// Filter matches names and all their parent domains against blocklists, user
+// rules and policies, per scope (network, group, device).
+//
+// Blocklists and rules live in two membership bitset indexes (see index.go),
+// so one domain can belong to many items. Which items apply to a client is a
+// precomputed mask per distinct (device, groups) signature (see policy.go).
+//
+// Until SetScopes is called the filter runs in legacy mode: every loaded list
+// applies network wide, and SetRules and SetPolicy edit the network scope.
 type Filter struct {
-	mu        sync.RWMutex
-	lists     map[string]map[string]struct{}
-	listNames []string
-	listed    map[string]uint16 // domain -> index into listNames
-	allow     map[string]struct{}
-	block     map[string]struct{}
-	policies  map[string][]string // policy label -> domains
-	policy    map[string]string   // domain -> policy label
+	lists *memberIndex // catalog and custom list items
+	rules *memberIndex // "allow:<scope>", "block:<scope>" and "policy:<name>" items
+
+	pmu sync.Mutex // serialises writers of pol
+	pol atomicPolicy
 }
 
+// NewFilter returns an empty filter in legacy mode.
 func NewFilter() *Filter {
-	return &Filter{
-		lists:    map[string]map[string]struct{}{},
-		listed:   map[string]uint16{},
-		allow:    map[string]struct{}{},
-		block:    map[string]struct{}{},
-		policies: map[string][]string{},
-		policy:   map[string]string{},
+	f := &Filter{lists: newMemberIndex(), rules: newMemberIndex()}
+	f.pol.Store(&policyState{legacyPolicies: map[string]bool{}})
+	f.loadKnownPolicies()
+	return f
+}
+
+func (f *Filter) loadKnownPolicies() {
+	sets := map[string]map[string]struct{}{}
+	for name, domains := range policyDomains {
+		if _, ok := f.rules.load().bits[policyItem(name)]; !ok {
+			sets[policyItem(name)] = domainSet(domains)
+		}
 	}
+	if len(sets) > 0 {
+		f.rules.setMany(sets)
+	}
+}
+
+func policyItem(name string) string { return "policy:" + name }
+
+func domainSet(domains []string) map[string]struct{} {
+	if len(domains) == 0 {
+		return nil
+	}
+	s := make(map[string]struct{}, len(domains))
+	for _, d := range domains {
+		s[normalize(d)] = struct{}{}
+	}
+	return s
 }
 
 // SetPolicy enables a built-in policy for domains (and their subdomains), or
-// disables it when domains is empty. Policy blocks answer NXDOMAIN.
+// disables it when domains is empty. Policy blocks answer NXDOMAIN. This is
+// the legacy network-wide switch; it is ignored once SetScopes has been used.
 func (f *Filter) SetPolicy(label string, domains []string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	f.pmu.Lock()
+	defer f.pmu.Unlock()
+	old := f.pol.Load()
+	if old.configured {
+		return
+	}
+	f.rules.set(policyItem(label), domainSet(domains))
+	next := old.clone()
 	if len(domains) == 0 {
-		delete(f.policies, label)
+		delete(next.legacyPolicies, label)
 	} else {
-		f.policies[label] = domains
+		next.legacyPolicies[label] = true
 	}
-	f.policy = map[string]string{}
-	for l, ds := range f.policies {
-		for _, d := range ds {
-			f.policy[normalize(d)] = l
-		}
-	}
+	f.pol.Store(next)
 }
 
 func normalize(name string) string {
 	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
 }
 
-// walk calls fn with name, then each parent that still has two or more labels,
-// stopping when fn returns true. Single-label parents (TLDs) are never matched.
-func walk(name string, fn func(string) bool) {
+// walk calls fn with name, then each parent that still has two or more labels.
+// Single-label parents (TLDs) are never visited.
+func walk(name string, fn func(string)) {
 	for {
-		if fn(name) {
-			return
-		}
+		fn(name)
 		i := strings.IndexByte(name, '.')
 		if i < 0 {
 			return
@@ -83,84 +113,48 @@ func walk(name string, fn func(string) bool) {
 	}
 }
 
-// Check reports whether name should be blocked.
-func (f *Filter) Check(name string) Decision {
-	name = normalize(name)
-	f.mu.RLock()
-	defer f.mu.RUnlock()
+// Check reports whether name should be blocked network wide.
+func (f *Filter) Check(name string) Decision { return f.CheckFor("", name, nil) }
 
-	var d Decision
-	walk(name, func(s string) bool {
-		if _, ok := f.allow[s]; ok {
-			d = Decision{Reason: "allowlist"}
-			return true
-		}
-		return false
-	})
-	if d.Reason != "" {
-		return d
-	}
-	walk(name, func(s string) bool {
-		if label, ok := f.policy[s]; ok {
-			d = Decision{Blocked: true, Reason: label, NXDOMAIN: true}
-			return true
-		}
-		if _, ok := f.block[s]; ok {
-			d = Decision{Blocked: true, Reason: "custom rule"}
-			return true
-		}
-		if i, ok := f.listed[s]; ok {
-			d = Decision{Blocked: true, Reason: f.listNames[i]}
-			return true
-		}
-		return false
-	})
-	return d
+// ItemsFor returns the IDs of every loaded list item that contains name or
+// any of its parent domains, sorted. It ignores scopes: it answers "what
+// would match", not "what is enabled".
+func (f *Filter) ItemsFor(name string) []string {
+	li := f.lists.load()
+	var buf [4]uint64
+	hit := li.match(normalize(name), buf[:0])
+	out := li.commonNames(hit, hit)
+	slices.Sort(out)
+	return out
 }
 
-// SetList replaces one named blocklist. A nil set removes it.
-func (f *Filter) SetList(name string, set map[string]struct{}) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if set == nil {
-		delete(f.lists, name)
-	} else {
-		f.lists[name] = set
-	}
-	names := make([]string, 0, len(f.lists))
-	for n := range f.lists {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	listed := make(map[string]uint16)
-	for i, n := range names {
-		for d := range f.lists[n] {
-			if _, dup := listed[d]; !dup {
-				listed[d] = uint16(i)
-			}
-		}
-	}
-	f.listNames, f.listed = names, listed
-}
+// SetList replaces one named blocklist item. A nil set removes it.
+func (f *Filter) SetList(name string, set map[string]struct{}) { f.lists.set(name, set) }
 
-// SetRules replaces the user allow and block rules.
+// SetRules replaces the network scope's allow and block rules. This is the
+// legacy entry point; it is ignored once SetScopes has been used.
 func (f *Filter) SetRules(allow, block []string) {
-	a := make(map[string]struct{}, len(allow))
-	for _, d := range allow {
-		a[normalize(d)] = struct{}{}
+	f.pmu.Lock()
+	defer f.pmu.Unlock()
+	if f.pol.Load().configured {
+		return
 	}
-	b := make(map[string]struct{}, len(block))
-	for _, d := range block {
-		b[normalize(d)] = struct{}{}
-	}
-	f.mu.Lock()
-	f.allow, f.block = a, b
-	f.mu.Unlock()
+	f.rules.setMany(map[string]map[string]struct{}{
+		ruleItem("allow", NetworkScope()): domainSet(allow),
+		ruleItem("block", NetworkScope()): domainSet(block),
+	})
 }
 
-// Counts returns the number of listed domains and user rules.
+// Counts returns the number of listed domains and network scope rules.
 func (f *Filter) Counts() (listed, allow, block int) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	return len(f.listed), len(f.allow), len(f.block)
+	ri := f.rules.load()
+	return len(f.lists.load().dom), ri.size[ruleItem("allow", NetworkScope())], ri.size[ruleItem("block", NetworkScope())]
+}
+
+// ItemSize returns how many domains the named list item holds, and whether
+// it is loaded.
+func (f *Filter) ItemSize(name string) (int, bool) {
+	st := f.lists.load()
+	_, ok := st.bits[name]
+	return st.size[name], ok
 }
