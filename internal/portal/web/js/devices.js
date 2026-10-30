@@ -334,12 +334,12 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     mb.type = 'button';
     mb.setAttribute('aria-haspopup', 'menu');
     cExc.append(mb);
-    const wb = el('span', 'wbadge', 'Wandering');
-    wb.hidden = true;
-    nameWrap.after(wb);
     row.append(cSel, cName, cIp, cGrp, cSeen, cExc);
     for (const c of row.children) c.setAttribute('role', 'cell');
-    const s = { row, cb, ico, nm, sub, pen, cIp, cGrp, cSeen, mb, wb, nameWrap, _i: -1, _d: null, _sig: '' };
+    // Wandering is announced once, by the Mode button below (it already
+    // carries the countdown, e.g. "Wandering 36m"); a second badge next to
+    // the name duplicated the same state on every row.
+    const s = { row, cb, ico, nm, sub, pen, cIp, cGrp, cSeen, mb, nameWrap, _i: -1, _d: null, _sig: '' };
     return s;
   }
 
@@ -380,7 +380,6 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     if (s.mb.textContent !== mt) s.mb.textContent = mt;
     s.mb.className = 'mode-btn m-' + mode;
     s.mb.setAttribute('aria-label', 'Mode for ' + d.name + ': ' + mt + '. Change');
-    s.wb.hidden = mode !== 'wandering';
     s.row.classList.toggle('excl', mode === 'excluded');
     s.row.classList.toggle('wand', mode === 'wandering');
     s.row.tabIndex = i === active ? 0 : -1;

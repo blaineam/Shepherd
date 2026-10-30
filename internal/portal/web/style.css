@@ -750,7 +750,6 @@ tr.a-error .h-dom { color: var(--amber); }
 :root { --wander: #a78bfa; }
 .wbadge { display: inline-block; font: 600 9.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--wander); border: 1px dashed #a78bfa88; background: #a78bfa14; padding: 0 6px; border-radius: 3px; white-space: nowrap; align-self: center; }
 .shadow-note { color: #b9a8f5; font-style: italic; }
-.c-name .wbadge { margin-left: 2px; }
 .dv-rows .c-exc { justify-content: flex-start; }
 .mode-btn { background: transparent; border: 1px solid var(--line2); color: var(--muted); font: 600 10.5px var(--mono); letter-spacing: .04em; padding: 4px 9px; border-radius: 3px; white-space: nowrap; }
 .mode-btn:hover { color: var(--text); border-color: var(--muted); }
