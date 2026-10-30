@@ -78,6 +78,15 @@ quarantine_new_devices = true    # a new device joins the reserved Quarantine gr
 enabled = true
 interval_seconds = 300           # how often guesses are reconsidered
 
+[arp]
+# Passive ARP monitor (docs/ARP.md): a read-only listener that learns real MAC
+# addresses for the device registry and raises events about the ARP layer
+# itself (a new MAC, an IP moving to a different MAC, a changed gateway MAC).
+# Needs CAP_NET_RAW and Linux; without either, Shepherd logs a warning and
+# starts normally with ARP monitoring off.
+enabled = true
+interface = ""                   # empty auto-detects the default route's interface
+
 [portal]
 listen = "127.0.0.1:8787"
 

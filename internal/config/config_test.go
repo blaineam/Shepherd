@@ -299,6 +299,38 @@ func TestExampleConfigShowsTheClassifyDefaults(t *testing.T) {
 	}
 }
 
+func TestARPDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ARP.Enabled || cfg.ARP.Interface != "" {
+		t.Errorf("arp defaults = %+v (on by default, auto-detect interface)", cfg.ARP)
+	}
+}
+
+func TestARPOverrides(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.toml")
+	os.WriteFile(path, []byte("[arp]\nenabled = false\ninterface = \"eth9\"\n"), 0o600)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ARP.Enabled || cfg.ARP.Interface != "eth9" {
+		t.Errorf("arp overrides = %+v", cfg.ARP)
+	}
+}
+
+func TestExampleConfigShowsTheARPDefaults(t *testing.T) {
+	ex, err := Load("../../shepherd.example.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.ARP != Default().ARP {
+		t.Errorf("example %+v differs from the defaults %+v", ex.ARP, Default().ARP)
+	}
+}
+
 func TestQuarantineCanBeOptedOut(t *testing.T) {
 	cfg := writeCfg(t, "[devices]\nquarantine_new_devices = false\n")
 	if cfg.Devices.QuarantineNewDevices || !cfg.Devices.Enabled {

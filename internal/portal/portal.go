@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"shepherd/internal/arp"
 	"shepherd/internal/devices"
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/geo"
@@ -37,6 +38,9 @@ const cookieName = "shepherd_session"
 
 // GeoStatus reports the state of the map data.
 type GeoStatus interface{ Status() geo.Status }
+
+// ARPStatus reports the passive ARP monitor's counters.
+type ARPStatus interface{ Stats() arp.Stats }
 
 type Deps struct {
 	Engine *dnsengine.Engine
@@ -60,6 +64,10 @@ type Deps struct {
 	Settings *settings.Store
 	// Geo reports map data status. Nil means the map is disabled.
 	Geo GeoStatus
+	// ARP reports the passive ARP monitor's counters. Nil means ARP
+	// monitoring is disabled, unsupported on this platform, or lacks the
+	// capability it needs.
+	ARP ARPStatus
 	// DetectHome re-detects the automatic home now (nil when automatic home is off).
 	DetectHome func(ctx context.Context) error
 	// Heartbeat is how often the live stream sends a keep-alive (default 15s).
@@ -309,6 +317,7 @@ func (s *Server) routes() {
 	h("GET /api/devices/{id}", s.getDevice)
 	h("PATCH /api/devices/{id}", s.patchDevice)
 	h("DELETE /api/devices/{id}", s.deleteDevice)
+	h("GET /api/arp/stats", s.arpStats)
 	h("GET /api/groups", s.listGroups)
 	h("POST /api/groups", s.createGroup)
 	h("PATCH /api/groups/{id}", s.patchGroup)

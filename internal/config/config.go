@@ -31,6 +31,19 @@ type Config struct {
 	Map            Map      `toml:"map"`
 	Devices        Devices  `toml:"devices"`
 	Classify       Classify `toml:"classify"`
+	ARP            ARP      `toml:"arp"`
+}
+
+// ARP controls the passive ARP monitor (docs/ARP.md): a read-only listener
+// that learns real MAC addresses for the device registry and raises events
+// about the ARP layer itself (a new MAC, an IP moving to a different MAC, a
+// changed gateway MAC). It needs CAP_NET_RAW and is Linux-only; elsewhere, or
+// without the capability, it logs a warning and Shepherd starts normally.
+type ARP struct {
+	Enabled bool `toml:"enabled"`
+	// Interface names the NIC to listen on. Empty auto-detects it from the
+	// default route, the same convention arp.Open("") already uses.
+	Interface string `toml:"interface"`
 }
 
 // ListsAreDefault reports whether [[lists]] is exactly the built-in default,
@@ -145,6 +158,7 @@ func Default() Config {
 		Map:      Map{Enabled: true, AutoHome: true},
 		Devices:  Devices{Enabled: true, DNS: true, Neighbors: true, NeighborIntervalSeconds: 30, MDNS: true, ReverseDNS: true, SaveIntervalSeconds: 60, QuarantineNewDevices: true},
 		Classify: Classify{Enabled: true, IntervalSeconds: 300},
+		ARP:      ARP{Enabled: true},
 		DataDir:  "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
