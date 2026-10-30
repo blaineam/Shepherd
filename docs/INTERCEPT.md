@@ -117,6 +117,18 @@ exist yet):
 4. Call `PanicStop()` at the first sign of trouble; it works even if something else has gone wrong.
 5. Let the trial auto-revert on its own otherwise — nothing else needs to remember to clean up.
 
+## The one-off trial harness
+
+`cmd/intercept-trial` is exactly that first trial, made runnable: a standalone CLI (Linux-only,
+build-tagged) that wires a `Controller` as above, adds its own minimal `AF_PACKET`/`ETH_P_ALL`
+capture loop to feed `HandleFrame` (the only piece the library itself does not provide — see
+`sender.go`'s comment on why `internal/arp`'s read side is ARP-only), and steers exactly one device
+named twice on the command line (`-target-mac` and `-confirm`, which must match byte for byte) for a
+mandatory, capped (5 minutes max) trial duration. It is **not** built, run, or shipped by anything in
+`cmd/shepherd`; it is a separate binary the maintainer builds and runs by hand, once, watching
+`Status()` scroll by, with Ctrl-C wired to `PanicStop` + `Close`. It has never been run against a
+real household device — only against a disposable, throwaway VM set up for exactly this purpose.
+
 None of this is wired up yet. Doing so, and running it against a real network, happens later, only
 with the maintainer's explicit go-ahead.
 
