@@ -153,3 +153,174 @@ res, err := c.Publish(ctx, ntfy.Message{
   by default.
 - The server URL is operator configuration, so unlike Web Push this client does not refuse private
   addresses: a self-hosted ntfy normally lives on one.
+
+# The engine (`internal/alarms`)
+
+## Model
+
+An `Alarm` has: `ID`, `Type`, `Severity`, `Title`, `Body`, `Key` (the dedupe key), `Source`, `DeviceID`,
+`DeviceClass`, `GroupIDs`, `Domain`, `Evidence` (a list of label and value pairs), `URL` (the portal route to
+open, defaulting to `/alarms/<id>`), `State`, `FirstSeen`, `LastSeen`, `Count`, `AckedAt`, `ResolvedAt`,
+`MutedBy` (a rule ID, or `snooze`), `MutedUntil`, `Learning`, `Bundle` and `ParentID`, plus the
+sync-ready fields of the device registry: an HLC stamp (`Updated`), the writing `Node` and a `Deleted`
+tombstone.
+
+**Severities**, lowest first: `info`, `low`, `medium`, `high`, `critical`.
+
+**States:** `new` (the unread state, what badges count), `acknowledged` (seen), `muted` (recorded but never
+notified) and `resolved` (closed; a resolved alarm fires again, as a new alarm, the next time its key is
+raised).
+
+Alarms are values: the engine returns copies.
+
+## Alarm types
+
+Types are a registry. Each has a title, a description, a default severity, default channels and a flag
+saying whether learning mode suppresses it. Third parties add types with `Engine.Register` (a type ID is
+never silently replaced, and the built-in IDs cannot be reused). An unregistered type ID still works: the
+alarm is recorded at medium severity on all channels, so a typo never loses an alarm.
+
+| Type | Default severity | Channels | Learning suppresses |
+|---|---|---|---|
+| `new-device` | high | portal, push, ntfy | yes (install period only) |
+| `device-left` | low | portal | yes (install period only) |
+| `upstream-down` | high | all | no |
+| `upstream-recovered` | low | all | no |
+| `list-update-rejected` | medium | all | no |
+| `history-locked` | medium | all | no |
+| `history-error` | medium | all | no |
+| `map-data-failed` | low | portal | no |
+| `dns-error-spike` | medium | all | yes (install and device) |
+| `blocked-spike` | low | portal | yes (install and device) |
+| `private-relay-attempt` | info | portal | no |
+| `port-opened` (ports feature, future) | high | all | yes (install and device) |
+| `new-inbound-exposure` (future) | critical | all | no |
+| `threat-match` (future) | critical | all | no |
+| `self-update` (future) | low | all | no |
+| `test` | high | all | no, and it **bypasses** mute rules, quiet hours and learning mode |
+
+"Install and device" means the type is also suppressed for a device that was first seen recently (see
+Learning mode). `new-device` is deliberately install-only: a per-device period would silence the very alarm
+that announces the device.
+
+## Raising alarms
+
+```go
+eng.Raise(alarms.Event{
+    Type: alarms.TypeNewDevice, DeviceID: id, DeviceClass: "camera",
+    Title: "New device: Camera", Key: "new-device|" + id + "|",
+    Evidence: []alarms.Evidence{{Label: "Address", Value: "192.0.2.10"}},
+})
+```
+
+`Raise` is the single entry point and never blocks: it queues the event for a worker and returns whether it
+was queued. When the queue (default 1024) is full the event is dropped and counted (`Engine.Dropped()`, also in
+`Summary.Dropped`), so it is safe on the DNS hot path. `RaiseSync` processes on the caller's goroutine and
+returns the resulting alarm (use it for "send a test notification"); `Drain` waits for the queue to empty.
+Titles, bodies, evidence and URLs are length-bounded, and an `Event.URL` that is not a same-site path
+starting with `/` is replaced by the default.
+
+## Dedupe and storm control
+
+**Dedupe.** An event whose `Key` matches an open (not resolved) alarm that was last seen within the dedupe
+window (default 1 hour) folds into it: `Count` and `LastSeen` increase, the body and evidence are refreshed,
+and **nobody is notified again**. The window is measured from the last sighting, so a steady trickle stays
+one alarm. Two things let an alarm fire again: resolving it, or a quiet gap longer than the window. The one
+exception is escalation: a repeat with a higher severity raises the alarm's severity, returns it to `new` if it
+was acknowledged, and notifies once. The default key is `<type>|<device>|<domain>`. End your own keys with a
+delimiter if prefix muting must not catch longer keys.
+
+**Storm control.** More than a threshold (default 5) of new alarms of one type for one device within a window
+(default 1 minute) collapse into a **bundle**. The bundle is one alarm titled, for example, `47 similar
+alerts: Blocked-query spike`; it carries the highest severity of its members and notifies once, when it forms.
+Further events absorb into it (it keeps counting), the earlier members stay recorded as its children
+(`ParentID`, `Engine.Children`) and are hidden from lists and counts while the bundle exists, and acting on the
+bundle (acknowledge, resolve, mute, delete) acts on its members. A quiet gap, or resolving the bundle, ends
+the storm. A burst therefore produces at most threshold plus one notifications. This is checked with
+property-style tests over random bursts: no event is lost (counts of visible alarms add up) and notifications
+stay bounded.
+
+## Muting
+
+**Rules.** A mute rule matches by device, group, type, domain or key prefix. Within a field the entries are
+alternatives; every non-empty field must match; a rule needs at least one field. Domains match exactly or as a
+parent (`example.com` matches `ads.example.com`). Alarms matching an active rule are recorded with state
+`muted` and `MutedBy` set to the rule, and are never notified. Creating a rule also mutes matching alarms that
+are still new. A rule lasts for a duration:
+
+| Preset | Ends |
+|---|---|
+| `1h` | One hour from now. |
+| `tomorrow` | The next time the wall clock reads the morning hour (default 08:00) in the household's time zone: 23:30 mutes until 08:00 the next day, 02:00 until 08:00 the same day. |
+| `days` + `Days` | That many calendar days from now, same wall-clock time (DST-safe). |
+| `forever` | Never. |
+| `until` + `Until` | A specific time. |
+
+An expired rule stops applying at its boundary; the next sweep (every 30 seconds, or `Tick`) returns the
+alarms it muted to `new`. If such an alarm was still being seen, channels are told once ("the mute ended on a
+live problem").
+
+**Snooze.** `Engine.Snooze(id, spec)` mutes one alarm without a rule. Repeats stay quiet; it returns to `new`
+when the snooze ends.
+
+**Quiet hours.** Global windows in `Preferences.Quiet`: `Start` and `End` as `HH:MM` in the preferences' time
+zone (End before Start wraps midnight, `22:00` to `07:00`), optional `Days` (weekdays on which the window
+starts), and `Allow`, the lowest severity that still gets through (default `critical`; empty lets nothing
+through). Quiet hours do not mute: the alarm stays `new` and is recorded, and its notification is **held**
+until the window ends and then delivered with the digest. A digest that falls due inside a window waits for it
+too.
+
+```go
+p := eng.Preferences()
+p.Timezone = "America/Chicago"
+p.Quiet = alarms.QuietPref{Enabled: true, Windows: []alarms.QuietWindow{
+    {Start: "22:00", End: "07:00", Allow: alarms.SeverityCritical},
+    {Start: "09:00", End: "17:00", Days: []int{1, 2, 3, 4, 5}, Allow: alarms.SeverityHigh}, // weekdays
+}}
+err := eng.SetPreferences(p)
+```
+
+**Learning mode.** For a configurable period after install (default 72 hours) alarms of types flagged
+"learning suppresses" are recorded as `info` (`RawSeverity` keeps the real one, `Learning` is set) and not
+notified, while baselines form. Types flagged for device learning are also suppressed for a device for a
+period (default 24 hours) after it was first seen (`Raise` notes devices; `NoteDeviceSeen` lets the registry
+tell the engine earlier). Mute rules win over learning; the `test` type ignores both. `LearningUntil()` tells
+the UI when learning ends.
+
+Order of decisions for a new alarm: bypass type, then mute rule, then learning mode, then quiet hours, then
+notify.
+
+## Batch management
+
+All batch calls take a `Selector`: explicit `IDs`, a `Filter`, or both (an alarm must be in the IDs and match
+the filter), or `All`. An empty selector is an error, never "everything". They return a `BatchResult` with
+`Matched`, `Changed`, `Skipped` (unknown IDs), the IDs of any `Rules` created and an undo `Handle`.
+
+```go
+// Acknowledge everything that is new and medium or lower.
+res, _ := eng.Acknowledge(alarms.Selector{Filter: &alarms.Filter{
+    States: []alarms.State{alarms.StateNew}, Severities: []alarms.Severity{alarms.SeverityLow, alarms.SeverityMedium}}})
+
+// Mute these alarms' type and device pair for a week, then undo.
+res, _ = eng.Mute(alarms.Selector{IDs: ids}, alarms.MuteRequest{
+    By: alarms.MuteByTypeDevice, Duration: alarms.MuteSpec{Preset: alarms.MuteDays, Days: 7}})
+eng.Undo(res.Handle)
+```
+
+- `Acknowledge`: new alarms become acknowledged. `Resolve`: closes alarms of any open state.
+- `Mute` builds rules from the selection by `MuteBy`: `alarm` (snooze each, no rule), `key` (one rule per
+  key), `type`, `device`, `type+device` (one rule per pair), or `domain`. It mutes the other new alarms the
+  rules match as well, and returns `ErrNothingToMute` when the selection has nothing to build a rule from
+  (a device mute over alarms with no device).
+- `Delete` tombstones (so the deletion replicates); retention purges them later. It cannot be undone.
+- `Undo(handle)` reverses an acknowledge, resolve, mute, snooze or `CreateRule`. It removes created rules and
+  restores each alarm's previous state, but leaves alone any alarm changed again since (counted in
+  `Skipped`). A handle works once and lives for 10 minutes (the last 50 are kept).
+- Filters match `Types`, `Severities` or `MinSeverity`, `States`, `DeviceID`, `GroupID`, a `Since`/`Until`
+  time range (alarms whose first-to-last sighting overlaps it) and `Text` (case-insensitive over title, body,
+  key, source, domain, device, type and evidence).
+- `List(Query)` filters, sorts (`last_seen` default, `first_seen`, `severity`, `count`, `title`; newest or
+  highest first unless `Asc`), and pages (`Offset`, `Limit` default 50, at most 500) with a stable order.
+  `Summary()` returns counts by state, counts by severity of the new alarms (the badge numbers), the highest
+  new severity, the active rule count and the drop counter in one call.
+- Large batches (over 100 alarms) emit one `ChangeBulk` instead of one change per alarm.
