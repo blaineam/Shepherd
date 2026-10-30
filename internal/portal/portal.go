@@ -320,6 +320,7 @@ func (s *Server) routes() {
 	h("POST /api/policy/rules", s.addPolicyRule)
 	h("DELETE /api/policy/rules", s.deletePolicyRule)
 	h("POST /api/policy/switches", s.setPolicySwitch)
+	h("POST /api/policy/mode", s.setPolicyMode)
 	h("POST /api/policy/custom-lists", s.addCustomList)
 	h("DELETE /api/policy/custom-lists/{id}", s.deleteCustomList)
 	h("POST /api/policy/refresh", s.refreshPolicy)

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // ScopeKind is how widely a set of settings applies.
@@ -77,12 +78,35 @@ type ClientScopes interface {
 // (leaf items; the PolicyStore expands apps and categories): true enables the
 // item at this scope, false opts out of it here and below. Policies work the
 // same way for built-in policy switches.
+//
+// Mode is this scope's own block/allow default ("" means inherit; see
+// effectiveMode). AllowSchedules and BlockSchedules optionally limit when a
+// domain in Allow or Block applies; a domain absent from the map always
+// applies when it matches. A domain's entry is meaningless unless that same
+// domain is also in Allow or Block.
 type ScopeConfig struct {
-	Items    map[string]bool
-	Policies map[string]bool
-	Allow    []string
-	Block    []string
+	Items          map[string]bool
+	Policies       map[string]bool
+	Allow          []string
+	Block          []string
+	Mode           Mode
+	AllowSchedules map[string]Schedule
+	BlockSchedules map[string]Schedule
 }
+
+// Mode is a scope's default action for a name nothing else decides. "block"
+// (the zero value behaves the same way) leaves a name that matches no item,
+// policy, list or rule unblocked. "allow" inverts that default: a name that
+// matches no item, policy, list or rule is blocked instead. See
+// docs/POLICY.md's "Allowlist mode".
+type Mode string
+
+const (
+	ModeBlock Mode = "block"
+	ModeAllow Mode = "allow"
+)
+
+func (m Mode) valid() bool { return m == "" || m == ModeBlock || m == ModeAllow }
 
 func ruleItem(kind string, s Scope) string { return kind + ":" + s.String() }
 
@@ -155,14 +179,22 @@ type effScope struct {
 	level  int
 	list   []uint64 // list items that block here, after opt-outs from more specific scopes
 	policy []uint64 // policy items that block here, after opt-outs
-	block  []uint64 // this scope's own block-rule item
-	allow  []uint64 // this scope's own allow-rule item
+	block  []uint64 // this scope's own block-rule item (coarse: any of its domains)
+	allow  []uint64 // this scope's own allow-rule item (coarse: any of its domains)
+	// blockRule and allowRule narrow block/allow to the specific domain that
+	// matched, and apply its schedule, if it has one. Nil when the scope has
+	// no rules of that kind.
+	blockRule, allowRule *ruleSet
 }
 
-// effective holds the scopes that apply to one signature, most specific first.
+// effective holds the scopes that apply to one signature, most specific
+// first, plus the effective Mode for this signature (most-specific-set-wins;
+// ModeBlock when nothing set one, which is today's only behavior).
 type effective struct {
 	listVer, ruleVer uint64
 	scopes           []effScope
+	mode             Mode
+	modeScope        string // the scope that set mode; "" when mode is the default
 }
 
 func (p *policyState) effectiveFor(dev string, groups []string, li, ri *indexState) *effective {
@@ -185,6 +217,7 @@ type rawScope struct {
 	sc                             Scope
 	listOn, listOff, polOn, polOff []uint64
 	allow, block                   []uint64
+	allowRule, blockRule           *ruleSet
 }
 
 func (p *policyState) compute(dev string, groups []string, li, ri *indexState) *effective {
@@ -197,6 +230,7 @@ func (p *policyState) compute(dev string, groups []string, li, ri *indexState) *
 	}
 	order = append(order, NetworkScope())
 
+	mode, modeScope := ModeBlock, ""
 	var raws []rawScope
 	for _, sc := range order {
 		r := rawScope{sc: sc}
@@ -221,15 +255,26 @@ func (p *policyState) compute(dev string, groups []string, li, ri *indexState) *
 			}
 			r.listOn, r.listOff = splitMask(li, c.Items, "")
 			r.polOn, r.polOff = splitMask(ri, c.Policies, "policy:")
+			r.allowRule = newRuleSet(c.Allow, c.AllowSchedules)
+			r.blockRule = newRuleSet(c.Block, c.BlockSchedules)
+			// The effective Mode is the most specific scope's own explicit
+			// choice, exactly the same most-specific-wins lookup compute()
+			// already walks order for everything else; an unset scope (""
+			// here, or no entry at all for this scope) falls through to the
+			// next less specific one, and ModeBlock when none ever sets it.
+			if modeScope == "" && c.Mode != "" {
+				mode, modeScope = c.Mode, sc.String()
+			}
 		}
 		r.allow = ri.maskOf([]string{ruleItem("allow", sc)})
 		r.block = ri.maskOf([]string{ruleItem("block", sc)})
 		raws = append(raws, r)
 	}
 
-	e := &effective{listVer: li.ver, ruleVer: ri.ver}
+	e := &effective{listVer: li.ver, ruleVer: ri.ver, mode: mode, modeScope: modeScope}
 	for _, r := range raws {
-		es := effScope{key: r.sc.String(), level: r.sc.level(), list: r.listOn, policy: r.polOn, block: r.block, allow: r.allow}
+		es := effScope{key: r.sc.String(), level: r.sc.level(), list: r.listOn, policy: r.polOn,
+			block: r.block, allow: r.allow, blockRule: r.blockRule, allowRule: r.allowRule}
 		for _, o := range raws {
 			if o.sc.level() > es.level { // opt-outs only reach less specific scopes
 				es.list = clearBitsIn(es.list, o.listOff)
@@ -260,7 +305,12 @@ func splitMask(idx *indexState, m map[string]bool, prefix string) (on, off []uin
 // CheckFor decides name for the client behind clientIP. Blocks union across
 // the client's scopes. An allow rule at a more specific scope, or at the same
 // scope, overrides a block from a less specific one; allows at sibling groups
-// do not cancel each other's blocks. cs may be nil (network scope only).
+// do not cancel each other's blocks. When the effective Mode (see
+// docs/POLICY.md's "Allowlist mode") is "allow", a catalog or custom item
+// switched on at a scope is that scope's allowlist instead of its blocklist,
+// and a name nothing decides is blocked instead of let through. Built-in
+// policy switches always block, in both modes. cs may be nil (network scope
+// only).
 func (f *Filter) CheckFor(clientIP, name string, cs ClientScopes) Decision {
 	name = normalize(name)
 	var dev string
@@ -273,38 +323,63 @@ func (f *Filter) CheckFor(clientIP, name string, cs ClientScopes) Decision {
 	var lb, rb [4]uint64
 	hl, hr := li.match(name, lb[:0]), ri.match(name, rb[:0])
 	if len(hl) == 0 && len(hr) == 0 {
-		return Decision{}
+		return e.defaultDecision()
 	}
-	return e.decide(li, ri, hl, hr)
+	return e.decide(li, ri, hl, hr, name, f.now())
 }
 
-func (e *effective) decide(li, ri *indexState, hl, hr []uint64) Decision {
+// defaultDecision is what CheckFor returns when nothing in any index even
+// mentions name: not blocked, unless the effective mode is "allow".
+func (e *effective) defaultDecision() Decision {
+	if e.mode == ModeAllow {
+		return Decision{Blocked: true, Reason: "default deny: allowlist mode", Scope: e.modeScope}
+	}
+	return Decision{}
+}
+
+func (e *effective) decide(li, ri *indexState, hl, hr []uint64, name string, now time.Time) Decision {
+	// In allow mode an item (catalog or custom list) switched on at a scope
+	// is that scope's allowlist, not its blocklist; ruleAllow and itemAllow
+	// are tracked apart only to report which one matched. Both are computed
+	// once: decide() needs them both to find the most specific allow (below)
+	// and to skip a scope they override (in the main loop), and
+	// activeRuleMatch walks name's ancestors, so it is worth not repeating
+	// per scope.
+	listAllows := e.mode == ModeAllow
+	ruleAllow := make([]bool, len(e.scopes))
+	itemAllow := make([]bool, len(e.scopes))
 	maxAllow, allowAt := -1, -1
 	for i, s := range e.scopes {
-		if intersects(hr, s.allow) {
+		ruleAllow[i] = intersects(hr, s.allow) && activeRuleMatch(s.allowRule, name, now)
+		itemAllow[i] = listAllows && intersects(hl, s.list)
+		if ruleAllow[i] || itemAllow[i] {
 			if allowAt < 0 {
 				allowAt = i
 			}
 			maxAllow = max(maxAllow, s.level)
 		}
 	}
-	for _, s := range e.scopes {
-		if maxAllow > s.level || intersects(hr, s.allow) {
-			continue // overridden by an allow here or at a more specific scope
+	for i, s := range e.scopes {
+		if maxAllow > s.level || ruleAllow[i] || itemAllow[i] {
+			continue // overridden by an allow (rule, or in allow mode an item) here or at a more specific scope
 		}
-		if intersects(hr, s.policy) {
+		if intersects(hr, s.policy) { // policies always block, in both modes
 			names := ri.commonNames(hr, s.policy)
 			return Decision{Blocked: true, Reason: strings.TrimPrefix(slices.Min(names), "policy:"), NXDOMAIN: true, Scope: s.key}
 		}
-		if intersects(hr, s.block) {
+		if intersects(hr, s.block) && activeRuleMatch(s.blockRule, name, now) {
 			return Decision{Blocked: true, Reason: "custom rule", Scope: s.key}
 		}
-		if intersects(hl, s.list) {
+		if !listAllows && intersects(hl, s.list) {
 			return Decision{Blocked: true, Reason: slices.Min(li.commonNames(hl, s.list)), Scope: s.key}
 		}
 	}
 	if allowAt >= 0 {
-		return Decision{Reason: "allowlist", Scope: e.scopes[allowAt].key}
+		reason := "allowlist"
+		if !ruleAllow[allowAt] && itemAllow[allowAt] {
+			reason = slices.Min(li.commonNames(hl, e.scopes[allowAt].list))
+		}
+		return Decision{Reason: reason, Scope: e.scopes[allowAt].key}
 	}
-	return Decision{}
+	return e.defaultDecision()
 }

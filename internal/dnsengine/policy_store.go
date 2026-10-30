@@ -25,11 +25,20 @@ const (
 // custom item ID (a list, an app or a whole category) to true (on here) or
 // false (off here and below); an ID that is absent inherits from less
 // specific scopes. Policies work the same way for built-in policy switches.
+//
+// Mode is this scope's own blocklist/allowlist choice ("" inherits; see
+// docs/POLICY.md's "Allowlist mode"). AllowSchedules and BlockSchedules
+// optionally limit when a domain in Allow or Block applies (see "Scheduled
+// access"); a domain missing from the map always applies when it matches,
+// and a schedule for a domain not in Allow or Block is meaningless.
 type ScopeSettings struct {
-	Items    map[string]bool `json:"items,omitempty"`
-	Policies map[string]bool `json:"policies,omitempty"`
-	Allow    []string        `json:"allow,omitempty"`
-	Block    []string        `json:"block,omitempty"`
+	Items          map[string]bool     `json:"items,omitempty"`
+	Policies       map[string]bool     `json:"policies,omitempty"`
+	Allow          []string            `json:"allow,omitempty"`
+	Block          []string            `json:"block,omitempty"`
+	Mode           Mode                `json:"mode,omitempty"`
+	AllowSchedules map[string]Schedule `json:"allow_schedules,omitempty"`
+	BlockSchedules map[string]Schedule `json:"block_schedules,omitempty"`
 }
 
 // CustomList is a user-defined blocklist, fetched from URL or given inline.
@@ -53,7 +62,10 @@ type PolicyData struct {
 }
 
 func (s ScopeSettings) clone() ScopeSettings {
-	return ScopeSettings{Items: maps.Clone(s.Items), Policies: maps.Clone(s.Policies), Allow: slices.Clone(s.Allow), Block: slices.Clone(s.Block)}
+	return ScopeSettings{
+		Items: maps.Clone(s.Items), Policies: maps.Clone(s.Policies), Allow: slices.Clone(s.Allow), Block: slices.Clone(s.Block),
+		Mode: s.Mode, AllowSchedules: maps.Clone(s.AllowSchedules), BlockSchedules: maps.Clone(s.BlockSchedules),
+	}
 }
 
 func (d PolicyData) clone() PolicyData {
@@ -310,6 +322,33 @@ func (d *PolicyData) validate() error {
 			return fmt.Errorf("invalid custom list id %q", c.ID)
 		}
 	}
+	all := []ScopeSettings{d.Network}
+	for _, m := range []map[string]ScopeSettings{d.Groups, d.Devices} {
+		for _, ss := range m {
+			all = append(all, ss)
+		}
+	}
+	for _, ss := range all {
+		if !ss.Mode.valid() {
+			return fmt.Errorf("invalid mode %q", ss.Mode)
+		}
+		for _, sched := range []struct {
+			domains   []string
+			schedules map[string]Schedule
+			kind      string
+		}{
+			{ss.Allow, ss.AllowSchedules, "allow"}, {ss.Block, ss.BlockSchedules, "block"},
+		} {
+			for dom, sc := range sched.schedules {
+				if !slices.Contains(sched.domains, dom) {
+					return fmt.Errorf("schedule for %q is not on the %s rules", dom, sched.kind)
+				}
+				if err := sc.Validate(); err != nil {
+					return fmt.Errorf("schedule for %q: %w", dom, err)
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -374,7 +413,10 @@ func (s *PolicyStore) expandItems(items map[string]bool, custom map[string]bool)
 func (s *PolicyStore) scopeConfigs() map[string]ScopeConfig {
 	custom := s.customIDs()
 	cfg := func(ss ScopeSettings) ScopeConfig {
-		return ScopeConfig{Items: s.expandItems(ss.Items, custom), Policies: maps.Clone(ss.Policies), Allow: ss.Allow, Block: ss.Block}
+		return ScopeConfig{
+			Items: s.expandItems(ss.Items, custom), Policies: maps.Clone(ss.Policies), Allow: ss.Allow, Block: ss.Block,
+			Mode: ss.Mode, AllowSchedules: ss.AllowSchedules, BlockSchedules: ss.BlockSchedules,
+		}
 	}
 	out := map[string]ScopeConfig{NetworkScope().String(): cfg(s.data.Network)}
 	for id, ss := range s.data.Groups {
@@ -483,6 +525,36 @@ func (s *PolicyStore) ClearPolicy(sc Scope, name string) error {
 	})
 }
 
+// SetMode sets the scope's own blocklist/allowlist default. mode must be
+// ModeBlock or ModeAllow; see docs/POLICY.md's "Allowlist mode".
+func (s *PolicyStore) SetMode(sc Scope, mode Mode) error {
+	if mode != ModeBlock && mode != ModeAllow {
+		return fmt.Errorf(`mode must be "block" or "allow", got %q`, mode)
+	}
+	return s.mutate(func(d *PolicyData) error {
+		ss, err := d.settings(sc)
+		if err != nil {
+			return err
+		}
+		ss.Mode = mode
+		d.put(sc, *ss)
+		return nil
+	})
+}
+
+// ClearMode removes the scope's own mode choice so it inherits again.
+func (s *PolicyStore) ClearMode(sc Scope) error {
+	return s.mutate(func(d *PolicyData) error {
+		ss, err := d.settings(sc)
+		if err != nil {
+			return err
+		}
+		ss.Mode = ""
+		d.put(sc, *ss)
+		return nil
+	})
+}
+
 func ruleLists(ss *ScopeSettings, kind string) (same, other *[]string, err error) {
 	switch kind {
 	case "allow":
@@ -493,12 +565,38 @@ func ruleLists(ss *ScopeSettings, kind string) (same, other *[]string, err error
 	return nil, nil, fmt.Errorf("rule kind must be \"allow\" or \"block\", got %q", kind)
 }
 
-// AddRule puts domain on the scope's allow or block rules, removing it from
-// the opposite kind at that scope.
-func (s *PolicyStore) AddRule(sc Scope, kind, domain string) error {
+// scheduleMap returns a pointer to the schedule map matching kind ("allow" or
+// "block"), already validated by an earlier ruleLists call.
+func scheduleMap(ss *ScopeSettings, kind string) *map[string]Schedule {
+	if kind == "allow" {
+		return &ss.AllowSchedules
+	}
+	return &ss.BlockSchedules
+}
+
+// putSchedule sets (sched non-nil) or clears (nil) domain's schedule in m.
+func putSchedule(m *map[string]Schedule, domain string, sched *Schedule) {
+	if sched == nil {
+		delete(*m, domain)
+		return
+	}
+	if *m == nil {
+		*m = map[string]Schedule{}
+	}
+	(*m)[domain] = *sched
+}
+
+// addRule is AddRule's and AddScheduledRule's shared implementation. sched
+// nil means the rule always applies.
+func (s *PolicyStore) addRule(sc Scope, kind, domain string, sched *Schedule) error {
 	domain = normalize(domain)
 	if !ValidDomain(domain) {
 		return fmt.Errorf("%q is not a valid domain", domain)
+	}
+	if sched != nil {
+		if err := sched.Validate(); err != nil {
+			return fmt.Errorf("schedule: %w", err)
+		}
 	}
 	return s.mutate(func(d *PolicyData) error {
 		ss, err := d.settings(sc)
@@ -512,14 +610,37 @@ func (s *PolicyStore) AddRule(sc Scope, kind, domain string) error {
 		if len(*same) >= maxRulesPerKind && !slices.Contains(*same, domain) {
 			return fmt.Errorf("too many %s rules at this scope (limit %d)", kind, maxRulesPerKind)
 		}
+		otherKind := "allow"
+		if kind == "allow" {
+			otherKind = "block"
+		}
 		*other = slices.DeleteFunc(*other, func(x string) bool { return x == domain })
+		putSchedule(scheduleMap(ss, otherKind), domain, nil)
 		*same = addDomain(*same, domain)
+		putSchedule(scheduleMap(ss, kind), domain, sched)
 		d.put(sc, *ss)
 		return nil
 	})
 }
 
-// RemoveRule deletes domain from the scope's allow or block rules.
+// AddRule puts domain on the scope's allow or block rules, removing it from
+// the opposite kind at that scope, with no schedule (always active). Calling
+// it again on a domain that has a schedule clears that schedule, since a
+// bare AddRule means "just this rule, always on". Use AddScheduledRule to
+// give it a time window instead.
+func (s *PolicyStore) AddRule(sc Scope, kind, domain string) error {
+	return s.addRule(sc, kind, domain, nil)
+}
+
+// AddScheduledRule is AddRule, limited to sched's days and times; outside
+// that window the rule is inert, as if it were not configured. See
+// docs/POLICY.md's "Scheduled access".
+func (s *PolicyStore) AddScheduledRule(sc Scope, kind, domain string, sched Schedule) error {
+	return s.addRule(sc, kind, domain, &sched)
+}
+
+// RemoveRule deletes domain from the scope's allow or block rules, and its
+// schedule if it had one.
 func (s *PolicyStore) RemoveRule(sc Scope, kind, domain string) error {
 	domain = normalize(domain)
 	return s.mutate(func(d *PolicyData) error {
@@ -532,6 +653,7 @@ func (s *PolicyStore) RemoveRule(sc Scope, kind, domain string) error {
 			return err
 		}
 		*same = slices.DeleteFunc(*same, func(x string) bool { return x == domain })
+		putSchedule(scheduleMap(ss, kind), domain, nil)
 		d.put(sc, *ss)
 		return nil
 	})

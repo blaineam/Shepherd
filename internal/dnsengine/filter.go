@@ -8,13 +8,15 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Decision is the outcome of checking a name against the filter.
 type Decision struct {
 	Blocked bool
 	// Reason names what matched: a catalog or custom list ID, "custom rule",
-	// "allowlist", or a policy name.
+	// "allowlist", "default deny: allowlist mode" (nothing matched in a scope
+	// whose effective Mode is "allow"), or a policy name.
 	Reason string
 	// NXDOMAIN is set for policy blocks that must answer NXDOMAIN, not 0.0.0.0.
 	NXDOMAIN bool
@@ -38,15 +40,21 @@ type Filter struct {
 
 	pmu sync.Mutex // serialises writers of pol
 	pol atomicPolicy
+
+	// clock is swapped out in tests that need a fixed or controlled time to
+	// check a Schedule deterministically; production always uses time.Now.
+	clock func() time.Time
 }
 
 // NewFilter returns an empty filter in legacy mode.
 func NewFilter() *Filter {
-	f := &Filter{lists: newMemberIndex(), rules: newMemberIndex()}
+	f := &Filter{lists: newMemberIndex(), rules: newMemberIndex(), clock: time.Now}
 	f.pol.Store(&policyState{legacyPolicies: map[string]bool{}})
 	f.loadKnownPolicies()
 	return f
 }
+
+func (f *Filter) now() time.Time { return f.clock() }
 
 func (f *Filter) loadKnownPolicies() {
 	sets := map[string]map[string]struct{}{}
