@@ -26,8 +26,9 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   alarm type (raised once per newly-found vulnerability per device, never suppressed by learning mode —
   this feature's whole point is telling the owner about exposure found on day one; a finding that clears
   resolves the alarm rather than leaving it to linger), and the portal (`GET /api/vulnscan`, `GET
-  /api/vulnscan/devices[/{id}]`, `POST /api/vulnscan/scan`). The portal UI panel lands in the next commit.
-  See docs/VULNSCAN.md.
+  /api/vulnscan/devices[/{id}]`, `POST /api/vulnscan/scan`), with a Vulnerabilities panel in each device's
+  drawer (reusing the Ports panel's layout and a scan-now button) showing active findings with a severity
+  badge, description and evidence, plus a collapsed "N resolved" history. See docs/VULNSCAN.md.
 - **Import wired into the portal:** the Devices screen's new "Import" modal drives `internal/importers`
   end to end — CSV upload or eero login (phone/email, then the code eero sends, then a network), a
   dry-run preview of what would be created or changed, and an apply step, matching the Devices tab's

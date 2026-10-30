@@ -787,3 +787,14 @@ tr.a-error .h-dom { color: var(--amber); }
 .port-chip.risky { color: var(--red); border-color: #f2706b66; background: #f2706b12; }
 .port-chip.new:not(.risky) { color: var(--amber); border-color: #f0b64a66; background: #f0b64a12; }
 .port-flag { font: 700 9px var(--mono); letter-spacing: .1em; color: inherit; opacity: .85; }
+
+/* ---------- Vulnerabilities (deepens Ports and exposure, above) ---------- */
+.dr-vulns { display: flex; flex-direction: column; gap: 8px; }
+.vuln-item { border: 1px solid var(--line2); background: var(--panel2); border-radius: 6px; padding: 8px 10px; }
+.vuln-item.resolved { opacity: .6; }
+.vuln-item-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.vuln-name { font: 600 13px var(--sans); color: var(--text); }
+.vuln-item p { margin: 4px 0 0; }
+.dr-vulns-resolved { margin-top: 10px; }
+.dr-vulns-resolved > summary { cursor: pointer; }
+.dr-vulns-resolved .dr-vulns { margin-top: 8px; }

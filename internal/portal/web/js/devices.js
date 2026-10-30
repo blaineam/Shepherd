@@ -11,6 +11,8 @@ import { icon, iconButton, button, chip, segmented, emptyState, openPopover, ope
 import { unavailable } from './mgmt.js';
 import { TIMER_CHOICES, MODES, deviceMode, countdown, countdownShort, modePatch, applyModeLocal } from './wander.js';
 import { createImportModal } from './importview.js';
+import { severityLabel, severityBadgeClass } from './alarms.js';
+import { activeFindings, resolvedFindings, findingTooltip } from './vulnscan.js';
 
 const OVER = 6;
 const rowHeight = () => (window.matchMedia && window.matchMedia('(max-width: 760px)').matches ? 88 : 56);
@@ -832,6 +834,77 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     mgmt.portscanDevice(id).then((d) => { data = d; paint(); }).catch((e) => { failed = e; paint(); });
   }
 
+  // renderVulns fetches and paints one device's vulnerability-scan panel
+  // into holder, with a manual "Scan now" button — the same shape
+  // renderPorts uses, since this panel deepens the Ports panel's own
+  // findings (docs/VULNSCAN.md). Guards every repaint on the drawer still
+  // showing this same device, for the same reason renderPorts does.
+  function renderVulns(holder, id) {
+    let data = null;
+    let scanning = false;
+    let failed = null;
+
+    function paint() {
+      if (drawerId !== id || !holder.isConnected) return;
+      holder.replaceChildren();
+      if (failed) {
+        holder.append(unavailable(failed) ? el('p', 'muted small', 'Vulnerability scanning is not available on this version.') : el('p', 'err small', failed.message));
+        return;
+      }
+      const head = el('div', 'dr-ports-head');
+      head.append(el('span', 'muted small', data && data.last_scanned ? 'Last scanned ' + relTime(data.last_scanned) : 'Never scanned'));
+      const btn = button(scanning ? 'Scanning…' : 'Scan now', 'ghost', scan, 'refresh');
+      btn.disabled = scanning;
+      head.append(btn);
+      holder.append(head);
+
+      const active = activeFindings((data && data.findings) || []);
+      const resolved = resolvedFindings((data && data.findings) || []);
+      if (!active.length) {
+        holder.append(el('p', 'muted small', scanning ? 'Scanning…' : 'No vulnerabilities found.'));
+      } else {
+        const list = el('div', 'dr-vulns');
+        for (const f of active) list.append(vulnItem(f));
+        holder.append(list);
+      }
+      if (resolved.length) {
+        const r = el('details', 'dr-vulns-resolved');
+        r.append(el('summary', 'muted small', resolved.length + ' resolved'));
+        const list = el('div', 'dr-vulns');
+        for (const f of resolved) list.append(vulnItem(f));
+        r.append(list);
+        holder.append(r);
+      }
+    }
+
+    function vulnItem(f) {
+      const row = el('div', 'vuln-item' + (f.active ? '' : ' resolved'));
+      const head = el('div', 'vuln-item-head');
+      head.append(el('span', severityBadgeClass(f.severity), severityLabel(f.severity)));
+      head.append(el('span', 'vuln-name', f.name));
+      head.append(el('span', 'muted small', 'port ' + f.port));
+      row.append(head);
+      row.append(el('p', 'muted small', f.description));
+      const why = findingTooltip(f);
+      if (why) row.title = why;
+      return row;
+    }
+
+    function scan() {
+      scanning = true;
+      paint();
+      mgmt.scanVulns(id).then((r) => {
+        scanning = false;
+        const found = ((r && r.devices) || []).find((x) => x.device_id === id);
+        if (found) data = found;
+        paint();
+      }).catch((e) => { scanning = false; failed = e; paint(); });
+    }
+
+    paint();
+    mgmt.vulnscanDevice(id).then((d) => { data = d; paint(); }).catch((e) => { failed = e; paint(); });
+  }
+
   function paintDrawer(d) {
     const keepScroll = drawer.scrollTop;
     drawer.replaceChildren();
@@ -891,6 +964,14 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     sPorts.append(portsHolder);
     drawer.append(sPorts);
     renderPorts(portsHolder, d.id);
+
+    // Vulnerabilities (deepens the Ports panel above: what's actually
+    // running on an open port, and whether it matches a known signature)
+    const sVulns = section('Vulnerabilities');
+    const vulnsHolder = el('div', 'dr-ports');
+    sVulns.append(vulnsHolder);
+    drawer.append(sVulns);
+    renderVulns(vulnsHolder, d.id);
 
     // Groups
     const sG = section('Groups');

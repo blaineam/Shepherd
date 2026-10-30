@@ -71,5 +71,10 @@ export function createMgmt(api) {
     portscanDevices: () => api('/api/portscan/devices'),
     portscanDevice: (id) => api('/api/portscan/devices/' + encodeURIComponent(id)),
     scanPorts: (deviceId) => post('/api/portscan/scan', deviceId ? { device_id: deviceId } : {}),
+
+    vulnscanStatus: () => api('/api/vulnscan'),
+    vulnscanDevices: () => api('/api/vulnscan/devices'),
+    vulnscanDevice: (id) => api('/api/vulnscan/devices/' + encodeURIComponent(id)),
+    scanVulns: (deviceId) => post('/api/vulnscan/scan', deviceId ? { device_id: deviceId } : {}),
   };
 }
