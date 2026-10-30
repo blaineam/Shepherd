@@ -165,6 +165,22 @@ func TestBufferbloatFallsBackToProberConfiguredLoadAndDuration(t *testing.T) {
 	}
 }
 
+func TestBufferbloatNowRecordsHistoryAndCallsHook(t *testing.T) {
+	f := newFakeDial()
+	f.delayMS["a"] = 1
+	p := New(Options{Dial: f.dial, Now: f.now, Burst: 1, Timeout: time.Second})
+	var got []Bufferbloat
+	p.OnBufferbloat = func(b Bufferbloat) { got = append(got, b) }
+	b := p.BufferbloatNow(context.Background(), "a", BufferbloatOptions{Load: fakeLoad(nil), Duration: 5 * time.Millisecond})
+	if len(got) != 1 || got[0].Time != b.Time {
+		t.Fatalf("OnBufferbloat = %+v, direct result = %+v", got, b)
+	}
+	latest, ok := p.LatestBufferbloat()
+	if !ok || latest.Time != b.Time {
+		t.Fatalf("LatestBufferbloat() = %+v, %v", latest, ok)
+	}
+}
+
 func TestRunBufferbloatStopsOnContextCancel(t *testing.T) {
 	f := newFakeDial()
 	p := New(Options{Dial: f.dial, Now: f.now, Burst: 1, Timeout: time.Second})

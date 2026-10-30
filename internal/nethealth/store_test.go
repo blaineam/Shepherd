@@ -145,6 +145,65 @@ func TestStoreMaxBytesDropsOldestDaily(t *testing.T) {
 	}
 }
 
+func TestStoreQueryHourAndDay(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	st := NewStore(StoreOptions{Now: func() time.Time { return base }})
+	st.Hourly = []aggregate{{Bucket: hourStart(base), Count: 3, AvgLatencyMS: 12, MinLatencyMS: 5, MaxLatencyMS: 20, ReachableTargets: 2, TotalTargets: 2}}
+	st.Daily = []aggregate{{Bucket: dayStart(base), Count: 7, AvgLatencyMS: 15, ReachableTargets: 1, TotalTargets: 2}}
+
+	hourPts := st.Query(base.Add(-time.Hour), base.Add(time.Hour), BucketHour)
+	if len(hourPts) != 1 || hourPts[0].Count != 3 || hourPts[0].AvgLatencyMS != 12 || hourPts[0].MinLatencyMS != 5 || hourPts[0].MaxLatencyMS != 20 {
+		t.Fatalf("hour query = %+v", hourPts)
+	}
+	if hourPts[0].ReachableTargets != 2 || hourPts[0].TotalTargets != 2 {
+		t.Errorf("hour query reachable/total = %+v", hourPts[0])
+	}
+
+	dayPts := st.Query(base.Add(-24*time.Hour), base.Add(24*time.Hour), BucketDay)
+	if len(dayPts) != 1 || dayPts[0].Count != 7 || dayPts[0].AvgLatencyMS != 15 {
+		t.Fatalf("day query = %+v", dayPts)
+	}
+	// ReachableTargets=1, TotalTargets=2 round to the nearest int cleanly here.
+	if dayPts[0].ReachableTargets != 1 || dayPts[0].TotalTargets != 2 {
+		t.Errorf("day query reachable/total = %+v", dayPts[0])
+	}
+}
+
+func TestAddBufferbloatPrunesByDailyRetention(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	st := NewStore(StoreOptions{Retention: Retention{Day: 10 * 24 * time.Hour}, Now: func() time.Time { return base }})
+	st.AddBufferbloat(Bufferbloat{Time: base.AddDate(0, 0, -20), Grade: "A"})
+	st.AddBufferbloat(Bufferbloat{Time: base.AddDate(0, 0, -1), Grade: "B"})
+	if len(st.Bufferbloat) != 1 || st.Bufferbloat[0].Grade != "B" {
+		t.Fatalf("got %+v, want only the recent entry kept", st.Bufferbloat)
+	}
+}
+
+func TestFoldIntoDailyMergesASecondHourlyBucketIntoTheSameDay(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := base.Add(5 * time.Hour)
+	st := NewStore(StoreOptions{Retention: Retention{Raw: time.Minute, Hour: time.Hour, Day: 0}, Now: func() time.Time { return now }})
+	st.Hourly = []aggregate{
+		{Bucket: hourStart(base), Count: 2, AvgLatencyMS: 10, MinLatencyMS: 8, MaxLatencyMS: 12},
+		{Bucket: hourStart(base.Add(time.Hour)), Count: 1, AvgLatencyMS: 40, MinLatencyMS: 40, MaxLatencyMS: 40},
+	}
+	st.rollup()
+	if len(st.Daily) != 1 {
+		t.Fatalf("expected both hourly buckets to merge into one daily bucket, got %+v", st.Daily)
+	}
+	d := st.Daily[0]
+	if d.Count != 3 {
+		t.Fatalf("day count = %d, want 3", d.Count)
+	}
+	// weighted mean: (10*2 + 40*1) / 3 = 20
+	if d.AvgLatencyMS != 20 {
+		t.Errorf("day avg latency = %v, want 20", d.AvgLatencyMS)
+	}
+	if d.MinLatencyMS != 8 || d.MaxLatencyMS != 40 {
+		t.Errorf("day min/max = %v/%v, want 8/40", d.MinLatencyMS, d.MaxLatencyMS)
+	}
+}
+
 func TestStoreLatest(t *testing.T) {
 	st := NewStore(StoreOptions{})
 	if _, ok := st.Latest(); ok {

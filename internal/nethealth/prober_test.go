@@ -194,6 +194,41 @@ func TestRunTicksMultipleTimes(t *testing.T) {
 	}
 }
 
+func TestProbeNowRecordsHistoryAndCallsOnSample(t *testing.T) {
+	f := newFakeDial()
+	f.delayMS["a"] = 5
+	p := newTestProber(f)
+	var got []Sample
+	p.OnSample = func(s Sample) { got = append(got, s) }
+	s := p.ProbeNow(context.Background(), []string{"a"})
+	if len(got) != 1 || got[0].Time != s.Time {
+		t.Fatalf("OnSample = %+v, direct result = %+v", got, s)
+	}
+	latest, ok := p.Latest()
+	if !ok || latest.Time != s.Time {
+		t.Fatalf("Latest() = %+v, %v", latest, ok)
+	}
+}
+
+func TestSeriesDelegatesToStoreAtEveryBucket(t *testing.T) {
+	f := newFakeDial()
+	p := newTestProber(f)
+	now := time.Now()
+	p.store.Add(sampleAt(now, 10, 0, 0, 1, 1))
+	p.store.Hourly = []aggregate{{Bucket: hourStart(now), Count: 1, AvgLatencyMS: 20}}
+	p.store.Daily = []aggregate{{Bucket: dayStart(now), Count: 1, AvgLatencyMS: 30}}
+
+	if pts := p.Series(now.Add(-time.Hour), now.Add(time.Hour), BucketRaw); len(pts) != 1 {
+		t.Errorf("raw series = %+v", pts)
+	}
+	if pts := p.Series(hourStart(now).Add(-time.Minute), hourStart(now).Add(time.Minute), BucketHour); len(pts) != 1 {
+		t.Errorf("hourly series = %+v", pts)
+	}
+	if pts := p.Series(dayStart(now).Add(-time.Minute), dayStart(now).Add(time.Minute), BucketDay); len(pts) != 1 {
+		t.Errorf("daily series = %+v", pts)
+	}
+}
+
 func TestManualAndScheduledScansDoNotOverlap(t *testing.T) {
 	// cycleMu serializes Probe/runOnce; verify two concurrent callers never
 	// run their bursts interleaved by checking the fake dial's call count
