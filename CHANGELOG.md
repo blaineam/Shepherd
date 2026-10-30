@@ -28,6 +28,8 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design, roadmap, IPv6/Thread rules, Contributor Covenant code of conduct, security policy, contributing guide and issue templates.
 - Icon: the black sheep, reused from the Lamdi app.
 
+- Optional Docker packaging in `deploy/docker/` (Dockerfile and compose file) that runs the same static binary under a restart policy with a read-only filesystem and minimal capabilities, plus docs for supervising Shepherd and cutting over from another resolver.
+
 ### Fixed
 - The portal kept polling the API every second while signed out, flooding the console with 401 errors. It now stops until you sign in.
 - The example config's blocklist URL returned HTTP 404. It now points at a working list, and a weekly CI job (`scripts/check-list-urls`) fails if any example blocklist URL stops resolving.

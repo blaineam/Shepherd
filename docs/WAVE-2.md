@@ -50,6 +50,33 @@ does not allow the relay. Some reports say devices that use their own DNS, or al
 addresses, can still connect. Fully enforcing this needs Watch mode (Wave 6), which can also block
 the QUIC traffic and outside DNS the relay uses.
 
+## Run it as a supervised service
+
+Shepherd is one static binary, so any service manager works. Where none is available (a NAS without
+root, for example), `deploy/docker/` packages the same binary under Docker's restart policy. Docker is
+only the supervisor: read-only filesystem, all capabilities dropped except binding port 53, state in
+one mounted directory.
+
+```bash
+cd deploy/docker
+cp /path/to/shepherd .                     # a release binary, or `make build` output
+cp ../../shepherd.example.toml shepherd.toml   # set data_dir = "/data" and your addresses
+mkdir data && docker compose up -d --build
+```
+
+## Cutting over from another resolver
+
+If your router already hands out this machine's address for DNS (it usually does when another
+resolver such as AdGuard or Pi-hole is running there), the router needs no change. Swap what answers
+on port 53:
+
+1. Run Shepherd on a spare port first and check it (`dig`, the portal, a restart).
+2. Stop the old resolver, point Shepherd's `dns.listen` at port 53, restart it.
+3. Verify within seconds from another machine. If anything is wrong, stop Shepherd and start the old resolver again.
+
+Keep the old resolver installed (stopped) for a while. A stopped container with a restart policy of
+`unless-stopped` stays stopped across reboots, so only Shepherd comes back.
+
 ## Not in this wave
 
 Persistent query history and replay, device identity and groups, alarms, the mesh, and the globe HUD
