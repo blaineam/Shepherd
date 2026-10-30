@@ -98,7 +98,7 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
   });
   const cSelH = el('div', 'c-sel');
   cSelH.append(allBox);
-  thead.append(cSelH, el('div', '', 'Severity'), el('div', '', 'Alarm'), el('div', '', 'Device'), el('div', '', 'State'), el('div', '', 'Last seen'), el('div', '', ''));
+  thead.append(cSelH, el('div', 'al-sev', 'Severity'), el('div', 'al-title', 'Alarm'), el('div', 'al-dev', 'Device'), el('div', 'al-state', 'State'), el('div', 'al-seen', 'Last seen'), el('div', 'al-acts', ''));
   for (const c of thead.children) c.setAttribute('role', 'columnheader');
 
   const scroll = el('div', 'al-scroll');
@@ -178,7 +178,7 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
     cb.addEventListener('change', () => { sel.set(a.id, cb.checked); row.classList.toggle('sel', cb.checked); paintBulk(); });
     cSel.append(cb);
 
-    const sevCell = el('div', '');
+    const sevCell = el('div', 'al-sev');
     sevCell.append(el('span', severityBadgeClass(a.severity), severityLabel(a.severity)));
 
     const titleCell = el('div', 'al-title');
@@ -187,7 +187,7 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
     else if (a.count > 1) titleCell.append(el('span', 'sub', a.count + ' occurrences'));
 
     const devCell = el('div', 'al-dev mono', a.device_id || '—');
-    const stateCell = el('div', '', stateLabel(a.state));
+    const stateCell = el('div', 'al-state', stateLabel(a.state));
     const seenCell = el('div', 'al-seen', relTime(a.last_seen));
 
     const actsCell = el('div', 'al-acts');

@@ -194,7 +194,8 @@ input[type=range]:disabled { opacity: .35; cursor: not-allowed; }
 /* ---------- Details view ---------- */
 #view-details { flex: 1; min-height: 0; overflow: auto; padding: 20px; width: 100%; max-width: 1500px; margin: 0 auto; }
 .banner { margin: 0 0 14px; padding: 10px 14px; border: 1px solid #f0b64a55; color: var(--amber); background: #f0b64a10; font-size: 13px; }
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.watchmode-note { margin: 0 0 16px; }
 .tiles .tile { background: var(--panel); border: 1px solid var(--line2); padding: 12px 16px; }
 .tiles .tile .v { font-size: 26px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
@@ -279,6 +280,19 @@ tr:hover td { background: #ffffff06; }
 }
 @media (prefers-reduced-motion: reduce) {
   .feed-row, .pill.live::before, .live-btn.on::before { animation: none; }
+}
+
+/* iOS Safari zooms the whole page on focus of any text input rendered below
+   16px; several controls here (search boxes, filter selects, the add-rule
+   forms) are intentionally compact and sit under that. Force the effective
+   size up on phones where it matters, rather than hunting every call site -
+   checkboxes and the replay slider carry no text, so this never touches them
+   - and trim padding back down so the controls do not visibly grow from it. */
+@media (max-width: 760px) {
+  input:not([type=checkbox]):not([type=range]), select, textarea { font-size: 16px !important; }
+  input, select { padding: 5px 7px; }
+  .sbox input { padding: 6px 2px; }
+  .up-add-row input, .inline-add input, .cf-row input { padding: 6px 8px; }
 }
 
 /* ======================================================================
@@ -786,6 +800,33 @@ tr.a-error .h-dom { color: var(--amber); }
 .al-rules-wrap { padding: 16px; overflow: auto; }
 .al-loadmore { display: flex; justify-content: center; padding: 14px; }
 .al-main { display: flex; flex-direction: column; gap: 14px; flex: 1; min-height: 0; }
+
+@media (max-width: 1100px) {
+  .al-row { grid-template-columns: 36px 82px minmax(180px, 2fr) 120px 96px 92px 112px; }
+}
+/* Below this width .al-row stops being a 7-column table (its minimum width is
+   well over 700px) and reflows into a stacked card, the same technique
+   .dv-row (Devices) and .h-table (History) already use: fixed grid-areas
+   instead of columns, select/severity/state on the top line, the title on
+   its own line, device + last-seen on the bottom line, actions last. */
+@media (max-width: 760px) {
+  .al-row {
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    grid-template-areas: "sel sev state" "sel title title" "sel dev seen" "sel acts acts";
+    align-items: start;
+    row-gap: 5px;
+    padding: 10px 10px 10px 6px;
+  }
+  .al-row .c-sel { grid-area: sel; align-self: center; }
+  .al-row .al-sev { grid-area: sev; }
+  .al-row .al-title { grid-area: title; }
+  .al-row .al-dev { grid-area: dev; }
+  .al-row .al-state { grid-area: state; justify-self: end; color: var(--muted); font-size: 12.5px; }
+  .al-row .al-seen { grid-area: seen; justify-self: end; }
+  .al-row .al-acts { grid-area: acts; margin-top: 2px; }
+  .al-thead { grid-template-columns: 30px minmax(0, 1fr) auto; grid-template-areas: "sel title title"; height: 32px; padding-right: 14px; }
+  .al-thead .al-sev, .al-thead .al-dev, .al-thead .al-state, .al-thead .al-seen, .al-thead .al-acts { display: none; }
+}
 
 /* ---------- Ports and exposure ---------- */
 .dr-ports-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }

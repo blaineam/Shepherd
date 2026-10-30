@@ -2,7 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <!-- Pinch-to-zoom is deliberately disabled and scale pinned to 1: the maintainer
+       uses this on a phone daily and asked for it explicitly, since an accidental
+       pinch mid-tap was worse than losing zoom. This is a real accessibility
+       tradeoff for anyone who relies on pinch-zoom; every text input on this page
+       is kept at an effective 16px+ (see style.css) specifically so iOS Safari
+       never force-zooms on focus instead, which was the usual reason to want zoom. -->
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <title>Shepherd</title>
   <link rel="icon" href="icon.png">
@@ -100,6 +106,7 @@
             <dt id="i-mode-k" hidden>Mode</dt><dd id="i-mode" hidden><span class="wbadge">Wandering</span> <span class="muted small">not filtered, still watched</span></dd>
             <dt>Domain</dt><dd class="mono" id="i-domain"></dd>
             <dt id="i-shadow-k" hidden>Shadow</dt><dd class="small shadow-note" id="i-shadow" hidden></dd>
+            <dt id="i-reason-k" hidden>Blocked by</dt><dd class="mono" id="i-reason" hidden></dd>
             <dt>Location</dt><dd id="i-loc"></dd>
             <dt id="i-count-k">Lookups</dt><dd class="mono" id="i-count"></dd>
             <dt>Last seen</dt><dd id="i-last"></dd>
@@ -181,6 +188,10 @@
       <div class="tile"><span class="k">Errors</span><span class="v" id="d-errors">0</span></div>
       <div class="tile"><span class="k">Listed domains</span><span class="v" id="d-listed">0</span></div>
     </section>
+    <!-- Honest status, not a bug report: Watch mode (ARP interception, internal/intercept)
+         is built but not wired into cmd/shepherd or the portal yet (docs/ROADMAP.md step 11),
+         so there is genuinely nothing live to report either way. -->
+    <p class="muted small watchmode-note">Watch mode is a planned feature — not available in this build yet. Everything above is from DNS-only Guard mode.</p>
 
     <section class="grid">
       <div class="card wide">
