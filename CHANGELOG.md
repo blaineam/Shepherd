@@ -13,6 +13,12 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Reverse proxy (`[reverseproxy]`, `internal/reverseproxy`):** routing HTTPS requests for other
+  self-hosted services through Shepherd by Host header, the main remaining piece of
+  [ROADMAP.md](docs/ROADMAP.md) step 18. `internal/reverseproxy` holds the proxied hosts (`Store`,
+  persisted to `<data_dir>/reverseproxy.json`) and forwards with `httputil.ReverseProxy`, WebSocket
+  upgrades included. `internal/tlscert.Obtainer` is proven to issue a wildcard (`*.example.com`) end to
+  end. Off by default.
 - **Marketing site (`site/`):** a public, vanilla-HTML/CSS/JS landing page — hero, the real shipped feature
   set (DNS filtering and the 95-list catalog, devices, the globe HUD, alarms, port and vulnerability
   scanning, geo-block, portal locking, self-healing upstreams and more), an honest "what's coming" section

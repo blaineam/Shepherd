@@ -24,6 +24,7 @@ type fakeACME struct {
 
 	order             *acme.Order
 	authorizeOrderErr error
+	authorizeIDs      []acme.AuthzID // identifiers AuthorizeOrder was asked for
 
 	authz               map[string]*acme.Authorization
 	getAuthorizationErr error
@@ -38,6 +39,7 @@ type fakeACME struct {
 
 	certDER       [][]byte
 	createCertErr error
+	csr           []byte // the CSR CreateCertFromOrder was handed
 
 	dns01Value string
 	dns01Err   error
@@ -50,7 +52,8 @@ func (f *fakeACME) Register(context.Context, *acme.Account, func(string) bool) (
 	return &acme.Account{}, nil
 }
 
-func (f *fakeACME) AuthorizeOrder(context.Context, []acme.AuthzID, ...acme.OrderOption) (*acme.Order, error) {
+func (f *fakeACME) AuthorizeOrder(_ context.Context, ids []acme.AuthzID, _ ...acme.OrderOption) (*acme.Order, error) {
+	f.authorizeIDs = ids
 	if f.authorizeOrderErr != nil {
 		return nil, f.authorizeOrderErr
 	}
@@ -86,7 +89,8 @@ func (f *fakeACME) WaitOrder(context.Context, string) (*acme.Order, error) {
 	return f.waitOrderResult, nil
 }
 
-func (f *fakeACME) CreateCertFromOrder(context.Context, *acme.Order, []byte, bool) ([][]byte, string, error) {
+func (f *fakeACME) CreateCertFromOrder(_ context.Context, _ *acme.Order, csr []byte, _ bool) ([][]byte, string, error) {
+	f.csr = csr
 	if f.createCertErr != nil {
 		return nil, "", f.createCertErr
 	}

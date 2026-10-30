@@ -196,6 +196,23 @@ email = ""                      # optional; Let's Encrypt expiry-notice contact
 cloudflare_api_token = ""
 cloudflare_api_token_file = ""  # e.g. "/etc/shepherd/cloudflare-api-token"
 
+[reverseproxy]
+# Terminates HTTPS for your other self-hosted services and forwards each
+# request, WebSockets included, to the backend you set for its hostname
+# (docs/REVERSEPROXY.md). The hosts themselves are managed in the portal's
+# Proxy tab, never here. One wildcard certificate for "*.<domain>" covers
+# every proxied name, issued over the same Cloudflare DNS-01 flow as [tls].
+# Off by default. Read the doc's "Before you point real traffic at this"
+# section before moving port 443 over from another reverse proxy.
+enabled = false
+listen = ":8443"                # binding 443 is your call, not a default
+domain = ""                     # e.g. "example.com" -> certificate for *.example.com
+email = ""                      # optional; Let's Encrypt expiry-notice contact
+# Same rules as [tls]: set the token or a 0600 token file, never both. Both
+# sections may use the same token (scoped to DNS edit on the one zone).
+cloudflare_api_token = ""
+cloudflare_api_token_file = ""  # e.g. "/etc/shepherd/cloudflare-api-token"
+
 # The list a pre-policy install used, and the default for a new one. Defining
 # any [[lists]] replaces the recommended catalog lists on a new install.
 [[lists]]
