@@ -827,6 +827,16 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
   };
   const portLabel = (p) => (PORT_NAMES[p] ? p + ' (' + PORT_NAMES[p] + ')' : String(p));
 
+  // EXPOSURE_NOTES explains portscan's WAN-exposure check (docs/PORTSCAN.md):
+  // a best-effort read of the router's own UPnP IGD port-mapping table,
+  // never a guess. A port with no note at all (the exposure key absent)
+  // means the check is disabled, or the server predates it.
+  const EXPOSURE_NOTES = {
+    wan_forwarded: 'Forwarded from the WAN by the router (checked via UPnP)',
+    lan_only: "Not forwarded from the WAN, per the router's own UPnP port-mapping table",
+    unknown: 'WAN exposure unknown: the router did not answer the UPnP port-mapping check',
+  };
+
   // renderPorts fetches and paints one device's port-scan panel into holder,
   // with a manual "Scan now" button. It guards every repaint on the drawer
   // still showing this same device, since its own fetch and scan calls are
@@ -860,7 +870,9 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
         const c = el('span', cls);
         c.append(document.createTextNode(portLabel(p.port)));
         if (p.newly_opened) c.append(el('span', 'port-flag', 'NEW'));
-        const why = [p.risky ? p.risk_note : '', p.newly_opened ? 'Newly opened since the last scan' : ''].filter(Boolean).join(' — ');
+        if (p.exposure === 'wan_forwarded') c.append(el('span', 'port-flag wan', 'WAN'));
+        const why = [p.risky ? p.risk_note : '', p.newly_opened ? 'Newly opened since the last scan' : '', EXPOSURE_NOTES[p.exposure] || '']
+          .filter(Boolean).join(' — ');
         if (why) c.title = why;
         list.append(c);
       }

@@ -20,12 +20,17 @@ type portRecordJSON struct {
 	NewlyOpened bool      `json:"newly_opened,omitempty"`
 	Risky       bool      `json:"risky,omitempty"`
 	RiskNote    string    `json:"risk_note,omitempty"`
+	// Exposure is "lan_only", "wan_forwarded" or "unknown" — see
+	// docs/PORTSCAN.md's "WAN exposure" section. Omitted entirely when
+	// [portscan.wan_exposure] is disabled: absence means "not checked",
+	// never "safe".
+	Exposure portscan.Exposure `json:"exposure,omitempty"`
 }
 
 func toPortRecord(p portscan.PortRecord) portRecordJSON {
 	return portRecordJSON{
 		Port: p.Port, Open: p.Open, FirstSeen: p.FirstSeen, LastSeen: p.LastSeen,
-		NewlyOpened: p.NewlyOpened, Risky: p.Risky, RiskNote: p.RiskNote,
+		NewlyOpened: p.NewlyOpened, Risky: p.Risky, RiskNote: p.RiskNote, Exposure: p.Exposure,
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +36,57 @@ func (fakeVulnConn) SetWriteDeadline(time.Time) error { return nil }
 func fakeVulnDial(open map[string]bool) vulnscan.DialFunc {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		if open[address] {
+			return fakeVulnConn{}, nil
+		}
+		return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connection refused")}
+	}
+}
+
+// syncOpenSet guards a set of "open" addresses behind a mutex. Plain
+// fakeScanDial/fakeVulnDial maps are safe everywhere else in this file
+// because nothing ever mutates them after the dial func is built; a test
+// that flips an address from open to closed partway through, like
+// TestStartVulnscanResolvesAlarmWhenFindingClears, needs this instead,
+// since startVulnscan's background goroutine (its one initial scan, before
+// its own, effectively-never-firing ticker) can still be reading the set
+// concurrently with that mutation.
+type syncOpenSet struct {
+	mu   sync.Mutex
+	open map[string]bool
+}
+
+func newSyncOpenSet(initiallyOpen ...string) *syncOpenSet {
+	s := &syncOpenSet{open: make(map[string]bool, len(initiallyOpen))}
+	for _, addr := range initiallyOpen {
+		s.open[addr] = true
+	}
+	return s
+}
+
+func (s *syncOpenSet) has(addr string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.open[addr]
+}
+
+func (s *syncOpenSet) set(addr string, open bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.open[addr] = open
+}
+
+func syncScanDial(s *syncOpenSet) portscan.DialFunc {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		if s.has(address) {
+			return fakeScanConn{}, nil
+		}
+		return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connection refused")}
+	}
+}
+
+func syncVulnDial(s *syncOpenSet) vulnscan.DialFunc {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		if s.has(address) {
 			return fakeVulnConn{}, nil
 		}
 		return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connection refused")}
@@ -133,14 +185,19 @@ func TestStartVulnscanProbesPortscanResultsAndRaisesAlarm(t *testing.T) {
 }
 
 func TestStartVulnscanResolvesAlarmWhenFindingClears(t *testing.T) {
-	open := map[string]bool{net.JoinHostPort("203.0.113.61", "23"): true}
+	addr := net.JoinHostPort("203.0.113.61", "23")
+	// A mutex-guarded set, not a plain map: this test flips addr from open
+	// to closed partway through, while startVulnscan's background
+	// goroutine (its one scan at startup, before a ticker that will not
+	// fire again inside this test) can still be reading it concurrently.
+	open := newSyncOpenSet(addr)
 	reg := devices.New(devices.Options{NodeID: "t", AllowLoopback: true})
 	id := reg.Observe(devices.Observation{Source: devices.SourceNeighbor, MAC: "02:00:00:00:02:02", IP: "203.0.113.61", Time: time.Now()})
 	if id == "" {
 		t.Fatal("observation was rejected")
 	}
 
-	ps := portscan.New(portscan.Options{Dial: fakeScanDial(open), Ports: []int{23}, Concurrency: 2, Timeout: time.Second})
+	ps := portscan.New(portscan.Options{Dial: syncScanDial(open), Ports: []int{23}, Concurrency: 2, Timeout: time.Second})
 	eng, err := alarms.New(alarms.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +210,7 @@ func TestStartVulnscanResolvesAlarmWhenFindingClears(t *testing.T) {
 	defer cancel()
 
 	oldVSDial := vulnscanDial
-	vulnscanDial = fakeVulnDial(open)
+	vulnscanDial = syncVulnDial(open)
 	t.Cleanup(func() { vulnscanDial = oldVSDial })
 
 	vs, err := startVulnscan(ctx, cfg, reg, ps, eng)
@@ -171,7 +228,7 @@ func TestStartVulnscanResolvesAlarmWhenFindingClears(t *testing.T) {
 
 	// Telnet closes: portscan no longer reports it open, so vulnscan has
 	// nothing to probe for this device and the finding resolves.
-	open[net.JoinHostPort("203.0.113.61", "23")] = false
+	open.set(addr, false)
 	ps.Scan(ctx, portscan.TargetsFromDevices(reg.List()))
 	vs.Scan(ctx, vulnscan.TargetsFromPortscan(ps.Results()))
 	eng.Drain()

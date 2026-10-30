@@ -168,6 +168,35 @@ type Portscan struct {
 	// not seconds: scanning is cheap and gentle, but there is no reason to
 	// repeat it constantly.
 	IntervalSeconds int `toml:"interval_seconds"`
+	// WANExposure deepens each open port with a best-effort read of
+	// whether the router also forwards it from the internet, via the
+	// router's own UPnP IGD port-mapping table (internal/upnpigd). See
+	// docs/PORTSCAN.md's "WAN exposure" section for what this can and
+	// cannot detect.
+	WANExposure WANExposure `toml:"wan_exposure"`
+}
+
+// WANExposure controls internal/portscan's optional WAN-exposure check:
+// for every port a scan finds open on the LAN, a best-effort read of
+// whether the router's own UPnP IGD port-mapping table also forwards it
+// from the internet. Enabled defaults true, for the same reasoning as
+// Portscan.Enabled itself (docs/PORTSCAN.md's "Should this be on by
+// default?" sections for both): the whole value of this feature is an
+// owner learning about exposure they did not expect, and WAN-forwarded is
+// strictly the more dangerous half of that picture. The extra LAN traffic
+// this adds — one SSDP multicast discovery and, at most, a handful of SOAP
+// calls per RefreshIntervalSeconds, never per scan — is no more active on
+// the network than an owner's own UPnP-enabled game console or torrent
+// client already is. It needs Portscan.Enabled: with no open-port data to
+// deepen, there is nothing for it to check.
+type WANExposure struct {
+	Enabled bool `toml:"enabled"`
+	// RefreshIntervalSeconds bounds how often the router's NAT table is
+	// actually re-queried. A UPnP discovery-and-enumerate round trip is
+	// much slower and more fragile than internal/portscan's own TCP
+	// connect probes, so results are served from a cache in between,
+	// however many ports or devices a scan cycle checks.
+	RefreshIntervalSeconds int `toml:"refresh_interval_seconds"`
 }
 
 // Vulnscan schedules internal/vulnscan's deeper probe of every open port
@@ -269,7 +298,7 @@ func Default() Config {
 		ARP:            ARP{Enabled: true},
 		Alarms:         Alarms{Enabled: true, Ntfy: AlarmsNtfy{Topic: "shepherd-alarms"}},
 		Accountability: Accountability{Enabled: true, SMTP: AccountabilitySMTP{Port: 587, TLS: "starttls"}},
-		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600},
+		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600, WANExposure: WANExposure{Enabled: true, RefreshIntervalSeconds: 600}},
 		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600},
 		DataDir:        "data",
 		DNS: DNS{
@@ -362,6 +391,9 @@ func (c Config) Validate() error {
 	}
 	if c.Portscan.IntervalSeconds < 300 {
 		return errors.New("portscan.interval_seconds must be at least 300")
+	}
+	if c.Portscan.WANExposure.Enabled && c.Portscan.WANExposure.RefreshIntervalSeconds < 300 {
+		return errors.New("portscan.wan_exposure.refresh_interval_seconds must be at least 300")
 	}
 	if c.Portal.IdleLockMinutes < 0 {
 		return errors.New("portal.idle_lock_minutes must not be negative")

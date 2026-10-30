@@ -367,6 +367,47 @@ func TestExampleConfigShowsThePortscanDefaults(t *testing.T) {
 	}
 }
 
+func TestWANExposureDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Portscan.WANExposure.Enabled || cfg.Portscan.WANExposure.RefreshIntervalSeconds != 600 {
+		t.Errorf("wan_exposure defaults = %+v", cfg.Portscan.WANExposure)
+	}
+}
+
+func TestWANExposureOverridesAndValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "p.toml")
+	os.WriteFile(path, []byte("[portscan.wan_exposure]\nenabled = false\nrefresh_interval_seconds = 1200\n"), 0o600)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Portscan.WANExposure.Enabled || cfg.Portscan.WANExposure.RefreshIntervalSeconds != 1200 {
+		t.Errorf("wan_exposure overrides = %+v", cfg.Portscan.WANExposure)
+	}
+	// Overriding only [portscan] must not reset wan_exposure's own defaults.
+	os.WriteFile(path, []byte("[portscan]\nenabled = false\n"), 0o600)
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Portscan.WANExposure.Enabled || cfg.Portscan.WANExposure.RefreshIntervalSeconds != 600 {
+		t.Errorf("wan_exposure should keep its own defaults when only [portscan] is set: %+v", cfg.Portscan.WANExposure)
+	}
+
+	os.WriteFile(path, []byte("[portscan.wan_exposure]\nenabled = true\nrefresh_interval_seconds = 299\n"), 0o600)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "wan_exposure.refresh_interval_seconds") {
+		t.Errorf("too-short wan_exposure interval: %v", err)
+	}
+	// A too-short interval is fine when the feature itself is disabled.
+	os.WriteFile(path, []byte("[portscan.wan_exposure]\nenabled = false\nrefresh_interval_seconds = 1\n"), 0o600)
+	if _, err := Load(path); err != nil {
+		t.Errorf("a short interval on a disabled wan_exposure should not fail validation: %v", err)
+	}
+}
+
 func TestVulnscanDefaults(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
 	if err != nil {

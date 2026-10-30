@@ -434,6 +434,22 @@ func (c *Controller) Steer(dev DeviceRef, opts SteerOptions) error {
 			case <-spoofCtx.Done():
 				// Unsteered some other way first; nothing to do.
 			case <-trialTimer:
+				// spoofCtx can be cancelled (by a manual Unsteer, PanicStop,
+				// or Close) at essentially the same moment trialTimer also
+				// becomes ready -- e.g. a test's FakeClock.Advance landing
+				// right after Unsteer. Go's select does not prefer one ready
+				// case over another when more than one is ready at once, so
+				// this branch can still be chosen even though cancellation
+				// "won" in real time. Re-check explicitly, with a
+				// non-blocking select, before acting: if dev.MAC was
+				// re-Steer'd in the meantime (same MAC, a new deviceState),
+				// c.unsteer's own presence check can't tell that apart from
+				// the original device and would wrongly unsteer it.
+				select {
+				case <-spoofCtx.Done():
+					return
+				default:
+				}
 				c.unsteer(dev.MAC, "trial duration elapsed")
 			}
 		}()

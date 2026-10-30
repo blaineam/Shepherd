@@ -13,6 +13,21 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Marketing site (`site/`):** a public, vanilla-HTML/CSS/JS landing page — hero, the real shipped feature
+  set (DNS filtering and the 95-list catalog, devices, the globe HUD, alarms, port and vulnerability
+  scanning, geo-block, portal locking, self-healing upstreams and more), an honest "what's coming" section
+  that calls out Watch mode's current trial-only state by name, and a Raspberry Pi section. The
+  centerpiece is `site/demo/`: the portal's real compiled frontend (`internal/portal/web/`), forced
+  permanently into its own built-in demo mode for a static host with zero backend — the real globe HUD and
+  Devices/Blocking/Alarms screens, populated with synthetic data generated in the browser, not screenshots
+  or a video. `site/demo/js/demomgmt.js` additionally gives the Alarms screen synthetic data (the shipped
+  demo fake never covered `/api/alarms`; alarmsview.js already shows a clean "not available" card for that
+  case, so this is additive, local to the site build, and does not touch
+  `internal/portal/web/js/demomgmt.js`, the file `cmd/shepherd` actually embeds). Mirrored to
+  `blaineam.github.io/apps/shepherd/` by the portfolio repo's `mirror-app-docs.yml`.
+  New `.github/workflows/notify-portfolio.yml`, modeled on Haven's, dispatches that mirror on every push to
+  `site/**` (needs a `PORTFOLIO_DISPATCH_TOKEN` repo secret to actually fire; skips cleanly without one, same
+  as Haven's).
 - **Alarm archiving:** the Alarms view had no way to dismiss a handled alarm from the default list short
   of resolving it (which means "this is fixed," a different claim) or waiting for retention's age/count
   pruning to remove it outright. A new `Archived bool`/`ArchivedAt time.Time` on `alarms.Alarm`,
@@ -53,6 +68,20 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   of leaving its absence to read as a bug (confirmed unwired: `cmd/shepherd` never imports
   `internal/intercept`; see docs/ROADMAP.md step 11). See docs/PORTAL.md, docs/VULNSCAN.md,
   docs/DEVICES.md and docs/HISTORY.md.
+- **WAN exposure for open ports (`internal/upnpigd`):** `internal/portscan` now tells you not just that a
+  port is open on the LAN, but whether your router also forwards it from the internet — the far more
+  dangerous case for the same open port. A new, read-only UPnP IGD client discovers the router over SSDP,
+  finds its WANIPConnection/WANPPPConnection control URL, and enumerates its NAT port-mapping table (never
+  calling AddPortMapping or DeletePortMapping), cached for 10 minutes by default so a slower, more fragile
+  router round trip never runs on every scan. Every open `PortRecord` gains `Exposure`: `"lan_only"`,
+  `"wan_forwarded"` or `"unknown"` — `"unknown"`, never a guess, whenever the router does not cooperate
+  (UPnP IGD disabled, or not implemented the same way by some consumer mesh systems), and the field is left
+  out entirely when the new `[portscan.wan_exposure]` config is disabled. Enabled by default, alongside
+  `[portscan]` itself (see docs/PORTSCAN.md's "Should this be on by default?" for the reasoning). The
+  portal's `GET /api/portscan*` endpoints and each device's Ports panel now surface it, with a small "WAN"
+  badge on a forwarded port's chip. See docs/PORTSCAN.md's new "WAN exposure" section for the full
+  limits — in particular, that this is best-effort and will read `unknown` for every port on any router
+  that does not answer UPnP IGD discovery at all.
 - **Vulnerability scanning (`internal/vulnscan`):** a real vulnerability-detection layer on top of
   `internal/portscan`'s open-port findings — not "port 23 is open" but "Telnet is open" or "this OpenSSH
   build is missing a specific named fix." A small, curated, built-in signature table (no external CVE API,
@@ -178,6 +207,17 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- `Controller`'s trial-expiry watcher (`internal/intercept`) could fire a second, spurious unsteer after
+  a device had already been unsteered manually and then re-steered: its goroutine blocks on
+  `select { case <-spoofCtx.Done(): ...; case <-trialTimer: ... }`, and Go's `select` does not prefer
+  one ready case over another when both are ready at once — a `FakeClock.Advance` landing around the
+  same moment a manual `Unsteer` cancelled `spoofCtx` could still pick the `trialTimer` branch, calling
+  `unsteer` against whatever now holds that MAC (a legitimate second `Steer` call, since `unsteer`'s own
+  presence check has no way to tell the two apart). Caught by `TestTrialCancelledByManualUnsteerDoesNotDoubleFire`
+  failing intermittently in CI, never locally (lower scheduling pressure made the race far less likely to
+  manifest). Fixed by re-checking `spoofCtx.Done()` with a non-blocking `select` immediately before
+  acting on the timer branch, which is safe regardless of which way the outer `select` resolved: once
+  cancelled, `spoofCtx.Done()` stays ready, so the re-check is not itself timing-sensitive.
 - `scripts/coverage`'s floor check counted `cmd/intercept-trial` against the whole-repo total, but that
   package is a hand-run, Linux-only CLI most of whose logic needs `CAP_NET_RAW`/`CAP_NET_ADMIN` and live
   hardware to exercise — the same reason `internal/intercept`'s own raw-socket code is untestable

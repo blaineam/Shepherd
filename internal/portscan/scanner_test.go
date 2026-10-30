@@ -184,6 +184,102 @@ func TestScanFlagsRiskyPortsEveryTime(t *testing.T) {
 	}
 }
 
+// fakeExposureChecker answers Exposure from a fixed map keyed by
+// "ip:port", with a configurable default for anything not in the map. It
+// never touches a real IGD.
+type fakeExposureChecker struct {
+	wan    map[string]bool
+	known  map[string]bool // ip:port -> ok
+	defOK  bool
+	defWAN bool
+	calls  int32
+}
+
+func (f *fakeExposureChecker) Exposure(ctx context.Context, ip string, port int) (bool, bool) {
+	atomic.AddInt32(&f.calls, 1)
+	key := addr(ip, port)
+	if ok, has := f.known[key]; has {
+		return f.wan[key], ok
+	}
+	return f.defWAN, f.defOK
+}
+
+func TestScanSetsExposureWANForwarded(t *testing.T) {
+	dial := fakeDial(map[string]bool{addr("192.0.2.200", 80): true})
+	exp := &fakeExposureChecker{wan: map[string]bool{addr("192.0.2.200", 80): true}, known: map[string]bool{addr("192.0.2.200", 80): true}}
+	s := New(Options{Dial: dial, Ports: []int{80}, Exposure: exp})
+	r := s.Scan(context.Background(), []Target{{DeviceID: "d1", IP: "192.0.2.200"}})[0]
+	p := findPort(t, r.Ports, 80)
+	if p.Exposure != ExposureWANForwarded {
+		t.Fatalf("Exposure = %q, want %q", p.Exposure, ExposureWANForwarded)
+	}
+}
+
+func TestScanSetsExposureLANOnly(t *testing.T) {
+	dial := fakeDial(map[string]bool{addr("192.0.2.201", 80): true})
+	exp := &fakeExposureChecker{known: map[string]bool{addr("192.0.2.201", 80): true}} // ok, not forwarded
+	s := New(Options{Dial: dial, Ports: []int{80}, Exposure: exp})
+	r := s.Scan(context.Background(), []Target{{DeviceID: "d1", IP: "192.0.2.201"}})[0]
+	p := findPort(t, r.Ports, 80)
+	if p.Exposure != ExposureLANOnly {
+		t.Fatalf("Exposure = %q, want %q", p.Exposure, ExposureLANOnly)
+	}
+}
+
+func TestScanSetsExposureUnknownWhenCheckerCannotTell(t *testing.T) {
+	dial := fakeDial(map[string]bool{addr("192.0.2.202", 80): true})
+	exp := &fakeExposureChecker{} // defOK false: every lookup is "unknown"
+	s := New(Options{Dial: dial, Ports: []int{80}, Exposure: exp})
+	r := s.Scan(context.Background(), []Target{{DeviceID: "d1", IP: "192.0.2.202"}})[0]
+	p := findPort(t, r.Ports, 80)
+	if p.Exposure != ExposureUnknown {
+		t.Fatalf("Exposure = %q, want %q", p.Exposure, ExposureUnknown)
+	}
+}
+
+func TestScanLeavesExposureEmptyWhenNoCheckerConfigured(t *testing.T) {
+	dial := fakeDial(map[string]bool{addr("192.0.2.203", 80): true})
+	s := New(Options{Dial: dial, Ports: []int{80}}) // no Exposure set
+	r := s.Scan(context.Background(), []Target{{DeviceID: "d1", IP: "192.0.2.203"}})[0]
+	p := findPort(t, r.Ports, 80)
+	if p.Exposure != "" {
+		t.Fatalf("Exposure = %q, want empty when no ExposureChecker is configured", p.Exposure)
+	}
+}
+
+func TestScanResetsExposureWhenPortCloses(t *testing.T) {
+	open := map[string]bool{addr("192.0.2.204", 80): true}
+	dial := fakeDial(open)
+	exp := &fakeExposureChecker{wan: map[string]bool{addr("192.0.2.204", 80): true}, known: map[string]bool{addr("192.0.2.204", 80): true}}
+	s := New(Options{Dial: dial, Ports: []int{80}, Exposure: exp})
+	target := Target{DeviceID: "d1", IP: "192.0.2.204"}
+
+	r := s.Scan(context.Background(), []Target{target})[0]
+	if findPort(t, r.Ports, 80).Exposure != ExposureWANForwarded {
+		t.Fatal("expected exposure set while the port is open")
+	}
+
+	open[addr("192.0.2.204", 80)] = false
+	r = s.Scan(context.Background(), []Target{target})[0]
+	p := findPort(t, r.Ports, 80)
+	if p.Open {
+		t.Fatal("port 80 should now be closed")
+	}
+	if p.Exposure != "" {
+		t.Fatalf("Exposure = %q, want empty once the port is no longer open", p.Exposure)
+	}
+}
+
+func TestScanExposureCheckerCalledOnlyForOpenPorts(t *testing.T) {
+	dial := fakeDial(map[string]bool{addr("192.0.2.205", 80): true}) // 80 open, 81 closed
+	exp := &fakeExposureChecker{}
+	s := New(Options{Dial: dial, Ports: []int{80, 81}, Exposure: exp})
+	s.Scan(context.Background(), []Target{{DeviceID: "d1", IP: "192.0.2.205"}})
+	if atomic.LoadInt32(&exp.calls) != 1 {
+		t.Fatalf("exposure checker called %d times, want exactly 1 (only for the open port)", exp.calls)
+	}
+}
+
 func TestScanNonRiskyOpenPortIsNotFlaggedRisky(t *testing.T) {
 	dial := fakeDial(map[string]bool{addr("192.0.2.40", 80): true})
 	s := New(Options{Dial: dial, Ports: []int{80}, Concurrency: 2, Timeout: time.Second})
