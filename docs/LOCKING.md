@@ -26,7 +26,18 @@ A PIN is short, so it is only accepted together with something an attacker does 
 - **Strength.** 6 to 12 digits (letters allowed). Stored only as an Argon2id hash, never in plain text. Obvious PINs (all the same digit, runs such as 123456) are refused.
 - **Lockout.** Wrong PINs are slowed down, and 5 wrong tries in a row lock that browser's PIN for 15 minutes with growing delays. After 10 the trusted-device record is revoked and only the token can unlock again. There is also a global limit across all browsers, so many devices cannot be used to share the guesses.
 - **Management.** Settings lists trusted browsers (with last used) and lets you remove any of them, change the PIN, or turn the PIN off. Forgot the PIN? Unlock with the token and set a new one. Changing the token's secret (rotating it) revokes every trusted browser.
-- **Later.** Passkeys (Face ID, Touch ID, a security key) through WebAuthn would replace the PIN with a biometric on devices that support it.
+
+## Passkeys
+
+Passkeys (Face ID, Touch ID, Windows Hello, a phone, or a hardware security key) unlock the portal with a biometric
+and nothing to type. They use the WebAuthn standard.
+
+- **Requirements.** Browsers only allow passkeys on a secure (HTTPS) page with a real hostname, never on a plain `http://` address or a bare IP. Shepherd therefore offers passkeys once the portal is served over HTTPS (Tailscale's built-in HTTPS, or a name served by Shepherd's own reverse proxy with a certificate). The hostname you use becomes the passkey's relying-party ID, so `portal.public_url` in the configuration must match how you reach the portal; a passkey made for one hostname does not work on another.
+- **Registering.** While unlocked (with the token or a PIN), Settings offers **Add a passkey**. You can add several (a phone, a laptop, a security key) and give each a name. Platform passkeys that sync through a password manager or a cloud keychain work on all your devices at once.
+- **Unlocking.** The unlock card shows **Use a passkey** first. The browser asks for your fingerprint or face, the server verifies the signed challenge, and a normal server-side session starts. User verification is required, so the passkey cannot be used without the biometric or device PIN.
+- **Safety.** Challenges are single use and expire in minutes, the origin and relying-party ID are checked, the signature counter is tracked to spot cloned authenticators, and no attestation data is collected or stored. The server keeps only each credential's public key, name, last use and transports.
+- **Management and recovery.** Settings lists registered passkeys with when each was last used and lets you remove any. The token always works as the recovery path, and rotating the token revokes every passkey, PIN and trusted browser.
+- **Order of preference.** Passkey, then PIN on a trusted browser, then the token.
 
 ## Settings: auto-lock is optional
 
@@ -36,6 +47,7 @@ Auto-lock is on by default but you can change or turn it off, in the configurati
 |---|---|---|
 | Auto-lock after idle | **Never**, 5, 10 (default), 30, 60 minutes, or a custom number | **Never** keeps you unlocked until you press Lock or sign out. |
 | PIN | none, or one you choose | Faster than pasting the token, bound to trusted browsers. Set, change or clear it while unlocked. |
+| Passkeys | none, or any number | Biometric unlock. Needs the portal served over HTTPS with `portal.public_url` set. Add and remove them while unlocked. |
 
 ```toml
 [portal]
