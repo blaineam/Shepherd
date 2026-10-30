@@ -200,8 +200,9 @@ func TestParseUpstream(t *testing.T) {
 			t.Errorf("%s -> %s, want %s", in, got, want)
 		}
 	}
-	if _, err := parseUpstream("https://dns.example/dns-query"); err == nil {
-		t.Error("https upstreams are not supported yet and must be rejected, not silently misused")
+	u, err := parseUpstream("https://dns.example/dns-query")
+	if err != nil || u.network != "https" || u.hostport != "dns.example:443" {
+		t.Errorf("https upstream: %+v, %v", u, err)
 	}
 }
 
