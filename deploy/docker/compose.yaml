@@ -9,7 +9,7 @@ services:
     network_mode: host            # DNS on the LAN address, same as the bare binary
     restart: unless-stopped
     cap_drop: [ALL]
-    cap_add: [NET_BIND_SERVICE]   # to listen on port 53
+    cap_add: [NET_BIND_SERVICE, NET_RAW]   # NET_BIND_SERVICE: port 53; NET_RAW: passive ARP monitor (read-only)
     security_opt: ["no-new-privileges:true"]
     read_only: true
     tmpfs: [/tmp]
