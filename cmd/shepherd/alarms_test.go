@@ -24,11 +24,14 @@ func TestStartAlarmsBuildsAWorkingEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	eng, err := startAlarms(ctx, cfg, pool)
+	eng, stop, err := startAlarms(context.Background(), cfg, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// stop cancels the Router's own background loop and waits for it to
+	// actually exit before closing the engine, so the test's TempDir
+	// cleanup never races a save still in flight.
+	t.Cleanup(stop)
 	if eng == nil {
 		t.Fatal("startAlarms must return a usable engine")
 	}
@@ -46,12 +49,6 @@ func TestStartAlarmsBuildsAWorkingEngine(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(cfg.DataDir, "alarms", alarms.AlarmsFile)); statErr != nil {
 		t.Errorf("alarms.json was not written under <data_dir>/alarms: %v", statErr)
 	}
-	// Stop the Router's background loop (started on ctx) before closing the
-	// engine and before the test's temp dir is removed, or its next save can
-	// race the directory cleanup.
-	cancel()
-	time.Sleep(50 * time.Millisecond)
-	eng.Close()
 }
 
 func TestStartAlarmsFailsIfTheDirCannotBeCreated(t *testing.T) {
@@ -65,7 +62,7 @@ func TestStartAlarmsFailsIfTheDirCannotBeCreated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := startAlarms(context.Background(), cfg, pool); err == nil {
+	if _, _, err := startAlarms(context.Background(), cfg, pool); err == nil {
 		t.Error("expected an error when the alarms directory cannot be created")
 	}
 }
@@ -84,7 +81,7 @@ func TestStartAlarmsFailsOnACorruptDeliveriesFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := startAlarms(context.Background(), cfg, pool); err == nil {
+	if _, _, err := startAlarms(context.Background(), cfg, pool); err == nil {
 		t.Error("expected an error when the router's saved delivery log is corrupt")
 	}
 }

@@ -194,27 +194,60 @@ func run() error {
 	return nil
 }
 
-// reportStatus prints Status() every 2s until ctx is done or nothing is
-// steered anymore (the trial expired or was unsteered some other way).
+// reportStatus prints Status() and the packet-rate line every 2s until ctx
+// is done or nothing is steered anymore (the trial expired or was
+// unsteered some other way). The rate line is the diagnostic the last live
+// trial did not have: packets and bytes per second, live, is exactly what
+// would have shown a retransmission storm (or a self-capture overhead
+// problem — see not_for_shepherd below) growing in real time, instead of
+// needing a separate packet capture afterward to notice it.
 func reportStatus(ctx context.Context, ctrl *intercept.Controller) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	prevStats := ctrl.Stats()
+	prevTime := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case now := <-ticker.C:
 			st := ctrl.Status()
 			if len(st) == 0 {
 				log.Println("nothing steered anymore; trial is over")
 				return
 			}
 			for _, d := range st {
-				log.Printf("status: %s healthy=%v bytes_relayed=%d last_verified=%s",
-					d.MAC, d.Healthy, d.BytesRelayed, formatSince(d.LastVerified))
+				log.Printf("status: %s healthy=%v bytes_relayed=%d packets_relayed=%d last_verified=%s",
+					d.MAC, d.Healthy, d.BytesRelayed, d.PacketsRelayed, formatSince(d.LastVerified))
 			}
+			curStats := ctrl.Stats()
+			log.Printf("rate: %s", statsRate(prevStats, curStats, now.Sub(prevTime)))
+			prevStats, prevTime = curStats, now
 		}
 	}
+}
+
+// statsRate turns two ControllerStats samples, taken elapsed apart, into a
+// one-line summary: packets and bytes per second actually relayed, the
+// examined rate (everything the capture sockets handed to a Relay, matched
+// or not), and not_for_shepherd — the count of frames in that window whose
+// destination was not Shepherd's own MAC. On a non-promiscuous capture
+// socket that is overwhelmingly Shepherd's own transmitted frames looping
+// back (see PACKET_IGNORE_OUTGOING in capture_linux.go and
+// docs/INTERCEPT.md); a number here close to the relayed count is exactly
+// the shape of the avoidable overhead that fix targets, and this line is
+// how a live trial would notice it without a separate packet capture.
+func statsRate(prev, cur intercept.ControllerStats, elapsed time.Duration) string {
+	if elapsed <= 0 {
+		return "n/a (no time elapsed)"
+	}
+	secs := elapsed.Seconds()
+	examinedPPS := float64(cur.FramesExamined-prev.FramesExamined) / secs
+	relayedPPS := float64(cur.FramesRelayed-prev.FramesRelayed) / secs
+	relayedBPS := float64(cur.BytesRelayed-prev.BytesRelayed) / secs
+	notForShepherd := cur.FramesNotForShepherd - prev.FramesNotForShepherd
+	return fmt.Sprintf("examined=%.0f pkt/s relayed=%.0f pkt/s (%.0f B/s) not_for_shepherd=%d",
+		examinedPPS, relayedPPS, relayedBPS, notForShepherd)
 }
 
 // ethtoolGRO reports whether generic-receive-offload is currently on for

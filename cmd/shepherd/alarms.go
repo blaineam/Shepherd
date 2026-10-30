@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"path/filepath"
+	"sync"
 
 	"shepherd/internal/alarms"
 	"shepherd/internal/config"
@@ -19,21 +20,40 @@ import (
 // portal (cmd/shepherd/main.go). The Router itself is not returned: nothing
 // outside this file needs to drive it directly, only the engine it delivers
 // for. Web Push is not wired in; see docs/ALARMS.md.
-func startAlarms(ctx context.Context, cfg config.Config, pool *dnsengine.Pool) (*alarms.Engine, error) {
+//
+// The returned stop func cancels the Router's own context (derived from ctx,
+// but independently cancelable) and waits for its goroutine to actually
+// exit before closing the engine. It must not rely on ctx having already
+// been cancelled by the caller: run's own defer order can close the alarm
+// engine before its outer ctx is cancelled, and waiting on a goroutine
+// that is still being told to keep running would deadlock. Calling stop
+// before that goroutine has a chance to save its state is exactly the bug
+// that let main.go's own ctx cancellation race the Router's final
+// Router.Save, intermittently leaving <data_dir>/alarms mid-write when a
+// test's early failure tore the directory down immediately after.
+func startAlarms(ctx context.Context, cfg config.Config, pool *dnsengine.Pool) (eng *alarms.Engine, stop func(), err error) {
 	dir := filepath.Join(cfg.DataDir, "alarms")
-	eng, err := alarms.New(alarms.Options{Dir: dir})
+	eng, err = alarms.New(alarms.Options{Dir: dir})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rt := alarms.NewRouter(alarms.RouterOptions{Source: eng, Ntfy: ntfyPublisherFor(cfg.Alarms.Ntfy), Path: alarms.DefaultRouterPath(dir)})
 	if err := rt.Load(); err != nil {
 		eng.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	eng.Subscribe(rt.Handle)
-	go rt.Run(ctx)
+	rctx, rcancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); rt.Run(rctx) }()
 	wireUpstreamAlarms(eng, pool)
-	return eng, nil
+	stop = func() {
+		rcancel()
+		wg.Wait()
+		eng.Close()
+	}
+	return eng, stop, nil
 }
 
 // ntfyPublisherFor adapts the ntfy config section to the Router's

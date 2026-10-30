@@ -73,10 +73,126 @@ genuine panic, instead of a goroutine and a timer allocation on every single pac
 does not report `selfBounded`, so every existing safety test (a deliberately wedged Sender, a
 panicking one) still exercises the slow, fully defensive path unchanged.
 
-This is the current best explanation and fix, not yet re-measured live against a real sustained
-transfer at the time of writing — do that before trusting the number. Even once it holds up: this is
-a software relay, not a hardware switch, so steering a device will never be perfectly free, and
-making Watch mode something left on indefinitely needs this measured again, at whatever the shipped
+That `sendWithTimeout` fix, like `ParallelRelay` before it, was re-measured live and **did not fix
+the drop**: with both fixes in place, a real device still fell from ~1.1 Gbps to roughly 300 Mbps
+while steered — the same slowdown as before either fix. Two more candidates were ruled out the same
+way, live, against the real device:
+
+4. **Tailscale on the test device.** Disabled entirely during a trial: same slowdown. Not the cause.
+5. **Something upstream of all of this.** A live packet capture taken during a slow run showed the
+   same SYN and QUIC "initial" packets being retransmitted abnormally fast — microseconds apart, not
+   the seconds-scale backoff any normal TCP/QUIC stack uses — with a large directional asymmetry:
+   thousands of packets out to one destination, only hundreds back. This was never root-caused before
+   the investigation paused. Two hypotheses were raised and left open: (a) the device's own
+   connections are retrying pathologically because something about the path looks broken to them, or
+   (b) frames are being duplicated somewhere — possibly Shepherd's own capture path, possibly the
+   eero's own Wi-Fi/bridging behavior reacting to the ARP change.
+
+### A later code audit: no duplication found in Shepherd's own path, but a real avoidable cost found
+
+Hypothesis (b) above — duplication inside Shepherd itself — had only ever been reasoned about
+informally, never actually audited against the code. A line-by-line pass of `capture_linux.go`,
+`open_linux.go`, `relay.go`, `controller.go`, and `spoofer.go` did that audit. Everything in this
+subsection is a code-review finding, **not** re-measured against a real device — the honest
+re-measurement is the first item in the "what to test live next" list below.
+
+**`Relay.HandleFrame`'s destination-MAC filter is correct**, and was checked explicitly rather than
+assumed. `HandleFrame` rewrites only the destination MAC when relaying (`relay.go`); the source MAC,
+always the steered device's own, is left untouched. Neither the Relay's own relayed frames (addressed
+to `GatewayMAC`) nor the Spoofer's claim/corrective frames (addressed to the device's own real MAC)
+are ever addressed to `ShepherdMAC`, so the `dst != r.ShepherdMAC` check at the top of `HandleFrame`
+discards every one of them before any lookup or send — correctly, in every case, not just the common
+one. No path was found where a frame Shepherd itself transmitted could be re-relayed, double-sent, or
+mistaken for new device traffic. **No frame duplication was found anywhere in this package.**
+
+**But that correct filter runs after an avoidable capture.** The capture socket in
+`openCaptureGroup` is a plain `AF_PACKET`/`ETH_P_ALL` socket with no promiscuous mode set (confirmed:
+nothing in this package ever asks for it). Without `PACKET_IGNORE_OUTGOING`, a non-promiscuous
+`AF_PACKET` socket bound to an interface still receives a loopback copy of every frame *this host*
+transmits on that interface — standard Linux behavior, the same reason `tcpdump` shows your own
+outgoing packets without asking for promiscuous mode. Concretely: every single frame the Relay
+retransmits, and every periodic ARP claim/corrective the Spoofer sends, loops straight back into
+Shepherd's own capture socket, gets parsed, fails the destination-MAC check, and is thrown away. At
+the relay's real packet rate (the ACK-storm scale discussed above — tens of thousands of frames per
+second during a sustained transfer), that is a second full parse-and-discard for every frame actually
+relayed: real, avoidable CPU work, on the exact hot path already under suspicion, that nothing before
+this audit had identified or measured.
+
+**Fix:** `openCaptureGroup` now sets `PACKET_IGNORE_OUTGOING` (`golang.org/x/sys/unix`, value `0x17`,
+Linux 4.20+) on each capture socket, asking the kernel to not deliver a host's own outgoing frames to
+it at all. This is purely a cost removal, not a correctness change — the destination-MAC filter
+already made the old behavior safe, it just paid for it. The call's error is deliberately ignored: on
+a pre-4.20 kernel it fails with `ENOPROTOOPT` and capture keeps working exactly as it did before,
+just without this saving, rather than failing the whole capture group over a missing optimization.
+**This has not been measured live.** It removes real, confirmed-avoidable work, but there is no
+measurement yet of how much of the 1.1→0.3 Gbps drop (if any) it accounts for — it may be a
+meaningful fraction of the packet-rate cost, or it may be a rounding error next to whatever is
+actually gating throughput. Treat it the same as the `ParallelRelay` and `sendWithTimeout` fixes
+before it: plausible, shipped, unverified against real hardware.
+
+**The Spoofer's claim interval and frame content were also reviewed against hypothesis (a)** (the
+device itself retrying pathologically). `Spoofer.sendClaim`/`sendCorrective` send one **unicast** ARP
+reply (`arp.NewReply`, addressed directly to the target device's real MAC) every `DefaultSpoofInterval`
+(2 seconds) — not a broadcast gratuitous ARP flood, not a burst, not malformed content: standard
+unsolicited-ARP-reply spoofing, same shape most ARP tools use, at a frequency far below any normal
+device's ARP cache TTL (which is minutes, not seconds). **Nothing found here looks unusual or
+wrong.** This review does not rule out hypothesis (a) — the device, or the eero's bridging of a
+one-sided ARP change, could still be reacting badly to being steered at all — it only rules out the
+Spoofer's own timing or content as the mechanism, since there is nothing about either that departs
+from how ARP spoofing normally looks on the wire.
+
+**Batched I/O (`recvmmsg`/`sendmmsg`) was considered and deliberately not attempted.** It would cut
+per-packet syscall overhead further, but it adds real `unsafe.Pointer`-adjacent buffer-management
+code to the single most safety-reviewed package in this repo, and this package's raw-socket code is
+already, by design, untestable without `CAP_NET_RAW` (see the comments in `open_linux.go` and
+`capture_linux.go`) — there is no way to give it the same test coverage as everything else here
+without live hardware to validate against. Shipping that complexity now, unverified, on the strength
+of a suspected-but-unconfirmed throughput problem is a worse trade than leaving it for a future change
+made *after* the `PACKET_IGNORE_OUTGOING` fix above has been measured live and shown to still leave a
+syscall-bound gap worth chasing.
+
+**New diagnostics, added so the next live trial does not need a fresh packet capture to see this.**
+`Controller.Stats()` is a new cumulative counter snapshot (frames/bytes examined, frames discarded for
+not being addressed to Shepherd, frames/bytes actually relayed), fed lock-free from every `Relay`
+sharing a `Controller`'s state — the `ParallelRelay` workers included. `SteeredDevice` (from `Status()`)
+now also reports `PacketsRelayed`, not just bytes. `cmd/intercept-trial` samples `Stats()` every 2
+seconds alongside `Status()` and logs a `rate:` line — packets/sec and bytes/sec actually relayed, the
+raw examined rate, and `not_for_shepherd` (frames seen whose destination wasn't Shepherd's MAC, almost
+all of which are the self-capture loopback described above). A live trial with this build will show,
+without any separate `tcpdump`, whether packet rate itself is spiking abnormally during a slow run, and
+roughly how much of the capture socket's work was ever the self-loopback `PACKET_IGNORE_OUTGOING` now
+asks the kernel to stop delivering.
+
+### What to test live next, in order
+
+None of the above has been confirmed against real hardware — that is the whole point of writing it
+down here rather than claiming it fixed anything. In priority order, against the real device and the
+real eero:
+
+1. **Re-measure throughput with this change alone** (`PACKET_IGNORE_OUTGOING`, on top of the existing
+   `ParallelRelay` and `sendWithTimeout` fixes). If the drop is unchanged, self-capture overhead was
+   not the dominant cost and the `not_for_shepherd` rate from the new `rate:` log line will say so
+   directly (a high rate with no throughput change rules this out cleanly).
+2. **Watch the new `rate:` log line during a slow run**, specifically `examined` vs `relayed` pps. If
+   `examined` is far higher than `relayed` and growing, that is the retransmission storm happening in
+   real time, visible from Shepherd's own counters — confirm it lines up with a fresh `tcpdump` instead
+   of needing the capture to find it first.
+3. **Narrow hypothesis (a) vs (b) directly**: with `PACKET_IGNORE_OUTGOING` active, `not_for_shepherd`
+   should drop to near zero (only broadcast/ARP noise, not the self-loopback). If the retransmission
+   storm in a fresh packet capture is still present at the same rate, that is evidence against
+   duplication inside Shepherd (consistent with this audit finding none) and more evidence for (a): the
+   device or the eero reacting to the ARP change itself, not anything Shepherd is doing to the frames.
+4. **If (a) still looks live, test the eero's own behavior directly**: steer the device, then capture
+   on the eero's own uplink (not just at Shepherd) during a slow run, to see whether the eero itself is
+   re-sending or mis-switching frames in response to the ARP change — this audit only covered
+   Shepherd's own code and could not rule the eero in or out.
+5. **Only after 1–4**, if a syscall-rate ceiling still looks like the bottleneck, consider batched I/O
+   (`recvmmsg`/`sendmmsg`) — deliberately not attempted in this change; see above.
+
+This is a software relay, not a hardware switch, so steering a device will never be perfectly free —
+but the live finding (a ~70% throughput drop) is still far larger than ordinary relay overhead should
+explain, which is why this section keeps being rewritten rather than closed. Making Watch mode
+something left on indefinitely needs all of this measured again, live, at whatever the shipped
 configuration turns out to be, before it is trusted the way the DNS engine is.
 
 ## IPv4 only, no exceptions

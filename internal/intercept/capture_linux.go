@@ -66,6 +66,19 @@ func openCaptureGroup(iface string, n int) ([]*captureSocket, error) {
 			closeAll()
 			return nil, fmt.Errorf("intercept: bind capture socket %q: %w", iface, err)
 		}
+		// Without this, an AF_PACKET socket bound to iface also receives a
+		// loopback copy of every frame this same host transmits on iface —
+		// including every frame the Relay and Spoofer send out through
+		// their own separate (send-only) sockets on the same interface.
+		// HandleFrame's destination-MAC check already discards those
+		// correctly (Shepherd never sends anything addressed to its own
+		// MAC), so this is not a correctness fix; it is cutting, at the
+		// kernel's own packet-rate cost, the biggest single avoidable part
+		// of it: one wasted capture-and-discard for every frame relayed.
+		// PACKET_IGNORE_OUTGOING is Linux 4.20+; an older kernel returns
+		// ENOPROTOOPT here and capture keeps working exactly as before,
+		// just without this saving.
+		_ = unix.SetsockoptInt(fd, unix.SOL_PACKET, unix.PACKET_IGNORE_OUTGOING, 1)
 		fanoutArg := groupID | (unix.PACKET_FANOUT_HASH << 16)
 		if err := unix.SetsockoptInt(fd, unix.SOL_PACKET, unix.PACKET_FANOUT, fanoutArg); err != nil {
 			_ = unix.Close(fd)

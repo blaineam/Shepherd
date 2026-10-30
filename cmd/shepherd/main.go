@@ -124,11 +124,11 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		DataDir: cfg.DataDir, IdleLockMinutes: cfg.Portal.IdleLockMinutes}
 
 	if cfg.Alarms.Enabled {
-		alarmEngine, err := startAlarms(ctx, cfg, pool)
+		alarmEngine, stopAlarms, err := startAlarms(ctx, cfg, pool)
 		if err != nil {
 			return err
 		}
-		defer alarmEngine.Close()
+		defer stopAlarms()
 		deps.Alarms = alarmEngine
 	}
 
