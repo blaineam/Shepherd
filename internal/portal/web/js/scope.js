@@ -17,10 +17,13 @@ export function chainFor(scope, groupIds = []) {
 
 export function dataFor(policy, scope) {
   const hit = ((policy && policy.scopes) || []).find((s) => s.scope && sameScope(s.scope, scope));
+  const rs = (hit && hit.rule_schedules) || {};
   return {
     items: (hit && hit.items) || {},
     rules: { allow: (hit && hit.rules && hit.rules.allow) || [], block: (hit && hit.rules && hit.rules.block) || [] },
+    rule_schedules: { allow: rs.allow || {}, block: rs.block || {} },
     switches: (hit && hit.switches) || {},
+    mode: (hit && hit.mode) || '',
   };
 }
 
@@ -74,12 +77,15 @@ export function nextItemValue(status, wantOn) {
   return status.covered ? false : null;
 }
 
-// Rules visible at a scope: those set here plus those inherited, tagged with their origin.
+// Rules visible at a scope: those set here plus those inherited, tagged with
+// their origin and, when they have one, their schedule (days/start_min/end_min).
 export function rulesView(policy, scope, groupIds = []) {
   const out = [];
   for (const s of chainFor(scope, groupIds)) {
-    const d = dataFor(policy, s).rules;
-    for (const kind of ['block', 'allow']) for (const domain of d[kind]) out.push({ kind, domain, scope: s, here: sameScope(s, scope) });
+    const d = dataFor(policy, s);
+    for (const kind of ['block', 'allow']) {
+      for (const domain of d.rules[kind]) out.push({ kind, domain, scope: s, here: sameScope(s, scope), schedule: d.rule_schedules[kind][domain] || null });
+    }
   }
   out.sort((a, b) => (b.here - a.here) || a.domain.localeCompare(b.domain));
   return out;
@@ -93,6 +99,21 @@ export function switchView(policy, scope, groupIds, name) {
     else if (v === true) inherited.push(s);
   }
   return { here, inherited, effective: here === true || inherited.length > 0 };
+}
+
+// Mode (blocklist/allowlist) at a scope: its own choice if it set one, else
+// the nearest ancestor's (most specific group first, then network), else
+// "block" by default. Mirrors the server's most-specific-wins resolution.
+export function modeView(policy, scope, groupIds = []) {
+  const chain = chainFor(scope, groupIds);
+  let here = null, inherited = null;
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const s = chain[i];
+    const m = dataFor(policy, s).mode || null;
+    if (sameScope(s, scope)) { here = m; continue; }
+    if (m && !inherited) inherited = { scope: s, mode: m };
+  }
+  return { here, inherited, effective: here || (inherited && inherited.mode) || 'block' };
 }
 
 export function effectiveSummary(policy, catalog, scope, groupIds = []) {
@@ -126,11 +147,14 @@ export function effectiveSummary(policy, catalog, scope, groupIds = []) {
 function withScope(policy, scope, fn) {
   const scopes = [...((policy && policy.scopes) || [])];
   let i = scopes.findIndex((s) => s.scope && sameScope(s.scope, scope));
-  const cur = i >= 0 ? scopes[i] : { scope: { kind: scope.kind, id: scope.id || '' }, items: {}, rules: { allow: [], block: [] }, switches: {} };
+  const cur = i >= 0 ? scopes[i] : { scope: { kind: scope.kind, id: scope.id || '' }, items: {}, rules: { allow: [], block: [] }, rule_schedules: { allow: {}, block: {} }, switches: {}, mode: '' };
+  const curSched = cur.rule_schedules || {};
   const next = fn({
     scope: cur.scope, items: { ...(cur.items || {}) },
     rules: { allow: [...((cur.rules && cur.rules.allow) || [])], block: [...((cur.rules && cur.rules.block) || [])] },
+    rule_schedules: { allow: { ...(curSched.allow || {}) }, block: { ...(curSched.block || {}) } },
     switches: { ...(cur.switches || {}) },
+    mode: cur.mode || '',
   });
   if (i >= 0) scopes[i] = next; else scopes.push(next);
   scopes.sort((a, b) => (ORDER[a.scope.kind] - ORDER[b.scope.kind]) || String(a.scope.id).localeCompare(String(b.scope.id)));
@@ -143,16 +167,21 @@ export function setItem(policy, scope, id, enabled) {
 export function setSwitch(policy, scope, name, enabled) {
   return withScope(policy, scope, (s) => { if (enabled === null || enabled === undefined) delete s.switches[name]; else s.switches[name] = !!enabled; return s; });
 }
-export function addRule(policy, scope, kind, domain) {
+export function setMode(policy, scope, mode) {
+  return withScope(policy, scope, (s) => { if (!mode) delete s.mode; else s.mode = mode; return s; });
+}
+export function addRule(policy, scope, kind, domain, schedule = null) {
   const other = kind === 'block' ? 'allow' : 'block';
   return withScope(policy, scope, (s) => {
     s.rules[other] = s.rules[other].filter((d) => d !== domain);
+    delete s.rule_schedules[other][domain];
     if (!s.rules[kind].includes(domain)) s.rules[kind].push(domain);
+    if (schedule) s.rule_schedules[kind][domain] = schedule; else delete s.rule_schedules[kind][domain];
     return s;
   });
 }
 export function delRule(policy, scope, kind, domain) {
-  return withScope(policy, scope, (s) => { s.rules[kind] = s.rules[kind].filter((d) => d !== domain); return s; });
+  return withScope(policy, scope, (s) => { s.rules[kind] = s.rules[kind].filter((d) => d !== domain); delete s.rule_schedules[kind][domain]; return s; });
 }
 
 // Normalises what a person types into a domain: strips scheme, path, port, www-less, lowercases.
