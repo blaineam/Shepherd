@@ -143,6 +143,15 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		}
 	}
 
+	acctEngine, err := startAccountability(ctx, cfg, engine, registry)
+	if err != nil {
+		return err
+	}
+	if acctEngine != nil {
+		defer acctEngine.Close()
+		deps.Accountability = acctEngine
+	}
+
 	if cfg.History.Mode == "encrypted" {
 		store, err := openHistory(cfg)
 		if err != nil {

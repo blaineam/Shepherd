@@ -28,6 +28,13 @@ export function createMgmt(api) {
     delCustomList: (id) => api('/api/policy/custom-lists/' + encodeURIComponent(id), { method: 'DELETE' }),
     refreshLists: (item) => post('/api/policy/refresh', item ? { item } : {}),
 
+    contacts: () => api('/api/accountability/contacts'),
+    addContact: (name, email) => post('/api/accountability/contacts', { name, email }),
+    deleteContact: (id) => api('/api/accountability/contacts/' + encodeURIComponent(id), { method: 'DELETE' }),
+    subscriptions: (contactId) => api('/api/accountability/subscriptions' + Q({ contact_id: contactId })),
+    addSubscription: (body) => post('/api/accountability/subscriptions', body),
+    deleteSubscription: (id) => api('/api/accountability/subscriptions/' + encodeURIComponent(id), { method: 'DELETE' }),
+
     upstreams: () => api('/api/upstreams'),
     testUpstream: (addr) => post('/api/upstreams/test', { addr }),
     addUpstream: (addr) => post('/api/upstreams', { addr }),

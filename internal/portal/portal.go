@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"shepherd/internal/accountability"
 	"shepherd/internal/devices"
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/geo"
@@ -64,6 +65,11 @@ type Deps struct {
 	DetectHome func(ctx context.Context) error
 	// Heartbeat is how often the live stream sends a keep-alive (default 15s).
 	Heartbeat time.Duration
+	// Accountability manages accountability-partner contacts and
+	// subscriptions (docs/ACCOUNTABILITY.md). Nil means the feature is not
+	// wired up (see cmd/shepherd's startAccountability): the API answers 404
+	// for every /api/accountability/... route instead of panicking.
+	Accountability *accountability.Engine
 }
 
 type Server struct {
@@ -323,6 +329,13 @@ func (s *Server) routes() {
 	h("POST /api/policy/custom-lists", s.addCustomList)
 	h("DELETE /api/policy/custom-lists/{id}", s.deleteCustomList)
 	h("POST /api/policy/refresh", s.refreshPolicy)
+
+	h("GET /api/accountability/contacts", s.listContacts)
+	h("POST /api/accountability/contacts", s.addContact)
+	h("DELETE /api/accountability/contacts/{id}", s.deleteContact)
+	h("GET /api/accountability/subscriptions", s.listSubscriptions)
+	h("POST /api/accountability/subscriptions", s.addSubscription)
+	h("DELETE /api/accountability/subscriptions/{id}", s.deleteSubscription)
 
 	h("GET /api/upstreams", s.getUpstreams)
 	h("POST /api/upstreams/test", s.testUpstream)
