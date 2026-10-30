@@ -74,7 +74,12 @@ func TestQueriesPagingParameters(t *testing.T) {
 
 func TestCookieAuthWorksAndStillNeedsCustomHeaderToChangeState(t *testing.T) {
 	ts, filter := newTestServer(t)
-	cookie := &http.Cookie{Name: cookieName, Value: strings.Repeat("t", 64)}
+	login := do(t, "POST", ts.URL+"/api/login", "", `{"token":"`+strings.Repeat("t", 64)+`"}`, nil)
+	cookies := login.Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("login cookies = %+v", cookies)
+	}
+	cookie := cookies[0]
 	req, _ := http.NewRequest("GET", ts.URL+"/api/rules", nil)
 	req.AddCookie(cookie)
 	res, _ := http.DefaultClient.Do(req)

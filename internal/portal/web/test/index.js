@@ -26,3 +26,4 @@ import './demomgmt.test.js';
 import './names.test.js';
 import './wander.test.js';
 import './alarms.test.js';
+import './locking.test.js';

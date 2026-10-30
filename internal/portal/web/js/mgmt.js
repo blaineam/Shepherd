@@ -72,5 +72,12 @@ export function createMgmt(api) {
     portscanDevices: () => api('/api/portscan/devices'),
     portscanDevice: (id) => api('/api/portscan/devices/' + encodeURIComponent(id)),
     scanPorts: (deviceId) => post('/api/portscan/scan', deviceId ? { device_id: deviceId } : {}),
+
+    setLockingSettings: (idleLockMinutes) => post('/api/settings/locking', { idle_lock_minutes: idleLockMinutes }),
+    setPIN: (pin) => post('/api/pin', { pin }),
+    clearPIN: () => api('/api/pin', { method: 'DELETE' }),
+    trustedDevices: () => api('/api/trusted-devices'),
+    revokeTrustedDevice: (id) => api('/api/trusted-devices/' + encodeURIComponent(id), { method: 'DELETE' }),
+    lock: () => post('/api/lock', {}),
   };
 }

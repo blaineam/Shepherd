@@ -22,6 +22,9 @@ It needs WebGL for the globe and falls back to the Details view without it. It r
 trying the interface. Options: `rate=N` events per second (default 5), `demo=bytes` to see byte-weighted lanes,
 `rotate=0` to stop the auto-rotate, `nogl=1` to test the fallback, `debug=1` to expose `window.__hud` for measuring.
 
+The portal is also locked behind demo data by default until you sign in with the token or a PIN, and relocks itself
+after you are idle. See [LOCKING.md](LOCKING.md).
+
 ## How it gets data
 
 Live entries come from `GET /api/stream` (Server-Sent Events, resuming from the last event) and fall back to polling
