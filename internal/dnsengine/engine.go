@@ -21,6 +21,9 @@ type Engine struct {
 	BlockNXDOMAIN bool
 	// Geo places answer addresses on the globe. Nil disables geolocation.
 	Geo Geo
+	// Clients maps a client address to its device and groups for scoped
+	// policy; nil means every client gets network scope only.
+	Clients ClientScopes
 }
 
 func clientIP(a net.Addr) string {
@@ -143,7 +146,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		entry.Type = fmt.Sprintf("TYPE%d", q.Qtype)
 	}
 
-	d := e.Filter.Check(entry.Name)
+	d := e.Filter.CheckFor(entry.Client, entry.Name, e.Clients)
 	if d.Blocked {
 		resp := e.sinkhole(r, q, d.NXDOMAIN)
 		entry.Action, entry.Reason, entry.Rcode = "blocked", d.Reason, dns.RcodeToString[resp.Rcode]

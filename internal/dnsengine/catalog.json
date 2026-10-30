@@ -1,0 +1,1839 @@
+[
+  {
+    "id": "hagezi-light",
+    "kind": "list",
+    "name": "HaGeZi Light",
+    "category": "ads-trackers",
+    "description": "Lightweight ad, tracker and malware blocking with very few false positives.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/light-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 1575249
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 74278,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-multi",
+    "kind": "list",
+    "name": "HaGeZi Normal",
+    "category": "ads-trackers",
+    "description": "Balanced all-round protection: ads, trackers, malware, phishing.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/multi-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 3468903
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 172633,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-pro",
+    "kind": "list",
+    "name": "HaGeZi Pro",
+    "category": "ads-trackers",
+    "description": "Extended protection against ads, trackers, telemetry, phishing, malware and scams. Recommended default.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 4021906
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 211671,
+    "recommended": true,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-pro-plus",
+    "kind": "list",
+    "name": "HaGeZi Pro++",
+    "category": "ads-trackers",
+    "description": "Aggressive extension of Pro; may need occasional allow rules.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.plus-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 4284363
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 225331,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-ultimate",
+    "kind": "list",
+    "name": "HaGeZi Ultimate",
+    "category": "ads-trackers",
+    "description": "Strictest HaGeZi preset; expect some breakage.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/ultimate-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 4770867
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 249411,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-popups",
+    "kind": "list",
+    "name": "HaGeZi Pop-Up Ads",
+    "category": "ads-trackers",
+    "description": "Pop-up, pop-under and aggressive advertising networks.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/popupads-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 937281
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 53756,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-tif-medium",
+    "kind": "list",
+    "name": "HaGeZi Threat Intelligence (medium)",
+    "category": "malware-phishing",
+    "description": "Malware, phishing, scam and cryptojacking domains from threat-intelligence feeds. Recommended default.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.medium-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 7875522
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 414867,
+    "recommended": true,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-fake",
+    "kind": "list",
+    "name": "HaGeZi Fake Stores",
+    "category": "malware-phishing",
+    "description": "Fake web shops, fake streaming and other scam storefronts.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/fake-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 305551
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 17720,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-dyndns",
+    "kind": "list",
+    "name": "HaGeZi Dynamic DNS",
+    "category": "malware-phishing",
+    "description": "Dynamic-DNS hostnames often used to host malware command servers.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/dyndns-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 20333
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 1541,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-spam-tlds",
+    "kind": "list",
+    "name": "HaGeZi Abused TLDs",
+    "category": "malware-phishing",
+    "description": "Top-level domains dominated by spam and abuse.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/spam-tlds-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 4447
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 445,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-hoster",
+    "kind": "list",
+    "name": "HaGeZi Free Hosters",
+    "category": "malware-phishing",
+    "description": "Free hosting and tunnelling services frequently abused for phishing.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/hoster-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 13065
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 1082,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-gambling",
+    "kind": "list",
+    "name": "HaGeZi Gambling",
+    "category": "gambling",
+    "description": "Gambling, betting and casino sites.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/gambling.medium-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 3424675
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 186850,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-piracy",
+    "kind": "list",
+    "name": "HaGeZi Piracy",
+    "category": "piracy",
+    "description": "Piracy and illegal streaming sites.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/anti.piracy-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 1129386
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 57850,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-nosafesearch",
+    "kind": "list",
+    "name": "HaGeZi No SafeSearch",
+    "category": "adult",
+    "description": "Search engines that ignore SafeSearch enforcement; useful on kids' devices.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/nosafesearch-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 3925
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 203,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-native-apple",
+    "kind": "list",
+    "name": "HaGeZi Apple Telemetry",
+    "category": "telemetry",
+    "description": "Apple analytics and telemetry hostnames. Can affect some Apple services.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/native.apple-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 3713
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 110,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-native-samsung",
+    "kind": "list",
+    "name": "HaGeZi Samsung Telemetry",
+    "category": "telemetry",
+    "description": "Samsung phone, TV and appliance telemetry and ads.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/native.samsung-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 6332
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 201,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hagezi-native-windows",
+    "kind": "list",
+    "name": "HaGeZi Windows and Office Telemetry",
+    "category": "telemetry",
+    "description": "Microsoft Windows and Office telemetry hostnames.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/native.winoffice-onlydomains.txt",
+        "format": "domains",
+        "size_bytes": 12579
+      }
+    ],
+    "license": "HaGeZi DNS Blocklists, GPL-3.0. Only the list URL is referenced; lists are downloaded by your own Shepherd. https://github.com/hagezi/dns-blocklists",
+    "homepage": "https://github.com/hagezi/dns-blocklists",
+    "approx_entries": 383,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-ads",
+    "kind": "list",
+    "name": "Block List Project Ads",
+    "category": "ads-trackers",
+    "description": "Advertising domains.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/ads.txt",
+        "format": "hosts",
+        "size_bytes": 6862355
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 235901,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-tracking",
+    "kind": "list",
+    "name": "Block List Project Tracking",
+    "category": "ads-trackers",
+    "description": "Tracking and analytics domains.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/tracking.txt",
+        "format": "hosts",
+        "size_bytes": 4215541
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 143876,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-phishing",
+    "kind": "list",
+    "name": "Block List Project Phishing",
+    "category": "malware-phishing",
+    "description": "Phishing domains.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/phishing.txt",
+        "format": "hosts",
+        "size_bytes": 5686136
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 190215,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-scam",
+    "kind": "list",
+    "name": "Block List Project Scams",
+    "category": "malware-phishing",
+    "description": "Scam domains.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/scam.txt",
+        "format": "hosts",
+        "size_bytes": 223675
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 8527,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-fraud",
+    "kind": "list",
+    "name": "Block List Project Fraud",
+    "category": "malware-phishing",
+    "description": "Fraud domains.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/fraud.txt",
+        "format": "hosts",
+        "size_bytes": 8590241
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 285200,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-ransomware",
+    "kind": "list",
+    "name": "Block List Project Ransomware",
+    "category": "malware-phishing",
+    "description": "Ransomware infrastructure.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/ransomware.txt",
+        "format": "hosts",
+        "size_bytes": 66764
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 1904,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-crypto",
+    "kind": "list",
+    "name": "Block List Project Crypto Miners",
+    "category": "malware-phishing",
+    "description": "Cryptojacking and coin-miner domains.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/crypto.txt",
+        "format": "hosts",
+        "size_bytes": 27787
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 1274,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-abuse",
+    "kind": "list",
+    "name": "Block List Project Abuse",
+    "category": "malware-phishing",
+    "description": "Domains reported for abuse.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/abuse.txt",
+        "format": "hosts",
+        "size_bytes": 12905916
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 435119,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-redirect",
+    "kind": "list",
+    "name": "Block List Project Redirects",
+    "category": "ads-trackers",
+    "description": "Redirect and click-tracking domains.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/redirect.txt",
+        "format": "hosts",
+        "size_bytes": 2628741
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 108685,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-porn",
+    "kind": "list",
+    "name": "Block List Project Adult Content",
+    "category": "adult",
+    "description": "Adult content sites (large list).",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/porn.txt",
+        "format": "hosts",
+        "size_bytes": 26095053
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 953393,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-gambling",
+    "kind": "list",
+    "name": "Block List Project Gambling",
+    "category": "gambling",
+    "description": "Gambling and betting sites.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/gambling.txt",
+        "format": "hosts",
+        "size_bytes": 8368035
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 342623,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-drugs",
+    "kind": "list",
+    "name": "Block List Project Drugs",
+    "category": "substances",
+    "description": "Illegal drug marketplaces and related sites.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/drugs.txt",
+        "format": "hosts",
+        "size_bytes": 699414
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 26029,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-vaping",
+    "kind": "list",
+    "name": "Block List Project Vaping",
+    "category": "substances",
+    "description": "Vaping and e-cigarette shops.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/vaping.txt",
+        "format": "hosts",
+        "size_bytes": 3332
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 108,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-piracy",
+    "kind": "list",
+    "name": "Block List Project Piracy",
+    "category": "piracy",
+    "description": "Piracy sites.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/piracy.txt",
+        "format": "hosts",
+        "size_bytes": 55890
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 2154,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-torrent",
+    "kind": "list",
+    "name": "Block List Project Torrents",
+    "category": "piracy",
+    "description": "Torrent trackers and indexes.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/torrent.txt",
+        "format": "hosts",
+        "size_bytes": 65780
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 2620,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blp-smart-tv",
+    "kind": "list",
+    "name": "Block List Project Smart TV",
+    "category": "telemetry",
+    "description": "Smart TV telemetry and advertising.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/smart-tv.txt",
+        "format": "hosts",
+        "size_bytes": 2783
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 77,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "stevenblack-unified",
+    "kind": "list",
+    "name": "StevenBlack Unified Hosts",
+    "category": "ads-trackers",
+    "description": "Unified hosts file for ads and malware.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+        "format": "hosts",
+        "size_bytes": 2338341
+      }
+    ],
+    "license": "StevenBlack/hosts, MIT License. https://github.com/StevenBlack/hosts",
+    "homepage": "https://github.com/StevenBlack/hosts",
+    "approx_entries": 76750,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "adguard-dns",
+    "kind": "list",
+    "name": "AdGuard DNS Filter",
+    "category": "ads-trackers",
+    "description": "AdGuard's DNS blocklist of ads, trackers and malware.",
+    "sources": [
+      {
+        "url": "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt",
+        "format": "adblock",
+        "size_bytes": 4534879
+      }
+    ],
+    "license": "AdGuard DNS filter, GPL-3.0. https://github.com/AdguardTeam/AdGuardSDNSFilter",
+    "homepage": "https://github.com/AdguardTeam/AdGuardSDNSFilter",
+    "approx_entries": 185484,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "facebook",
+    "kind": "app",
+    "name": "Facebook",
+    "category": "social",
+    "description": "Facebook and its CDN and API hostnames.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/facebook",
+        "format": "domains",
+        "size_bytes": 146
+      },
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/facebook.txt",
+        "format": "hosts",
+        "size_bytes": 934943
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 22371,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "instagram",
+    "kind": "app",
+    "name": "Instagram",
+    "category": "social",
+    "description": "Instagram app and CDN.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/instagram",
+        "format": "domains",
+        "size_bytes": 31
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 2,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "whatsapp",
+    "kind": "app",
+    "name": "WhatsApp",
+    "category": "messaging",
+    "description": "WhatsApp messaging and calls.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/whatsapp",
+        "format": "domains",
+        "size_bytes": 26
+      },
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/whatsapp.txt",
+        "format": "hosts",
+        "size_bytes": 8388
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 228,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "messenger",
+    "kind": "app",
+    "name": "Messenger",
+    "category": "messaging",
+    "description": "Facebook Messenger.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/messenger",
+        "format": "domains",
+        "size_bytes": 65
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 3,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "meta",
+    "kind": "app",
+    "name": "Meta (Facebook, Instagram, WhatsApp, Messenger)",
+    "category": "social",
+    "description": "Umbrella item: every Meta app in one switch.",
+    "sources": [],
+    "includes": [
+      "facebook",
+      "instagram",
+      "whatsapp",
+      "messenger"
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "discord",
+    "kind": "app",
+    "name": "Discord",
+    "category": "messaging",
+    "description": "Discord chat, voice and CDN.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/discord",
+        "format": "domains",
+        "size_bytes": 67
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 5,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "tiktok",
+    "kind": "app",
+    "name": "TikTok",
+    "category": "social",
+    "description": "TikTok app, CDN and analytics.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/tiktok",
+        "format": "domains",
+        "size_bytes": 2082
+      },
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/tiktok.txt",
+        "format": "hosts",
+        "size_bytes": 126628
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 3815,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "snapchat",
+    "kind": "app",
+    "name": "Snapchat",
+    "category": "social",
+    "description": "Snapchat app and CDN.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/snapchat",
+        "format": "domains",
+        "size_bytes": 161
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 10,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "twitter",
+    "kind": "app",
+    "name": "X (Twitter)",
+    "category": "social",
+    "description": "X, formerly Twitter, including t.co and media.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/twitter",
+        "format": "domains",
+        "size_bytes": 71
+      },
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/twitter.txt",
+        "format": "hosts",
+        "size_bytes": 38266
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 1200,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "reddit",
+    "kind": "app",
+    "name": "Reddit",
+    "category": "social",
+    "description": "Reddit and its media hosts.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/reddit",
+        "format": "domains",
+        "size_bytes": 74
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 5,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "pinterest",
+    "kind": "app",
+    "name": "Pinterest",
+    "category": "social",
+    "description": "Pinterest and regional domains.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/pinterest",
+        "format": "domains",
+        "size_bytes": 684
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 49,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "tumblr",
+    "kind": "app",
+    "name": "Tumblr",
+    "category": "social",
+    "description": "Tumblr blogs.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/tumblr",
+        "format": "domains",
+        "size_bytes": 11
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 1,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "mastodon",
+    "kind": "app",
+    "name": "Mastodon",
+    "category": "social",
+    "description": "Popular Mastodon instances.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/mastodon",
+        "format": "domains",
+        "size_bytes": 643
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 51,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "bereal",
+    "kind": "app",
+    "name": "BeReal",
+    "category": "social",
+    "description": "BeReal.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/bereal",
+        "format": "domains",
+        "size_bytes": 19
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 2,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "vk",
+    "kind": "app",
+    "name": "VK",
+    "category": "social",
+    "description": "VK social network.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/vk",
+        "format": "domains",
+        "size_bytes": 87
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 8,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "9gag",
+    "kind": "app",
+    "name": "9GAG",
+    "category": "social",
+    "description": "9GAG meme site.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/9gag",
+        "format": "domains",
+        "size_bytes": 20
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 2,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "imgur",
+    "kind": "app",
+    "name": "Imgur",
+    "category": "social",
+    "description": "Imgur image hosting.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/imgur",
+        "format": "domains",
+        "size_bytes": 10
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 1,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "youtube",
+    "kind": "app",
+    "name": "YouTube",
+    "category": "streaming",
+    "description": "YouTube, YouTube Kids and video CDN.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/youtube",
+        "format": "domains",
+        "size_bytes": 261
+      },
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/youtube.txt",
+        "format": "hosts",
+        "size_bytes": 1052881
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 24298,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "netflix",
+    "kind": "app",
+    "name": "Netflix",
+    "category": "streaming",
+    "description": "Netflix streaming.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/netflix",
+        "format": "domains",
+        "size_bytes": 73
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 6,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "disneyplus",
+    "kind": "app",
+    "name": "Disney+",
+    "category": "streaming",
+    "description": "Disney+ streaming.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/disneyplus",
+        "format": "domains",
+        "size_bytes": 123
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 6,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "primevideo",
+    "kind": "app",
+    "name": "Prime Video",
+    "category": "streaming",
+    "description": "Amazon Prime Video streaming hostnames (not the shopping site).",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/primevideo",
+        "format": "domains",
+        "size_bytes": 31
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 2,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hulu",
+    "kind": "app",
+    "name": "Hulu",
+    "category": "streaming",
+    "description": "Hulu streaming.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/hulu",
+        "format": "domains",
+        "size_bytes": 9
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 1,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "hbomax",
+    "kind": "app",
+    "name": "HBO Max",
+    "category": "streaming",
+    "description": "HBO Max streaming.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/hbomax",
+        "format": "domains",
+        "size_bytes": 19
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 2,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "twitch",
+    "kind": "app",
+    "name": "Twitch",
+    "category": "streaming",
+    "description": "Twitch live streaming.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/twitch",
+        "format": "domains",
+        "size_bytes": 104
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 8,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "spotify",
+    "kind": "app",
+    "name": "Spotify",
+    "category": "streaming",
+    "description": "Spotify music streaming.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/spotify",
+        "format": "domains",
+        "size_bytes": 294
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 12,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "dailymotion",
+    "kind": "app",
+    "name": "Dailymotion",
+    "category": "streaming",
+    "description": "Dailymotion video.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/dailymotion",
+        "format": "domains",
+        "size_bytes": 39
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 3,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "vimeo",
+    "kind": "app",
+    "name": "Vimeo",
+    "category": "streaming",
+    "description": "Vimeo video.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/vimeo",
+        "format": "domains",
+        "size_bytes": 71
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 4,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "telegram",
+    "kind": "app",
+    "name": "Telegram",
+    "category": "messaging",
+    "description": "Telegram messaging.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/telegram",
+        "format": "domains",
+        "size_bytes": 89
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 4,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "signal",
+    "kind": "app",
+    "name": "Signal",
+    "category": "messaging",
+    "description": "Signal messaging.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/signal",
+        "format": "domains",
+        "size_bytes": 49
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 2,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "skype",
+    "kind": "app",
+    "name": "Skype",
+    "category": "messaging",
+    "description": "Skype calls and chat.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/skype",
+        "format": "domains",
+        "size_bytes": 103
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 5,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "zoom",
+    "kind": "app",
+    "name": "Zoom",
+    "category": "messaging",
+    "description": "Zoom video meetings.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/zoom",
+        "format": "domains",
+        "size_bytes": 48
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 4,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "google-chat",
+    "kind": "app",
+    "name": "Google Chat",
+    "category": "messaging",
+    "description": "Google Chat.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/google-chat",
+        "format": "domains",
+        "size_bytes": 16
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 1,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "steam",
+    "kind": "app",
+    "name": "Steam",
+    "category": "gaming",
+    "description": "Steam store, chat and downloads.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/steam",
+        "format": "domains",
+        "size_bytes": 272
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 12,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "roblox",
+    "kind": "app",
+    "name": "Roblox",
+    "category": "gaming",
+    "description": "Roblox.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/roblox",
+        "format": "domains",
+        "size_bytes": 22
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 2,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "epicgames",
+    "kind": "app",
+    "name": "Epic Games",
+    "category": "gaming",
+    "description": "Epic Games store and launcher.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/fortnite",
+        "format": "domains",
+        "size_bytes": 14
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 1,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "fortnite",
+    "kind": "app",
+    "name": "Fortnite",
+    "category": "gaming",
+    "description": "Fortnite.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/fortnite",
+        "format": "domains",
+        "size_bytes": 14
+      },
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/fortnite.txt",
+        "format": "hosts",
+        "size_bytes": 647
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 6,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "minecraft",
+    "kind": "app",
+    "name": "Minecraft",
+    "category": "gaming",
+    "description": "Minecraft.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/minecraft",
+        "format": "domains",
+        "size_bytes": 47
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 3,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "xboxlive",
+    "kind": "app",
+    "name": "Xbox Live",
+    "category": "gaming",
+    "description": "Xbox Live online services.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/xboxlive",
+        "format": "domains",
+        "size_bytes": 22
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 2,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "playstation-network",
+    "kind": "app",
+    "name": "PlayStation Network",
+    "category": "gaming",
+    "description": "PlayStation Network online services.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/playstation-network",
+        "format": "domains",
+        "size_bytes": 16
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 1,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "blizzard",
+    "kind": "app",
+    "name": "Blizzard",
+    "category": "gaming",
+    "description": "Blizzard and Battle.net.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/blizzard",
+        "format": "domains",
+        "size_bytes": 24
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 2,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "leagueoflegends",
+    "kind": "app",
+    "name": "League of Legends",
+    "category": "gaming",
+    "description": "League of Legends.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/leagueoflegends",
+        "format": "domains",
+        "size_bytes": 38
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 2,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "tinder",
+    "kind": "app",
+    "name": "Tinder",
+    "category": "dating",
+    "description": "Tinder dating app.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/tinder",
+        "format": "domains",
+        "size_bytes": 41
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 3,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "chatgpt",
+    "kind": "app",
+    "name": "ChatGPT",
+    "category": "ai",
+    "description": "ChatGPT.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/chatgpt",
+        "format": "domains",
+        "size_bytes": 16
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 1,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "ebay",
+    "kind": "app",
+    "name": "eBay",
+    "category": "shopping",
+    "description": "eBay marketplace.",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/ebay",
+        "format": "domains",
+        "size_bytes": 272
+      }
+    ],
+    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
+    "homepage": "https://github.com/nextdns/services",
+    "approx_entries": 27,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "adobe",
+    "kind": "app",
+    "name": "Adobe",
+    "category": "software",
+    "description": "Adobe activation and telemetry hosts (blocking can break Creative Cloud licensing).",
+    "sources": [
+      {
+        "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/adobe.txt",
+        "format": "hosts",
+        "size_bytes": 11409
+      }
+    ],
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists",
+    "homepage": "https://github.com/blocklistproject/Lists",
+    "approx_entries": 384,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "social",
+    "kind": "category",
+    "name": "Social",
+    "category": "",
+    "description": "Social networks and image boards.",
+    "sources": [],
+    "includes": [
+      "meta",
+      "tiktok",
+      "snapchat",
+      "twitter",
+      "reddit",
+      "pinterest",
+      "tumblr",
+      "mastodon",
+      "bereal",
+      "vk",
+      "9gag",
+      "imgur"
+    ],
+    "license": "Composed of the listed items; see each item's license.",
+    "homepage": "",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "messaging",
+    "kind": "category",
+    "name": "Messaging and Calls",
+    "category": "",
+    "description": "Chat apps and video calling.",
+    "sources": [],
+    "includes": [
+      "whatsapp",
+      "messenger",
+      "discord",
+      "telegram",
+      "signal",
+      "skype",
+      "zoom",
+      "google-chat"
+    ],
+    "license": "Composed of the listed items; see each item's license.",
+    "homepage": "",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "streaming",
+    "kind": "category",
+    "name": "Streaming",
+    "category": "",
+    "description": "Video, music and live-streaming services.",
+    "sources": [],
+    "includes": [
+      "youtube",
+      "netflix",
+      "disneyplus",
+      "primevideo",
+      "hulu",
+      "hbomax",
+      "twitch",
+      "spotify",
+      "dailymotion",
+      "vimeo"
+    ],
+    "license": "Composed of the listed items; see each item's license.",
+    "homepage": "",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "gaming",
+    "kind": "category",
+    "name": "Gaming",
+    "category": "",
+    "description": "Game stores, launchers and online services.",
+    "sources": [],
+    "includes": [
+      "steam",
+      "roblox",
+      "epicgames",
+      "fortnite",
+      "minecraft",
+      "xboxlive",
+      "playstation-network",
+      "blizzard",
+      "leagueoflegends"
+    ],
+    "license": "Composed of the listed items; see each item's license.",
+    "homepage": "",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "adult",
+    "kind": "category",
+    "name": "Adult",
+    "category": "",
+    "description": "Adult content, plus search engines that skip SafeSearch.",
+    "sources": [],
+    "includes": [
+      "blp-porn",
+      "hagezi-nosafesearch"
+    ],
+    "license": "Composed of the listed items; see each item's license.",
+    "homepage": "",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "gambling",
+    "kind": "category",
+    "name": "Gambling",
+    "category": "",
+    "description": "Gambling, betting and casino sites.",
+    "sources": [],
+    "includes": [
+      "hagezi-gambling",
+      "blp-gambling"
+    ],
+    "license": "Composed of the listed items; see each item's license.",
+    "homepage": "",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "dating",
+    "kind": "category",
+    "name": "Dating",
+    "category": "",
+    "description": "Dating apps.",
+    "sources": [],
+    "includes": [
+      "tinder"
+    ],
+    "license": "Composed of the listed items; see each item's license.",
+    "homepage": "",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "ads-trackers",
+    "kind": "category",
+    "name": "Ads and Trackers",
+    "category": "",
+    "description": "Advertising, tracking and pop-up networks.",
+    "sources": [],
+    "includes": [
+      "hagezi-pro",
+      "hagezi-popups"
+    ],
+    "license": "Composed of the listed items; see each item's license.",
+    "homepage": "",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "malware-phishing",
+    "kind": "category",
+    "name": "Malware and Phishing",
+    "category": "",
+    "description": "Malware, phishing, scams and cryptojacking.",
+    "sources": [],
+    "includes": [
+      "hagezi-tif-medium",
+      "blp-phishing",
+      "blp-scam",
+      "blp-ransomware",
+      "blp-crypto"
+    ],
+    "license": "Composed of the listed items; see each item's license.",
+    "homepage": "",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "piracy",
+    "kind": "category",
+    "name": "Piracy and Torrents",
+    "category": "",
+    "description": "Piracy sites and torrent trackers.",
+    "sources": [],
+    "includes": [
+      "hagezi-piracy",
+      "blp-piracy",
+      "blp-torrent"
+    ],
+    "license": "Composed of the listed items; see each item's license.",
+    "homepage": "",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "substances",
+    "kind": "category",
+    "name": "Drugs and Vaping",
+    "category": "",
+    "description": "Drug marketplaces and vaping shops.",
+    "sources": [],
+    "includes": [
+      "blp-drugs",
+      "blp-vaping"
+    ],
+    "license": "Composed of the listed items; see each item's license.",
+    "homepage": "",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "telemetry",
+    "kind": "category",
+    "name": "Device Telemetry",
+    "category": "",
+    "description": "Smart TV, phone and OS telemetry.",
+    "sources": [],
+    "includes": [
+      "blp-smart-tv",
+      "hagezi-native-samsung",
+      "hagezi-native-windows"
+    ],
+    "license": "Composed of the listed items; see each item's license.",
+    "homepage": "",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "ai",
+    "kind": "category",
+    "name": "AI Chat",
+    "category": "",
+    "description": "AI chat assistants.",
+    "sources": [],
+    "includes": [
+      "chatgpt"
+    ],
+    "license": "Composed of the listed items; see each item's license.",
+    "homepage": "",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "shopping",
+    "kind": "category",
+    "name": "Shopping",
+    "category": "",
+    "description": "Online marketplaces.",
+    "sources": [],
+    "includes": [
+      "ebay"
+    ],
+    "license": "Composed of the listed items; see each item's license.",
+    "homepage": "",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  },
+  {
+    "id": "software",
+    "kind": "category",
+    "name": "Software Services",
+    "category": "",
+    "description": "Vendor activation and telemetry hosts.",
+    "sources": [],
+    "includes": [
+      "adobe"
+    ],
+    "license": "Composed of the listed items; see each item's license.",
+    "homepage": "",
+    "approx_entries": 0,
+    "recommended": false,
+    "verified_at": "2026-10-29"
+  }
+]
