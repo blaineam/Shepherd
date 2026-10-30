@@ -27,7 +27,7 @@ function labelWrap(label, input) {
 
 export function createAlarms({ root, mgmt, notify, toaster }) {
   let view = 'alarms'; // or 'rules'
-  let filters = { severity: '', state: '', text: '' };
+  let filters = { severity: '', state: '', text: '', archived: false };
   let items = [];
   let total = 0;
   let loadError = null;
@@ -81,7 +81,16 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
     searchTimer = setTimeout(() => { filters.text = input.value.trim(); resetAndLoad(); }, 220);
   });
 
-  head.append(title, viewSeg.root, sevSel, stateSel, searchBox);
+  // Archived alarms are dismissed from the default view (see docs/ALARMS.md);
+  // this toggle is the only way to bring them back into the list.
+  const archCb = el('input');
+  archCb.type = 'checkbox';
+  archCb.setAttribute('aria-label', 'Show archived alarms');
+  archCb.addEventListener('change', () => { filters.archived = archCb.checked; resetAndLoad(); });
+  const archToggle = el('label', 'al-archtoggle');
+  archToggle.append(archCb, el('span', '', 'Show archived'));
+
+  head.append(title, viewSeg.root, sevSel, stateSel, searchBox, archToggle);
 
   const main = el('div', 'al-main');
   const wrap = el('section', 'al-tablewrap panel-lite');
@@ -129,13 +138,17 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
     if (filters.severity) f.min_severity = filters.severity;
     if (filters.state) f.states = [filters.state];
     if (filters.text) f.text = filters.text;
+    if (filters.archived) f.include_archived = true;
     return f;
   }
 
   async function load(reset) {
     if (reset) items = [];
     try {
-      const r = await mgmt.alarms({ min_severity: filters.severity || undefined, states: filters.state || undefined, text: filters.text || undefined, offset: items.length, limit: PAGE_SIZE });
+      const r = await mgmt.alarms({
+        min_severity: filters.severity || undefined, states: filters.state || undefined, text: filters.text || undefined,
+        include_archived: filters.archived ? '1' : undefined, offset: items.length, limit: PAGE_SIZE,
+      });
       const got = Array.isArray(r.alarms) ? r.alarms : [];
       items = reset ? got : items.concat(got);
       total = Number.isFinite(r.total) ? r.total : items.length;
@@ -167,7 +180,7 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
 
   // ------------------------------------------------------------- rows
   function rowNode(a) {
-    const row = el('div', 'al-row' + (a.state === 'muted' ? ' muted' : '') + (sel.has(a.id) ? ' sel' : ''));
+    const row = el('div', 'al-row' + (a.state === 'muted' ? ' muted' : '') + (a.archived ? ' archived' : '') + (sel.has(a.id) ? ' sel' : ''));
     row.setAttribute('role', 'row');
 
     const cSel = el('div', 'c-sel');
@@ -198,6 +211,9 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
       muteBtn.setAttribute('aria-haspopup', 'true');
       actsCell.append(muteBtn);
     }
+    actsCell.append(a.archived
+      ? iconButton('refresh', 'Unarchive', () => archiveOne(a.id, false))
+      : iconButton('archive', 'Archive', () => archiveOne(a.id, true)));
     actsCell.append(iconButton('trash', 'Delete', () => deleteOne(a.id), 'danger-i'));
 
     row.append(cSel, sevCell, titleCell, devCell, stateCell, seenCell, actsCell);
@@ -233,6 +249,8 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
       case 'resolve': return 'Resolved';
       case 'delete': return 'Deleted';
       case 'mute': return 'Muted';
+      case 'archive': return 'Archived';
+      case 'unarchive': return 'Unarchived';
       default: return 'Updated';
     }
   }
@@ -272,12 +290,17 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
     const resB = button('Resolve', 'bb', () => runBulk('resolve'), 'shield');
     const muteB = button('Mute', 'bb', (e) => bulkMuteMenu(e.currentTarget), 'tag');
     muteB.setAttribute('aria-haspopup', 'true');
+    // Viewing archived alarms (the "Show archived" toggle) flips this to
+    // Unarchive, since that is almost always what a selection there wants.
+    const archB = filters.archived
+      ? button('Unarchive', 'bb', () => runBulk('unarchive'), 'refresh')
+      : button('Archive', 'bb', () => runBulk('archive'), 'archive');
     const delB = button('Delete', 'bb danger', async () => {
       const ok = await confirmDialog({ title: 'Delete ' + n + ' alarm' + (n === 1 ? '' : 's') + '?', body: 'This cannot be undone.', confirm: 'Delete', danger: true });
       if (ok) runBulk('delete');
     }, 'trash');
     const clear = iconButton('x', 'Clear selection', () => { sel.clear(); paintRows(); paintBulk(); }, 'bulk-x');
-    bulk.append(label, ackB, resB, muteB, delB, clear);
+    bulk.append(label, ackB, resB, muteB, archB, delB, clear);
   }
 
   // ------------------------------------------------------------- single-row actions
@@ -294,6 +317,12 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
   async function deleteOne(id) {
     const ok = await confirmDialog({ title: 'Delete this alarm?', body: 'This cannot be undone.', confirm: 'Delete', danger: true });
     if (ok) await act(() => mgmt.deleteAlarm(id), 'Deleted');
+  }
+
+  // Archive reuses the bulk endpoint with a single-ID selector, the same way
+  // every other batch op works, rather than a dedicated single-alarm route.
+  async function archiveOne(id, archive) {
+    await act(() => mgmt.alarmsBulk({ ids: [id], op: archive ? 'archive' : 'unarchive' }), archive ? 'Archived' : 'Unarchived');
   }
 
   // ------------------------------------------------------------- rules
@@ -387,7 +416,7 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
   function paintAll() {
     wrap.hidden = view !== 'alarms';
     rulesWrap.hidden = view !== 'rules';
-    sevSel.hidden = stateSel.hidden = searchBox.hidden = view !== 'alarms';
+    sevSel.hidden = stateSel.hidden = searchBox.hidden = archToggle.hidden = view !== 'alarms';
   }
 
   return {

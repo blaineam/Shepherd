@@ -774,6 +774,8 @@ tr.a-error .h-dom { color: var(--amber); }
 .al-seen { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
 .al-acts { display: flex; gap: 4px; justify-content: flex-end; }
 .al-row.muted .nm { opacity: .6; }
+.al-row.archived .nm { opacity: .5; }
+.al-archtoggle { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); white-space: nowrap; cursor: pointer; }
 .al-empty { padding: 48px 16px; text-align: center; }
 .al-rules { display: flex; flex-direction: column; gap: 10px; }
 .al-rule { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line2); background: var(--panel); }

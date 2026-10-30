@@ -529,13 +529,15 @@ count, so an archived alarm cannot keep contributing to a badge number elsewhere
 Every handler goes through the same token-and-CSRF-header `auth` middleware as the rest of the portal.
 
 **Portal UI.** A new Alarms tab (`internal/portal/web/js/alarmsview.js`, pure helpers in `js/alarms.js`)
-matches the Devices tab's structure: a `pg-head` with a severity/state filter and search box, a
-`panel-lite` table with per-row severity badges, state and relative last-seen time, single-row
-acknowledge/resolve/mute/delete, a `Selection`-backed checkbox column with a `bulkbar` for batch
-acknowledge/resolve/mute/delete (mute offers the same scopes as `alarms.MuteBy`, with sensible default
-durations — the Rules sub-view gives full control over match criteria and duration), and toasts with an
-Undo action for batch changes that return a handle. A segmented control switches to a Rules sub-view:
-create a mute rule (name, types, device IDs, domains, duration, reason) and remove existing ones.
+matches the Devices tab's structure: a `pg-head` with a severity/state filter, a search box and a "Show
+archived" checkbox (off by default, so the default view is the quieter one), a `panel-lite` table with
+per-row severity badges, state and relative last-seen time, single-row
+acknowledge/resolve/mute/archive-or-unarchive/delete, a `Selection`-backed checkbox column with a `bulkbar`
+for batch acknowledge/resolve/mute/archive (or unarchive, when "Show archived" is on)/delete (mute offers
+the same scopes as `alarms.MuteBy`, with sensible default durations — the Rules sub-view gives full control
+over match criteria and duration), and toasts with an Undo action for batch changes that return a handle.
+A segmented control switches to a Rules sub-view: create a mute rule (name, types, device IDs, domains,
+duration, reason) and remove existing ones.
 
 # Web Push in the browser
 
