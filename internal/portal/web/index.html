@@ -15,6 +15,10 @@
     <span class="pill live" id="live" role="status">connecting</span>
     <nav class="tabs" role="tablist" aria-label="View">
       <button type="button" role="tab" id="tab-hud" aria-selected="true" aria-controls="view-hud">HUD</button>
+      <button type="button" role="tab" id="tab-devices" aria-selected="false" aria-controls="view-devices">Devices</button>
+      <button type="button" role="tab" id="tab-blocking" aria-selected="false" aria-controls="view-blocking">Blocking</button>
+      <button type="button" role="tab" id="tab-upstreams" aria-selected="false" aria-controls="view-upstreams">Upstreams</button>
+      <button type="button" role="tab" id="tab-history" aria-selected="false" aria-controls="view-history">History</button>
       <button type="button" role="tab" id="tab-details" aria-selected="false" aria-controls="view-details">Details</button>
     </nav>
     <span class="spacer"></span>
@@ -63,6 +67,12 @@
               <button type="button" class="chip error" data-action="error" aria-pressed="true">error</button>
             </div>
           </div>
+          <div class="fl"><span>Unfiltered</span>
+            <div class="chips">
+              <button type="button" class="chip wander" id="f-wander" aria-pressed="false" title="Only devices in wandering mode: not filtered, still watched">wandering only</button>
+              <button type="button" class="chip shadow" id="f-shadow" aria-pressed="false" title="Only queries that filtering would have blocked">would have blocked</button>
+            </div>
+          </div>
           <label class="fl"><span>Domain</span><input id="f-search" type="search" placeholder="Search domains" autocomplete="off" spellcheck="false"></label>
         </div>
       </section>
@@ -83,7 +93,9 @@
           </div>
           <dl class="kv">
             <dt>Device</dt><dd class="mono" id="i-device"></dd>
+            <dt id="i-mode-k" hidden>Mode</dt><dd id="i-mode" hidden><span class="wbadge">Wandering</span> <span class="muted small">not filtered, still watched</span></dd>
             <dt>Domain</dt><dd class="mono" id="i-domain"></dd>
+            <dt id="i-shadow-k" hidden>Shadow</dt><dd class="small shadow-note" id="i-shadow" hidden></dd>
             <dt>Location</dt><dd id="i-loc"></dd>
             <dt id="i-count-k">Lookups</dt><dd class="mono" id="i-count"></dd>
             <dt>Last seen</dt><dd id="i-last"></dd>
@@ -148,6 +160,11 @@
     </footer>
   </main>
 
+  <main id="view-devices" class="page page-fill" role="tabpanel" aria-labelledby="tab-devices" hidden></main>
+  <main id="view-blocking" class="page" role="tabpanel" aria-labelledby="tab-blocking" hidden></main>
+  <main id="view-upstreams" class="page" role="tabpanel" aria-labelledby="tab-upstreams" hidden></main>
+  <main id="view-history" class="page" role="tabpanel" aria-labelledby="tab-history" hidden></main>
+
   <main id="view-details" role="tabpanel" aria-labelledby="tab-details" hidden>
     <p class="banner" id="details-banner" hidden></p>
     <section class="tiles">
@@ -208,9 +225,10 @@
         <ul class="list" id="top-blocked"></ul>
       </div>
     </section>
+    <p class="muted small attrib-foot">Locations: <a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">IP geolocation by DB-IP</a> (CC BY 4.0). Land: Natural Earth.</p>
   </main>
 
-  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <div id="toasts" class="toasts" role="status" aria-live="polite" hidden></div>
 
   <div id="login" class="overlay" hidden>
     <form id="login-form" class="modal">

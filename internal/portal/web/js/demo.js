@@ -66,6 +66,9 @@ export const TRACKERS = [
   'beacon.example.org', 'adserve.example.com',
 ];
 
+const TRACKER_SHADOWS = ['core-ads', 'tracker-shield', 'core-ads'];
+const APP_SHADOWS = ['instagram (group Kids)', 'tiktok (group Kids)', 'discord (group Kids)', 'tv-telemetry (Network)'];
+
 const PLACE_DEF = PLACES.map(([city, country, lat, lon], i) => ({ city, country, lat, lon, ip: '203.0.113.' + (10 + i) }));
 
 function gauss(rng) {
@@ -98,8 +101,9 @@ export function diurnal(t) {
 }
 
 export class DemoGenerator {
-  constructor({ seed = 7, rate = 5, bytes = false } = {}) {
+  constructor({ seed = 7, rate = 5, bytes = false, deviceOf = null } = {}) {
     this.seed = seed;
+    this.deviceOf = deviceOf;
     this.rate = rate;
     this.bytes = bytes;
     this.profiles = deviceProfiles(seed);
@@ -141,6 +145,21 @@ export class DemoGenerator {
       ms: action === 'cached' ? 0.1 + rng() * 0.4 : 4 + rng() * 40, rcode: action === 'blocked' ? 3 : action === 'error' ? 2 : 0,
     };
     if (dests) e.dests = dests;
+    const dev = this.deviceOf && this.deviceOf(device.ip);
+    if (dev) { e.device = dev.name; e.device_id = dev.id; }
+    if (dev && dev.wandering) {
+      // Unfiltered but watched: blocked queries go through, and some carry a shadow result.
+      const h = hash2(Math.floor(t), device.ip.length * 131 + 7);
+      e.wandering = true;
+      if (e.action === 'blocked') {
+        e.action = 'allowed'; e.rcode = 0; e.ms = 6 + (h % 30);
+        const p = PLACE_DEF[h % PLACE_DEF.length];
+        e.dests = [{ ip: p.ip, lat: p.lat, lon: p.lon, city: p.city, country: p.country }];
+        e.upstream = '203.0.113.53:853';
+        e.shadow = TRACKER_SHADOWS[h % TRACKER_SHADOWS.length];
+      } else if (e.action !== 'error' && h % 9 === 0) e.shadow = APP_SHADOWS[h % APP_SHADOWS.length];
+      if (e.shadow) e.reason = 'wandering';
+    }
     if (this.bytes && dests) {
       const down = Math.min(3e9, Math.exp(8.5 + gauss(rng) * 2.4) * (burst ? 40 : 1));
       e.bytes_down = Math.max(1, Math.round(down));

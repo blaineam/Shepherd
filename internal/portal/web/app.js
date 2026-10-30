@@ -15,6 +15,16 @@ import { validLatLon } from './js/geo.js';
 import { fmtClock } from './js/format.js';
 import { createDetails } from './js/details.js';
 import { createTiles, createFeed, createFilters, createLegend, createInspector, createTimeline } from './js/hud.js';
+import { createToaster } from './js/ui.js';
+import { createMgmt } from './js/mgmt.js';
+import { createNameBook } from './js/names.js';
+import { createPolicyStore } from './js/policystore.js';
+import { createDevices } from './js/devices.js';
+import { createBlocking, createDevicePolicy } from './js/blocking.js';
+import { createUpstreams } from './js/upstreamsview.js';
+import { createHistory } from './js/historyview.js';
+import { createDemoMgmt } from './js/demomgmt.js';
+import { DEVICE_BY_IP } from './js/demodata.js';
 
 const params = new URLSearchParams(location.search);
 const demoParam = params.get('demo');
@@ -28,7 +38,9 @@ const FEED_BURST = 12;
 
 // ---------------------------------------------------------------- core state
 const model = new Model();
-const gen = DEMO ? new DemoGenerator({ rate: Number(params.get('rate')) || 5, bytes: demoParam === 'bytes' || params.get('bytes') === '1' }) : null;
+const gen = DEMO ? new DemoGenerator({ rate: Number(params.get('rate')) || 5, bytes: demoParam === 'bytes' || params.get('bytes') === '1', deviceOf: (ip) => (demoMgmt ? demoMgmt.deviceOf(ip) : DEVICE_BY_IP.get(ip)) }) : null;
+const names = createNameBook();
+let demoMgmt = null;
 let home = DEMO ? { ...DEMO_HOME } : null;
 let globe = null;
 let mode = 'live';
@@ -41,14 +53,8 @@ let liveState = 'connecting';
 const scratch = [];
 const clock = new ReplayClock(Date.now(), 1);
 
-const toastEl = $('#toast');
-let toastTimer = 0;
-function notify(msg) {
-  toastEl.textContent = msg;
-  toastEl.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { toastEl.hidden = true; }, 4500);
-}
+const toaster = createToaster($('#toasts'));
+function notify(msg) { toaster.show(msg); }
 
 // ---------------------------------------------------------------- api
 let api;
@@ -59,6 +65,7 @@ function showLogin() {
 }
 if (DEMO) {
   api = createDemoApi({
+    mgmt: (demoMgmt = createDemoMgmt({ count: Math.min(20000, Math.max(9, Number(params.get('devices')) || 38)), gen, history: params.get('history') || 'encrypted' })),
     getCounters: () => model.counters,
     topClients: () => [...model.clients.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([key, n]) => ({ key, n })),
     home: DEMO_HOME,
@@ -68,13 +75,13 @@ if (DEMO) {
 }
 
 // ---------------------------------------------------------------- UI pieces
-const details = createDetails({ api, getRows: () => model.recentNewestFirst(400), notify, onRulesChanged: () => {} });
+const details = createDetails({ api, getRows: () => model.recentNewestFirst(400), notify, onRulesChanged: () => {}, names });
 const setTiles = createTiles();
 const legend = createLegend();
 const filters = createFilters({ model, onChange: onFiltersChanged });
 const feed = createFeed({ onSelect: selectEntry });
 const inspector = createInspector({
-  api, notify,
+  api, notify, names,
   onRule: () => { details.refreshRules(); },
 });
 inspector.onClose = () => { if (globe) globe.setSelected(null); $('#lbl-sel').hidden = true; };
@@ -152,7 +159,8 @@ function processEntries(list, vnow, animate) {
   const feedFrom = Math.max(0, list.length - FEED_BURST);
   for (let i = 0; i < list.length; i++) {
     const e = list[i];
-    filters.noteClient(e.client);
+    names.note(e);
+    filters.noteClient(e.client, e.device);
     const res = model.ingest(e);
     if (res === 'filtered') continue;
     if (i >= feedFrom) feed.push(e);
@@ -432,20 +440,62 @@ async function pollStatus() {
   } catch { /* the pill reflects connectivity */ }
 }
 
+// ---------------------------------------------------------------- management screens
+const mgmt = createMgmt(api);
+const policyStore = createPolicyStore({ mgmt });
+const VIEWS = ['hud', 'devices', 'blocking', 'upstreams', 'history', 'details'];
+
+const blocking = createBlocking({
+  root: $('#view-blocking'), mgmt, store: policyStore, notify,
+  getGroups: () => devicesView.groups,
+});
+const devicesView = createDevices({
+  root: $('#view-devices'), mgmt, notify, toaster,
+  renderBlocking: createDevicePolicy({ store: policyStore, notify, openBlocking: (scope, d) => openBlocking(scope, d) }),
+  onOpenHistory: (d) => { showView('history'); historyView.showFor(d); },
+  onGroupsChanged: () => blocking.onGroupsChanged(),
+});
+const upstreamsView = createUpstreams({ root: $('#view-upstreams'), mgmt, notify });
+const historyView = createHistory({
+  root: $('#view-history'), mgmt, notify,
+  onReplay: (t) => { showView('hud'); enterReplay(Math.max(0, t - 20000)); },
+  demo: DEMO ? { setLocked: (locked) => api('/api/demo/history-lock', { method: 'POST', body: JSON.stringify({ locked }) }) } : null,
+});
+
+function openBlocking(scope, device) {
+  blocking.setScope(scope, device && device.name, device && device.groups);
+  showView('blocking');
+}
+
 // ---------------------------------------------------------------- views
 function showView(name) {
+  if (!VIEWS.includes(name)) name = 'hud';
   const hud = name === 'hud';
   hudVisible = hud;
-  $('#view-hud').hidden = !hud;
-  $('#view-details').hidden = hud;
-  $('#tab-hud').setAttribute('aria-selected', hud ? 'true' : 'false');
-  $('#tab-details').setAttribute('aria-selected', hud ? 'false' : 'true');
-  document.body.classList.toggle('on-details', !hud);
-  try { history.replaceState(null, '', location.pathname + location.search + (hud ? '' : '#details')); } catch { /* ignore */ }
-  if (!hud) details.renderRows();
+  for (const v of VIEWS) {
+    $('#view-' + v).hidden = v !== name;
+    $('#tab-' + v).setAttribute('aria-selected', v === name ? 'true' : 'false');
+    $('#tab-' + v).tabIndex = v === name ? 0 : -1;
+  }
+  document.body.classList.toggle('on-details', name === 'details');
+  document.body.classList.toggle('on-page', !hud);
+  try { history.replaceState(null, '', location.pathname + location.search + (hud ? '' : '#' + name)); } catch { /* ignore */ }
+  if (name === 'details') details.renderRows();
+  if (name !== 'upstreams') upstreamsView.hide();
+  if (name === 'devices') devicesView.show();
+  else if (name === 'blocking') devicesView.reloadGroups().catch(() => {}).finally(() => blocking.show());
+  else if (name === 'upstreams') upstreamsView.show();
+  else if (name === 'history') historyView.show();
 }
-$('#tab-hud').addEventListener('click', () => showView('hud'));
-$('#tab-details').addEventListener('click', () => showView('details'));
+for (const v of VIEWS) $('#tab-' + v).addEventListener('click', () => showView(v));
+window.addEventListener('hashchange', () => { const h = location.hash.slice(1) || 'hud'; if (VIEWS.includes(h) && $('#view-' + h).hidden) showView(h); });
+$('.tabs').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  const cur = VIEWS.findIndex((v) => $('#tab-' + v).getAttribute('aria-selected') === 'true');
+  const next = VIEWS[(cur + (e.key === 'ArrowRight' ? 1 : VIEWS.length - 1)) % VIEWS.length];
+  showView(next);
+  $('#tab-' + next).focus();
+});
 setInterval(() => { if (!$('#view-details').hidden) details.renderRows(); }, 1000);
 
 // ---------------------------------------------------------------- toolbar
@@ -530,7 +580,7 @@ async function main() {
   updateTimelineAvailability();
   legend.setMode('lookups');
   document.body.classList.toggle('demo', DEMO);
-  if (location.hash === '#details') showView('details');
+  { const h = location.hash.slice(1); if (VIEWS.includes(h) && h !== 'hud') showView(h); }
   try {
     await initGlobe();
   } catch (err) {
@@ -540,7 +590,7 @@ async function main() {
     const b = $('#details-banner');
     b.textContent = 'The globe needs WebGL, which is not available in this browser. Everything else works here.';
     b.hidden = false;
-    if (location.hash !== '#hud') showView('details');
+    if (location.hash !== '#hud' && !VIEWS.includes(location.hash.slice(1))) showView('details');
     if (DEBUG) console.warn('globe disabled:', err && err.message);
   }
   bootData();

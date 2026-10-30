@@ -6,7 +6,7 @@
 import { $, el } from './dom.js';
 import { fmtNum, fmtUptime } from './format.js';
 
-export function createDetails({ api, getRows, notify, onRulesChanged = () => {} }) {
+export function createDetails({ api, getRows, notify, onRulesChanged = () => {}, names = null }) {
   let filter = '';
 
   function fillList(id, items, build) {
@@ -46,7 +46,10 @@ export function createDetails({ api, getRows, notify, onRulesChanged = () => {} 
     });
     const countRow = (c) => {
       const li = el('li');
-      li.append(el('span', 'grow', c.key), el('span', 'num', fmtNum(c.n)));
+      const label = names && names.has(c.key) ? names.label(c.key) : c.key;
+      const nm = el('span', 'grow', label);
+      if (label !== c.key) nm.title = c.key;
+      li.append(nm, el('span', 'num', fmtNum(c.n)));
       return li;
     };
     fillList('#top-clients', st.top_clients, countRow);
@@ -83,16 +86,20 @@ export function createDetails({ api, getRows, notify, onRulesChanged = () => {} 
     const rows = getRows();
     let shown = 0;
     for (const e of rows) {
-      if (f && !(`${e.client} ${e.name} ${e.action} ${e.reason || ''}`.toLowerCase().includes(f))) continue;
+      if (f && !(`${e.device || ''} ${e.client} ${e.name} ${e.action} ${e.reason || ''}`.toLowerCase().includes(f))) continue;
       if (++shown > 300) break;
       const tr = el('tr');
       const time = new Date(e.t).toLocaleTimeString();
-      tr.append(el('td', 'muted', time), el('td', '', e.client), el('td', 'dom', e.name), el('td', 'muted', e.type || ''));
+      const dev = el('td', '', e.device || e.client);
+      if (e.device) dev.title = e.client;
+      tr.append(el('td', 'muted', time), dev, el('td', 'dom', e.name), el('td', 'muted', e.type || ''));
       const res = el('td');
       const pill = el('span', 'act ' + e.action, e.action);
       if (e.reason) pill.title = e.reason;
       res.append(pill);
-      if (e.reason && e.action !== 'error') res.append(' ', el('span', 'muted small', e.reason));
+      if (e.wandering) res.append(' ', el('span', 'wbadge', 'wandering'));
+      if (e.shadow) res.append(' ', el('span', 'muted small shadow-note', 'would have blocked: ' + e.shadow));
+      else if (e.reason && e.action !== 'error' && e.reason !== 'wandering') res.append(' ', el('span', 'muted small', e.reason));
       tr.append(res, el('td', 'muted', e.upstream || ''), el('td', 'num', Number(e.ms || 0).toFixed(1)));
       const act = el('td');
       const kind = e.action === 'blocked' ? 'allow' : 'block';

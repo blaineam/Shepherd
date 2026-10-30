@@ -19,6 +19,10 @@ export function normalizeEntry(e) {
   e.t = Number.isFinite(t) ? t : Date.now();
   e.client = toStr(e.client);
   e.name = toStr(e.name);
+  e.device = toStr(e.device, 128);
+  e.device_id = toStr(e.device_id, 64);
+  e.wandering = e.wandering === true;
+  e.shadow = toStr(e.shadow, 160);
   if (!ACTIONS.includes(e.action)) e.action = 'error';
   if (Array.isArray(e.dests)) e.dests = e.dests.filter(validDest);
   else e.dests = null;
@@ -35,4 +39,9 @@ export function placeName(d) {
   const cc = toStr(d.country, 8);
   if (city && cc) return city + ', ' + cc;
   return city || cc || 'Unknown place';
+}
+
+// The friendly device name, falling back to the client address.
+export function deviceLabel(e) {
+  return (e && (e.device || e.client)) || '';
 }

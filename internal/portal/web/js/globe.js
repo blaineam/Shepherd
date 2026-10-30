@@ -315,7 +315,7 @@ export class Globe {
       A.iA[i * 3] = lane.from[0]; A.iA[i * 3 + 1] = lane.from[1]; A.iA[i * 3 + 2] = lane.from[2];
       A.iB[i * 3] = lane.to[0]; A.iB[i * 3 + 1] = lane.to[1]; A.iB[i * 3 + 2] = lane.to[2];
       A.iGeo[i * 2] = lane.angle; A.iGeo[i * 2 + 1] = lane.lift;
-      A.iStyle[st] = widthPx(s); A.iStyle[st + 1] = baseAlpha(s); A.iStyle[st + 2] = 0; A.iStyle[st + 3] = sel;
+      A.iStyle[st] = widthPx(s); A.iStyle[st + 1] = baseAlpha(s); A.iStyle[st + 2] = lane.wandering ? -1 : 0; A.iStyle[st + 3] = sel;
       A.iColor[i * 3] = col[0]; A.iColor[i * 3 + 1] = col[1]; A.iColor[i * 3 + 2] = col[2];
       D.pos[i * 3] = lane.to[0] * 1.005; D.pos[i * 3 + 1] = lane.to[1] * 1.005; D.pos[i * 3 + 2] = lane.to[2] * 1.005;
       D.size[i] = 3 + 6 * s + sel * 5;

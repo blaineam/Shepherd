@@ -110,6 +110,8 @@ void main() {
   } else {
     float flow = uReduced > 0.5 ? 1.0 : 0.72 + 0.28 * sin(vT * 64.0 - uTime * 2.4);
     inten = vAlpha * flow;
+    // Wandering lanes (mode < 0) are dashed: unfiltered traffic is visibly different.
+    if (vMode < -0.5) inten *= 0.25 + 0.9 * step(0.42, fract(vT * 30.0 - (uReduced > 0.5 ? 0.0 : uTime * 0.12)));
   }
   col = mix(col, vec3(1.0), vSel * 0.35);
   gl_FragColor = vec4(col * inten * (core + glow * 0.5), 1.0);

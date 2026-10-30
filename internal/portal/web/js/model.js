@@ -8,7 +8,7 @@ export class Model {
     this.lanes = new LaneTable({ cap: laneCap, halfLifeMs });
     this.recentCap = recentCap;
     this.recent = [];
-    this.filters = { device: '', actions: new Set(ACTIONS), q: '' };
+    this.filters = { device: '', actions: new Set(ACTIONS), q: '', wandering: false, shadow: false };
     this.clients = new Map();
     this.reset();
     this.touched = [];
@@ -43,6 +43,8 @@ export class Model {
     if (f.device && e.client !== f.device) return false;
     if (!f.actions.has(e.action)) return false;
     if (f.q && !e.name.toLowerCase().includes(f.q.toLowerCase())) return false;
+    if (f.wandering && !e.wandering) return false;
+    if (f.shadow && !e.shadow) return false;
     return true;
   }
 
@@ -50,6 +52,8 @@ export class Model {
     const f = this.filters;
     if (f.device && lane.client !== f.device) return false;
     if (!f.actions.has(lane.action)) return false;
+    if (f.wandering && !lane.wandering) return false;
+    if (f.shadow && !lane.shadow) return false;
     if (f.q) {
       const q = f.q.toLowerCase();
       let hit = false;

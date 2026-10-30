@@ -90,7 +90,7 @@ export class LaneTable {
           dest: { lat: d.lat, lon: d.lon, ip: d.ip, city: d.city, country: d.country },
           to: latLonToVec3(d.lat, d.lon),
           from: null, angle: 0, lift: 0,
-          action: entry.action, w: 0, wt: now, count: 0, bytes: 0,
+          action: entry.action, wandering: false, shadow: false, w: 0, wt: now, count: 0, bytes: 0,
           first: now, last: now, lastName: entry.name, lastComet: -Infinity,
           domains: new Map(), created: true,
         };
@@ -106,6 +106,8 @@ export class LaneTable {
       lane.count += 1;
       lane.bytes += (entry.bytes_up || 0) + (entry.bytes_down || 0) > 0 ? ((entry.bytes_up || 0) + (entry.bytes_down || 0)) / n : 0;
       lane.action = entry.action;
+      lane.wandering = !!entry.wandering;
+      lane.shadow = !!entry.shadow;
       if (now > lane.last) lane.last = now;
       lane.lastName = entry.name;
       this._noteDomain(lane, entry.name, now);

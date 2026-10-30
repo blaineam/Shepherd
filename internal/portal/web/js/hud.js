@@ -3,7 +3,8 @@
 // Everything from the network is placed with textContent.
 import { $, el } from './dom.js';
 import { fmtNum, fmtPct, fmtClock, fmtDateTime, fmtAgo } from './format.js';
-import { placeName } from './entry.js';
+import { placeName, deviceLabel } from './entry.js';
+import { shadowNote } from './wander.js';
 import { weightScale, weightFromScale, widthPx, legendText, fmtWeight, fmtBytes } from './weight.js';
 
 const FEED_MAX = 60;
@@ -29,8 +30,8 @@ export function createFeed({ onSelect }) {
     const li = el('li', 'feed-row');
     li.tabIndex = 0;
     li.setAttribute('role', 'button');
-    const f = { time: el('span', 'f-time mono'), dot: el('i', 'f-dot'), dev: el('span', 'f-dev mono'), name: el('span', 'f-name mono'), via: el('span', 'f-via') };
-    li.append(f.time, f.dot, f.name, f.dev, f.via);
+    const f = { time: el('span', 'f-time mono'), dot: el('i', 'f-dot'), dev: el('span', 'f-dev mono'), name: el('span', 'f-name mono'), via: el('span', 'f-via'), shadow: el('span', 'f-shadow') };
+    li.append(f.time, f.dot, f.name, f.dev, f.via, f.shadow);
     li._f = f;
     li.addEventListener('click', () => li._entry && onSelect(li._entry));
     li.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); li._entry && onSelect(li._entry); } });
@@ -41,13 +42,16 @@ export function createFeed({ onSelect }) {
     const li = shown >= FEED_MAX ? ul.lastElementChild : (pool.pop() || make());
     const f = li._f;
     li._entry = e;
-    li.className = 'feed-row a-' + e.action;
+    li.className = 'feed-row a-' + e.action + (e.wandering ? ' wand' : '');
+    const note = shadowNote(e);
+    f.shadow.textContent = note;
+    f.shadow.hidden = !note;
     f.time.textContent = fmtClock(e.t);
     f.name.textContent = e.name;
-    f.dev.textContent = e.client;
+    f.dev.textContent = deviceLabel(e) + (e.wandering ? ' \u00b7 W' : '');
     const place = e.dests && e.dests[0];
     f.via.textContent = place ? place.country || '' : e.action === 'blocked' ? 'shield' : '';
-    li.title = e.name + '  ' + e.client + (e.reason ? '  ' + e.reason : '');
+    li.title = e.name + '  ' + deviceLabel(e) + (e.device ? ' (' + e.client + ')' : '') + (e.wandering ? '  [wandering: not filtered]' : '') + (shadowNote(e) ? '  ' + shadowNote(e) : '') + (e.reason ? '  ' + e.reason : '');
     ul.insertBefore(li, ul.firstChild);
     if (shown < FEED_MAX) shown++;
   }
@@ -64,7 +68,11 @@ export function createFilters({ model, onChange }) {
   const dev = $('#f-device');
   const search = $('#f-search');
   const chips = [...document.querySelectorAll('#f-actions .chip')];
-  const known = new Set();
+  const wb = $('#f-wander'), sb = $('#f-shadow');
+  for (const [b, k] of [[wb, 'wandering'], [sb, 'shadow']]) {
+    b.addEventListener('click', () => { const on = b.getAttribute('aria-pressed') !== 'true'; b.setAttribute('aria-pressed', on ? 'true' : 'false'); model.setFilters({ [k]: on }); onChange(); });
+  }
+  const known = new Map();
   let timer = 0;
 
   dev.addEventListener('change', () => { model.setFilters({ device: dev.value }); onChange(); });
@@ -83,12 +91,15 @@ export function createFilters({ model, onChange }) {
   }
 
   return {
-    noteClient(ip) {
-      if (known.has(ip) || known.size > 200) return;
-      known.add(ip);
+    noteClient(ip, name) {
+      const label = name && name !== ip ? name + '  ' + ip : ip;
+      const have = known.get(ip);
+      if (have) { if (have.textContent !== label && label !== ip) have.textContent = label; return; }
+      if (known.size > 200) return;
       const opts = [...dev.options].slice(1);
-      const o = el('option', '', ip);
+      const o = el('option', '', label);
       o.value = ip;
+      known.set(ip, o);
       const after = opts.find((x) => x.value > ip);
       dev.insertBefore(o, after || null);
     },
@@ -97,7 +108,8 @@ export function createFilters({ model, onChange }) {
       dev.replaceChildren(Object.assign(el('option', '', 'All devices'), { value: '' }));
       dev.value = '';
       search.value = '';
-      model.setFilters({ device: '', q: '' });
+      model.setFilters({ device: '', q: '', wandering: false, shadow: false });
+      wb.setAttribute('aria-pressed', 'false'); sb.setAttribute('aria-pressed', 'false');
       model.filters.actions = new Set(['allowed', 'cached', 'blocked', 'error']);
       chips.forEach((c) => c.setAttribute('aria-pressed', 'true'));
     },
@@ -129,12 +141,13 @@ export function createLegend() {
 
 // The inspector panel: shows a lane or a single event, and exposes the
 // block/allow controls with an undo.
-export function createInspector({ api, notify, onRule }) {
+export function createInspector({ api, notify, onRule, names = null }) {
   const R = {
     empty: $('#insp-empty'), root: $('#insp'), close: $('#insp-close'), action: $('#i-action'), place: $('#i-place'),
     device: $('#i-device'), domain: $('#i-domain'), loc: $('#i-loc'), countK: $('#i-count-k'), count: $('#i-count'), last: $('#i-last'),
     domains: $('#i-domains'), block: $('#i-block'), allow: $('#i-allow'), fb: $('#i-fb'), fbText: $('#i-fb-text'), undo: $('#i-undo'),
     panel: $('#inspector'),
+    modeK: $('#i-mode-k'), mode: $('#i-mode'), shadowK: $('#i-shadow-k'), shadow: $('#i-shadow'),
   };
   let sel = null; // {lane, entry, domain}
   let lastRule = null;
@@ -148,8 +161,15 @@ export function createInspector({ api, notify, onRule }) {
     R.action.textContent = action;
     const dest = lane ? lane.dest : e && e.dests && e.dests[0];
     R.place.textContent = dest ? placeName(dest) : action === 'blocked' ? 'Blocked at home' : 'No destination';
-    R.device.textContent = lane ? lane.client : e.client;
+    const cl = lane ? lane.client : e.client;
+    const nm = (e && e.device) || (names ? names.label(cl) : cl);
+    R.device.textContent = nm && nm !== cl ? nm + '  ' + cl : cl;
     R.domain.textContent = sel.domain;
+    const wandering = e ? !!e.wandering : !!(names && names.isWandering(cl));
+    R.modeK.hidden = R.mode.hidden = !wandering;
+    const note = e && e.shadow && sel.domain === e.name ? shadowNote(e) : '';
+    R.shadowK.hidden = R.shadow.hidden = !note;
+    R.shadow.textContent = note;
     R.loc.textContent = dest ? `${dest.lat.toFixed(2)}, ${dest.lon.toFixed(2)}` + (dest.ip ? '  ' + dest.ip : '') : 'Not geolocated';
     if (lane) {
       const bytes = model.mode === 'bytes';

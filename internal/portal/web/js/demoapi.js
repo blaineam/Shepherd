@@ -2,7 +2,7 @@
 // and Details view work with zero network calls. All data is synthetic.
 import { ApiError } from './api.js';
 
-export function createDemoApi({ getCounters, topClients, home }) {
+export function createDemoApi({ getCounters, topClients, home, mgmt = null }) {
   const rules = { block: [], allow: [], policies: { 'apple-private-relay': true } };
   let settings = { home: { ...home }, history: { mode: 'memory' } };
   const started = Date.now();
@@ -52,9 +52,13 @@ export function createDemoApi({ getCounters, topClients, home }) {
         rules.policies[body.name] = !!body.enabled;
         return snapshot();
       case '/api/lists/refresh': return null;
-      case '/api/settings': return settings;
+      case '/api/settings': return mgmt ? { ...settings, auto_home: false, history: mgmt.historyState(), geo: { enabled: false } } : settings;
       case '/api/settings/home': settings = { ...settings, home: { lat: body.lat, lon: body.lon, label: body.label || 'Home' } }; return settings;
       default: break;
+    }
+    if (mgmt) {
+      const r = await mgmt.handle(method, url.pathname, url, body);
+      if (r !== undefined) return r;
     }
     throw new ApiError('not found', 404);
   };
