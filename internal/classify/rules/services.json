@@ -1,0 +1,147 @@
+{
+ "version": 1,
+ "rules": [
+  {
+   "service": "_ipp",
+   "classes": {
+    "printer": 0.9
+   },
+   "label": "a printing service"
+  },
+  {
+   "service": "_ipps",
+   "classes": {
+    "printer": 0.9
+   },
+   "label": "a printing service"
+  },
+  {
+   "service": "_printer",
+   "classes": {
+    "printer": 0.9
+   },
+   "label": "a printing service"
+  },
+  {
+   "service": "_pdl-datastream",
+   "classes": {
+    "printer": 0.9
+   },
+   "label": "a printing service"
+  },
+  {
+   "service": "_scanner",
+   "classes": {
+    "printer": 0.8
+   },
+   "label": "a scanning service"
+  },
+  {
+   "service": "_uscan",
+   "classes": {
+    "printer": 0.8
+   },
+   "label": "a scanning service"
+  },
+  {
+   "service": "_rtsp",
+   "classes": {
+    "camera": 0.5
+   },
+   "label": "a video-streaming service"
+  },
+  {
+   "service": "_axis-video",
+   "classes": {
+    "camera": 0.9
+   },
+   "label": "a camera video service"
+  },
+  {
+   "service": "_nvstream",
+   "classes": {
+    "game console": 0.5
+   },
+   "label": "a game-streaming service"
+  },
+  {
+   "service": "_sonos",
+   "classes": {
+    "speaker": 0.9
+   },
+   "label": "the Sonos speaker service"
+  },
+  {
+   "service": "_spotify-connect",
+   "classes": {
+    "speaker": 0.4
+   },
+   "label": "Spotify Connect"
+  },
+  {
+   "service": "_raop",
+   "classes": {
+    "speaker": 0.5
+   },
+   "label": "AirPlay audio"
+  },
+  {
+   "service": "_hap",
+   "classes": {
+    "smart-home hub": 0.6
+   },
+   "label": "HomeKit"
+  },
+  {
+   "service": "_homekit",
+   "classes": {
+    "smart-home hub": 0.6
+   },
+   "label": "HomeKit"
+  },
+  {
+   "service": "_matter",
+   "classes": {
+    "smart-home hub": 0.7
+   },
+   "label": "Matter"
+  },
+  {
+   "service": "_matterc",
+   "classes": {
+    "smart-home hub": 0.6
+   },
+   "label": "Matter commissioning"
+  },
+  {
+   "service": "_meshcop",
+   "classes": {
+    "smart-home hub": 0.5
+   },
+   "label": "a Thread border router"
+  },
+  {
+   "service": "_hue",
+   "classes": {
+    "smart-home hub": 0.8
+   },
+   "label": "Philips Hue"
+  },
+  {
+   "service": "_googlecast",
+   "classes": {
+    "tv": 0.4,
+    "speaker": 0.2
+   },
+   "label": "Google Cast"
+  },
+  {
+   "service": "_airplay",
+   "classes": {
+    "tv": 0.4,
+    "speaker": 0.2
+   },
+   "label": "AirPlay video"
+  }
+ ]
+}

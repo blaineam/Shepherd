@@ -165,3 +165,22 @@ func TestGuessedTypeSurvivesSaveAndLoad(t *testing.T) {
 	eq(t, d.TypeAuto, true)
 	eq(t, d.TypeConfidence, 0.72)
 }
+
+func TestKnownVendorsListsTheTable(t *testing.T) {
+	v := KnownVendors()
+	if len(v) < 1000 {
+		t.Fatalf("expected the full manufacturer list, got %d", len(v))
+	}
+	for i := 1; i < len(v); i++ {
+		if v[i-1] > v[i] {
+			t.Fatal("not sorted")
+		}
+	}
+	found := false
+	for _, n := range v {
+		found = found || n == "Apple"
+	}
+	if !found {
+		t.Error("Apple missing")
+	}
+}

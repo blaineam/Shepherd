@@ -1,0 +1,436 @@
+{
+ "version": 1,
+ "verified": "2026-10-30",
+ "asns": [
+  {
+   "asn": 2906,
+   "holder": "AS-SSI - Netflix Streaming Services Inc.",
+   "classes": {
+    "tv": 0.2,
+    "streaming box": 0.15
+   },
+   "label": "a streaming network",
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'AS-SSI - Netflix Streaming Services Inc.', announced"
+  },
+  {
+   "asn": 40027,
+   "holder": "NETFLIX-ASN - Netflix Streaming Services Inc.",
+   "classes": {
+    "tv": 0.2,
+    "streaming box": 0.15
+   },
+   "label": "a streaming network",
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'NETFLIX-ASN - Netflix Streaming Services Inc.', announced"
+  },
+  {
+   "asn": 394557,
+   "holder": "ROKU - Roku Inc.",
+   "classes": {
+    "streaming box": 0.35,
+    "tv": 0.1
+   },
+   "label": "Roku's network",
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'ROKU - Roku Inc.', announced"
+  },
+  {
+   "asn": 23286,
+   "holder": "HULU - Hulu, LLC",
+   "classes": {
+    "tv": 0.15,
+    "streaming box": 0.1
+   },
+   "label": "a streaming network",
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'HULU - Hulu, LLC', announced"
+  },
+  {
+   "asn": 21478,
+   "holder": "PLEX Plex BV",
+   "classes": {
+    "tv": 0.1,
+    "streaming box": 0.1,
+    "NAS/server": 0.1
+   },
+   "label": "a media-server network",
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'PLEX Plex BV', announced"
+  },
+  {
+   "asn": 11278,
+   "holder": "NINTENDO - Nintendo Of America inc.",
+   "classes": {
+    "game console": 0.35
+   },
+   "label": "a game network",
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'NINTENDO - Nintendo Of America inc.', announced"
+  },
+  {
+   "asn": 32590,
+   "holder": "VALVE-CORPORATION - Valve Corporation",
+   "classes": {
+    "game console": 0.2,
+    "laptop": 0.15
+   },
+   "label": "Steam's network",
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'VALVE-CORPORATION - Valve Corporation', announced"
+  },
+  {
+   "asn": 26324,
+   "holder": "GARMIN-ASN-1 - GARMIN INTERNATIONAL INC.",
+   "classes": {
+    "wearable": 0.25
+   },
+   "label": "a wearable maker's network",
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'GARMIN-ASN-1 - GARMIN INTERNATIONAL INC.', announced"
+  },
+  {
+   "asn": 140079,
+   "holder": "GARMININTERNATIONAL-AS-AP - Garmin International Inc",
+   "classes": {
+    "wearable": 0.25
+   },
+   "label": "a wearable maker's network",
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'GARMININTERNATIONAL-AS-AP - Garmin International Inc', announced"
+  },
+  {
+   "asn": 714,
+   "holder": "APPLE-ENGINEERING - Apple Inc.",
+   "classes": {
+    "phone": 0.1,
+    "laptop": 0.08,
+    "tablet": 0.04
+   },
+   "label": "Apple's network",
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'APPLE-ENGINEERING - Apple Inc.', announced"
+  },
+  {
+   "asn": 6185,
+   "holder": "APPLE-AUSTIN - Apple Inc.",
+   "classes": {
+    "phone": 0.1,
+    "laptop": 0.08,
+    "tablet": 0.04
+   },
+   "label": "Apple's network",
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'APPLE-AUSTIN - Apple Inc.', announced"
+  },
+  {
+   "asn": 15169,
+   "holder": "GOOGLE - Google LLC",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'GOOGLE - Google LLC', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 36040,
+   "holder": "YOUTUBE - Google LLC",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'YOUTUBE - Google LLC', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 396982,
+   "holder": "GOOGLE-CLOUD-PLATFORM - Google LLC",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'GOOGLE-CLOUD-PLATFORM - Google LLC', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 16509,
+   "holder": "AMAZON-02 - Amazon.com, Inc.",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'AMAZON-02 - Amazon.com, Inc.', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 14618,
+   "holder": "AMAZON-AES - Amazon.com, Inc.",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'AMAZON-AES - Amazon.com, Inc.', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 13335,
+   "holder": "CLOUDFLARENET - Cloudflare, Inc.",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'CLOUDFLARENET - Cloudflare, Inc.', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 20940,
+   "holder": "AKAMAI-ASN1 Akamai International B.V.",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'AKAMAI-ASN1 Akamai International B.V.', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 12222,
+   "holder": "AKAMAI - Akamai Technologies, Inc.",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'AKAMAI - Akamai Technologies, Inc.', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 16625,
+   "holder": "AKAMAI-AS - Akamai Technologies, Inc.",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'AKAMAI-AS - Akamai Technologies, Inc.', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 21342,
+   "holder": "AKAMAI-ASN2 Akamai International B.V.",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'AKAMAI-ASN2 Akamai International B.V.', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 34164,
+   "holder": "AKAMAI-LON Akamai International B.V.",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'AKAMAI-LON Akamai International B.V.', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 63949,
+   "holder": "AKAMAI-LINODE-AP - Akamai Connected Cloud",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'AKAMAI-LINODE-AP - Akamai Connected Cloud', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 54113,
+   "holder": "FASTLY - Fastly, Inc.",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'FASTLY - Fastly, Inc.', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 14210,
+   "holder": "EDGECAST - Edgecast Inc.",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'EDGECAST - Edgecast Inc.', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 8075,
+   "holder": "MICROSOFT-CORP-MSN-AS-BLOCK - Microsoft Corporation",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'MICROSOFT-CORP-MSN-AS-BLOCK - Microsoft Corporation', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 8068,
+   "holder": "MICROSOFT-CORP-MSN-AS-BLOCK - Microsoft Corporation",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'MICROSOFT-CORP-MSN-AS-BLOCK - Microsoft Corporation', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 8069,
+   "holder": "MICROSOFT-CORP-MSN-AS-BLOCK - Microsoft Corporation",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'MICROSOFT-CORP-MSN-AS-BLOCK - Microsoft Corporation', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 32934,
+   "holder": "FACEBOOK - Facebook, Inc.",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'FACEBOOK - Facebook, Inc.', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 19551,
+   "holder": "INCAPSULA - Incapsula Inc",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'INCAPSULA - Incapsula Inc', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 14061,
+   "holder": "DIGITALOCEAN-ASN - DigitalOcean, LLC",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'DIGITALOCEAN-ASN - DigitalOcean, LLC', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 24940,
+   "holder": "HETZNER-AS Hetzner Online GmbH",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'HETZNER-AS Hetzner Online GmbH', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 16276,
+   "holder": "OVH OVH SAS",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'OVH OVH SAS', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 20473,
+   "holder": "AS-VULTR - The Constant Company, LLC",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'AS-VULTR - The Constant Company, LLC', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 45102,
+   "holder": "ALIBABA-CN-NET - Alibaba (US) Technology Co., Ltd.",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'ALIBABA-CN-NET - Alibaba (US) Technology Co., Ltd.', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 37963,
+   "holder": "ALIBABA-CN-NET - Hangzhou Alibaba Advertising Co.,Ltd.",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'ALIBABA-CN-NET - Hangzhou Alibaba Advertising Co.,Ltd.', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 45090,
+   "holder": "TENCENT-NET-AP - Shenzhen Tencent Computer Systems Company Limited",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'TENCENT-NET-AP - Shenzhen Tencent Computer Systems Company Limited', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 136907,
+   "holder": "HWCLOUDS-AS-AP - HUAWEI CLOUDS",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'HWCLOUDS-AS-AP - HUAWEI CLOUDS', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 55990,
+   "holder": "HWCSNET - Huawei Cloud Service data center",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'HWCSNET - Huawei Cloud Service data center', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 3356,
+   "holder": "LEVEL3 - Level 3 Parent, LLC",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'LEVEL3 - Level 3 Parent, LLC', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 396190,
+   "holder": "LEASEWEB-USA-SEA - Leaseweb USA, Inc.",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'LEASEWEB-USA-SEA - Leaseweb USA, Inc.', announced; shared CDN, cloud or backbone network"
+  },
+  {
+   "asn": 21859,
+   "holder": "ZEN-ECN - Zenlayer Inc",
+   "shared": true,
+   "evidence": "RIPEstat as-overview 2026-10-30: holder 'ZEN-ECN - Zenlayer Inc', announced; shared CDN, cloud or backbone network"
+  }
+ ],
+ "orgs": [
+  {
+   "keyword": "netflix",
+   "classes": {
+    "tv": 0.2,
+    "streaming box": 0.15
+   },
+   "label": "a streaming network",
+   "evidence": "holder 'Netflix Streaming Services Inc.' (AS2906, AS40027)"
+  },
+  {
+   "keyword": "roku",
+   "classes": {
+    "streaming box": 0.35,
+    "tv": 0.1
+   },
+   "label": "Roku's network",
+   "evidence": "holder 'Roku Inc.' (AS394557)"
+  },
+  {
+   "keyword": "hulu",
+   "classes": {
+    "tv": 0.15,
+    "streaming box": 0.1
+   },
+   "label": "a streaming network",
+   "evidence": "holder 'Hulu, LLC' (AS23286)"
+  },
+  {
+   "keyword": "nintendo",
+   "classes": {
+    "game console": 0.35
+   },
+   "label": "a game network",
+   "evidence": "holder 'Nintendo Of America inc.' (AS11278)"
+  },
+  {
+   "keyword": "valve corporation",
+   "classes": {
+    "game console": 0.2,
+    "laptop": 0.15
+   },
+   "label": "Steam's network",
+   "evidence": "holder 'Valve Corporation' (AS32590)"
+  },
+  {
+   "keyword": "garmin",
+   "classes": {
+    "wearable": 0.25
+   },
+   "label": "a wearable maker's network",
+   "evidence": "holders 'GARMIN INTERNATIONAL INC.' (AS26324), 'Garmin International Inc' (AS140079)"
+  },
+  {
+   "keyword": "akamai",
+   "shared": true,
+   "evidence": "holder 'Akamai Technologies, Inc.' (AS12222); shared CDN or cloud network"
+  },
+  {
+   "keyword": "cloudflare",
+   "shared": true,
+   "evidence": "holder 'Cloudflare, Inc.' (AS13335); shared CDN or cloud network"
+  },
+  {
+   "keyword": "amazon",
+   "shared": true,
+   "evidence": "holder 'Amazon.com, Inc.' (AS16509, AS14618); shared CDN or cloud network"
+  },
+  {
+   "keyword": "google",
+   "shared": true,
+   "evidence": "holder 'Google LLC' (AS15169); shared CDN or cloud network"
+  },
+  {
+   "keyword": "microsoft",
+   "shared": true,
+   "evidence": "holder 'Microsoft Corporation' (AS8075); shared CDN or cloud network"
+  },
+  {
+   "keyword": "fastly",
+   "shared": true,
+   "evidence": "holder 'Fastly, Inc.' (AS54113); shared CDN or cloud network"
+  },
+  {
+   "keyword": "edgecast",
+   "shared": true,
+   "evidence": "holder 'Edgecast Inc.' (AS14210); shared CDN or cloud network"
+  },
+  {
+   "keyword": "digitalocean",
+   "shared": true,
+   "evidence": "holder 'DigitalOcean, LLC' (AS14061); shared CDN or cloud network"
+  },
+  {
+   "keyword": "hetzner",
+   "shared": true,
+   "evidence": "holder 'Hetzner Online GmbH' (AS24940); shared CDN or cloud network"
+  },
+  {
+   "keyword": "ovh",
+   "shared": true,
+   "evidence": "holder 'OVH SAS' (AS16276); shared CDN or cloud network"
+  },
+  {
+   "keyword": "alibaba",
+   "shared": true,
+   "evidence": "holder 'Alibaba (US) Technology Co., Ltd.' (AS45102); shared CDN or cloud network"
+  },
+  {
+   "keyword": "tencent",
+   "shared": true,
+   "evidence": "holder 'Shenzhen Tencent Computer Systems Company Limited' (AS45090); shared CDN or cloud network"
+  },
+  {
+   "keyword": "leaseweb",
+   "shared": true,
+   "evidence": "holder 'Leaseweb USA, Inc.' (AS396190); shared CDN or cloud network"
+  },
+  {
+   "keyword": "zenlayer",
+   "shared": true,
+   "evidence": "holder 'Zenlayer Inc' (AS21859); shared CDN or cloud network"
+  },
+  {
+   "keyword": "the constant company",
+   "shared": true,
+   "evidence": "holder 'The Constant Company, LLC' (AS20473); shared CDN or cloud network"
+  },
+  {
+   "keyword": "incapsula",
+   "shared": true,
+   "evidence": "holder 'Incapsula Inc' (AS19551); shared CDN or cloud network"
+  }
+ ]
+}

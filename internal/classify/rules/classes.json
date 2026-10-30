@@ -1,0 +1,116 @@
+{
+ "version": 1,
+ "classes": [
+  {
+   "id": "phone",
+   "group": "Phones and tablets",
+   "related": [
+    "tablet"
+   ]
+  },
+  {
+   "id": "tablet",
+   "group": "Phones and tablets",
+   "related": [
+    "phone"
+   ]
+  },
+  {
+   "id": "laptop",
+   "group": "Computers",
+   "related": []
+  },
+  {
+   "id": "tv",
+   "group": "TVs and streaming",
+   "related": [
+    "streaming box"
+   ]
+  },
+  {
+   "id": "streaming box",
+   "group": "TVs and streaming",
+   "related": [
+    "tv"
+   ]
+  },
+  {
+   "id": "speaker",
+   "group": "Speakers",
+   "related": [
+    "smart-home hub"
+   ]
+  },
+  {
+   "id": "camera",
+   "group": "Cameras",
+   "related": [
+    "doorbell"
+   ]
+  },
+  {
+   "id": "doorbell",
+   "group": "Cameras",
+   "related": [
+    "camera"
+   ]
+  },
+  {
+   "id": "printer",
+   "group": "Printers",
+   "related": []
+  },
+  {
+   "id": "game console",
+   "group": "Game consoles",
+   "related": []
+  },
+  {
+   "id": "smart-home hub",
+   "group": "Smart home",
+   "related": [
+    "speaker",
+    "smart plug/sensor",
+    "thermostat"
+   ]
+  },
+  {
+   "id": "smart plug/sensor",
+   "group": "Smart home",
+   "related": [
+    "smart-home hub",
+    "thermostat"
+   ]
+  },
+  {
+   "id": "thermostat",
+   "group": "Smart home",
+   "related": [
+    "smart-home hub",
+    "smart plug/sensor"
+   ]
+  },
+  {
+   "id": "e-reader",
+   "group": "E-readers",
+   "related": [
+    "tablet"
+   ]
+  },
+  {
+   "id": "wearable",
+   "group": "Wearables",
+   "related": []
+  },
+  {
+   "id": "NAS/server",
+   "group": "Servers and storage",
+   "related": []
+  },
+  {
+   "id": "router/infrastructure",
+   "group": "Network equipment",
+   "related": []
+  }
+ ]
+}
