@@ -11,10 +11,14 @@ const catalog = { entries: [
 ] };
 const kids = { kind: 'group', id: 'g1' };
 const tv = { kind: 'device', id: 'd1' };
+const sched = { days: [1, 2, 3, 4, 5], start_min: 540, end_min: 1020 };
 const policy = {
   scopes: [
-    { scope: S.NETWORK, items: { ads: true }, rules: { block: ['bad.example.com'], allow: [] }, switches: { relay: true } },
-    { scope: kids, items: { meta: true, ig: false }, rules: { allow: ['ok.example.com'], block: [] }, switches: {} },
+    {
+      scope: S.NETWORK, items: { ads: true }, rules: { block: ['bad.example.com'], allow: [] },
+      rule_schedules: { allow: {}, block: { 'bad.example.com': sched } }, switches: { relay: true }, mode: 'block',
+    },
+    { scope: kids, items: { meta: true, ig: false }, rules: { allow: ['ok.example.com'], block: [] }, switches: {}, mode: 'allow' },
     { scope: tv, items: { 'cat-social': true }, rules: { allow: [], block: [] }, switches: { relay: false } },
   ],
   custom_lists: [{ id: 'cl-1', name: 'Mine' }],
@@ -36,7 +40,9 @@ test('chainFor orders broad to specific', () => {
 });
 
 test('dataFor defaults for unlisted scopes and tolerates junk', () => {
-  assert.deepEqual(S.dataFor(policy, { kind: 'group', id: 'zz' }), { items: {}, rules: { allow: [], block: [] }, switches: {} });
+  assert.deepEqual(S.dataFor(policy, { kind: 'group', id: 'zz' }), {
+    items: {}, rules: { allow: [], block: [] }, rule_schedules: { allow: {}, block: {} }, switches: {}, mode: '',
+  });
   assert.deepEqual(S.dataFor(null, S.NETWORK).items, {});
   assert.deepEqual(S.dataFor({ scopes: [{ scope: S.NETWORK }] }, S.NETWORK).rules, { allow: [], block: [] });
 });
@@ -99,6 +105,29 @@ test('rulesView marks origin and sorts local rules first', () => {
   assert.equal(S.rulesView(policy, S.NETWORK).length, 1);
 });
 
+test('rulesView attaches a rule schedule when it has one', () => {
+  const r = S.rulesView(policy, kids);
+  const blocked = r.find((x) => x.domain === 'bad.example.com');
+  assert.deepEqual(blocked.schedule, sched);
+  const allowed = r.find((x) => x.domain === 'ok.example.com');
+  assert.equal(allowed.schedule, null);
+});
+
+test('modeView: own choice beats inherited, which beats the block default', () => {
+  assert.deepEqual(S.modeView(policy, S.NETWORK), { here: 'block', inherited: null, effective: 'block' });
+  // kids sets its own mode ('allow'); network's ('block') is still reported as
+  // shadowed, informational "inherited" the way switchView reports provenance.
+  const k = S.modeView(policy, kids);
+  assert.equal(k.here, 'allow');
+  assert.deepEqual(k.inherited, { scope: S.NETWORK, mode: 'block' });
+  assert.equal(k.effective, 'allow');
+  const d = S.modeView(policy, tv, ['g1']);
+  assert.equal(d.here, null);
+  assert.deepEqual(d.inherited, { scope: kids, mode: 'allow' });
+  assert.equal(d.effective, 'allow');
+  assert.equal(S.modeView({ scopes: [] }, S.NETWORK).effective, 'block');
+});
+
 test('switchView', () => {
   assert.deepEqual(S.switchView(policy, S.NETWORK, [], 'relay'), { here: true, inherited: [], effective: true });
   const g = S.switchView(policy, kids, [], 'relay');
@@ -138,6 +167,21 @@ test('immutable updates for items, switches and rules', () => {
   assert.deepEqual(S.dataFor(S.delRule(r, kids, 'block', 'ok.example.com'), kids).rules.block, []);
   const order = S.setItem(S.setItem({ scopes: [] }, tv, 'a', true), S.NETWORK, 'b', true);
   assert.deepEqual(order.scopes.map((s) => s.scope.kind), ['network', 'device']);
+
+  const scheduled = S.addRule(policy, tv, 'block', 'games.example.com', sched);
+  assert.deepEqual(S.dataFor(scheduled, tv).rule_schedules.block['games.example.com'], sched);
+  const bare = S.addRule(scheduled, tv, 'block', 'games.example.com');
+  assert.equal('games.example.com' in S.dataFor(bare, tv).rule_schedules.block, false, 'a bare addRule clears the schedule');
+  const moved = S.addRule(scheduled, tv, 'allow', 'games.example.com');
+  assert.equal('games.example.com' in S.dataFor(moved, tv).rule_schedules.block, false, 'moving kind drops the old schedule');
+  assert.equal('games.example.com' in S.dataFor(moved, tv).rule_schedules.allow, false, 'moving kind does not invent a new one');
+  const removed = S.delRule(scheduled, tv, 'block', 'games.example.com');
+  assert.equal('games.example.com' in S.dataFor(removed, tv).rule_schedules.block, false);
+
+  const m1 = S.setMode(policy, tv, 'allow');
+  assert.equal(S.dataFor(m1, tv).mode, 'allow');
+  const m2 = S.setMode(m1, tv, null);
+  assert.equal(S.dataFor(m2, tv).mode, '');
 });
 
 test('inheritedSources lists ancestors that set something', () => {

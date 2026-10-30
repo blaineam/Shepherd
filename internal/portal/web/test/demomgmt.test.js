@@ -164,6 +164,23 @@ test('catalog and policy: items, rules, switches, scopes', async () => {
   assert.equal('safe-search' in s2.scopes.find((s) => s.scope.id === 'dev-0005').switches, false);
   await fails(call('POST', '/api/policy/switches', { scope: dev, name: 'nope', enabled: true }), 404);
   assert.equal(await call('POST', '/api/policy/refresh', {}), null);
+
+  const sched = { days: [1, 2, 3, 4, 5], start_min: 540, end_min: 1020 };
+  const r4 = await call('POST', '/api/policy/rules', { scope: dev, kind: 'block', domain: 'games.example.com', schedule: sched });
+  const sc4 = r4.scopes.find((s) => s.scope.id === 'dev-0005');
+  assert.deepEqual(sc4.rule_schedules.block['games.example.com'], sched);
+  const r5 = await call('POST', '/api/policy/rules', { scope: dev, kind: 'block', domain: 'games.example.com' });
+  assert.equal('games.example.com' in r5.scopes.find((s) => s.scope.id === 'dev-0005').rule_schedules.block, false, 'a bare repeat clears the schedule');
+  await call('POST', '/api/policy/rules', { scope: dev, kind: 'block', domain: 'games.example.com', schedule: sched });
+  const r7 = await call('DELETE', '/api/policy/rules?scope_kind=device&scope_id=dev-0005&kind=block&domain=games.example.com');
+  assert.equal('games.example.com' in r7.scopes.find((s) => s.scope.id === 'dev-0005').rule_schedules.block, false);
+
+  const m1 = await call('POST', '/api/policy/mode', { scope: dev, mode: 'allow' });
+  assert.equal(m1.scopes.find((s) => s.scope.id === 'dev-0005').mode, 'allow');
+  const m2 = await call('POST', '/api/policy/mode', { scope: dev, mode: null });
+  assert.equal(m2.scopes.find((s) => s.scope.id === 'dev-0005').mode, null);
+  await fails(call('POST', '/api/policy/mode', { scope: dev, mode: 'sideways' }), 400);
+  await fails(call('POST', '/api/policy/mode', { scope: { kind: 'planet' }, mode: 'allow' }), 400);
 });
 
 test('custom lists: add by url or text, validate, delete', async () => {

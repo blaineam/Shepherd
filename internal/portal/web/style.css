@@ -570,16 +570,22 @@ body.on-page .toasts { bottom: 20px; }
 .attrib-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; }
 .attrib-list li { display: flex; gap: 8px; align-items: center; }
 .cust-form, .rule-add { padding: 14px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 10px; max-width: 640px; }
-.cf-row { display: flex; gap: 8px; }
-.cf-row input { flex: 1; min-width: 0; }
+.cf-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.cf-row input { flex: 1 1 220px; min-width: 0; }
 .cust-form button[type=submit] { align-self: flex-start; }
-.rule-add { flex-direction: row; flex-wrap: wrap; align-items: center; }
-.rule-add input { flex: 1 1 220px; }
-.rule-add .err { flex-basis: 100%; margin: 0; }
+.rule-add .err { margin: 0; }
 .rule-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line2); background: var(--panel); max-width: 760px; }
 .rule-list li { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-top: 1px solid #ffffff0b; }
 .rule-list li:first-child { border-top: 0; }
 .rule-list li.inh { opacity: .8; }
+.rule-sched label { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.rule-sched-fields { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.rule-sched-days { display: flex; gap: 6px; flex-wrap: wrap; }
+.day-chip { display: inline-flex; align-items: center; gap: 4px; font: 600 10.5px var(--mono); letter-spacing: .06em; padding: 3px 8px; border: 1px solid var(--line2); border-radius: 3px; color: var(--muted); }
+.day-chip:has(input:checked) { color: var(--teal); border-color: #16c7bd55; background: var(--teal-d); }
+.rule-sched-times { display: flex; gap: 8px; align-items: center; }
+.bk-mode { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line2); }
+.bk-mode .bk-desc { flex-basis: 100%; margin: 4px 0 0; }
 
 /* ---------- Upstreams ---------- */
 .up-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 14px; align-items: start; }

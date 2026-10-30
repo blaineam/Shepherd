@@ -11,7 +11,7 @@ function fakeMgmt(over = {}) {
     calls,
     catalog: rec('catalog', { entries: [{ id: 'ads', kind: 'list', name: 'Ads', category: 'Ads' }], categories: ['Ads'] }),
     policy: rec('policy', { scopes: [{ scope: NETWORK, items: { ads: true }, rules: { allow: [], block: [] }, switches: {} }], custom_lists: [], lists: [], switches: [] }),
-    setItem: rec('setItem', null), setSwitch: rec('setSwitch', null), addRule: rec('addRule', null), delRule: rec('delRule', null),
+    setItem: rec('setItem', null), setSwitch: rec('setSwitch', null), setMode: rec('setMode', null), addRule: rec('addRule', null), delRule: rec('delRule', null),
     addCustomList: rec('addCustomList', { id: 'cl-9', name: 'Mine', category: 'Other', count: 3 }), delCustomList: rec('delCustomList', { ok: true }),
     refreshLists: rec('refreshLists', null),
   };
@@ -100,6 +100,37 @@ test('rules and switches: optimistic with rollback, including allow/block flips'
   fail = true;
   await assert.rejects(s.addRule(kids, 'block', 'z.example.com'));
   assert.deepEqual(dataFor(s.policy, kids).rules.block, ['z.example.com'], 'an existing rule is kept when a repeat fails');
+});
+
+test('setMode is optimistic and rolls back on failure', async () => {
+  let fail = false;
+  const m = fakeMgmt({ setMode: async () => { if (fail) throw new Error('nope'); return null; } });
+  const s = createPolicyStore({ mgmt: m });
+  await s.load();
+  await s.setMode(kids, 'allow');
+  assert.equal(dataFor(s.policy, kids).mode, 'allow');
+  fail = true;
+  await assert.rejects(s.setMode(kids, 'block'), /nope/);
+  assert.equal(dataFor(s.policy, kids).mode, 'allow', 'restored after failure');
+  fail = false;
+  await s.setMode(kids, null);
+  assert.equal(dataFor(s.policy, kids).mode, '');
+});
+
+test('addRule with a schedule is optimistic, and a repeat without one clears it, with rollback', async () => {
+  let fail = false;
+  const sched = { days: [1, 2, 3, 4, 5], start_min: 540, end_min: 1020 };
+  const m = fakeMgmt({ addRule: async () => { if (fail) throw new Error('x'); } });
+  const s = createPolicyStore({ mgmt: m });
+  await s.load();
+  await s.addRule(kids, 'block', 'games.example.com', sched);
+  assert.deepEqual(dataFor(s.policy, kids).rule_schedules.block['games.example.com'], sched);
+  fail = true;
+  await assert.rejects(s.addRule(kids, 'block', 'games.example.com'));
+  assert.deepEqual(dataFor(s.policy, kids).rule_schedules.block['games.example.com'], sched, 'schedule restored after a failed repeat');
+  fail = false;
+  await s.addRule(kids, 'block', 'games.example.com');
+  assert.equal('games.example.com' in dataFor(s.policy, kids).rule_schedules.block, false, 'a bare repeat clears the schedule');
 });
 
 test('custom lists: add appends, delete is optimistic and restores on failure', async () => {

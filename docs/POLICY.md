@@ -9,6 +9,9 @@ Three ideas, and that is all there is:
 2. **Scopes** say who it applies to: the whole **network**, a **group** of devices, or one **device**.
 3. **Precedence** decides what happens when scopes disagree.
 
+On top of those three, two optional, per-scope layers: ["Allowlist mode"](#allowlist-mode) flips a scope from block-by-default to
+allow-by-default, and ["Scheduled access"](#scheduled-access) limits a rule to a day/time window.
+
 ## The catalog
 
 The catalog ships inside the binary (95 entries) and is the same on every install. Entries come in three kinds:
@@ -87,6 +90,55 @@ or the TV's groups.
 *A blocklist of your own.* Add a custom list from a URL or paste domains (hosts, one-per-line or adblock `||domain^` form, up to 1 MiB).
 It is enabled on the network and can then be switched on or off per group or device like any catalog entry.
 
+## Allowlist mode
+
+Every scope also has a **Mode**: **Blocklist** (the default, and everything above) or **Allowlist**. Allowlist mode inverts the
+default: instead of nothing being blocked until you switch something on, **everything is blocked until you switch something on**.
+
+- **Effective mode resolution is the usual most-specific-wins lookup:** a device's own Mode if it set one, else its group's, else
+  the network's. There is one effective mode per device for a given query, not one per scope; whichever scope decided it, that
+  mode governs how every scope's items are read for that device (see below). If a device belongs to two groups that each set a
+  different Mode and neither is overridden by the device itself, the group whose ID is listed first for that device wins; this is a
+  real but rare edge case — give the device its own Mode, or keep a device's groups agreed on Mode, to avoid relying on it.
+- **In allowlist mode, a catalog or custom item switched on is what the scope allows, not what it blocks.** The same catalog
+  picker, the same categories, the same custom lists you would use to build a blocklist now build an allowlist instead — switch on
+  "Educational" or your own "Homework sites" custom list, and devices in that scope can reach only what those items contain (plus
+  whatever an explicit allow rule adds), everything else is blocked. Opting an item off at a more specific scope still cancels an
+  "on" from a less specific one, exactly as in blocklist mode.
+- **Explicit allow and block rules keep their ordinary meaning and the ordinary precedence in both modes.** An allow rule still
+  allows, a block rule still blocks, and the same rule wins at the same scope, the same more-specific-wins order, exactly as under
+  "Precedence" above — allowlist mode only changes what happens when nothing decides a name at all (default-block instead of
+  default-allow) and what an item switched on means.
+- **Built-in policy switches (Private Relay and the like) always block when enabled, in both modes.** They are a fixed security
+  feature, not a general allow/block list, so Allowlist mode does not turn them into something they allow.
+- **No automatic infrastructure exceptions.** Shepherd does not auto-allow NTP, OS update checks, captive-portal probes, mDNS or
+  anything else just because a scope switched to allowlist mode. This is deliberate: switching to allowlist mode **can and will
+  break basic device functionality** (time sync, software updates, the device's own "is there internet?" check) until you
+  explicitly allow what it needs — which you already can, with the same catalog categories, custom lists and allow rules you would
+  use in blocklist mode. Expect to iterate: switch a device to allowlist mode, see what breaks in the query log, allow it.
+
+## Scheduled access
+
+Any allow or block rule, at any scope, can carry an optional **schedule**: a day-of-week and time-of-day window it only applies
+in. Outside that window the rule is completely inert — as if it were not configured at all — so evaluation falls through to
+whatever the next applicable scope or default would otherwise decide.
+
+- **Data model:** a list of days (Sunday–Saturday) plus a start and end minute-of-day (0–1440), kept as minimal as that: no
+  per-day times, no exceptions calendar.
+- **A schedule cannot cross midnight.** Start must be strictly before end, within the same day (`start_min < end_min <= 1440`).
+  An overnight window (say, blocking games 21:00–07:00) needs **two** schedules on consecutive days — one 21:00–24:00, one
+  00:00–07:00 the next calendar day — not one window that wraps past midnight. This is a deliberate v1 simplification, not an
+  oversight.
+- **Time zone: the server's own local system time zone, always.** There is no per-network or per-rule time zone setting in v1; if
+  Shepherd runs somewhere other than where the household is, set the system clock's time zone to match, or expect schedules to be
+  offset.
+- **Catalog items, custom lists and built-in policy switches do not carry a schedule in v1** — only individual allow and block
+  rules do. Scheduling a whole category or list is not yet supported; add the domains you need scheduled as explicit rules
+  instead.
+- **Composes with Allowlist mode exactly as you would expect:** a scheduled allow rule in an allowlist-mode scope only lets its
+  domain through during its window; outside it, that domain falls back to whatever would otherwise apply (typically the scope's
+  own default-block). A scheduled block rule works the same way in blocklist mode: it blocks only inside its window.
+
 ## Excluded devices
 
 A device marked **excluded** has opted out of protection: its queries are answered without any blocking (the log shows reason
@@ -100,13 +152,16 @@ All under the portal token, with `X-Shepherd: 1` on every change; bodies are JSO
 | Endpoint | Does |
 |---|---|
 | `GET /api/catalog` | every entry and the category names |
-| `GET /api/policy` | each scope's items, rules and switches, the custom lists, list health, the switch descriptions |
+| `GET /api/policy` | each scope's items, rules, rule schedules, switches and mode, the custom lists, list health, the switch descriptions |
 | `POST /api/policy/items` | `{scope, item, enabled}`: `true` or `false` set it, `null` removes the setting from that scope |
-| `POST /api/policy/rules`, `DELETE /api/policy/rules?scope_kind=&scope_id=&kind=&domain=` | add or remove an allow or block rule |
+| `POST /api/policy/rules`, `DELETE /api/policy/rules?scope_kind=&scope_id=&kind=&domain=` | add or remove an allow or block rule; `POST` takes an optional `schedule: {days: [0-6, Sunday first], start_min, end_min}`, omitted or absent for "always" |
 | `POST /api/policy/switches` | `{scope, name, enabled}` for built-in policies |
+| `POST /api/policy/mode` | `{scope, mode}`: `"block"` or `"allow"` sets it, `null` removes the scope's own choice |
 | `POST /api/policy/custom-lists`, `DELETE /api/policy/custom-lists/{id}` | a list of your own (`url` or `inline`) |
 | `POST /api/policy/refresh` | fetch lists now (`{item}` for one) |
 
 A scope is `{"kind": "network"|"group"|"device", "id": ""}`. An unknown group, device, item or switch is a 404; bad input a 400; a body over
-the limit a 413. The older `/api/rules`, `/api/policies` and `/api/lists/refresh` keep working and act on the network scope.
+the limit a 413. The older `/api/rules`, `/api/policies` and `/api/lists/refresh` keep working and act on the network scope, and know
+nothing of Mode or schedules. `GET /api/policy`'s per-scope `rule_schedules` is `{"allow": {domain: schedule}, "block": {domain: schedule}}`;
+a domain missing from it has no schedule (always applies).
 `GET /api/policy` reports an item you switched **off** at a scope as `false`, and one you never set as absent.

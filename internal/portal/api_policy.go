@@ -89,7 +89,16 @@ func (s *Server) getCatalog(w http.ResponseWriter, r *http.Request) {
 }
 
 func isEmptyScope(ss dnsengine.ScopeSettings) bool {
-	return len(ss.Items) == 0 && len(ss.Policies) == 0 && len(ss.Allow) == 0 && len(ss.Block) == 0
+	return len(ss.Items) == 0 && len(ss.Policies) == 0 && len(ss.Allow) == 0 && len(ss.Block) == 0 && ss.Mode == ""
+}
+
+// orEmptySchedules turns a nil schedule map into an empty (never null) one,
+// matching orEmpty's treatment of a nil rule list.
+func orEmptySchedules(m map[string]dnsengine.Schedule) map[string]dnsengine.Schedule {
+	if m == nil {
+		return map[string]dnsengine.Schedule{}
+	}
+	return m
 }
 
 func scopeView(kind, id string, ss dnsengine.ScopeSettings) map[string]any {
@@ -102,10 +111,14 @@ func scopeView(kind, id string, ss dnsengine.ScopeSettings) map[string]any {
 		switches[k] = v
 	}
 	return map[string]any{
-		"scope":    scopeJSON{Kind: kind, ID: id},
-		"items":    items,
-		"rules":    map[string][]string{"allow": orEmpty(ss.Allow), "block": orEmpty(ss.Block)},
+		"scope": scopeJSON{Kind: kind, ID: id},
+		"items": items,
+		"rules": map[string][]string{"allow": orEmpty(ss.Allow), "block": orEmpty(ss.Block)},
+		"rule_schedules": map[string]map[string]dnsengine.Schedule{
+			"allow": orEmptySchedules(ss.AllowSchedules), "block": orEmptySchedules(ss.BlockSchedules),
+		},
 		"switches": switches,
+		"mode":     ss.Mode,
 	}
 }
 
@@ -290,9 +303,10 @@ func (s *Server) setPolicySwitch(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) addPolicyRule(w http.ResponseWriter, r *http.Request) {
 	var b struct {
-		Scope  scopeJSON `json:"scope"`
-		Kind   string    `json:"kind"`
-		Domain string    `json:"domain"`
+		Scope    scopeJSON           `json:"scope"`
+		Kind     string              `json:"kind"`
+		Domain   string              `json:"domain"`
+		Schedule *dnsengine.Schedule `json:"schedule,omitempty"`
 	}
 	if !decode(w, r, &b, smallBody) {
 		return
@@ -301,7 +315,38 @@ func (s *Server) addPolicyRule(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.Policy.AddRule(sc, b.Kind, b.Domain); err != nil {
+	var err error
+	if b.Schedule != nil {
+		err = s.Policy.AddScheduledRule(sc, b.Kind, b.Domain, *b.Schedule)
+	} else {
+		err = s.Policy.AddRule(sc, b.Kind, b.Domain)
+	}
+	if err != nil {
+		policyError(w, err)
+		return
+	}
+	s.getPolicy(w, r)
+}
+
+func (s *Server) setPolicyMode(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Scope scopeJSON `json:"scope"`
+		Mode  *string   `json:"mode"`
+	}
+	if !decode(w, r, &b, smallBody) {
+		return
+	}
+	sc, ok := s.resolveScope(w, b.Scope.Kind, b.Scope.ID)
+	if !ok {
+		return
+	}
+	var err error
+	if b.Mode == nil {
+		err = s.Policy.ClearMode(sc)
+	} else {
+		err = s.Policy.SetMode(sc, dnsengine.Mode(*b.Mode))
+	}
+	if err != nil {
 		policyError(w, err)
 		return
 	}

@@ -60,6 +60,13 @@ test('policy endpoints', async () => {
   assert.equal(calls[9][1].body, '{}');
   await m.refreshLists('ads');
   assert.equal(calls[10][1].body, '{"item":"ads"}');
+  await m.setMode(scope, 'allow');
+  assert.equal(calls[11][1].body, '{"scope":{"kind":"group","id":"g1"},"mode":"allow"}');
+  await m.setMode(scope, null);
+  assert.equal(calls[12][1].body, '{"scope":{"kind":"group","id":"g1"},"mode":null}');
+  const sched = { days: [1, 2, 3, 4, 5], start_min: 540, end_min: 1020 };
+  await m.addRule(scope, 'block', 'games.example.com', sched);
+  assert.equal(calls[13][1].body, '{"scope":{"kind":"group","id":"g1"},"kind":"block","domain":"games.example.com","schedule":{"days":[1,2,3,4,5],"start_min":540,"end_min":1020}}');
 });
 
 test('accountability endpoints', async () => {

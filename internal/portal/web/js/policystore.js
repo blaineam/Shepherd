@@ -2,7 +2,7 @@
 // drawer. Edits are optimistic: the UI changes at once and a failed request
 // rolls just that edit back (and the caller shows the error).
 import { normalizeCatalog } from './catalog.js';
-import { dataFor, setItem, setSwitch, addRule, delRule } from './scope.js';
+import { dataFor, setItem, setSwitch, setMode, addRule, delRule } from './scope.js';
 
 export function normalizePolicy(p) {
   const q = p && typeof p === 'object' ? p : {};
@@ -64,16 +64,21 @@ export function createPolicyStore({ mgmt, onChange = () => {} }) {
       const prev = typeof was === 'boolean' ? was : null;
       return mutate((p) => setSwitch(p, scope, name, enabled), (p) => setSwitch(p, scope, name, prev), () => mgmt.setSwitch(scope, name, enabled));
     },
-    addRule(scope, kind, domain) {
-      const rules = dataFor(policy, scope).rules;
+    setMode(scope, mode) {
+      const prev = dataFor(policy, scope).mode || null;
+      return mutate((p) => setMode(p, scope, mode), (p) => setMode(p, scope, prev), () => mgmt.setMode(scope, mode));
+    },
+    addRule(scope, kind, domain, schedule = null) {
+      const d = dataFor(policy, scope);
       const other = kind === 'block' ? 'allow' : 'block';
-      const flipped = rules[other].includes(domain);
-      const had = rules[kind].includes(domain);
-      return mutate((p) => addRule(p, scope, kind, domain), (p) => {
-        let n = had ? p : delRule(p, scope, kind, domain);
+      const flipped = d.rules[other].includes(domain);
+      const had = d.rules[kind].includes(domain);
+      const prevSchedule = d.rule_schedules[kind][domain] || null;
+      return mutate((p) => addRule(p, scope, kind, domain, schedule), (p) => {
+        let n = had ? addRule(p, scope, kind, domain, prevSchedule) : delRule(p, scope, kind, domain);
         if (flipped) n = addRule(n, scope, other, domain);
         return n;
-      }, () => mgmt.addRule(scope, kind, domain));
+      }, () => mgmt.addRule(scope, kind, domain, schedule || undefined));
     },
     delRule(scope, kind, domain) {
       return mutate((p) => delRule(p, scope, kind, domain), (p) => addRule(p, scope, kind, domain), () => mgmt.delRule(scope, kind, domain));

@@ -14,7 +14,10 @@ const err = (status, msg) => new ApiError(msg, status);
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function initialPolicy() {
-  const sc = (kind, id, items, rules = {}, switches = {}) => ({ scope: { kind, id }, items, rules: { allow: rules.allow || [], block: rules.block || [] }, switches });
+  const sc = (kind, id, items, rules = {}, switches = {}, mode = null) => ({
+    scope: { kind, id }, items, rules: { allow: rules.allow || [], block: rules.block || [] },
+    rule_schedules: { allow: {}, block: {} }, switches, mode,
+  });
   return [
     sc('network', '', { 'core-ads': true, 'malware-domains': true, 'phishing-watch': true }, { block: ['ads.example.net'], allow: [] }, { 'apple-private-relay': true }),
     sc('group', 'grp-kids', { instagram: true, tiktok: true, snapchat: true, discord: true, 'adult-core': true, 'gambling-core': true }, {}, { 'safe-search': true }),
@@ -73,7 +76,8 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
     const ref = { kind: sc.kind, id: sc.kind === 'network' ? '' : String(sc.id || '') };
     if (ref.kind !== 'network' && !ref.id) throw err(400, 'scope id required');
     let s = scopes.find((x) => scopeKey(x.scope) === scopeKey(ref));
-    if (!s) { s = { scope: ref, items: {}, rules: { allow: [], block: [] }, switches: {} }; scopes.push(s); }
+    if (!s) { s = { scope: ref, items: {}, rules: { allow: [], block: [] }, rule_schedules: { allow: {}, block: {} }, switches: {}, mode: null }; scopes.push(s); }
+    if (!s.rule_schedules) s.rule_schedules = { allow: {}, block: {} };
     return s;
   }
 
@@ -224,13 +228,16 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
         if (body.kind !== 'allow' && body.kind !== 'block') throw err(400, 'kind must be allow or block');
         const other = body.kind === 'block' ? 'allow' : 'block';
         s.rules[other] = s.rules[other].filter((x) => x !== d);
+        delete s.rule_schedules[other][d];
         if (!s.rules[body.kind].includes(d)) s.rules[body.kind].push(d);
+        if (body.schedule) s.rule_schedules[body.kind][d] = body.schedule; else delete s.rule_schedules[body.kind][d];
         return policyDoc();
       }
       if (method === 'DELETE') {
         const s = scopeRef({ kind: q.get('scope_kind'), id: q.get('scope_id') || '' });
         const k = q.get('kind');
         if (s.rules[k]) s.rules[k] = s.rules[k].filter((x) => x !== q.get('domain'));
+        if (s.rule_schedules[k]) delete s.rule_schedules[k][q.get('domain')];
         return policyDoc();
       }
     }
@@ -238,6 +245,12 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       const s = scopeRef(body.scope);
       if (!DEMO_SWITCHES.some((x) => x.name === body.name)) throw err(404, 'unknown switch');
       if (body.enabled === null || body.enabled === undefined) delete s.switches[body.name]; else s.switches[body.name] = !!body.enabled;
+      return policyDoc();
+    }
+    if (path === '/api/policy/mode' && method === 'POST') {
+      const s = scopeRef(body.scope);
+      if (body.mode !== null && body.mode !== 'block' && body.mode !== 'allow') throw err(400, 'mode must be block or allow');
+      s.mode = body.mode;
       return policyDoc();
     }
     if (path === '/api/policy/custom-lists' && method === 'POST') {

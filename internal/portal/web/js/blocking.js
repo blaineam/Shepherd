@@ -3,7 +3,7 @@
 // switches. Inherited settings are shown, not hidden. Edits are optimistic.
 import { el } from './dom.js';
 import { icon, iconButton, button, toggle, segmented, emptyState, confirmDialog, relTime, unavailableCard, debounce } from './ui.js';
-import { NETWORK, sameScope, scopeLabel, itemStatus, nextItemValue, rulesView, switchView, effectiveSummary, inheritedSources, dataFor, normalizeDomain } from './scope.js';
+import { NETWORK, sameScope, scopeLabel, itemStatus, nextItemValue, rulesView, switchView, modeView, effectiveSummary, inheritedSources, dataFor, normalizeDomain } from './scope.js';
 import { groupCatalog, listStatus, fmtCount, sources, safeHref, bundleProgress, matchesQuery } from './catalog.js';
 import { unavailable } from './mgmt.js';
 
@@ -70,7 +70,33 @@ export function createBlocking({ root, mgmt, store, notify, getGroups, onOpenDev
       desc.textContent = 'Applies to ' + (g ? (g.count ?? 0) + ' device' + (g.count === 1 ? '' : 's') + ' in ' + g.name : 'this group') + ', on top of the network settings.';
     } else desc.textContent = 'Applies only to ' + labelOf(scope) + ', on top of the network' + (scopeGroups.length ? ' and group' : '') + ' settings.';
     scopeBox.append(desc);
-    if (store.ready) scopeBox.append(summaryRow());
+    if (store.ready) { scopeBox.append(modeRow()); scopeBox.append(summaryRow()); }
+  }
+
+  function modeRow() {
+    const v = modeView(store.policy, scope, scopeGroups);
+    const row = el('div', 'bk-mode');
+    row.append(el('span', 'k', 'Mode'));
+    const seg = segmented(
+      [{ id: 'block', label: 'Blocklist' }, { id: 'allow', label: 'Allowlist' }], v.effective,
+      async (m) => {
+        try { await store.setMode(scope, m); paintScope(); }
+        catch (e) { notify('Could not change mode: ' + e.message); seg.set(v.effective); }
+      },
+      'Blocklist or allowlist mode for ' + labelOf(scope),
+    );
+    row.append(seg.root);
+    if (v.here) {
+      row.append(iconButton('x', 'Remove ' + labelOf(scope) + '’s own mode choice', async () => {
+        try { await store.setMode(scope, null); paintScope(); } catch (e) { notify(e.message); }
+      }));
+    } else if (v.inherited) {
+      row.append(el('span', 'badge inh', 'Inherited from ' + labelOf(v.inherited.scope)));
+    }
+    if (v.effective === 'allow') {
+      row.append(el('p', 'bk-desc muted', 'Allowlist mode: everything is blocked here unless an app, list or allow rule switched on lets it through. No automatic exceptions for NTP, updates or captive portals.'));
+    }
+    return row;
   }
 
   function summaryRow() {
@@ -414,8 +440,52 @@ export function createBlocking({ root, mgmt, store, notify, getGroups, onOpenDev
     return f;
   }
 
+  const DAY_LABELS = [['0', 'Sun'], ['1', 'Mon'], ['2', 'Tue'], ['3', 'Wed'], ['4', 'Thu'], ['5', 'Fri'], ['6', 'Sat']];
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const minutesOf = (hhmm) => { const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || ''); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+  const fmtMinutes = (m) => pad2(Math.floor(m / 60)) + ':' + pad2(m % 60);
+  function fmtSchedule(sch) {
+    const days = [...sch.days].sort((a, b) => a - b).map((d) => DAY_LABELS[d][1]).join(',');
+    return days + ' ' + fmtMinutes(sch.start_min) + '–' + fmtMinutes(sch.end_min);
+  }
+
+  function scheduleFields() {
+    const wrap = el('div', 'rule-sched');
+    const on = el('input'); on.type = 'checkbox'; on.id = 'rule-sched-on';
+    const onLabel = el('label', '', 'Limit to a schedule'); onLabel.htmlFor = on.id; onLabel.prepend(on);
+    const days = el('div', 'rule-sched-days');
+    const boxes = DAY_LABELS.map(([v, l]) => {
+      const cb = el('input'); cb.type = 'checkbox'; cb.value = v; cb.id = 'rule-sched-day-' + v;
+      const lab = el('label', 'day-chip', l); lab.htmlFor = cb.id; lab.prepend(cb);
+      days.append(lab);
+      return cb;
+    });
+    const start = el('input'); start.type = 'time'; start.value = '09:00'; start.setAttribute('aria-label', 'Start time');
+    const end = el('input'); end.type = 'time'; end.value = '17:00'; end.setAttribute('aria-label', 'End time');
+    const times = el('div', 'rule-sched-times');
+    times.append(start, el('span', '', '–'), end);
+    const fields = el('div', 'rule-sched-fields');
+    fields.append(days, times);
+    fields.hidden = true;
+    on.addEventListener('change', () => { fields.hidden = !on.checked; });
+    wrap.append(onLabel, fields);
+    return {
+      root: wrap,
+      // Returns a Schedule, null for "always", or a string error.
+      value() {
+        if (!on.checked) return null;
+        const picked = boxes.filter((cb) => cb.checked).map((cb) => Number(cb.value));
+        if (!picked.length) return 'Pick at least one day.';
+        const s = minutesOf(start.value), e = minutesOf(end.value);
+        if (s === null || e === null) return 'Pick a start and end time.';
+        if (s >= e) return 'The start time must be before the end time (an overnight window needs two rules).';
+        return { days: picked, start_min: s, end_min: e };
+      },
+    };
+  }
+
   function paintRules() {
-    content.append(intro('Rules for single domains. They also cover subdomains. An allow rule at a more specific level (device over group over network) wins over a block from a broader one.'));
+    content.append(intro('Rules for single domains. They also cover subdomains. An allow rule at a more specific level (device over group over network) wins over a block from a broader one. A rule can optionally be limited to a day/time window (server-local time); outside it, it is as if it were not there.'));
     const f = el('form', 'rule-add panel-lite');
     const d = el('input');
     d.placeholder = 'example.com';
@@ -429,13 +499,18 @@ export function createBlocking({ root, mgmt, store, notify, getGroups, onOpenDev
     const go = button('Add rule', 'primary');
     go.type = 'submit';
     const err = el('p', 'err small');
-    f.append(d, k, go, err);
+    const row = el('div', 'cf-row');
+    row.append(d, k, go);
+    const sched = scheduleFields();
+    f.append(row, sched.root, err);
     f.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       err.textContent = '';
       const dom = normalizeDomain(d.value);
       if (!dom) { err.textContent = 'That does not look like a domain name.'; return; }
-      try { await store.addRule(scope, k.value, dom); d.value = ''; paintScope(); paintContent(); d.focus(); } catch (e) { err.textContent = e.message; }
+      const schedule = sched.value();
+      if (typeof schedule === 'string') { err.textContent = schedule; return; }
+      try { await store.addRule(scope, k.value, dom, schedule); d.value = ''; paintScope(); paintContent(); d.focus(); } catch (e) { err.textContent = e.message; }
     });
     content.append(f);
     const rules = rulesView(store.policy, scope, scopeGroups);
@@ -444,6 +519,7 @@ export function createBlocking({ root, mgmt, store, notify, getGroups, onOpenDev
     for (const r of rules) {
       const li = el('li', r.here ? '' : 'inh');
       li.append(el('span', 'act ' + (r.kind === 'block' ? 'blocked' : 'allowed'), r.kind), el('span', 'grow mono', r.domain));
+      if (r.schedule) li.append(el('span', 'badge small', fmtSchedule(r.schedule)));
       if (r.here) {
         li.append(iconButton('trash', 'Remove ' + r.kind + ' rule for ' + r.domain, async () => { try { await store.delRule(scope, r.kind, r.domain); paintScope(); } catch (e) { notify(e.message); } }));
       } else li.append(el('span', 'badge inh', 'From ' + labelOf(r.scope)));
