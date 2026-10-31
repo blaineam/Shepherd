@@ -60,14 +60,19 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   An interim commit on this branch claimed the loops were caused by steering the gateway via the
   merged registry record, and relaxed this refusal to a warning on the strength of it. The trial
   above disproved that: no registry, no gateway, same loop. The refusal is restored.
-  A second measurement, taken with Watch mode **off** and nothing steered, sets a bound on what the
-  eventual fix may do: that host forwards **3,900 to 4,900 datagrams a second** at rest — the whole
-  of the relay interface's inbound traffic, routed to a container bridge for a service its owner
-  runs on purpose. Clearing `net.ipv4.ip_forward` is therefore not available as a remedy. The same
-  measurement shows the relay interface transmitting only 1,100 to 1,700 packets a second against
-  3,900 received, so at rest nothing is routed back onto the relay's own segment: the hazard is
-  narrower than the condition being tested, and is specifically a frame arriving for a *steered*
-  device's address and being routed back out the interface it came in on.
+  Further measurement on that host, with Watch mode **off** and nothing steered, sets a bound on
+  what the eventual fix may do. Its IPv4 forwarding is **bursty**: over a minute, a median of 34
+  datagrams a second, a p90 of 5,759, a peak of 8,607 and 80,521 in all, with a half-second bucket
+  during a trial reaching the equivalent of 24,842 a second. Every burst is the relay interface's
+  inbound traffic routed to a container bridge, for a service its owner runs on purpose, so clearing
+  `net.ipv4.ip_forward` is not available as a remedy. Separately, a rule counting hairpin forwarding
+  — in the relay interface, out that same interface — dropped **zero** packets across 25 seconds
+  that included those bursts, so nothing is routed back onto the relay's own segment. The hazard is
+  therefore narrower than the condition being tested, and is specifically a frame arriving for a
+  *steered* device's address and being routed back out the interface it came in on.
+  Two earlier five-second samples both landed inside bursts and were written up as a steady 3,900 to
+  4,900 a second; the distribution above supersedes that. The same burstiness also explains the
+  first trial's unexplained pre-steering baseline of 12,000 packets a second inbound.
 - **Watch mode no longer tries to steer devices that are not on the relay interface's subnet.** The
   host's own Docker containers arrive in the registry looking like ordinary LAN devices: a `172.x`
   address learned from the host's neighbour table and several MACs each. An ARP reply on the relay's

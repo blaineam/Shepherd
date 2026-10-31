@@ -1688,19 +1688,28 @@ var _ intercept.Excluder = v6Excluder{}
 // (checkForLoop) remains the mechanism-independent backstop for everything
 // else.
 //
-// Two numbers from that host, measured with Watch mode off and nothing
-// steered, bound what a narrower test may assume. It forwards 3,900 to
-// 4,900 datagrams a second at rest (ForwDatagrams in /proc/net/snmp) --
-// the whole of the relay interface's inbound traffic, routed to a
-// container bridge for a service its owner runs on purpose -- so turning
-// forwarding off is not a remedy anyone can offer. And it transmits only
-// 1,100 to 1,700 packets a second against those 3,900 received, so none
-// of that routed traffic goes back out onto the relay's own segment. The
-// hazard is therefore narrower than what this function tests: a frame
-// arriving for a *steered* device's address and being routed back out the
-// interface it arrived on. Keying the refusal on that, rather than on the
-// host merely having forwarding plus a second address on the prefix, is
-// what would let Watch mode run on hardware like this.
+// Two measurements from that host, taken with Watch mode off and nothing
+// steered, bound what a narrower test may assume.
+//
+// Its forwarding is bursty, not steady: over a minute, ForwDatagrams in
+// /proc/net/snmp had a median of 34 a second, a p90 of 5,759 and a peak of
+// 8,607, totalling 80,521, and a half-second bucket during a trial hit the
+// equivalent of 24,842 a second. Every burst is the relay interface's
+// inbound traffic routed to a container bridge, for a service its owner
+// runs on purpose. So turning forwarding off is not a remedy anyone can
+// offer. (Two five-second samples taken earlier both landed in bursts and
+// were written up here as a steady ~4,000 a second. They also explain the
+// first trial's odd pre-steering baseline of 12,000 packets a second on an
+// interface whose median is 65.)
+//
+// And a rule counting hairpin forwarding -- in this interface, out this
+// same interface -- dropped zero packets over 25 seconds that included
+// those bursts. None of the routed traffic goes back onto the relay's own
+// segment. The hazard is therefore narrower than what this function tests:
+// a frame arriving for a *steered* device's address and being routed back
+// out the interface it arrived on. Keying the refusal on that, rather than
+// on the host merely having forwarding plus a second address on the
+// prefix, is what would let Watch mode run on hardware like this.
 func (e *Engine) routingOwnSegment(link Link, own Own) (bool, string) {
 	fwd, err := e.plat.IPForwarding()
 	if err != nil || !fwd {

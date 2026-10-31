@@ -264,20 +264,28 @@ with wired and wireless on one LAN is ordinary — so this does disable Watch mo
 That is the right trade until the mechanism is measured and closed: unavailable is much better than
 melting the network.
 
-Forwarding on such a host is also not idle plumbing left on by a package manager. Measured on the
-same NAS with Watch mode **off** and nothing steered, `ForwDatagrams` in `/proc/net/snmp` climbs at
-**about 3,900 to 4,900 datagrams a second**, and that is essentially the whole of the relay
-interface's inbound traffic: it is being routed to a container bridge for a service the owner runs
-deliberately. So "sort out the routing" cannot mean clearing `net.ipv4.ip_forward` — that would cut
-off a container doing five thousand packets a second. Whatever closes this has to be narrower than
-the host-wide switch.
+Forwarding on such a host is also not idle plumbing left on by a package manager. Measured over a
+minute on the same NAS with Watch mode **off** and nothing steered, `ForwDatagrams` in
+`/proc/net/snmp` is **bursty**: a median of 34 datagrams a second, a 90th percentile of 5,759, a
+peak of 8,607, and 80,521 forwarded over the minute in all, with about a fifth of its seconds above
+a thousand. A single half-second bucket during a later trial reached the equivalent of 24,842 a
+second. Every burst is the relay interface's inbound traffic being routed to a container bridge, for
+a service the owner runs deliberately. So "sort out the routing" cannot mean clearing
+`net.ipv4.ip_forward` — that would cut off a container that bursts to twenty thousand packets a
+second. Whatever closes this has to be narrower than the host-wide switch.
 
-It is worth being precise about which direction is dangerous, because at rest neither is happening.
-In that same measurement the relay interface transmitted only about 1,100 to 1,700 packets a second
-against 3,900 received, so **none** of the routed traffic was going back out onto the relay's own
-segment. The hazard is specific: frames that arrive for a *steered* device's address and get routed
-back out the same interface they came in on. A refusal keyed on that, rather than on the host having
-forwarding plus a second address on the prefix, is the shape the fix should take.
+> Two five-second samples taken before that minute both happened to land inside bursts, and were
+> read here as a steady four thousand a second. The distribution above is the honest shape. The same
+> burstiness explains the first trial's odd pre-steering baseline, which showed 12,000 packets a
+> second inbound on an interface whose median is 65.
+
+It is worth being precise about which direction is dangerous, because at rest it is not happening at
+all. A rule counting hairpin forwarding — in the relay interface, out that same interface — dropped
+**zero** packets across a 25-second window that included those bursts. So none of the routed traffic
+goes back out onto the relay's own segment; it all leaves via the bridge. The hazard is specific:
+frames that arrive for a *steered* device's address and get routed back out the interface they came
+in on. A refusal keyed on that, rather than on the host having forwarding plus a second address on
+the prefix, is the shape the fix should take.
 
 > An earlier revision of this document blamed a polluted registry record that had merged the gateway
 > into a steerable device, and said the cause was settled. The single-device trial above disproved
