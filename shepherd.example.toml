@@ -206,7 +206,7 @@ cloudflare_api_token_file = ""  # e.g. "/etc/shepherd/cloudflare-api-token"
 # section before moving port 443 over from another reverse proxy.
 enabled = false
 listen = ":8443"                # binding 443 is your call, not a default
-redirect_listen = ":80"         # answers plain http:// with a 302 to https://; "" turns it off
+redirect_listen = ""            # e.g. ":80" once your deployment can bind it; answers plain http:// with a 302 to https://
 domain = ""                     # e.g. "example.com" -> certificate for *.example.com
 email = ""                      # optional; Let's Encrypt expiry-notice contact
 # Same rules as [tls]: set the token or a 0600 token file, never both. Both

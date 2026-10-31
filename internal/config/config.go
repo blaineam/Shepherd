@@ -275,9 +275,13 @@ type ReverseProxy struct {
 	// with a 302 to the same host and path over https, so a bookmark or
 	// hardcoded "http://" link to a proxied host still gets there instead
 	// of just failing to connect once nothing else is listening on 80.
-	// ":80" by default, like Listen itself never bound unless this is
-	// also [reverseproxy].enabled; empty turns the redirect off (say, to
-	// leave port 80 for something else) without disabling the proxy.
+	// Empty (off) by default, the same reason Listen itself defaults to
+	// ":8443" and never ":80"/":443": binding a port below 1024 needs a
+	// capability (CAP_NET_BIND_SERVICE, or root) a default install does
+	// not have, so a plain `go test` or an uncapable process must never
+	// try it just because [reverseproxy] is enabled. Set it to ":80"
+	// once the deployment already has that capability (the same
+	// container that lets Listen bind ":443" already grants it).
 	RedirectListen string `toml:"redirect_listen"`
 	// Domain is the zone the wildcard certificate covers: "example.com"
 	// (or "*.example.com", the same thing) gets "*.example.com", valid for
@@ -425,7 +429,7 @@ func Default() Config {
 		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600, WANExposure: WANExposure{Enabled: true, RefreshIntervalSeconds: 600}},
 		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600},
 		Nethealth:      Nethealth{Enabled: false, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
-		ReverseProxy:   ReverseProxy{Listen: ":8443", RedirectListen: ":80"},
+		ReverseProxy:   ReverseProxy{Listen: ":8443"},
 		DataDir:        "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},

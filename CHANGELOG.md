@@ -36,9 +36,11 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   proves the CSR and challenge naming. The same order also asks for the bare base domain itself
   (`Obtainer.ExtraHostnames`, a general "more names on the same certificate" seam): a pure wildcard never
   covers `example.com` on its own, only `*.example.com`, which the first live cutover hit directly (a
-  host at the bare apex domain). A plain-HTTP listener (`redirect_listen`, `:80` by default, empty to
-  turn it off) answers every request with a 302 to the same host and path over https, so a bookmarked or
-  hardcoded `http://` link still gets there instead of failing to connect once nothing else owns port 80.
+  host at the bare apex domain). A plain-HTTP listener (`redirect_listen`, off by default like `listen`
+  itself never defaulting to `:443` — binding a port below 1024 needs a capability a fresh install does
+  not have) answers every request with a 302 to the same host and path over https when set (e.g. `:80`),
+  so a bookmarked or hardcoded `http://` link still gets there instead of failing to connect once
+  nothing else owns port 80.
   Backend certificates are verified by default, with an explicit
   per-host "accept any backend certificate" switch for self-signed backends (a typical manager never
   verified them at all). Hosts live in `<data_dir>/reverseproxy.json` (0600), managed only from the
@@ -50,7 +52,7 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   `[reverseproxy]`'s `enabled` (**false by default**), `listen` (`:8443` by default, never 443: moving
   the standard port over is the owner's deliberate cutover), `domain`, `email` and
   `cloudflare_api_token`/`cloudflare_api_token_file` (same rules as `[tls]`), and `redirect_listen`
-  (`:80` by default). A taken listen port (either one) stops startup with a clear error; obtaining the
+  (empty/off by default). A taken listen port (either one) stops startup with a clear error; obtaining the
   certificate never blocks it. Not yet: per-host access control of any kind, custom per-host config, an
   access log, or import from an existing manager — a straight migration can lose per-host features a
   manager had. Every automated test runs against fakes and loopback, but this has also now been run for

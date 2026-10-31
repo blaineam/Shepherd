@@ -21,8 +21,8 @@ func TestReverseProxyDefaultsAreOffAndInert(t *testing.T) {
 	if rp.Listen != ":8443" {
 		t.Errorf("listen default = %q, want :8443 (never 443: binding it is the owner's call)", rp.Listen)
 	}
-	if rp.RedirectListen != ":80" {
-		t.Errorf("redirect_listen default = %q, want :80", rp.RedirectListen)
+	if rp.RedirectListen != "" {
+		t.Errorf("redirect_listen default = %q, want empty: binding :80 by default needs a capability a fresh install does not have", rp.RedirectListen)
 	}
 	if rp.Domain != "" || rp.CloudflareAPIToken != "" || rp.CloudflareAPITokenFile != "" || rp.Email != "" {
 		t.Errorf("a fresh install must configure no domain or secret under [reverseproxy]: %+v", rp)

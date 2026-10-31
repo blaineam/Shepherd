@@ -45,7 +45,7 @@ Any `X-Forwarded-*` header the client sent is dropped before these are set.
 [reverseproxy]
 enabled = false
 listen = ":8443"                # binding 443 is your call, not a default
-redirect_listen = ":80"         # 302s every request to https://; "" leaves port 80 alone
+redirect_listen = ""            # e.g. ":80" once your deployment can bind it; 302s to https:// when set
 domain = ""                     # e.g. "example.com" -> certificate for *.example.com
 email = ""                      # optional; Let's Encrypt expiry-notice contact
 cloudflare_api_token = ""
@@ -175,10 +175,12 @@ proxies a name to one backend, and that is all. Not built:
 - **No custom per-host configuration**: no extra headers, no custom locations (sending one path to a
   different backend), no rewrites, no "advanced" free-form server config, no caching, no "block common
   exploits"-style filtering, no per-host body size limits or timeouts.
-- **`redirect_listen` only redirects; it does not terminate anything on port 80.** It answers every
-  request with a 302 to the same host and path over https (no per-host matching — unknown names get
-  redirected too, same as nginx's typical catch-all). Off entirely with `redirect_listen = ""`, say to
-  leave port 80 for something else. No HSTS is added on the https side.
+- **`redirect_listen` only redirects; it does not terminate anything on port 80, and it is off by
+  default** — like `listen` itself, which defaults to `:8443` and never `:443`, binding a port below
+  1024 needs a capability (`CAP_NET_BIND_SERVICE`, or root) a fresh install does not have, so nothing
+  tries to bind one until the owner says so. When set, it answers every request with a 302 to the same
+  host and path over https (no per-host matching — unknown names get redirected too, same as nginx's
+  typical catch-all). No HSTS is added on the https side.
 - **No per-host certificates, no custom (uploaded) certificates, no second zone.**
 - **No TCP/UDP stream forwarding, redirection hosts or dead-host pages**: HTTP(S) proxy hosts only.
 - **No access log.** Backend failures are logged by host name only (never the path or query, which can
@@ -217,8 +219,8 @@ Read this before moving DNS or port 443 over. It is the honest list.
    proxies (Home Assistant's `trusted_proxies`, Jellyfin's known proxies, and similar) must list the
    address Shepherd connects to them from. If the old proxy ran on the same host and connected over
    loopback, that may already match; check, do not assume.
-7. **`redirect_listen` (`:80` by default) answers port 80 with a redirect automatically** once
-   `[reverseproxy]` is enabled; set it to `""` instead if you want to leave port 80 to something else.
+7. **Set `redirect_listen = ":80"` if you want port 80 to redirect** (off by default; needs the same
+   bind capability `listen` itself needs for `:443`).
 8. **Cut over with a rollback ready.** Stop the old proxy (freeing 443), set `listen = ":443"` (with the
    privilege to bind it), restart Shepherd. Leave the old proxy's configuration and certificates in place:
    rolling back is setting `listen` back, restarting Shepherd and starting the old proxy again.
