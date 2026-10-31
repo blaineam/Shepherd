@@ -100,6 +100,7 @@ type fakePlatform struct {
 	unsupported                         bool
 
 	xdpAttached, relayStarted int
+	xdpLocalIPs               []netip.Addr
 	groSets                   []bool
 	xdpDie                    chan error // when set, AttachXDP returns what it receives
 }
@@ -220,6 +221,7 @@ func (p *fakePlatform) AttachXDP(ctx context.Context, c *intercept.Controller, i
 	}
 	p.xdpAttached++
 	p.xdpRequested = opts.Mode
+	p.xdpLocalIPs = append([]netip.Addr(nil), opts.LocalIPs...)
 	mode, die := p.xdpMode, p.xdpDie
 	// Asking for generic gets generic; asking for auto or native gets
 	// whatever this fake NIC is set up to support.

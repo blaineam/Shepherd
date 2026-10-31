@@ -13,11 +13,11 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
-- **A loop brake for Watch mode, and a refusal to relay on a host that routes its own segment.**
+- **A loop brake for Watch mode.**
   Twice on real hardware the relay ended up carrying its own output back to itself at line rate --
   about 10 Gbit/s and over a million packets a second on a 10 GbE card -- and both times it ran for
-  minutes because a person had to notice. The first had a cause and it is fixed (it steered one of
-  the host's own interfaces); the second does not, which is what these two guards are for.
+  minutes because a person had to notice. Both causes are now known and fixed (see Fixed, below);
+  the brake stays as the backstop for any mechanism that is not.
   The brake compares the relay's own throughput against the interface's kernel counters every
   second and looks for the signature that identified both incidents by hand: the interface receives
   and transmits the same amount, the relay accounts for almost all of it, and the rate is one a home
@@ -28,13 +28,36 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   alone has innocent explanations, hence all three: the healthy live run had the interface receiving
   600 Mbit/s against 800 to 1000 transmitted, 25 to 40% apart, with the relay under half its
   packets; the loop had them within 0.03% of each other.
-  Separately, Shepherd now **refuses to relay at all** when IPv4 forwarding is on and another of
-  this host's interfaces has an address inside the relay interface's own prefix. One-sided ARP
-  steering assumes a passive Layer 2 relay; a host routing the same subnet has the kernel's own
-  opinion about where frames go, and with two link routes for one subnet that can be back onto the
-  same segment. The maintainer's NAS is exactly that shape -- forwarding on, two interfaces on one
-  `/24`, Tailscale advertising that subnet as a subnet router and exit node -- and it is the only
-  host that has ever looped. This is a precaution, not a proven mechanism, and docs/WATCH.md says so.
+### Fixed
+- **The cause of both line-rate relay loops: the relay was steering the gateway.** The device
+  registry had merged the gateway, both of the host's LAN interfaces and all nine of its container
+  bridge addresses into one device record -- the ARP monitor learning Shepherd's own steering frames
+  as a device -- and that record was eligible to steer. Steering the gateway makes the relay bounce
+  the gateway's own frames back to it, and the gateway, having learned those clients at Shepherd's
+  MAC from the source address of every relayed frame, returns them: a tight loop at line rate,
+  entirely in the kernel, which is why it cost almost no CPU and was invisible until someone read
+  the interface counters. The policy now refuses any record carrying a host or gateway address by
+  MAC **and** by address, across every address on the record rather than its primary one, so a
+  merged record, a randomised MAC or an address learned from Shepherd's own frames is caught even
+  when the MAC looks like an ordinary device's.
+- **Traffic from a steered device to any of this host's other addresses reached the gateway instead
+  of this host.** The relay's "not for Shepherd itself" rule was given only the relay interface's
+  own addresses, so on a host with a second interface on the same segment, or with container
+  bridges, a frame addressed to one of those was relayed out to the router rather than passed up to
+  the stack. The maintainer's NAS answers DNS on such an address, so this is the ordinary case. The
+  rule now covers every address of the host, for IPv4 and IPv6; the gateway's own address stays out
+  of it, because that traffic belongs to the gateway and passing it up would strand it.
+
+### Changed
+- **A host that also routes the relay's own segment is now a warning rather than a refusal.** The
+  previous release refused to relay when IPv4 forwarding was on and another of this host's
+  interfaces had an address inside the relay interface's prefix. That was a precaution against an
+  unproven mechanism, written before the loop's actual cause (above) was known, and the condition is
+  far too broad to refuse on: every machine running Docker has IPv4 forwarding on, and a NAS with
+  wired and wireless on one LAN is ordinary, so it disabled Watch mode on exactly the hardware it is
+  for. XDP runs before the routing stack, so a relayed frame never meets the host's routing table.
+  Shepherd logs the condition and carries on; the loop brake remains the mechanism-independent
+  backstop.
 - **Watch mode no longer tries to steer devices that are not on the relay interface's subnet.** The
   host's own Docker containers arrive in the registry looking like ordinary LAN devices: a `172.x`
   address learned from the host's neighbour table and several MACs each. An ARP reply on the relay's

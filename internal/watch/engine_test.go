@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1412,11 +1413,12 @@ func TestAnUnknownSegmentRefusesNothing(t *testing.T) {
 }
 
 // A host that both forwards IPv4 and has a second interface on the relay's
-// own subnet is routing the segment Watch mode would steer. That is the
-// shape of the maintainer's NAS, which is the only host on which the relay
-// has ever ended up carrying its own output back to itself, so Shepherd
-// refuses rather than relay into it.
-func TestRefusesToRelayOnAHostRoutingItsOwnSegment(t *testing.T) {
+// own subnet is also routing the segment Watch mode steers. Shepherd says
+// so and carries on: every Docker host forwards, and a NAS with wired and
+// wireless on one LAN is ordinary, so refusing here disabled Watch mode on
+// exactly the hardware it is for. XDP runs before the routing stack. The
+// loop brake is the backstop.
+func TestWarnsButStillRelaysOnAHostRoutingItsOwnSegment(t *testing.T) {
 	plat := newFakePlatform()
 	plat.ipForward = true
 	plat.link.IPv4Nets = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
@@ -1425,17 +1427,46 @@ func TestRefusesToRelayOnAHostRoutingItsOwnSegment(t *testing.T) {
 	te := newTestEngine(t, plat, nil)
 	te.addPhone(t)
 	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
 
-	waitFor(t, "the refusal", func() bool { return te.Snapshot().Phase == PhaseUnavailable })
-	snap := te.Snapshot()
-	if !strings.Contains(snap.Reason, "routing the segment") {
-		t.Fatalf("reason = %q, want it to explain the refusal", snap.Reason)
+	var warned bool
+	for _, l := range te.logs.all() {
+		if strings.Contains(l, "routing the segment") && strings.Contains(l, "WARNING") {
+			warned = true
+		}
 	}
-	if te.isSteered(phoneMAC) {
-		t.Fatal("nothing should be steered on such a host")
+	if !warned {
+		t.Fatalf("want a warning that the host routes the segment; logs = %v", te.logs.all())
 	}
-	if x, _ := plat.counts(); x != 0 {
-		t.Fatalf("the relay should never have been attached; attaches = %d", x)
+}
+
+// Rule 4 of the relay ("not for Shepherd itself") is driven by the
+// local_ips map, and the relay interface's own addresses are not the whole
+// of this host. A second interface on the same segment -- the maintainer's
+// NAS answers DNS on one -- is an address steered devices legitimately
+// talk to, and those frames must reach the stack, not the gateway. The
+// gateway's own address must stay out: it is not this host's.
+func TestLocalIPsCoverEveryHostAddressButNotTheGateway(t *testing.T) {
+	plat := newFakePlatform()
+	second := netip.MustParseAddr("192.0.2.77")
+	plat.extraIPs = []netip.Addr{second}
+	te := newTestEngine(t, plat, nil)
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+
+	plat.mu.Lock()
+	got := append([]netip.Addr(nil), plat.xdpLocalIPs...)
+	plat.mu.Unlock()
+	if !slices.Contains(got, second) {
+		t.Errorf("local_ips = %v, want it to include this host's other address %v", got, second)
+	}
+	if !slices.Contains(got, shepherdIP) {
+		t.Errorf("local_ips = %v, want it to include the relay interface's own %v", got, shepherdIP)
+	}
+	if slices.Contains(got, gwIP) {
+		t.Errorf("local_ips = %v, must not include the gateway %v", got, gwIP)
 	}
 }
 

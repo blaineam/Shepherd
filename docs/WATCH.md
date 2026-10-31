@@ -244,21 +244,29 @@ that means `interface = "eth0"`.
 
 ## Two things that stop it by themselves
 
-**Shepherd refuses to relay on a host that routes the relay's own segment.**
-One-sided ARP steering assumes Shepherd is a passive Layer 2 relay: a device hands it a frame, it
-rewrites both MAC addresses and puts it back on the wire. A host that also *routes* that subnet
-breaks the assumption, because the kernel has its own view of where the frame should go, and with
-two link routes for one subnet that can be straight back onto the same segment. So if IPv4
-forwarding is on **and** another of this host's interfaces has an address inside the relay
-interface's own prefix, Watch mode reports itself unavailable with that reason and attaches
-nothing.
+**Shepherd never steers the gateway, or itself.** This is what caused both line-rate relay loops,
+and it is worth being plain about it. The device registry had merged the gateway, both of the host's
+LAN interfaces and all nine of its container bridge addresses into a *single* device record — the
+ARP monitor learning Shepherd's own steering frames as though they were a device's. That record was
+eligible to steer, so the relay ended up steering the gateway. Steering the gateway is fatal in a
+specific way: the relay bounces the gateway's own frames straight back to it, and the gateway — which
+has meanwhile learned those clients at Shepherd's MAC, because that is the source address on every
+relayed frame — returns them. That is a tight loop at line rate, in the kernel, which is why it cost
+almost no CPU and was invisible until the interface counters were read.
 
-This is a precaution rather than a proven mechanism, and it is worth being plain about why it
-exists. The maintainer's NAS has exactly that shape: forwarding on, `eth0` and `wlan0` both on the
-same `/24`, and Tailscale advertising that subnet while acting as an exit node. It is the only host
-on which the relay has ever ended up carrying its own output back to itself, and the second time it
-did so nothing else explained it. Shepherd therefore declines the combination instead of relaying
-into it.
+The policy now refuses any record that carries a host or gateway address, **by MAC and by address**,
+and checks every address on the record rather than its primary one. A merged record, a randomised
+MAC or an address the ARP monitor learned from Shepherd's own frames is caught by the address even
+when the MAC looks like an ordinary device's. Devices off the relay interface's subnet are refused
+too, which is what the host's own containers look like.
+
+**A host that also routes the relay's segment is a warning, not a refusal.** If IPv4 forwarding is
+on and another of this host's interfaces has an address inside the relay interface's own prefix,
+Watch mode says so in the log and carries on. It used to refuse. That was a precaution against an
+unproven mechanism, written before the cause above was known, and the condition is far too broad to
+refuse on: every machine running Docker has IPv4 forwarding on, and a NAS with wired and wireless on
+one LAN is ordinary, so refusing disabled Watch mode on exactly the hardware it is for. XDP runs
+before the routing stack, so a relayed frame never meets the host's routing table at all.
 
 **The loop brake.** Whatever the cause, a relay carrying its own output is caught in three seconds
 rather than by a person noticing. Every second the engine compares the relay's own throughput

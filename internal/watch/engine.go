@@ -588,11 +588,12 @@ func (e *Engine) session(ctx context.Context) error {
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	e.setPhase(PhaseStarting, "attaching the relay to "+iface)
-	// Refuse before anything is attached or steered if this host is
-	// routing the very segment the relay would work on.
+	// Say so before anything is attached if this host also routes the
+	// segment the relay will work on. This is a warning, not a refusal:
+	// see routingOwnSegment.
 	if ownNow, ok := e.own(e.clock.Now()); ok {
 		if routing, why := e.routingOwnSegment(link, ownNow); routing {
-			return errors.New(why)
+			e.logf("watch: WARNING: %s", why)
 		}
 	}
 
@@ -756,6 +757,45 @@ func (e *Engine) learnIfNativeFlapped(ctx context.Context, iface, driver string,
 	}
 }
 
+// localRelayIPs is every address of this host, for the relay's "not for
+// Shepherd itself" rule (xdp_relay.c rule 4, Relay.HandleFrame's local
+// check). The relay interface's own addresses are not enough: a host with
+// a second interface on the same segment, or with container bridges, has
+// addresses a steered device can legitimately talk to, and a frame for one
+// of those must be passed up to the stack rather than relayed to the
+// gateway. The maintainer's NAS answers DNS on a second address on the
+// very segment it steers, so this is the normal case, not a corner.
+//
+// The gateway is deliberately not in this set, even though own() includes
+// it for policy: traffic to the gateway's own address belongs to the
+// gateway, not to this host, and passing it up would strand it.
+func (e *Engine) localRelayIPs(link Link) (v4, v6 []netip.Addr) {
+	seen := map[netip.Addr]bool{}
+	add := func(ip netip.Addr) {
+		if !ip.IsValid() || seen[ip] {
+			return
+		}
+		seen[ip] = true
+		if ip.Is4() {
+			v4 = append(v4, ip)
+			return
+		}
+		v6 = append(v6, ip)
+	}
+	for _, ip := range link.IPv4s {
+		add(ip)
+	}
+	for _, ip := range link.IPv6s {
+		add(ip)
+	}
+	if _, ips, err := e.plat.LocalAddrs(); err == nil {
+		for _, ip := range ips {
+			add(ip)
+		}
+	}
+	return v4, v6
+}
+
 func (e *Engine) startXDP(ctx context.Context, ctrl *intercept.Controller, link Link) (string, <-chan error, func(), error) {
 	mode, driver := e.xdpModeFor(link.Name)
 	var before uint64
@@ -768,10 +808,12 @@ func (e *Engine) startXDP(ctx context.Context, ctrl *intercept.Controller, link 
 	rctx, cancel := context.WithCancel(ctx)
 	attached := make(chan intercept.XDPMode, 1)
 	done := make(chan error, 1)
+	v4, v6 := e.localRelayIPs(link)
 	go func() {
 		done <- e.plat.AttachXDP(rctx, ctrl, link.Name, intercept.XDPOptions{
 			Mode:       mode,
-			LocalIPs:   link.IPv4s,
+			LocalIPs:   v4,
+			LocalIPs6:  v6,
 			OnAttached: func(m intercept.XDPMode) { attached <- m },
 		})
 	}()
@@ -1614,24 +1656,34 @@ func familyNames(f intercept.Family) []string {
 
 var _ intercept.Excluder = v6Excluder{}
 
-// routingOwnSegment reports whether this host is routing the very subnet
-// the relay runs on, which Watch mode cannot safely steer.
+// routingOwnSegment reports whether this host also routes the subnet the
+// relay runs on: IPv4 forwarding is on and a second interface sits in the
+// relay interface's own prefix. It is worth telling the operator, because
+// it means frames have more than one way back onto the segment.
 //
-// One-sided ARP steering assumes Shepherd is a passive Layer 2 relay on a
-// segment: a steered device hands it a frame, it rewrites both MAC
-// addresses and puts it back on the wire. A host that also *routes* that
-// subnet breaks the assumption, because the kernel has its own opinion
-// about where the frame should go and, with two link routes for one
-// subnet, that can be straight back out onto the same segment.
+// It used to refuse to start. It no longer does, for two reasons.
 //
-// This is a precaution, not a proven mechanism. The maintainer's NAS has
-// exactly this shape -- IPv4 forwarding on, a wired and a wireless
-// interface both on the same /24, and Tailscale advertising that subnet
-// while acting as an exit node -- and it is the host on which the relay
-// twice ended up
-// carrying its own output back to itself at line rate. The second of those
-// was not explained by anything else, so Shepherd refuses the combination
-// rather than relay into it. The loop brake stays as the backstop.
+// First, it was a precaution against an unproven mechanism, written while
+// the cause of two line-rate relay loops on the maintainer's NAS was
+// unknown. That cause is now known and is not this: the device registry
+// had merged the gateway, both host interfaces and every container bridge
+// address into one record (the ARP monitor learning Shepherd's own
+// steering frames), so the *gateway itself* became eligible to steer.
+// Steering the gateway makes the relay bounce the gateway's own frames
+// back to it, and the gateway -- having learned those clients at
+// Shepherd's MAC -- returns them, which is a tight loop at line rate.
+// Decide() now refuses any record carrying a host or gateway address, by
+// MAC and by address, which closes it at the source.
+//
+// Second, the condition is far too broad to refuse on. Any machine running
+// Docker has IPv4 forwarding on, and a NAS with both wired and wireless on
+// one LAN is ordinary, so refusing here disabled Watch mode on exactly the
+// hardware it is meant for. XDP runs before the routing stack, so a
+// relayed frame never meets the host's routing table at all.
+//
+// The loop brake (checkForLoop) remains the backstop for any mechanism not
+// yet understood, and it is mechanism-independent: it watches for the relay
+// carrying its own output and stops steering.
 func (e *Engine) routingOwnSegment(link Link, own Own) (bool, string) {
 	fwd, err := e.plat.IPForwarding()
 	if err != nil || !fwd {
