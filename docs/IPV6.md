@@ -26,3 +26,7 @@ discovers devices with mDNS. Break either and smart-home devices quietly stop wo
 Without being the IPv6 gateway, Shepherd cannot see IPv6 flows from the LAN. That's an accepted
 limit: DNS queries (both families) and Tailscale traffic remain fully visible. Passive
 IPv6 observation and any in-path design are tracked on the roadmap as research items.
+
+A design for how Watch mode *could* steer IPv6 without violating the hard rules above — unicast
+Neighbor Advertisements only, never RAs — is worked out in [IPV6-WATCH.md](IPV6-WATCH.md). It is a
+proposal awaiting a go/no-go decision, not a shipped feature; the rules on this page stand.
