@@ -14,6 +14,7 @@ check:
 	@test -z "$$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
 	go vet ./...
 	scripts/coverage
+	node --test internal/portal/web/test/
 	scripts/test-leakcheck
 	scripts/leakcheck --all
 

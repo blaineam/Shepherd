@@ -472,6 +472,14 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- **`make check` did not run the portal front-end tests, so a broken JavaScript file passed it.**
+  The target's comment said "Everything CI runs, locally" and it ran gofmt, vet, the Go suite with
+  the coverage floor and both leak guards — but not `node --test internal/portal/web/test/`, which
+  CI runs as its own step. A merge resolution had left `demomgmt.test.js` one `});` short, so the
+  whole file failed to parse and every test in it was silently not running, on this branch and on
+  main. `make check` reported green twice over it. The missing brace is back, the file's 18 test
+  blocks balance, all 298 front-end tests run and pass, and `check` now runs them in the same
+  place CI does so the local command means what its comment claims.
 - **Watch mode steered the host's own other interfaces, which made the relay carry Shepherd's
   traffic back to itself at line rate.** `watch.Engine.ownMACs` treated "this host" as the MAC of
   the interface the relay was pinned to, plus the gateway's. It never asked the operating system
