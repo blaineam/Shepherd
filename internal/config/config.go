@@ -126,15 +126,20 @@ type AlarmsNtfy struct {
 // something they chose to watch. Enabled by default is safe: the library
 // itself starts with no contacts and no subscriptions, and this section's
 // SMTP.Host is empty by default too, so a fresh install sends no mail until
-// both a subscription is added in the portal and an SMTP relay is configured
-// here.
+// both a subscription is added in the portal and an SMTP relay is set up
+// (in the portal's Accountability tab; SMTP here is only a read-once seed
+// for it).
 type Accountability struct {
 	Enabled bool               `toml:"enabled"`
 	SMTP    AccountabilitySMTP `toml:"smtp"`
 }
 
-// AccountabilitySMTP is the outgoing mail relay accountability alerts send
-// through: a relay you already have (a Gmail or iCloud app password, a
+// AccountabilitySMTP is a read-once seed for the outgoing mail relay
+// accountability alerts send through, which the portal manages
+// (internal/secrets; docs/ACCOUNTABILITY.md): the first time Shepherd runs
+// without a portal-managed relay, a relay set here (Host non-empty) is
+// imported, password included, and from then on this section is ignored.
+// The relay is one you already have (a Gmail or iCloud app password, a
 // self-hosted Postfix), matching this project's free, keyless,
 // bring-your-own-credentials convention. Password is the plaintext secret
 // kept directly in shepherd.toml (protected only by that file's own 0600
@@ -247,13 +252,14 @@ type TLS struct {
 	// Email is an optional contact Let's Encrypt can use for certificate
 	// expiry notices. Never required.
 	Email string `toml:"email"`
-	// CloudflareAPIToken and CloudflareAPITokenFile supply the token
-	// DNS-01 uses to create and remove the challenge TXT record. Scope it
-	// to DNS edit on the one zone the hostname lives in, nothing broader
-	// (docs/TLS.md). Exactly one must be set while tls.enabled is true;
-	// setting both is a configuration error (Validate rejects it), the
-	// same convention AccountabilitySMTP.Password/PasswordFile already
-	// uses, for the same reason: never an ambiguous "which one wins".
+	// CloudflareAPIToken and CloudflareAPITokenFile are read-once seeds
+	// for the DNS provider token the portal manages (internal/secrets,
+	// shared with [reverseproxy]): the first time Shepherd runs without a
+	// portal-managed token, whatever is set here is imported, and from
+	// then on the portal's value is the one used and these are ignored
+	// (cmd/shepherd/secrets.go, docs/TLS.md). Neither is required any
+	// more; setting both is still a configuration error (Validate rejects
+	// it), so an import is never an ambiguous "which one wins".
 	CloudflareAPIToken     string `toml:"cloudflare_api_token"`
 	CloudflareAPITokenFile string `toml:"cloudflare_api_token_file"`
 }
@@ -289,9 +295,10 @@ type ReverseProxy struct {
 	Domain string `toml:"domain"`
 	// Email is an optional Let's Encrypt expiry-notice contact.
 	Email string `toml:"email"`
-	// CloudflareAPIToken and CloudflareAPITokenFile follow [tls]'s
-	// convention exactly: exactly one while enabled, never both. They may
-	// name the same token (or file) [tls] uses.
+	// CloudflareAPIToken and CloudflareAPITokenFile are read-once seeds
+	// for the same shared, portal-managed DNS provider token [tls]'s seed
+	// fields feed (never both set). When both sections hold different
+	// tokens at import time, [tls]'s wins and the conflict is logged.
 	CloudflareAPIToken     string `toml:"cloudflare_api_token"`
 	CloudflareAPITokenFile string `toml:"cloudflare_api_token_file"`
 }
@@ -538,9 +545,6 @@ func (c Config) Validate() error {
 		if c.TLS.Listen == "" {
 			return errors.New("tls.listen is required when tls.enabled is true")
 		}
-		if c.TLS.CloudflareAPIToken == "" && c.TLS.CloudflareAPITokenFile == "" {
-			return errors.New("tls.cloudflare_api_token or tls.cloudflare_api_token_file is required when tls.enabled is true")
-		}
 		if c.TLS.CloudflareAPIToken != "" && c.TLS.CloudflareAPITokenFile != "" {
 			return errors.New("tls.cloudflare_api_token and tls.cloudflare_api_token_file must not both be set")
 		}
@@ -592,9 +596,6 @@ func (c Config) validateReverseProxy() error {
 	}
 	if rp.Listen == "" {
 		return errors.New("reverseproxy.listen is required when reverseproxy.enabled is true")
-	}
-	if rp.CloudflareAPIToken == "" && rp.CloudflareAPITokenFile == "" {
-		return errors.New("reverseproxy.cloudflare_api_token or reverseproxy.cloudflare_api_token_file is required when reverseproxy.enabled is true")
 	}
 	if rp.CloudflareAPIToken != "" && rp.CloudflareAPITokenFile != "" {
 		return errors.New("reverseproxy.cloudflare_api_token and reverseproxy.cloudflare_api_token_file must not both be set")
