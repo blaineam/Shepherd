@@ -32,6 +32,7 @@ import { createDemoMgmt } from './js/demomgmt.js';
 import { DEVICE_BY_IP } from './js/demodata.js';
 import { createLocking } from './js/lockingview.js';
 import { lockedURL, unlockedURL } from './js/locking.js';
+import { requestOptions, assertionJSON, browserIssue, ceremonyError } from './js/passkeys.js';
 
 const params = new URLSearchParams(location.search);
 const demoParam = params.get('demo');
@@ -621,6 +622,27 @@ $('#pin-form').addEventListener('submit', async (e) => {
     location.assign(unlockedURL(location.href));
   } catch (err) { $('#pin-err').textContent = err.message === 'unauthorized' ? 'Wrong PIN.' : err.message; }
 });
+// Passkey sign-in: offered only when the server says a passkey can work
+// here (this is the portal's own HTTPS address and one is registered) and
+// the browser has WebAuthn at all. Success lands in the same session, and
+// the same reload, as the PIN and token forms above.
+async function offerPasskey() {
+  if (browserIssue({ secureContext: window.isSecureContext, hasWebAuthn: !!window.PublicKeyCredential })) return;
+  try {
+    const r = await realApi('/api/login/passkey');
+    if (r && r.available) $('#passkey-unlock').hidden = false;
+  } catch { /* no passkey option; the PIN and token forms are still there */ }
+}
+$('#btn-passkey').addEventListener('click', async () => {
+  $('#passkey-err').textContent = '';
+  try {
+    const opts = await realApi('/api/login/passkey/begin', { method: 'POST' });
+    const cred = await navigator.credentials.get({ publicKey: requestOptions(opts) });
+    if (!cred) throw new Error('Cancelled.');
+    await realApi('/api/login/passkey/finish', { method: 'POST', body: JSON.stringify(assertionJSON(cred)), keep401: true });
+    location.assign(unlockedURL(location.href));
+  } catch (err) { $('#passkey-err').textContent = ceremonyError(err); }
+});
 $('#btn-lock').addEventListener('click', async () => {
   try { await realApi('/api/lock', { method: 'POST' }); } catch { /* lock locally regardless of what the server says */ }
   location.assign(lockedURL(location.href));
@@ -692,7 +714,7 @@ async function main() {
   $('#tab-locking').hidden = DEMO;
   $('#btn-lock').hidden = DEMO;
   $('.demo-switch').hidden = LOCKED;
-  if (LOCKED) $('#login').hidden = false;
+  if (LOCKED) { $('#login').hidden = false; offerPasskey(); }
   if (params.get('setup_pin') === '1') { try { history.replaceState(null, '', location.pathname + location.search.replace(/[?&]setup_pin=1/, '').replace(/^&/, '?') + location.hash); } catch { /* ignore */ } showView('locking'); }
   { const h = location.hash.slice(1); if (VIEWS.includes(h) && h !== 'hud') showView(h); }
   try {

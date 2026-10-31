@@ -227,6 +227,8 @@ tr:hover td { background: #ffffff06; }
 .modal { background: var(--panel2); border: 1px solid var(--line); padding: 28px; width: min(420px, 92vw); display: flex; flex-direction: column; gap: 10px; align-items: stretch; text-align: center; }
 .modal .logo { align-self: center; }
 .modal h2 { color: var(--text); font-size: 20px; margin: 0; }
+.passkey-unlock { display: flex; flex-direction: column; gap: 10px; }
+.passkey-unlock[hidden] { display: none; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {

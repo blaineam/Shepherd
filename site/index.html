@@ -162,8 +162,8 @@
         <span class="tag">LOCKING</span>
         <h3>Portal locking</h3>
         <p>The portal shows synthetic demo data until it's unlocked. A PIN, bound to up to 20 trusted
-          browsers and hashed with Argon2id, plus idle auto-lock. Passkeys are designed for, waiting on the
-          portal's own HTTPS.</p>
+          browsers and hashed with Argon2id, plus idle auto-lock. Passkeys (Face ID, Touch ID, a phone or a
+          security key) on the portal's own HTTPS address, alongside the PIN.</p>
       </div>
       <div class="card">
         <span class="tag">UPSTREAMS</span>
@@ -228,9 +228,10 @@
           portal's own first real HTTPS, which several other features (Web Push, passkeys) are waiting on.</p>
       </div>
       <div class="rcard">
-        <h3>Passkeys <span class="pill-state planned">planned</span></h3>
-        <p>Designed as part of portal locking already — WebAuthn needs HTTPS, so this follows the reverse
-          proxy directly.</p>
+        <h3>Passkeys <span class="pill-state trial">built, in testing</span></h3>
+        <p>Unlock the portal with Face ID, Touch ID, Windows Hello, a phone or a security key, on the portal's
+          own HTTPS address and alongside the PIN. Built and tested against a software authenticator; real
+          devices are next.</p>
       </div>
       <div class="rcard">
         <h3>Network health history <span class="pill-state planned">next up</span></h3>

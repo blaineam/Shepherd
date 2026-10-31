@@ -94,3 +94,31 @@ func TestSessionStoreUnknownIDIsInvalid(t *testing.T) {
 		t.Error("an unknown session id must never be valid")
 	}
 }
+
+func TestSessionStoreDeleteByPasskey(t *testing.T) {
+	now := time.Now()
+	s := newSessionStore()
+	token := s.create("", now)
+	pin := s.create("dev-1", now)
+	a := s.createForPasskey("pk-1", now)
+	b := s.createForPasskey("pk-1", now)
+	other := s.createForPasskey("pk-2", now)
+	if !s.valid(a.id, 10, now) {
+		t.Fatal("a passkey session is an ordinary session: it must be valid")
+	}
+	s.deleteByPasskey("pk-1")
+	if s.valid(a.id, 0, now) || s.valid(b.id, 0, now) {
+		t.Error("revoking a passkey must end every session it opened")
+	}
+	if !s.valid(other.id, 0, now) || !s.valid(token.id, 0, now) || !s.valid(pin.id, 0, now) {
+		t.Error("revoking a passkey must not touch sessions opened any other way")
+	}
+	s.deleteByPasskey("") // a no-op, never every non-passkey session
+	if !s.valid(token.id, 0, now) || !s.valid(pin.id, 0, now) {
+		t.Error(`deleteByPasskey("") must not delete token or PIN sessions`)
+	}
+	s.deleteByTrustedDevice("pk-2") // the two kinds of id never cross
+	if !s.valid(other.id, 0, now) {
+		t.Error("deleteByTrustedDevice must not end a passkey session")
+	}
+}
