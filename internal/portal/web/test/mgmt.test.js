@@ -238,3 +238,17 @@ test('reverse proxy endpoints', async () => {
   await m.deleteProxyHost('id1');
   assert.deepEqual([calls[4][0], calls[4][1].method], ['/api/reverseproxy/hosts/id1', 'DELETE']);
 });
+
+test('secrets endpoints are write-only PUTs and DELETEs', async () => {
+  const { calls, m } = rig();
+  await m.dnsProvider();
+  await m.setDNSProvider({ provider: 'cloudflare', api_token: 't' });
+  await m.clearDNSProvider();
+  assert.deepEqual(calls.map((c) => [c[0], (c[1] && c[1].method) || 'GET']), [['/api/dns-provider', 'GET'], ['/api/dns-provider', 'PUT'], ['/api/dns-provider', 'DELETE']]);
+  assert.equal(JSON.parse(calls[1][1].body).api_token, 't');
+  await m.smtpRelay();
+  await m.setSMTPRelay({ host: 'smtp.example.com', port: 587 });
+  await m.clearSMTPRelay();
+  assert.deepEqual(calls.slice(3).map((c) => [c[0], (c[1] && c[1].method) || 'GET']), [['/api/accountability/smtp', 'GET'], ['/api/accountability/smtp', 'PUT'], ['/api/accountability/smtp', 'DELETE']]);
+  assert.equal(JSON.parse(calls[4][1].body).port, 587);
+});
