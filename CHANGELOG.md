@@ -391,3 +391,6 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Licensed AGPL-3.0-or-later.
 - The in-memory query log now keeps 20,000 entries by default (was 5,000) so replay reaches further back.
 - Direction: a native single binary with a Go control plane and a Rust data plane (Wave 6), instead of containers.
+- `shepherd.example.toml`'s `[dns].listen` comment now says explicitly that one address per interface can
+  be listed at once (a wired LAN address, a separate Wi-Fi NIC's address, a Tailscale address, and so on),
+  not just a single choice — a real deployment hit this directly wanting all three reachable together.

@@ -17,7 +17,11 @@ no_default_lists = false
 
 [dns]
 # host:port addresses, each served over UDP and TCP. Use your LAN address
-# (not 0.0.0.0) on hosts where system DNS already holds 127.0.0.1:53.
+# (not 0.0.0.0) on hosts where system DNS already holds 127.0.0.1:53. List
+# one address per interface you want this reachable on — e.g. a wired LAN
+# address, a separate Wi-Fi NIC's address, and a Tailscale address, all at
+# once, if your host has more than one and you want every one of them
+# answering queries.
 listen = ["127.0.0.1:5353"]
 # Upstream resolvers: "9.9.9.10", "9.9.9.10:5353", "tcp://ip", "tls://host[:853]" (DoT),
 # "https://host/dns-query" (DoH). See docs/UPSTREAMS.md. This only seeds the list: once
