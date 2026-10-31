@@ -265,16 +265,22 @@
     </div>
 
     <div class="watch-callout">
-      <h3>⚠ About "Watch mode" (ARP interception)</h3>
-      <p>You may see Watch mode mentioned elsewhere — one-sided ARP steering that would let Shepherd see and
-        control a device's traffic even past its DNS. <strong>It is not live today.</strong> The engine is
-        real and tested, but it only runs by hand, in short trials, through a standalone CLI — nothing in
-        the normal app or portal wires it in yet. A live trial found a real, still-unresolved throughput
-        cost on the steered device (roughly 1.1&nbsp;Gbps down to ~300&nbsp;Mbps), and that gates it from
-        going further.</p>
-      <p>Everything above this box — DNS filtering, devices, the globe, alarms, scanning — has zero network
-        cost and runs today. Watch mode would close one specific gap (a device that deliberately avoids your
-        DNS resolver), not replace any of it. Read the honest, row-by-row comparison in
+      <h3>About "Watch mode" (ARP interception)</h3>
+      <p><strong>Watch mode is live, and on by default.</strong> Shepherd steers each eligible device's
+        outbound traffic through itself on its way to your router, so you can see what a device actually
+        connects to even when it never asks Shepherd to look up a name. Where the network card's driver
+        allows it the relay runs inside the kernel (XDP), and on a real network it held full gigabit
+        Wi-Fi with no perceivable slowdown — about 1.77&nbsp;Gbit/s relayed at peak. The ~300&nbsp;Mbps
+        ceiling earlier versions hit was a real bug, found and fixed.</p>
+      <p>Two things to be honest about. It sees the <strong>outbound half only</strong> — downloads come
+        straight back from your router and never pass through Shepherd, so a device's traffic total is
+        always an undercount — and it <strong>blocks nothing</strong> on its own; DNS filtering still does
+        that. Your router, Shepherd itself, anything you have excluded and all network and smart-home gear
+        (mesh nodes, hubs, Thread border routers, Matter devices) are never steered, every device has its
+        own switch, and one button stops everything at once. IPv6 steering exists but is off by default and
+        never touches Thread or Matter. Read
+        <a href="https://github.com/blaineam/shepherd/blob/main/docs/WATCH.md" target="_blank" rel="noopener">docs/WATCH.md</a>
+        and the row-by-row comparison in
         <a href="https://github.com/blaineam/shepherd/blob/main/docs/WATCH-MODE-COMPARISON.md" target="_blank" rel="noopener">docs/WATCH-MODE-COMPARISON.md</a>.</p>
     </div>
   </div>
@@ -293,7 +299,7 @@
         <ul class="run-list">
           <li><span class="dot2">●</span> <span><strong class="muted" style="color:var(--text)">DNS-only protection costs the network nothing</strong> — it never adds a hop to anyone's traffic, Pi included.</span></li>
           <li><span class="dot2">●</span> <span>Answering DNS against an in-memory blocklist, passive device learning, the catalog/policy engine and the portal itself are all light enough for a Pi&nbsp;3 or&nbsp;4 to handle a typical home's query volume without strain.</span></li>
-          <li><span class="dot2">●</span> <span>Watch mode's software relay is the one piece that isn't free — treat it as an occasional, short trial on a Pi, not something you run constantly, until its throughput cost is resolved.</span></li>
+          <li><span class="dot2">●</span> <span>Watch mode's relay is the one piece that isn't free. On a NAS it runs inside the kernel and carries a gigabit device without strain; a Pi has far fewer cores and usually a USB network interface with no in-kernel support, so expect the software relay to be the limit there. It is on by default, so turn it off or steer only a few devices if your Pi is modest.</span></li>
           <li><span class="dot2">●</span> <span>No formal installer yet — this is a binary-and-a-config-file setup today. See <a href="https://github.com/blaineam/shepherd/blob/main/docs/RASPBERRY-PI.md" target="_blank" rel="noopener">docs/RASPBERRY-PI.md</a> for the full systemd walkthrough.</span></li>
         </ul>
       </div>

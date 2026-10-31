@@ -213,6 +213,37 @@ email = ""                      # optional; Let's Encrypt expiry-notice contact
 cloudflare_api_token = ""
 cloudflare_api_token_file = ""  # e.g. "/etc/shepherd/cloudflare-api-token"
 
+[watch]
+# Watch mode (docs/WATCH.md): steers each eligible device's outbound IPv4
+# traffic through Shepherd by one-sided ARP steering, relayed to the real
+# gateway in the kernel (XDP) or by a parallel userspace relay. On by default;
+# needs Linux with CAP_NET_RAW, CAP_NET_ADMIN and CAP_BPF, and reports itself
+# unavailable (DNS filtering unaffected) anywhere it cannot run. Never steered:
+# the gateway, Shepherd's own interfaces, Excluded devices, network
+# infrastructure (routers, mesh nodes, access points, hubs, Thread border
+# routers, Thread/Matter advertisers), and any device whose own Watch switch
+# is off in the portal. The portal's Watch tab has the kill switch, which
+# stops all steering at once and stays off across restarts until re-armed.
+# One-sided means outbound-only visibility; see the doc. IPv4 only.
+enabled = true
+interface = ""           # empty: the default route's interface
+mode = "auto"            # auto (XDP native, else XDP generic, else userspace), xdp, userspace, off
+workers = 0              # userspace relay workers; 0 = automatic (4)
+# IPv6 steering (docs/IPV6-WATCH.md), by unicast Neighbor Advertisements.
+# Off by default. Even when on it engages only where the network has a
+# global IPv6 route to steer to; with unique-local addresses only (the
+# common case) there is no off-link IPv6 traffic to steer and it idles,
+# saying so in the portal. Smart-home hubs, Thread border routers and
+# Matter devices are never IPv6-steered, whatever their own Watch switch
+# says. Shepherd never sends Router Advertisements under any setting.
+ipv6 = false
+steer_infrastructure = false
+active_window_seconds = 900   # steer only devices seen within the last 15 minutes
+# Health knobs (seconds); 0 keeps the engine's defaults (3 / 15 / 30).
+health_interval_seconds = 0
+idle_grace_seconds = 0
+startup_grace_seconds = 0
+
 # The list a pre-policy install used, and the default for a new one. Defining
 # any [[lists]] replaces the recommended catalog lists on a new install.
 [[lists]]

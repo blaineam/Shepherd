@@ -1,8 +1,22 @@
-# Watch mode and IPv6: a design, not an implementation
+# Watch mode and IPv6: the design, and what shipped from it
+
+> **Status, 2026-10-30: built and wired in, off by default.** This document was written as a
+> design with a go/no-go question at the end. Both halves of that question have since been
+> answered. The library landed (NDP frame builder, `internal/ndp`, and the Controller's
+> `SteerV6` family), and then Watch mode itself shipped and IPv6 steering was wired into it
+> behind `watch.ipv6` — **off by default**, exactly the cautious shape recommended below, with
+> one user-facing per-device switch rather than two, and IPv6 engaging silently only where a
+> global route exists. One of the three obstacles below has also changed: the IPv4 throughput
+> ceiling **was** root-caused and fixed (see [INTERCEPT.md](INTERCEPT.md)), so objection (2) no
+> longer stands. Objections (1) and (3) do: the maintainer's LAN is still ULA-only, so IPv6
+> steering there idles and says so, and smart-home gear is auto-excluded with no override from
+> the portal. [WATCH.md](WATCH.md) is the operator's view of what runs. Everything below is the
+> design as written, kept as the reasoning behind those choices.
+
 
 This document resolves *how* Watch mode could steer one device's IPv6 traffic the same way
 it already steers IPv4, without breaking the hard rule in [IPV6.md](IPV6.md) that keeps
-Thread and Matter working. Nothing here is wired in. Read [INTERCEPT.md](INTERCEPT.md) first
+Thread and Matter working. Read [INTERCEPT.md](INTERCEPT.md) first
 for the IPv4 mechanism, its one-sided scope, its safety model, and the still-open throughput
 story; this is the IPv6 counterpart to that document, and it leans on it throughout.
 

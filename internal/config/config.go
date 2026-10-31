@@ -42,6 +42,59 @@ type Config struct {
 	TLS            TLS            `toml:"tls"`
 	Nethealth      Nethealth      `toml:"nethealth"`
 	ReverseProxy   ReverseProxy   `toml:"reverseproxy"`
+	Watch          Watch          `toml:"watch"`
+}
+
+// Watch controls Watch mode (docs/WATCH.md): one-sided ARP steering of each
+// eligible device's outbound IPv4 traffic through Shepherd, relayed to the
+// real gateway in the kernel (XDP) or by a parallel userspace relay
+// (internal/intercept). Enabled defaults true, per the protect-by-default
+// decision in docs/DESIGN.md: every device is steered once it has been seen
+// with a MAC and an IPv4 address, except the gateway, Shepherd's own
+// interfaces, devices marked Excluded, network infrastructure (routers, mesh
+// nodes, access points, hubs and bridges, Thread border routers, anything
+// advertising Thread or Matter services) and any device whose own Watch
+// switch is off. It needs Linux with CAP_NET_RAW plus CAP_NET_ADMIN and
+// CAP_BPF; anywhere else, or without them, it logs why, reports itself
+// unavailable in the portal and Shepherd starts normally. Watch mode is
+// IPv4-only by the hard rule in docs/IPV6.md.
+type Watch struct {
+	Enabled bool `toml:"enabled"`
+	// Interface names the NIC to steer on. Empty picks the interface the
+	// default route leaves through, the same convention [arp] uses.
+	Interface string `toml:"interface"`
+	// Mode selects the relay: "auto" (XDP in the NIC driver, else XDP in
+	// the kernel's generic path, else the userspace ParallelRelay), "xdp"
+	// (XDP only; unavailable when it cannot load), "userspace" (never XDP)
+	// or "off" (same as enabled = false).
+	Mode string `toml:"mode"`
+	// Workers is how many parallel capture-and-relay workers the userspace
+	// relay runs; 0 means intercept.DefaultParallelism. Ignored under XDP.
+	Workers int `toml:"workers"`
+	// IPv6 additionally steers each eligible device's IPv6 traffic, by
+	// unicast Neighbor Advertisements (docs/IPV6-WATCH.md). Off by
+	// default, deliberately: it only earns its risk on a network with a
+	// global IPv6 route, and even then it never touches a smart-home hub,
+	// a Thread border router or a Matter device, whatever that device's
+	// own Watch switch says. On a network without a global IPv6 route —
+	// unique-local addresses only, which is the common case — it reports
+	// itself idle and steers nothing rather than pretending. Shepherd
+	// never sends Router Advertisements under any setting
+	// (docs/IPV6.md hard rule 1).
+	IPv6 bool `toml:"ipv6"`
+	// SteerInfrastructure steers router/infrastructure and smart-home hub
+	// devices too. Off by default: a mesh node or a Thread border router
+	// is exactly the kind of device whose traffic must not be touched.
+	SteerInfrastructure bool `toml:"steer_infrastructure"`
+	// ActiveWindowSeconds is how recently a device must have been seen to be
+	// steered at all; a device quiet longer than this is left alone until
+	// it shows up again. Default 900 (15 minutes).
+	ActiveWindowSeconds int `toml:"active_window_seconds"`
+	// Health knobs passed straight through to intercept.ControllerConfig
+	// (docs/INTERCEPT.md explains each); 0 keeps that package's default.
+	HealthIntervalSeconds int `toml:"health_interval_seconds"`
+	IdleGraceSeconds      int `toml:"idle_grace_seconds"`
+	StartupGraceSeconds   int `toml:"startup_grace_seconds"`
 }
 
 // ARP controls the passive ARP monitor (docs/ARP.md): a read-only listener
@@ -418,6 +471,7 @@ func Default() Config {
 		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600},
 		Nethealth:      Nethealth{Enabled: false, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
 		ReverseProxy:   ReverseProxy{Listen: ":8443"},
+		Watch:          Watch{Enabled: true, Mode: "auto", ActiveWindowSeconds: 900},
 		DataDir:        "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
@@ -536,6 +590,9 @@ func (c Config) Validate() error {
 	if err := c.validateReverseProxy(); err != nil {
 		return err
 	}
+	if err := c.validateWatch(); err != nil {
+		return err
+	}
 	if c.Nethealth.Enabled && c.Nethealth.IntervalSeconds < 60 {
 		return errors.New("nethealth.interval_seconds must be at least 60")
 	}
@@ -589,6 +646,25 @@ func (c Config) validateReverseProxy() error {
 	}
 	if c.TLS.Enabled && c.TLS.Listen == rp.Listen {
 		return fmt.Errorf("tls.listen and reverseproxy.listen are the same address (%s); each needs its own", rp.Listen)
+	}
+	return nil
+}
+
+func (c Config) validateWatch() error {
+	w := c.Watch
+	switch w.Mode {
+	case "auto", "xdp", "userspace", "off":
+	default:
+		return fmt.Errorf(`watch.mode must be "auto", "xdp", "userspace" or "off", got %q`, w.Mode)
+	}
+	if w.Workers < 0 || w.Workers > 64 {
+		return errors.New("watch.workers must be between 0 (automatic) and 64")
+	}
+	if w.ActiveWindowSeconds < 60 {
+		return errors.New("watch.active_window_seconds must be at least 60")
+	}
+	if w.HealthIntervalSeconds < 0 || w.IdleGraceSeconds < 0 || w.StartupGraceSeconds < 0 {
+		return errors.New("watch.health_interval_seconds, watch.idle_grace_seconds and watch.startup_grace_seconds must not be negative")
 	}
 	return nil
 }

@@ -24,12 +24,13 @@
 // the wire flows through the Sender interface defined here, which
 // internal/arp deliberately has no equivalent of.
 //
-// This package is a library only. Nothing in it is wired into
-// cmd/shepherd, internal/portal, or any startup path, and nothing here
-// calls Open or constructs a real Sender outside this package's own
-// Linux-only, capability-gated file. A Controller never steers a device
-// unless something outside this package calls Steer — and the Controller
-// itself refuses to steer the gateway or an excluded device even then.
-// Wiring a trial UI or API, and running this against a real network,
-// happens later, only with the maintainer's explicit go-ahead.
+// This package is the engine, not the policy. internal/watch wires it
+// into cmd/shepherd and the portal (Watch mode is on by default; see
+// docs/WATCH.md), decides which devices to steer, and keeps one Controller
+// for the life of the process. What stays true regardless of the caller:
+// this package is the only thing here that transmits, and a Controller
+// never steers a device unless something calls Steer — and then still
+// refuses the gateway, Shepherd's own MAC, and anything its Excluder
+// rejects. IPv6 steering additionally needs its own master switch and its
+// own stricter excluder (docs/IPV6-WATCH.md).
 package intercept

@@ -13,6 +13,53 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Watch mode is wired in and on by default (`[watch]`, `internal/watch`, docs/WATCH.md)** — [ROADMAP.md](docs/ROADMAP.md)
+  step 11, after the throughput ceiling that held it back for months was root-caused and fixed and the relay was
+  measured at full gigabit on real hardware, with the maintainer's explicit go-ahead. Until now
+  `internal/intercept` was a library nothing called except a hand-run CLI. Now `cmd/shepherd` runs one engine for the
+  life of the process: it finds the interface from the default route, the gateway's MAC from the kernel's neighbour
+  table, and Shepherd's own MAC and addresses from the interface; attaches the relay **once** (in-kernel XDP in the
+  NIC driver, else XDP generic, else the parallel userspace relay — a native attach rebuilds the driver's rings for
+  about eight seconds, so attaching per device would stall traffic every time a phone woke up) and from then on only
+  toggles the steered set. **Every eligible device is steered**: never the gateway, never Shepherd's own interfaces,
+  never an excluded device, never network or smart-home infrastructure (router/mesh/AP/switch/hub types, anything
+  advertising Thread or Matter over mDNS, vendors that only make network gear), and never a device not seen for 15
+  minutes. Wandering and quarantined devices are steered like any other, since Watch mode is visibility and blocks
+  nothing. Every device gets a three-way **Watch** switch (automatic/always/never) in the registry, the portal, bulk
+  actions and search (`watch:off`), and the engine re-steers by MAC on an address change. Safety: the engine owns a
+  **kill switch** that panic-stops every device at once and **persists across restarts** until re-armed
+  (`<data_dir>/watch.json`, the only thing it saves); the interception library's health loop still fails a device
+  open on silence, now with a widening retry backoff so a failing device is not flapped; a relay that dies unsteers
+  everything and the engine restarts on a backoff; the passive ARP monitor's `gateway-mac-changed` event makes the
+  engine re-read the kernel's neighbour table (the event's own MAC is never trusted) and restart with the new MAC.
+  GRO is turned off on the interface for the userspace relay's lifetime and restored on shutdown, done with the
+  `ETHTOOL_SGRO` ioctl rather than by shelling out to `ethtool`, which the container image does not have. A host that
+  cannot run any of this — not Linux, missing `CAP_NET_RAW`/`CAP_NET_ADMIN`/`CAP_BPF`, no usable interface — logs one
+  clear reason, reports itself unavailable in the portal, retries quietly and changes nothing else; DNS filtering is
+  never affected. New **Watch** tab (`js/watchview.js`, pure logic in `js/watch.js` with its own tests) with the
+  relay in effect, live relayed bits and packets per second overall and per device, every unwatched device's reason,
+  the recent "stopped watching" log and the kill switch; a **Watch column** and per-device panel on the Devices
+  screen; `GET /api/watch`, `POST /api/watch/kill`, `POST /api/watch/rearm`, `watch`/`watch_state` on every device,
+  and a `set_watch` bulk op. Demo mode synthesizes the whole thing, policy and live rates included. New config:
+  `watch.enabled` (**true**), `interface`, `mode` (`auto`/`xdp`/`userspace`/`off`), `workers`,
+  `steer_infrastructure`, `active_window_seconds` and the health/grace knobs. `NET_ADMIN` and `BPF` added alongside
+  `NET_RAW` in both compose files.
+- **IPv6 Watch-mode steering (`watch.ipv6`, `internal/ndp`, docs/IPV6-WATCH.md), off by default.** The IPv6 mirror of
+  the IPv4 mechanism, and the narrowest shape that could work: unsolicited **unicast** Neighbor Advertisements sent
+  only to a device being steered, claiming the router's link-local address for Shepherd's MAC, with a solicited reply
+  to that device's own revalidation probe and a corrective advertisement on unsteer and panic-stop. **Shepherd never
+  sends Router Advertisements under any setting** — docs/IPV6.md hard rule 1 stands unchanged, and rule 6 now records
+  this unicast-only, per-device exception to it. The relay (userspace and XDP both) relays IPv6 only for a device
+  explicitly steered for IPv6, and the Controller keeps a master switch, a required gateway link-local address and a
+  **separate, stricter IPv6 excluder** so a smart-home hub, Thread border router or Matter device can never be
+  IPv6-steered — a refusal the per-device "always watch" switch cannot override, unlike for IPv4. The engine engages
+  it only where the network can carry it: an IPv6 default route whose next hop is link-local, a global (`2000::/3`)
+  address on the interface, and an IPv6 address on the device (its link-local preferred). With unique-local addresses
+  only — the maintainer's own network, and a common case — there is no off-link IPv6 traffic to steer, so it reports
+  itself idle with that reason instead of pretending. A device merged from several MACs stays IPv4-only, because
+  which of its MACs holds its IPv6 address cannot be known from the IPv4 neighbour table. An IPv6 refusal never costs
+  a device its IPv4 steering. **Never run against a live global-IPv6 network**: the design's own recommendation was
+  to wait for one, and the maintainer does not have one.
 - **2D map fallback for the HUD:** browsers without WebGL, notably Safari in Lockdown Mode, now get a
   flat canvas map (`js/flatmap.js`) with the same arcs, comets, pulses, picking, Set home and panning and
   zooming, plus day/night shading, instead of a "needs WebGL" notice. `?nogl=1` forces it.

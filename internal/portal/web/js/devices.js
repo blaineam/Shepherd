@@ -14,6 +14,7 @@ import { createImportModal } from './importview.js';
 import { severityLabel, severityBadgeClass } from './alarms.js';
 import { activeFindings, resolvedFindings, findingTooltip } from './vulnscan.js';
 import { mergeAttention, attentionReasonLabel } from './attention.js';
+import { WATCH_CHOICES, watchSwitchOf, deviceBadge, fmtBitsPerSecond, fmtPacketsPerSecond, fmtTotalBytes } from './watch.js';
 
 const OVER = 6;
 const rowHeight = () => (window.matchMedia && window.matchMedia('(max-width: 760px)').matches ? 88 : 56);
@@ -87,7 +88,7 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
   allBox.setAttribute('aria-label', 'Select all loaded devices');
   const cSelH = el('div', 'c-sel');
   cSelH.append(allBox);
-  thead.append(cSelH, el('div', 'c-name', 'Device'), el('div', 'c-ip', 'Addresses'), el('div', 'c-grp', 'Groups'), el('div', 'c-seen', 'Last seen'), el('div', 'c-exc', 'Mode'));
+  thead.append(cSelH, el('div', 'c-name', 'Device'), el('div', 'c-ip', 'Addresses'), el('div', 'c-grp', 'Groups'), el('div', 'c-seen', 'Last seen'), el('div', 'c-watch', 'Watch'), el('div', 'c-exc', 'Mode'));
   for (const c of thead.children) c.setAttribute('role', 'columnheader');
   const scroll = el('div', 'dv-scroll');
   scroll.tabIndex = 0;
@@ -378,17 +379,24 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     const cIp = el('div', 'c-ip mono');
     const cGrp = el('div', 'c-grp');
     const cSeen = el('div', 'c-seen');
+    // What Watch mode is doing with this device (watchview.js has the
+    // whole picture). The cell stays empty when the server did not report
+    // any Watch state, so an install without Watch mode shows nothing
+    // rather than a guess.
+    const cWatch = el('div', 'c-watch');
+    const wb = el('span', 'badge');
+    cWatch.append(wb);
     const cExc = el('div', 'c-exc');
     const mb = el('button', 'mode-btn');
     mb.type = 'button';
     mb.setAttribute('aria-haspopup', 'menu');
     cExc.append(mb);
-    row.append(cSel, cName, cIp, cGrp, cSeen, cExc);
+    row.append(cSel, cName, cIp, cGrp, cSeen, cWatch, cExc);
     for (const c of row.children) c.setAttribute('role', 'cell');
     // Wandering is announced once, by the Mode button below (it already
     // carries the countdown, e.g. "Wandering 36m"); a second badge next to
     // the name duplicated the same state on every row.
-    const s = { row, cb, ico, nm, sub, pen, cIp, cGrp, cSeen, mb, nameWrap, _i: -1, _d: null, _sig: '' };
+    const s = { row, cb, ico, nm, sub, pen, cIp, cGrp, cSeen, wb, mb, nameWrap, _i: -1, _d: null, _sig: '' };
     return s;
   }
 
@@ -423,6 +431,13 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     }
     const seen = relTime(d.last_seen);
     if (s.cSeen.textContent !== seen) { s.cSeen.textContent = seen; s.cSeen.title = d.last_seen ? new Date(d.last_seen).toLocaleString() : ''; }
+    const w = deviceBadge(d);
+    s.wb.hidden = !w;
+    if (w) {
+      if (s.wb.textContent !== w.label) s.wb.textContent = w.label;
+      s.wb.className = 'badge wm-' + w.cls;
+      s.wb.title = w.title;
+    }
     const mode = deviceMode(d);
     const short = countdownShort(d);
     const mt = mode === 'wandering' ? 'Wandering' + (short ? ' ' + short : '') : mode === 'excluded' ? 'Excluded' : 'Protected';
@@ -443,6 +458,7 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     s.nm.textContent = '';
     s.sub.textContent = '';
     s.cIp.textContent = ''; s.cGrp.replaceChildren(); s.cSeen.textContent = ''; s.ico.replaceChildren();
+    s.wb.hidden = true;
     s.cb.checked = false;
   }
 
@@ -672,6 +688,14 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
   }
 
   // ------------------------------------------------------------- bulk
+  // The Watch switch, in bulk. Same three positions as the drawer's own.
+  function watchMenu(anchor) {
+    openMenu(anchor, WATCH_CHOICES.map((c) => ({
+      label: c.label, hint: c.id === 'auto' ? 'the default' : undefined,
+      onSelect: () => runBulk({ op: 'set_watch', watch: c.id }),
+    })), { label: 'Set Watch mode' });
+  }
+
   async function runBulk(req, { confirmDelete = false } = {}) {
     const n = sel.count();
     if (!n) return;
@@ -781,11 +805,12 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     const ex = button('Exclude', 'bb', () => runBulk({ op: 'set_excluded', excluded: true }));
     const inc = button('Include', 'bb', () => runBulk({ op: 'set_excluded', excluded: false }));
     const wd = button('Wandering', 'bb', (e) => wanderMenu(e.currentTarget), 'refresh');
+    const wm = button('Watch', 'bb', (e) => watchMenu(e.currentTarget), 'eye');
     const tg = button('Tags', 'bb', (e) => tagsPopover(e.currentTarget), 'tag');
     const del = button('Delete', 'bb danger', () => runBulk({ op: 'delete' }, { confirmDelete: true }), 'trash');
     const clear = iconButton('x', 'Clear selection', () => { sel.clear(); renderAll(); }, 'bulk-x');
-    for (const b of [g1, g2, tg, wd]) b.setAttribute('aria-haspopup', 'true');
-    bulk.append(label, g1, g2, wd, ex, inc, tg, del, clear);
+    for (const b of [g1, g2, tg, wd, wm]) b.setAttribute('aria-haspopup', 'true');
+    bulk.append(label, g1, g2, wd, wm, ex, inc, tg, del, clear);
   }
 
   // ------------------------------------------------------------- drawer
@@ -1097,6 +1122,34 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     if (cur === 'wandering') sM.append(el('p', 'wander-left', 'Wandering, ' + countdown(d)));
     sM.append(modeText, timerRow);
     drawer.append(sM);
+
+    // Watch mode (docs/WATCH.md). The section is only drawn when the
+    // server actually reported Watch state for this device: on an install
+    // without Watch mode there is nothing true to say here.
+    if (d.watch_state) {
+      const sW = section('Watch');
+      const curW = watchSwitchOf(d);
+      const segW = segmented(WATCH_CHOICES.map((c) => ({ id: c.id, label: c.label })), curW,
+        (id) => { watchText.textContent = (WATCH_CHOICES.find((c) => c.id === id) || WATCH_CHOICES[0]).text; patchDevice(d.id, { watch: id }).catch(() => {}); }, 'Watch mode for this device');
+      const watchText = el('p', 'muted small', (WATCH_CHOICES.find((c) => c.id === curW) || WATCH_CHOICES[0]).text);
+      sW.append(segW.root, watchText);
+
+      const st = d.watch_state;
+      const badge = deviceBadge(d);
+      const live = el('dl', 'dr-watch');
+      const wrow = (k, v) => { live.append(el('dt', '', k)); live.append(el('dd', '', v)); };
+      if (badge) wrow('Now', badge.label);
+      if (st.reason) wrow('Why', st.reason);
+      if (st.state === 'steered') {
+        wrow('Sending', fmtBitsPerSecond(st.bytes_per_second) + '  \u00b7  ' + fmtPacketsPerSecond(st.packets_per_second));
+        wrow('Relayed', fmtTotalBytes(st.bytes_relayed));
+        const addrs = (st.steered || []).map((x) => x.ip + ' \u00b7 ' + x.mac).join('   ');
+        if (addrs) wrow('Steering', addrs);
+      }
+      if (live.childNodes.length) sW.append(live);
+      sW.append(el('p', 'muted small', 'Watch mode sees only what this device sends out, never what it downloads, and blocks nothing on its own.'));
+      drawer.append(sW);
+    }
 
     // Blocking
     const sB = section('Blocking for this device');

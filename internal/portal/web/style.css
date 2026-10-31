@@ -479,7 +479,12 @@ body.on-page .toasts { bottom: 20px; }
 
 .dv-tablewrap { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .dv-banner { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 7px 12px; background: var(--teal-d); border-bottom: 1px solid #16c7bd44; font-size: 12.5px; color: var(--text); }
-.dv-row { display: grid; grid-template-columns: 44px minmax(220px, 2.1fr) minmax(130px, 1.1fr) minmax(150px, 1.3fr) 104px 130px; align-items: center; column-gap: 12px; padding: 0 14px 0 6px; min-width: 0; }
+.dv-row { display: grid; grid-template-columns: 44px minmax(200px, 2fr) minmax(120px, 1fr) minmax(130px, 1.2fr) 96px 124px 124px; align-items: center; column-gap: 12px; padding: 0 14px 0 6px; min-width: 0; }
+.c-watch { min-width: 0; overflow: hidden; }
+.c-watch .badge { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.badge.wm-good { color: var(--teal); border-color: #16c7bd55; background: var(--teal-d); }
+.badge.wm-warn { color: var(--amber); border-color: #f0b64a55; background: var(--amber-d); }
+.badge.wm-muted { color: var(--muted); }
 .dv-thead { height: 34px; font: 600 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line2); padding-right: 18px; flex: none; }
 .dv-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; scrollbar-width: thin; scrollbar-color: var(--line2) transparent; outline-offset: -2px; }
 .dv-sizer { position: relative; width: 100%; }
@@ -491,7 +496,7 @@ body.on-page .toasts { bottom: 20px; }
 .dv-rows .dv-row.sel { background: #16c7bd12; box-shadow: inset 2px 0 0 var(--teal); }
 .dv-rows .dv-row:focus-visible { outline: 1px solid var(--teal); background: #ffffff0a; }
 .dv-row.loading .c-exc, .dv-row.loading .c-sel input, .dv-row.loading .dv-pen { visibility: hidden; }
-.dv-row.loading::after { content: ""; grid-column: 2 / 5; height: 10px; background: linear-gradient(90deg, #ffffff10, #ffffff05); border-radius: 2px; }
+.dv-row.loading::after { content: ""; grid-column: 2 / 6; height: 10px; background: linear-gradient(90deg, #ffffff10, #ffffff05); border-radius: 2px; }
 .dv-scroll .dv-empty { position: absolute; inset: 0; display: grid; place-items: center; }
 .has-bulk .dv-scroll { padding-bottom: 72px; }
 .c-sel { display: grid; place-items: center; }
@@ -949,3 +954,28 @@ tr.a-error .h-dom { color: var(--amber); }
   .rp-arrow { display: none; }
   .rp-form-row input { flex-basis: 100%; }
 }
+
+
+/* ---------------------------------------------------------------- Watch */
+.wm-body { display: flex; flex-direction: column; gap: 12px; }
+.wm-headline { margin: 0 0 10px; font-size: 13.5px; }
+.wm-headline.good { color: var(--teal); }
+.wm-headline.warn { color: var(--amber); }
+.wm-headline.bad { color: var(--red); }
+.wm-headline.muted { color: var(--muted); }
+.wm-note { margin: 10px 0 0; }
+.wm-counts { margin: 0 0 10px; }
+.wm-kill { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line2); }
+.wm-kill p { margin: 0; max-width: 62ch; }
+.wm-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.wm-tile { background: #ffffff05; border: 1px solid var(--line2); border-radius: 4px; padding: 10px 12px; min-width: 0; }
+.wm-tile-v { font: 600 19px var(--mono); color: var(--text); letter-spacing: -.01em; }
+.wm-tile-k { font: 600 10px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-top: 3px; }
+.wm-tile-s { font-size: 11.5px; margin-top: 4px; }
+.wm-row { width: 100%; text-align: left; font: inherit; color: inherit; background: transparent; border: 0; border-top: 1px solid #ffffff0b; }
+.list-rows .wm-row:first-child { border-top: 0; }
+button.wm-row { cursor: pointer; }
+button.wm-row:hover, button.wm-row:focus-visible { background: #ffffff07; outline: none; }
+.dr-watch { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 4px 10px; margin: 10px 0 0; font-size: 12.5px; }
+.dr-watch dt { color: var(--muted); margin: 0; }
+.dr-watch dd { margin: 0; overflow-wrap: anywhere; }

@@ -5,12 +5,16 @@
 monitor in [internal/arp](ARP.md) — reusing its Frame/MAC codec — but it is a different package
 with a different risk profile: this one transmits.
 
-**This package is a library only.** Nothing in Shepherd calls any of it automatically. No code in
-`cmd/shepherd`, `internal/portal`, or any startup path constructs a `Controller` or calls `Steer`.
-The only thing that ever invokes a real `Sender` outside this package's own tests is the maintainer,
-later, deliberately, by wiring a trial UI or API — and that wiring is out of scope for this change.
-Everything below documents what the package *can* do once something chooses to use it. For what
-Watch mode would actually add over the DNS-only baseline, row by row, see
+**This package is now wired in, and Watch mode is on by default.** With the maintainer's
+explicit go-ahead after the live measurements below, `internal/watch` owns a `Controller` for the
+life of the process, decides which devices are steered, and exposes it in the portal;
+[WATCH.md](WATCH.md) is the operator's view of that and the place to start if you want to know
+what Shepherd does rather than how. This document stays what it was: the engineering account of
+the interception engine itself — the mechanism, the safety model, the throughput investigation and
+the two relays. The division of labour is deliberate and worth keeping: **this package is the only
+thing that transmits, and the only authority on what is steered.** `internal/watch` can ask it to
+steer a device; it cannot make it steer the gateway, Shepherd itself, or anything its `Excluder`
+refuses. For what Watch mode adds over the DNS-only baseline, row by row, see
 [WATCH-MODE-COMPARISON.md](WATCH-MODE-COMPARISON.md).
 
 ## What one-sided ARP steering does
@@ -416,18 +420,25 @@ only affects frames the kernel itself chooses to route between interfaces at Lay
 Layer 2 relay performed entirely in Shepherd's own process. Nothing in this package reads or writes
 `net.ipv4.ip_forward`, and nothing needs to.
 
-## How a future trial would use this
+## How a caller uses this
 
-Once the maintainer decides to wire a trial (a UI button, a CLI flag, a portal API — none of which
-exist yet):
+`internal/watch` is the real caller (see [WATCH.md](WATCH.md)); this is the shape of what it does,
+and what any other caller would have to do:
 
-1. Build a `Controller` with the real gateway's IP/MAC, Shepherd's own MAC, a real `Sender`
-   (`intercept.Open(iface)` on Linux), and the device registry wrapped to satisfy `Excluder`.
-2. `Steer(dev, SteerOptions{Trial: true, Duration: 2 * time.Minute})` (or whatever short window feels
-   safe for a first run).
-3. Watch `Status()` for `Healthy` and `BytesRelayed` moving.
-4. Call `PanicStop()` at the first sign of trouble; it works even if something else has gone wrong.
-5. Let the trial auto-revert on its own otherwise — nothing else needs to remember to clean up.
+1. Build one `Controller` with the real gateway's IP and MAC, Shepherd's own MAC and IPs, a real
+   `Sender` (`intercept.Open(iface)` on Linux), and the device registry wrapped to satisfy
+   `Excluder`. One per process, for the life of the process.
+2. Attach a data plane **once** — `AttachXDP` or `ParallelRelay` — and from then on only change
+   the steered set. A native XDP attach rebuilds the driver's rings (about eight seconds on the
+   NAS), so attaching per device would stall traffic every time a device woke up.
+3. `Steer(dev, SteerOptions{})` per device; `SteerOptions{Trial: true, Duration: d}` additionally
+   auto-reverts after `d`, which is what `cmd/intercept-trial` uses and what a cautious first run
+   on new hardware still wants.
+4. Watch `Status()` for `Healthy` and `BytesRelayed` moving, and `Stats()` for the overall rate.
+5. Call `PanicStop()` at the first sign of trouble; it works even if something else has gone
+   wrong, and `Rearm()` resumes. `internal/watch` exposes exactly this as the portal's kill
+   switch.
+6. `Close()` on shutdown: every device is unsteered with its corrective reply.
 
 ## The one-off trial harness
 
@@ -451,8 +462,11 @@ against the maintainer's own phone with the maintainer's explicit go-ahead, watc
 self-reverted within about a second, before the GRO handling existed. Confirms the maintainer's eero
 7 Max accepts one-sided ARP steering, which was an open question.
 
-None of this is wired into `cmd/shepherd` or the portal yet. Doing so happens later, only
-with the maintainer's explicit go-ahead.
+The harness is still useful and still shipped: it is how a capped, single-device, hand-watched
+run happens on new hardware before trusting the always-on engine with it. Watch mode itself no
+longer goes through it — `internal/watch` does, with no duration cap and no `-confirm` flag,
+because the health loop, the kill switch and the per-device switches are what make default-on
+safe (see [WATCH.md](WATCH.md)).
 
 ## Package layout
 

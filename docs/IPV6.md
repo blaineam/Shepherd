@@ -14,8 +14,13 @@ discovers devices with mDNS. Break either and smart-home devices quietly stop wo
 5. **Never change a client's IPv6 default gateway.** Any future in-path mode is IPv4 only
    unless a separately reviewed IPv6 design lands. Until then IPv6 is passed through untouched
    and covered by DNS filtering and Tailscale.
-6. **Never spoof NDP.** ARP interception (Watch mode) is IPv4 only. The IPv6 equivalent would
-   disrupt neighbor discovery that Thread border routers rely on.
+6. **Never spoof NDP broadly.** Watch mode's IPv6 steering is the one reviewed exception, and it
+   is deliberately the narrowest possible one: unsolicited **unicast** Neighbor Advertisements
+   sent only to a device explicitly being steered, never to a multicast group, never an RA, and
+   **never** to a smart-home hub, Thread border router or Matter device — a refusal no portal
+   switch can override. It is off by default and engages only on a network with a global IPv6
+   route. See [IPV6-WATCH.md](IPV6-WATCH.md) for the design and [WATCH.md](WATCH.md) for the
+   operator's view. Everything else in this list stands unchanged; rule 1 especially.
 7. **Forwarding trap:** on a Linux host, enabling `net.ipv6.conf.all.forwarding=1` (needed to
    advertise IPv6 subnet routes over Tailscale) makes the kernel stop accepting RAs unless
    `accept_ra` is `2` on the LAN interface. Without that, the NAS loses its IPv6 default route.

@@ -66,7 +66,7 @@ func tokenize(q string) []string {
 
 var filterKeys = map[string]bool{
 	"group": true, "vendor": true, "type": true, "ip": true, "mac": true, "seen": true,
-	"excluded": true, "wandering": true, "unnamed": true, "tag": true, "name": true,
+	"excluded": true, "wandering": true, "unnamed": true, "tag": true, "name": true, "watch": true,
 }
 
 func parseQuery(q string) []term {
@@ -118,7 +118,7 @@ func stripMAC(s string) string {
 // Search finds devices. The query is free text plus filters, all ANDed:
 //
 //	group:kids vendor:apple type:camera ip:192.0.2. mac:02:00:5e seen:1h
-//	excluded:true unnamed:true tag:guest name:tv
+//	excluded:true unnamed:true tag:guest name:tv watch:off
 //
 // A leading "-" negates a term (-group:kids, -printer). Free text matches
 // any of display name, aliases, hostnames, IPs, MACs, vendor, type, tags,
@@ -209,6 +209,9 @@ func (r *Registry) matchLocked(d *Device, terms []term, now time.Time) bool {
 		case "excluded":
 			want, valid := parseBool(t.val)
 			ok = valid && d.Excluded == want
+		case "watch":
+			want, valid := ParseWatchMode(t.val)
+			ok = valid && t.val != "" && d.Watch == want
 		case "wandering":
 			want, valid := parseBool(t.val)
 			active := d.Wandering && (d.WanderingUntil.IsZero() || d.WanderingUntil.After(now))

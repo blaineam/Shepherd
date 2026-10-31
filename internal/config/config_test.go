@@ -706,3 +706,85 @@ func TestExampleConfigShowsTheTLSDefaults(t *testing.T) {
 		t.Errorf("example %+v differs from the defaults %+v", ex.TLS, Default().TLS)
 	}
 }
+
+func TestWatchDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Watch mode is on by default (docs/DESIGN.md's protect-by-default
+	// decision), in auto mode, and never steers infrastructure.
+	if !cfg.Watch.Enabled || cfg.Watch.Mode != "auto" || cfg.Watch.SteerInfrastructure || cfg.Watch.ActiveWindowSeconds != 900 {
+		t.Errorf("watch defaults = %+v", cfg.Watch)
+	}
+	if cfg.Watch.Interface != "" || cfg.Watch.Workers != 0 {
+		t.Errorf("watch defaults = %+v", cfg.Watch)
+	}
+}
+
+func TestWatchOverridesAndValidation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "shepherd.toml")
+	write := func(body string) (Config, error) {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return Load(path)
+	}
+	cfg, err := write(`[watch]
+enabled = false
+interface = "eth1"
+mode = "xdp"
+workers = 8
+steer_infrastructure = true
+active_window_seconds = 120
+health_interval_seconds = 5
+idle_grace_seconds = 20
+startup_grace_seconds = 45
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Watch.Enabled || cfg.Watch.Interface != "eth1" || cfg.Watch.Mode != "xdp" || cfg.Watch.Workers != 8 {
+		t.Errorf("watch = %+v", cfg.Watch)
+	}
+	if !cfg.Watch.SteerInfrastructure || cfg.Watch.ActiveWindowSeconds != 120 || cfg.Watch.HealthIntervalSeconds != 5 {
+		t.Errorf("watch = %+v", cfg.Watch)
+	}
+	if cfg.Watch.IdleGraceSeconds != 20 || cfg.Watch.StartupGraceSeconds != 45 {
+		t.Errorf("watch = %+v", cfg.Watch)
+	}
+
+	for body, want := range map[string]string{
+		"[watch]\nmode = \"kernel\"\n":            "watch.mode",
+		"[watch]\nworkers = -1\n":                 "watch.workers",
+		"[watch]\nworkers = 99\n":                 "watch.workers",
+		"[watch]\nactive_window_seconds = 30\n":   "watch.active_window_seconds",
+		"[watch]\nidle_grace_seconds = -5\n":      "watch.idle_grace_seconds",
+		"[watch]\nhealth_interval_seconds = -1\n": "watch.health_interval_seconds",
+	} {
+		if _, err := write(body); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: err = %v, want one naming %s", body, err, want)
+		}
+	}
+}
+
+func TestWatchIPv6IsOffByDefaultAndSettable(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// IPv6 steering is opt-in, unlike Watch mode itself: docs/IPV6-WATCH.md
+	// only recommends it on a network with a global IPv6 route.
+	if cfg.Watch.IPv6 {
+		t.Error("watch.ipv6 must default to false")
+	}
+	path := filepath.Join(t.TempDir(), "shepherd.toml")
+	if err := os.WriteFile(path, []byte("[watch]\nipv6 = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(path)
+	if err != nil || !cfg.Watch.IPv6 {
+		t.Fatalf("watch.ipv6 = %v err = %v", cfg.Watch.IPv6, err)
+	}
+}

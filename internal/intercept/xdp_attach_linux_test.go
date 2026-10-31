@@ -38,7 +38,14 @@ func TestAttachXDPRelaysOnVeth(t *testing.T) {
 		}
 	}
 	_ = exec.Command("ip", "link", "del", a).Run()
-	run("link", "add", a, "type", "veth", "peer", "name", b)
+	// Being root is not enough: an unprivileged container runs as root
+	// without CAP_NET_ADMIN, where creating a veth pair is refused. Skip
+	// on that rather than failing, so a plain `go test` in a container
+	// behaves like one on a developer's machine. `make test-xdp` runs this
+	// for real in a privileged container.
+	if out, err := exec.Command("ip", "link", "add", a, "type", "veth", "peer", "name", b).CombinedOutput(); err != nil {
+		t.Skipf("cannot create a veth pair (needs CAP_NET_ADMIN): %v: %s", err, out)
+	}
 	t.Cleanup(func() { _ = exec.Command("ip", "link", "del", a).Run() })
 	run("link", "set", a, "up")
 	run("link", "set", b, "up")

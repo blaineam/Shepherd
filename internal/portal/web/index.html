@@ -26,6 +26,7 @@
       <button type="button" role="tab" id="tab-blocking" aria-selected="false" aria-controls="view-blocking">Blocking</button>
       <button type="button" role="tab" id="tab-alarms" aria-selected="false" aria-controls="view-alarms">Alarms</button>
       <button type="button" role="tab" id="tab-vulnscan" aria-selected="false" aria-controls="view-vulnscan">Vulnerabilities</button>
+      <button type="button" role="tab" id="tab-watch" aria-selected="false" aria-controls="view-watch">Watch</button>
       <button type="button" role="tab" id="tab-network" aria-selected="false" aria-controls="view-network">Network</button>
       <button type="button" role="tab" id="tab-upstreams" aria-selected="false" aria-controls="view-upstreams">Upstreams</button>
       <button type="button" role="tab" id="tab-proxy" aria-selected="false" aria-controls="view-proxy">Proxy</button>
@@ -121,8 +122,8 @@
             <button type="button" class="btn red" id="i-block">Block domain</button>
             <button type="button" class="btn teal" id="i-allow">Allow domain</button>
           </div>
-          <span class="tip-wrap" title="Blocking a whole country needs Watch mode, which sees the actual connections. DNS-only Guard mode cannot do this reliably.">
-            <button type="button" class="btn ghost" id="i-country" disabled>Block country (needs Watch mode)</button>
+          <span class="tip-wrap" title="Blocking a whole country from the globe needs Watch mode to enforce it on the connection itself. Watch mode now ships and gives Shepherd that outbound view; wiring this button to it is still to come. Blocking a country by network, group or device works today on the Blocking screen&#39;s Countries tab.">
+            <button type="button" class="btn ghost" id="i-country" disabled>Block country (on the Blocking screen)</button>
           </span>
           <p class="insp-fb small" id="i-fb" role="status" aria-live="polite" hidden>
             <span id="i-fb-text"></span> <button type="button" class="linkbtn" id="i-undo">Undo</button>
@@ -180,6 +181,7 @@
   <main id="view-blocking" class="page" role="tabpanel" aria-labelledby="tab-blocking" hidden></main>
   <main id="view-alarms" class="page page-fill" role="tabpanel" aria-labelledby="tab-alarms" hidden></main>
   <main id="view-vulnscan" class="page page-fill" role="tabpanel" aria-labelledby="tab-vulnscan" hidden></main>
+  <main id="view-watch" class="page" role="tabpanel" aria-labelledby="tab-watch" hidden></main>
   <main id="view-network" class="page" role="tabpanel" aria-labelledby="tab-network" hidden></main>
   <main id="view-upstreams" class="page" role="tabpanel" aria-labelledby="tab-upstreams" hidden></main>
   <main id="view-proxy" class="page" role="tabpanel" aria-labelledby="tab-proxy" hidden></main>
@@ -199,7 +201,7 @@
     <!-- Honest status, not a bug report: Watch mode (ARP interception, internal/intercept)
          is built but not wired into cmd/shepherd or the portal yet (docs/ROADMAP.md step 11),
          so there is genuinely nothing live to report either way. -->
-    <p class="muted small watchmode-note">Watch mode is a planned feature — not available in this build yet. Everything above is from DNS-only Guard mode.</p>
+    <p class="muted small watchmode-note">Counts above are DNS lookups. Watch mode, on the Watch screen, adds what devices actually connect to and how much they send.</p>
 
     <section class="grid">
       <div class="card wide">
