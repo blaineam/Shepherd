@@ -89,17 +89,37 @@ func validRPID(id string) error {
 // matters is the library checking the origin and RP ID hash the
 // authenticator signed, which no request header can forge.
 func (rp RelyingParty) Serves(r *http.Request) bool {
-	if r.TLS == nil || rp.ID == "" {
+	if rp.ID == "" || !requestIsHTTPS(r) {
 		return false
 	}
 	return hostOnly(r.Host) == rp.ID
+}
+
+// requestIsHTTPS reports whether r reached the portal over a connection the
+// browser itself sees as HTTPS: either Shepherd's own [tls] listener
+// terminated it directly (r.TLS set), or [reverseproxy] did and forwarded
+// it as a plain-HTTP request carrying X-Forwarded-Proto: https, the same
+// header internal/reverseproxy.Proxy always sets on everything it forwards
+// (never anything a client sent, see Proxy's own header handling) and the
+// only way a request from reverseproxy ever reaches this backend, since
+// [portal].listen is never itself exposed through reverseproxy.
+//
+// This is an availability gate, not the actual WebAuthn trust boundary: a
+// forged header here only changes whether a ceremony is attempted, never
+// whether one succeeds. The library independently verifies the real
+// browser-signed origin in clientDataJSON against rp.Origins regardless of
+// anything checked here, so trusting this header costs nothing a forged
+// origin could not already have tried directly against [tls]'s own
+// listener.
+func requestIsHTTPS(r *http.Request) bool {
+	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 }
 
 // RequestOrigin is the origin r was addressed to, for messages that tell the
 // owner where they are versus where passkeys work.
 func RequestOrigin(r *http.Request) string {
 	scheme := "http"
-	if r.TLS != nil {
+	if requestIsHTTPS(r) {
 		scheme = "https"
 	}
 	return scheme + "://" + r.Host

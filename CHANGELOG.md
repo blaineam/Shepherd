@@ -385,6 +385,16 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- Passkeys' `Serves`/`RequestOrigin` checked `r.TLS != nil` to decide whether a request reached the
+  portal over HTTPS, which is only ever true when `[tls]`'s own listener terminated the connection
+  directly. Reaching the portal through `[reverseproxy]` on the same hostname instead — a real cutover
+  hit this directly, right after setting both features up the same night — terminates TLS at the proxy
+  and forwards as plain HTTP, so `r.TLS` is nil even though the browser's own connection genuinely was
+  HTTPS, and passkeys refused with "this page is http://..." on a page that was, from the browser's own
+  address bar, unmistakably `https://`. Fixed by also trusting `X-Forwarded-Proto: https`, which
+  `internal/reverseproxy.Proxy` always sets and always overwrites (never passes through from a client) —
+  this gate is an availability check, not the actual WebAuthn trust boundary, which the library enforces
+  independently against the browser-signed origin regardless of this header. See docs/PASSKEYS.md.
 - `internal/intercept.Relay` relayed *every* frame a steered device addressed to Shepherd's own MAC to
   the real gateway, including frames genuinely destined for Shepherd itself (a DNS query to the resolver
   Shepherd runs, a connection to its portal) — because a steered device's ARP entry for the real gateway

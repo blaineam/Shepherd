@@ -83,10 +83,19 @@ Each passkey records the RP ID it was registered for; after a change the old one
 ("Registered for old.example.com, not new.example.com"), so you can remove them, but they are never offered
 at sign-in. Register new ones at the new address.
 
-**Not supported yet:** reaching the portal through `[reverseproxy]` (or any proxy) rather than `[tls]`'s own
-listener. The portal then sees a plain-HTTP request and refuses, as above. That is the next step if the
-portal ever moves behind the reverse proxy; it needs the portal to trust the proxy's forwarded scheme and
-host, which it deliberately does not today.
+**Reaching the portal through `[reverseproxy]` on its own hostname works too.** `[reverseproxy]`
+terminates TLS itself and forwards as plain HTTP, so the portal's own backend never sees `r.TLS` set for
+a request that arrived this way — but `internal/reverseproxy.Proxy` always sets (and always overwrites,
+never passes through anything a client sent) `X-Forwarded-Proto: https` on everything it forwards, and
+the portal trusts that header to mean what it says. This is an availability gate, not the actual
+WebAuthn trust boundary: the real security — that a signed ceremony response really did come from the
+browser that opened exactly this origin — is enforced independently by the WebAuthn library against
+`clientDataJSON`'s own origin field, regardless of this header. A forged header against the portal's
+plain-HTTP listener directly (`[portal].listen`, reachable on its own, not only through the proxy) could
+at most make the server offer a ceremony it would otherwise refuse; it cannot make a browser run
+`navigator.credentials.*` outside a secure context (that enforcement is the browser's own, independent
+of any header), and the one thing an unauthenticated visitor can see either way — the registered
+credential IDs on a sign-in attempt — is already documented above as not a secret.
 
 ## The ceremonies
 
@@ -251,8 +260,9 @@ This is the honest list. Do it once, at the real HTTPS address, before treating 
    opened in another tab ends).
 7. **Check the token and PIN again** after all of the above.
 8. **Remember what changes the picture:** changing `[tls].hostname` orphans every passkey (re-register at the
-   new name); rotating `portal-token` wipes them all; reaching the portal any way other than `[tls]`'s own
-   listener (a reverse proxy, the LAN IP) offers no passkey sign-in at all.
+   new name); rotating `portal-token` wipes them all; reaching the portal at the LAN IP, or at any
+   hostname other than `[tls].hostname` (even through `[reverseproxy]`, which only forwards the one
+   hostname it has a host entry for), offers no passkey sign-in at all.
 9. **Anyone with an unlocked session can add a passkey**, just as they can set or change the PIN. Glance at
    the list now and then; remove anything you do not recognize, and rotate the token if you suspect a session
    was used by someone else.

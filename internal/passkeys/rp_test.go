@@ -93,6 +93,41 @@ func TestServesOnlyHTTPSRequestsForTheRPHostname(t *testing.T) {
 	}
 }
 
+// TestServesAcceptsReverseProxyForwardedHTTPS proves the fix for a real
+// gap: [reverseproxy] terminates TLS itself and forwards as plain HTTP, so
+// r.TLS is nil for every request that arrives this way even though the
+// browser's own connection genuinely was HTTPS. Serves must still say yes,
+// using the X-Forwarded-Proto header internal/reverseproxy.Proxy always
+// sets (and always overwrites, never passes through from a client) on
+// everything it forwards.
+func TestServesAcceptsReverseProxyForwardedHTTPS(t *testing.T) {
+	rp, err := NewRelyingParty("shepherd.example.com", ":8443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name  string
+		host  string
+		proto string
+		want  bool
+	}{
+		{"forwarded https at the right name", "shepherd.example.com", "https", true},
+		{"forwarded http at the right name", "shepherd.example.com", "http", false},
+		{"no forwarded header at all", "shepherd.example.com", "", false},
+		{"forwarded https at the wrong name", "other.example.com", "https", false},
+	}
+	for _, c := range cases {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Host = c.host
+		if c.proto != "" {
+			r.Header.Set("X-Forwarded-Proto", c.proto)
+		}
+		if got := rp.Serves(r); got != c.want {
+			t.Errorf("%s: Serves = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestRequestOrigin(t *testing.T) {
 	r := httptest.NewRequest("GET", "/", nil)
 	r.Host = "192.0.2.10:8787"
@@ -104,5 +139,11 @@ func TestRequestOrigin(t *testing.T) {
 	r.Host = "shepherd.example.com:8443"
 	if got := RequestOrigin(r); got != "https://shepherd.example.com:8443" {
 		t.Errorf("tls: %q", got)
+	}
+	r.TLS = nil
+	r.Host = "shepherd.example.com"
+	r.Header.Set("X-Forwarded-Proto", "https")
+	if got := RequestOrigin(r); got != "https://shepherd.example.com" {
+		t.Errorf("forwarded https: %q", got)
 	}
 }
