@@ -385,6 +385,18 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- **The globe's per-frame comet-arrival check scanned all 600 comet slots every frame**, regardless of
+  how many were actually animating — cheap enough with a JIT to go unnoticed, real cost without one
+  (Safari Lockdown Mode disables it entirely, and the portal felt sluggish there as a direct result).
+  `GlobeRenderer` now tracks which comet slots have anything left to do (`liveComets`) and only ever
+  iterates those, so the per-frame cost scales with what is actually on screen instead of a fixed cap
+  that is almost always mostly inert between spawns.
+- **The Devices screen's "Needs attention" panel had no way to collapse it.** With enough flagged devices
+  (new installs especially — quarantine, wandering, excluded all surface here) the full chip grid alone
+  could run many screens long on a phone, pushing the actual device table below the fold with no way
+  back up to it short of scrolling past all of it first. It now starts collapsed behind a "Show" toggle
+  next to its header; the header and count stay visible either way, so nothing needing a look is hidden,
+  just not forced open.
 - Passkeys' `Serves`/`RequestOrigin` checked `r.TLS != nil` to decide whether a request reached the
   portal over HTTPS, which is only ever true when `[tls]`'s own listener terminated the connection
   directly. Reaching the portal through `[reverseproxy]` on the same hostname instead — a real cutover

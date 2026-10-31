@@ -226,6 +226,15 @@ export class Globe {
     this.cometDest = new Float32Array(COMET_CAP * 3);
     this.cometColor = new Float32Array(COMET_CAP * 3);
     this.cometSize = new Float32Array(COMET_CAP);
+    // Comet slots with anything left to do this frame (still travelling, or
+    // still fading out its arrival ping): render() only ever needs to look
+    // at these, never all COMET_CAP of them. Without this, the per-frame
+    // arrival-ping check scanned every slot unconditionally — fine with a
+    // JIT, real cost without one (Safari Lockdown Mode disables it): most
+    // slots sit inert between spawns, so a fixed 600-iteration scan every
+    // frame was almost entirely wasted work scaling with the cap, not with
+    // anything actually happening on screen.
+    this.liveComets = new Set();
   }
 
   _buildPulses() {
@@ -340,6 +349,7 @@ export class Globe {
     this.cometDest.set(lane.to, i * 3);
     this.cometColor.set(col, i * 3);
     this.cometSize[i] = 0.035 + 0.06 * s;
+    this.liveComets.add(i);
     this.arcDirty = true;
   }
 
@@ -587,16 +597,23 @@ export class Globe {
     this._updateView(dt);
     this.uniforms.uSize.value = clamp(1.9 * (this.baseDist / this.camDist) ** 0.8, 1.6, 6.5);
 
-    // Arrival pings for comets that reached their destination.
+    // Arrival pings for comets that reached their destination. Only slots
+    // with anything left to do (see liveComets' own doc comment): most of
+    // COMET_CAP sits inert between spawns, so this scales with how many
+    // comets are actually on screen right now, not with the cap.
     let live = 0;
-    for (let i = 0; i < COMET_CAP; i++) {
+    for (const i of this.liveComets) {
       const slot = LANE_CAP + i;
       if (this.cometPending[i] && this.time >= this.cometArrive[i]) {
         this.cometPending[i] = 0;
         this._pulse(this.cometDest, i * 3, this.cometColor, i * 3, 0, this.cometSize[i], this.reduced ? 0.9 : 1.3);
       }
-      if (this.time < this.cometArrive[i] + this.A.iAnim[slot * 2 + 1] * 0.35 + 0.1) live++;
-      else if (this.A.iStyle[slot * 4 + 1] !== 0) { this.A.iStyle[slot * 4 + 1] = 0; this.arcDirty = true; }
+      if (this.time < this.cometArrive[i] + this.A.iAnim[slot * 2 + 1] * 0.35 + 0.1) {
+        live++;
+      } else {
+        if (this.A.iStyle[slot * 4 + 1] !== 0) { this.A.iStyle[slot * 4 + 1] = 0; this.arcDirty = true; }
+        this.liveComets.delete(i);
+      }
     }
     this.stats.comets = live;
 

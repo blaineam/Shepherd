@@ -23,6 +23,12 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
   let allTotal = null;
   let attention = []; // mergeAttention() result: devices needing a look, worst-first
   let attentionGen = 0;
+  // Collapsed by default: with enough flagged devices (new installs,
+  // mostly) the full chip grid alone can run many screens long on a phone,
+  // pushing the actual device table below the fold with no way back up to
+  // it short of scrolling past all of it first. The header and count stay
+  // visible either way, so this never hides that something needs a look.
+  let attnExpanded = false;
   let chips = []; // committed filters: [{key,value,neg}]
   let sort = 'recent';
   let active = -1;
@@ -335,8 +341,13 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     if (!attention.length) { attnWrap.replaceChildren(); return; }
     attnWrap.replaceChildren();
     const h = el('div', 'dv-attn-head');
-    h.append(el('h3', 'ph', 'Needs attention'), el('span', 'pg-count mono', String(attention.length)));
+    const toggle = el('button', 'dv-attn-toggle', attnExpanded ? 'Hide' : 'Show');
+    toggle.type = 'button';
+    toggle.setAttribute('aria-expanded', attnExpanded ? 'true' : 'false');
+    toggle.addEventListener('click', () => { attnExpanded = !attnExpanded; paintAttention(); });
+    h.append(el('h3', 'ph', 'Needs attention'), el('span', 'pg-count mono', String(attention.length)), toggle);
     attnWrap.append(h);
+    if (!attnExpanded) return;
     const row = el('div', 'dv-attn-row');
     const shown = attention.slice(0, 16);
     for (const { device: d, reasons } of shown) {
