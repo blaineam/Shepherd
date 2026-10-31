@@ -30,9 +30,15 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   first configured address, because when Shepherd is its own host's resolver, loopback is the one
   address that cannot vanish with an interface — in the outage the host lost name resolution
   entirely, which wedged `sshd` (it blocks on reverse lookups) and left the machine unreachable to
-  fix the very interface that had failed. Addresses already covered are not duplicated, a wildcard
-  listener is left alone, and a loopback port a system resolver already holds is just a warning.
-  It only helps if the host's own resolver lists 127.0.0.1, which the example config now says.
+  fix the very interface that had failed. Addresses already covered are not duplicated and a
+  wildcard listener is left alone. Because Shepherd adds these itself rather than the owner asking
+  for them, they are **best-effort in a way the configured addresses are not** (`dnsengine.Optional`):
+  *any* bind failure on one is a logged warning, the port already being taken included, which on a
+  NAS whose system resolver owns `127.0.0.1:53` is the normal case and not a fault. Without that
+  distinction this option would have refused to start on exactly the hosts it was written for, and
+  on a default install, since it is on by default. An address in `dns.listen` is still strict: one
+  another process holds stays fatal there. It only helps if the host's own resolver lists 127.0.0.1,
+  which the example config now says.
 - **Watch mode is wired in and on by default (`[watch]`, `internal/watch`, docs/WATCH.md)** — [ROADMAP.md](docs/ROADMAP.md)
   step 11, after the throughput ceiling that held it back for months was root-caused and fixed and the relay was
   measured at full gigabit on real hardware, with the maintainer's explicit go-ahead. Until now

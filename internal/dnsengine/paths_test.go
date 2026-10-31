@@ -741,3 +741,94 @@ func freeAddr(t *testing.T) string {
 	pc.Close()
 	return addr
 }
+
+// A loopback listener Shepherd added itself must never be able to stop it
+// from starting: on a NAS the system resolver commonly owns 127.0.0.1:53
+// already. The owner's own addresses stay strict, which is the distinction
+// Optional draws and the reason it is not just a wider errno list.
+func TestServeSkipsAnOptionalAddressSomethingElseHolds(t *testing.T) {
+	h := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		_ = w.WriteMsg(m)
+	})
+	taken, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	busy := taken.LocalAddr().String()
+	good := freeAddr(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var skipped []string
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, []string{good, busy}, h,
+			Optional([]string{busy}, func(addr string, e error) { skipped = append(skipped, addr) }))
+	}()
+	waitServing(t, good)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("a busy optional address must be skipped, not fatal: %v", err)
+	}
+	if len(skipped) != 1 || skipped[0] != busy {
+		t.Fatalf("skipped = %v, want just %s reported", skipped, busy)
+	}
+}
+
+// Optional only covers the addresses it is given. The same busy address
+// stays fatal when it is one the owner configured.
+func TestServeOptionalDoesNotRelaxTheConfiguredAddresses(t *testing.T) {
+	h := dns.HandlerFunc(func(dns.ResponseWriter, *dns.Msg) {})
+	taken, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	busy := taken.LocalAddr().String()
+
+	err = Serve(context.Background(), []string{busy, freeAddr(t)}, h,
+		Optional([]string{"127.0.0.1:1"}, func(string, error) {}))
+	if err == nil || !strings.Contains(err.Error(), "listening udp") {
+		t.Fatalf("err = %v, want the configured busy address to stay fatal", err)
+	}
+}
+
+// A taken TCP half of an optional address is skipped too, and does not
+// leave that address serving over UDP alone.
+func TestServeSkipsAnOptionalAddressWithABusyTCPHalf(t *testing.T) {
+	h := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		_ = w.WriteMsg(m)
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	busyTCP := ln.Addr().String()
+	good := freeAddr(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var skipped int
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, []string{good, busyTCP}, h,
+			Optional([]string{busyTCP}, func(string, error) { skipped++ }))
+	}()
+	waitServing(t, good)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("a busy TCP half on an optional address must be skipped: %v", err)
+	}
+	if skipped != 1 {
+		t.Fatalf("skipped = %d, want 1", skipped)
+	}
+	pc, perr := net.ListenPacket("udp", busyTCP)
+	if perr != nil {
+		t.Fatalf("the skipped address left its UDP socket open: %v", perr)
+	}
+	pc.Close()
+}

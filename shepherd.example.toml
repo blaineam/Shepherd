@@ -32,9 +32,13 @@ listen = ["127.0.0.1:5353"]
 # could not be reached to fix the interface. For this to help, put 127.0.0.1
 # first in the host's own resolver (/etc/resolv.conf): a listener nothing
 # asks is no use. An address already covered above is not added twice, and
-# one that cannot be bound (system DNS often holds 127.0.0.1:53) is a logged
-# warning, not a startup failure -- as is any address in the list, so losing
-# one interface no longer stops Shepherd answering on the others.
+# because Shepherd adds these itself rather than you asking for them, nothing
+# that goes wrong with one stops it starting: system DNS commonly holds
+# 127.0.0.1:53 already, and that is a logged warning. The addresses you do
+# list are stricter. One this host does not have is a warning too, so losing
+# an interface no longer stops Shepherd answering on the others -- but one
+# another process is holding is still a startup failure, because then
+# something else is answering DNS on it and starting anyway would hide that.
 listen_loopback = true
 # Upstream resolvers: "9.9.9.10", "9.9.9.10:5353", "tcp://ip", "tls://host[:853]" (DoT),
 # "https://host/dns-query" (DoH). See docs/UPSTREAMS.md. This only seeds the list: once

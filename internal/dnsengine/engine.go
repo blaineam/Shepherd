@@ -356,6 +356,23 @@ type ServeOption func(*serveConfig)
 
 type serveConfig struct {
 	onBindError func(addr string, err error)
+	optional    map[string]func(addr string, err error)
+}
+
+// skip reports whether a bind failure on addr is survivable, telling the
+// caller about it when it is.
+func (c serveConfig) skip(addr string, err error) bool {
+	if onSkip, ok := c.optional[addr]; ok {
+		if onSkip != nil {
+			onSkip(addr, err)
+		}
+		return true
+	}
+	if c.onBindError != nil && addressMissing(err) {
+		c.onBindError(addr, err)
+		return true
+	}
+	return false
 }
 
 // TolerateMissingAddresses makes Serve carry on when an address does not
@@ -382,6 +399,28 @@ type serveConfig struct {
 // half is closed too, so an address is never half-served.
 func TolerateMissingAddresses(onMissing func(addr string, err error)) ServeOption {
 	return func(c *serveConfig) { c.onBindError = onMissing }
+}
+
+// Optional marks addresses Shepherd added itself rather than the owner
+// writing them in the configuration -- the implicit loopback listeners of
+// dns.listen_loopback. Any bind failure on one of these is reported
+// through onSkip and skipped, not only an address this host does not have:
+// something else already answering on loopback is a normal condition (a
+// NAS's own resolver owning 127.0.0.1:53 is the common case), and an
+// address nobody asked for must never be able to stop Shepherd from
+// starting. Addresses the owner did configure stay strict.
+func Optional(addrs []string, onSkip func(addr string, err error)) ServeOption {
+	return func(c *serveConfig) {
+		if len(addrs) == 0 {
+			return
+		}
+		if c.optional == nil {
+			c.optional = make(map[string]func(string, error), len(addrs))
+		}
+		for _, a := range addrs {
+			c.optional[a] = onSkip
+		}
+	}
 }
 
 // addressMissing reports whether err means "this host does not have that
@@ -411,21 +450,19 @@ func Serve(ctx context.Context, addrs []string, h dns.Handler, opts ...ServeOpti
 	for _, a := range addrs {
 		pc, err := net.ListenPacket("udp", a)
 		if err != nil {
-			if cfg.onBindError == nil || !addressMissing(err) {
+			if !cfg.skip(a, fmt.Errorf("udp: %w", err)) {
 				closeAll()
 				return fmt.Errorf("listening udp %s: %w", a, err)
 			}
-			cfg.onBindError(a, fmt.Errorf("udp: %w", err))
 			continue
 		}
 		ln, err := net.Listen("tcp", a)
 		if err != nil {
 			pc.Close() // never leave an address served over UDP only
-			if cfg.onBindError == nil || !addressMissing(err) {
+			if !cfg.skip(a, fmt.Errorf("tcp: %w", err)) {
 				closeAll()
 				return fmt.Errorf("listening tcp %s: %w", a, err)
 			}
-			cfg.onBindError(a, fmt.Errorf("tcp: %w", err))
 			continue
 		}
 		closers = append(closers, func() { pc.Close() }, func() { ln.Close() })

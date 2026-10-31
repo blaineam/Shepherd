@@ -857,3 +857,34 @@ func TestDNSListenLoopbackCanBeTurnedOff(t *testing.T) {
 		t.Fatalf("addrs = %v", got)
 	}
 }
+
+// The loopback addresses Shepherd adds are identifiable, because startup
+// treats them as best-effort while the configured ones stay strict.
+func TestDNSAddedLoopbackAddrsAreOnlyTheOnesShepherdAdds(t *testing.T) {
+	d := DNS{Listen: []string{"192.0.2.20:53"}}
+	if got, want := d.AddedLoopbackAddrs(), []string{"127.0.0.1:53", "[::1]:53"}; !slices.Equal(got, want) {
+		t.Fatalf("added = %v, want %v", got, want)
+	}
+	// Nothing is added when the owner already listed loopback, when a
+	// wildcard listener covers it, or when the option is off.
+	off := false
+	for _, c := range []struct {
+		name string
+		d    DNS
+	}{
+		{"already configured", DNS{Listen: []string{"127.0.0.1:53", "[::1]:53"}}},
+		{"wildcard covers it", DNS{Listen: []string{"0.0.0.0:53"}}},
+		{"switched off", DNS{Listen: []string{"192.0.2.20:53"}, ListenLoopback: &off}},
+		{"nothing configured", DNS{}},
+	} {
+		if got := c.d.AddedLoopbackAddrs(); len(got) != 0 {
+			t.Fatalf("%s: added = %v, want none", c.name, got)
+		}
+	}
+	// Whatever is added is also in ListenAddrs, and only at the end.
+	d = DNS{Listen: []string{"192.0.2.20:5353"}}
+	all, added := d.ListenAddrs(), d.AddedLoopbackAddrs()
+	if !slices.Equal(all[len(all)-len(added):], added) {
+		t.Fatalf("added %v are not the tail of %v", added, all)
+	}
+}

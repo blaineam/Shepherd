@@ -714,13 +714,29 @@ func (d DNS) LoopbackEnabled() bool { return d.ListenLoopback == nil || *d.Liste
 // address, so the host reaches Shepherd the same way the network does.
 // Addresses already covered by the configuration are never added twice.
 func (d DNS) ListenAddrs() []string {
+	all, _ := d.listenAddrs()
+	return all
+}
+
+// AddedLoopbackAddrs is just the loopback addresses ListenAddrs adds, the
+// ones the owner did not write in dns.listen. Shepherd puts them there
+// itself, so they are best-effort: a NAS's own resolver commonly owns
+// 127.0.0.1:53 already, and an address nobody asked for must never be able
+// to stop Shepherd from starting. cmd/shepherd passes these to
+// dnsengine.Optional.
+func (d DNS) AddedLoopbackAddrs() []string {
+	_, added := d.listenAddrs()
+	return added
+}
+
+func (d DNS) listenAddrs() (all, added []string) {
 	out := append([]string(nil), d.Listen...)
 	if !d.LoopbackEnabled() || len(d.Listen) == 0 {
-		return out
+		return out, nil
 	}
 	_, port, err := net.SplitHostPort(d.Listen[0])
 	if err != nil || port == "" {
-		return out
+		return out, nil
 	}
 	have := map[string]bool{}
 	for _, a := range out {
@@ -728,14 +744,15 @@ func (d DNS) ListenAddrs() []string {
 			have[net.JoinHostPort(strings.ToLower(host), p)] = true
 			// A wildcard listener already answers on loopback.
 			if host == "" || host == "0.0.0.0" || host == "::" {
-				return out
+				return out, nil
 			}
 		}
 	}
 	for _, host := range []string{"127.0.0.1", "::1"} {
 		if a := net.JoinHostPort(host, port); !have[a] {
 			out = append(out, a)
+			added = append(added, a)
 		}
 	}
-	return out
+	return out, added
 }

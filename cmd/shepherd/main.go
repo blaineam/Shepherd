@@ -351,6 +351,13 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	if err := dnsengine.Serve(ctx, cfg.DNS.ListenAddrs(), engine,
 		dnsengine.TolerateMissingAddresses(func(addr string, err error) {
 			log.Printf("dns: WARNING: not listening on %s: %v (this host does not have that address)", addr, err)
+		}),
+		// The loopback listeners are Shepherd's own idea, not the owner's,
+		// so anything at all can go wrong with one without stopping
+		// startup -- including the port already being taken, which on a NAS
+		// whose system resolver owns 127.0.0.1:53 is the normal case.
+		dnsengine.Optional(cfg.DNS.AddedLoopbackAddrs(), func(addr string, err error) {
+			log.Printf("dns: not listening on %s: %v (dns.listen_loopback; something else on this host already answers there)", addr, err)
 		})); err != nil {
 		return err
 	}
