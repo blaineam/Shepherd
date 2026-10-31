@@ -125,8 +125,12 @@ func (s *Service) owner() (owner, error) {
 	if err != nil {
 		return owner{}, err
 	}
-	return owner{handle: h, creds: s.store.Credentials()}, nil
+	return owner{handle: h, creds: s.store.CredentialsFor(s.rp.ID)}, nil
 }
+
+// Usable counts the passkeys that can sign in here: those registered
+// under this relying party's ID.
+func (s *Service) Usable() int { return len(s.store.CredentialsFor(s.rp.ID)) }
 
 // BeginRegistration starts adding a passkey named name and returns the
 // ceremony id and the options to hand to navigator.credentials.create. The
@@ -174,7 +178,7 @@ func (s *Service) FinishRegistration(ceremonyID string, response []byte) (Passke
 	if err != nil {
 		return Passkey{}, rejected(err)
 	}
-	return s.store.Add(p.name, *cred, s.now())
+	return s.store.Add(p.name, s.rp.ID, *cred, s.now())
 }
 
 // BeginLogin starts a login and returns the ceremony id and the options to

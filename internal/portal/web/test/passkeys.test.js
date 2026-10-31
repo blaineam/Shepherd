@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   b64urlToBytes, bytesToB64url, creationOptions, requestOptions, registrationJSON, assertionJSON,
-  browserIssue, passkeyCardState, ceremonyError,
+  browserIssue, passkeyCardState, ceremonyError, staleNote,
 } from '../js/passkeys.js';
 
 const bytes = (...a) => new Uint8Array(a);
@@ -179,4 +179,12 @@ test('a browser credential built from the fixture serializes back to the exact b
     getClientExtensionResults: () => as.clientExtensionResults,
   };
   assert.deepEqual(assertionJSON(got), as);
+});
+
+test('staleNote flags a passkey registered for an earlier hostname', () => {
+  const status = { configured: true, rp_id: 'new.example.com' };
+  assert.equal(staleNote({ rp_id: 'new.example.com' }, status), '');
+  assert.match(staleNote({ rp_id: 'old.example.com' }, status), /Registered for old\.example\.com, not new\.example\.com/);
+  assert.equal(staleNote({ rp_id: 'old.example.com' }, { configured: false }), '', 'nothing to compare against without [tls]');
+  assert.equal(staleNote({}, status), '');
 });

@@ -52,7 +52,7 @@ func TestStoreAddPersistsAt0600AndReloads(t *testing.T) {
 	if !bytes.Equal(handle, again) {
 		t.Error("the user handle must be stable once created")
 	}
-	pk, err := s.Add("  My phone  ", cred("c1"), t0)
+	pk, err := s.Add("  My phone  ", "shepherd.example.com", cred("c1"), t0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,45 +85,51 @@ func TestStoreAddPersistsAt0600AndReloads(t *testing.T) {
 	if !bytes.Equal(h2, handle) {
 		t.Error("the user handle must survive a restart: every passkey is bound to it")
 	}
-	if creds := re.Credentials(); len(creds) != 1 || !bytes.Equal(creds[0].ID, []byte("c1")) {
-		t.Errorf("Credentials = %v", creds)
+	if creds := re.CredentialsFor("shepherd.example.com"); len(creds) != 1 || !bytes.Equal(creds[0].ID, []byte("c1")) {
+		t.Errorf("CredentialsFor = %v", creds)
+	}
+	if creds := re.CredentialsFor("other.example.com"); len(creds) != 0 {
+		t.Errorf("CredentialsFor another RP ID = %v, want none", creds)
+	}
+	if got.RPID != "shepherd.example.com" {
+		t.Errorf("RPID = %q, want it persisted", got.RPID)
 	}
 }
 
 func TestStoreDefaultsAndValidatesNames(t *testing.T) {
 	s, _ := Open("", "h")
-	pk, err := s.Add("", cred("c1"), t0)
+	pk, err := s.Add("", "shepherd.example.com", cred("c1"), t0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pk.Name != "Passkey" {
 		t.Errorf("an empty name = %q, want the default", pk.Name)
 	}
-	if _, err := s.Add(strings.Repeat("x", 65), cred("c2"), t0); !errors.Is(err, ErrInvalid) {
+	if _, err := s.Add(strings.Repeat("x", 65), "shepherd.example.com", cred("c2"), t0); !errors.Is(err, ErrInvalid) {
 		t.Errorf("a 65-character name: err = %v", err)
 	}
-	if _, err := s.Add("bad\x00name", cred("c3"), t0); !errors.Is(err, ErrInvalid) {
+	if _, err := s.Add("bad\x00name", "shepherd.example.com", cred("c3"), t0); !errors.Is(err, ErrInvalid) {
 		t.Errorf("a control character: err = %v", err)
 	}
-	if _, err := s.Add(strings.Repeat("é", 64), cred("c4"), t0); err != nil {
+	if _, err := s.Add(strings.Repeat("é", 64), "shepherd.example.com", cred("c4"), t0); err != nil {
 		t.Errorf("64 runes must fit, whatever their byte length: %v", err)
 	}
 }
 
 func TestStoreRefusesADuplicateCredentialAndCapsTheCount(t *testing.T) {
 	s, _ := Open("", "h")
-	if _, err := s.Add("a", cred("same"), t0); err != nil {
+	if _, err := s.Add("a", "shepherd.example.com", cred("same"), t0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Add("b", cred("same"), t0); !errors.Is(err, ErrDuplicate) {
+	if _, err := s.Add("b", "shepherd.example.com", cred("same"), t0); !errors.Is(err, ErrDuplicate) {
 		t.Errorf("the same credential twice: err = %v", err)
 	}
 	for i := 1; i < MaxPasskeys; i++ {
-		if _, err := s.Add("k", cred(string(rune('A'+i))), t0); err != nil {
+		if _, err := s.Add("k", "shepherd.example.com", cred(string(rune('A'+i))), t0); err != nil {
 			t.Fatalf("passkey %d: %v", i, err)
 		}
 	}
-	if _, err := s.Add("one too many", cred("overflow"), t0); !errors.Is(err, ErrTooMany) {
+	if _, err := s.Add("one too many", "shepherd.example.com", cred("overflow"), t0); !errors.Is(err, ErrTooMany) {
 		t.Errorf("past the cap: err = %v", err)
 	}
 }
@@ -131,8 +137,8 @@ func TestStoreRefusesADuplicateCredentialAndCapsTheCount(t *testing.T) {
 func TestStoreRenameAndRemove(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "passkeys.json")
 	s, _ := Open(path, "h")
-	a, _ := s.Add("a", cred("c1"), t0)
-	b, _ := s.Add("b", cred("c2"), t0)
+	a, _ := s.Add("a", "shepherd.example.com", cred("c1"), t0)
+	b, _ := s.Add("b", "shepherd.example.com", cred("c2"), t0)
 	if _, err := s.Rename(a.ID, "Laptop"); err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +170,7 @@ func TestStoreRenameAndRemove(t *testing.T) {
 func TestStoreRecordLoginUpdatesTheCredentialAndLastUsed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "passkeys.json")
 	s, _ := Open(path, "h")
-	a, _ := s.Add("a", cred("c1"), t0)
+	a, _ := s.Add("a", "shepherd.example.com", cred("c1"), t0)
 	updated := cred("c1")
 	updated.Authenticator.SignCount = 7
 	later := t0.Add(time.Hour)
@@ -188,7 +194,7 @@ func TestStoreWipesEverythingWhenTheTokenRotates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "passkeys.json")
 	s, _ := Open(path, "old-token")
 	handle, _ := s.UserHandle()
-	if _, err := s.Add("a", cred("c1"), t0); err != nil {
+	if _, err := s.Add("a", "shepherd.example.com", cred("c1"), t0); err != nil {
 		t.Fatal(err)
 	}
 	re, err := Open(path, "new-token")
@@ -243,13 +249,13 @@ func TestStoreAFailedSaveChangesNothing(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sub", "passkeys.json")
 	s, _ := Open(path, "h")
-	if _, err := s.Add("a", cred("c1"), t0); err != nil {
+	if _, err := s.Add("a", "shepherd.example.com", cred("c1"), t0); err != nil {
 		t.Fatal(err)
 	}
 	// Make the directory unwritable so the next save fails.
 	os.Chmod(filepath.Join(dir, "sub"), 0o500)
 	t.Cleanup(func() { os.Chmod(filepath.Join(dir, "sub"), 0o700) })
-	if _, err := s.Add("b", cred("c2"), t0); err == nil {
+	if _, err := s.Add("b", "shepherd.example.com", cred("c2"), t0); err == nil {
 		t.Skip("running with permissions that ignore directory modes")
 	}
 	if s.Len() != 1 {
@@ -262,7 +268,7 @@ func TestStoreMemoryOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Add("a", cred("c1"), t0); err != nil {
+	if _, err := s.Add("a", "shepherd.example.com", cred("c1"), t0); err != nil {
 		t.Fatal(err)
 	}
 	if s.Len() != 1 {

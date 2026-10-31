@@ -5,7 +5,7 @@ import { el } from './dom.js';
 import { button, confirmDialog, relTime, emptyState, unavailableCard } from './ui.js';
 import { unavailable } from './mgmt.js';
 import { idleChoices, pinIssue } from './locking.js';
-import { creationOptions, registrationJSON, passkeyCardState, ceremonyError } from './passkeys.js';
+import { creationOptions, registrationJSON, passkeyCardState, ceremonyError, staleNote } from './passkeys.js';
 
 // webauthn and env are seams for the browser's WebAuthn API and secure-
 // context state; the defaults are the real ones.
@@ -234,6 +234,8 @@ export function createLocking({
     const title = el('div', 'small', pk.name);
     const meta = 'Added ' + relTime(pk.created) + ' · ' + (pk.last_used ? 'last used ' + relTime(pk.last_used) : 'never used yet') + (pk.synced ? ' · synced' : '');
     main.append(title, el('div', 'muted small', meta));
+    const stale = staleNote(pk, passkeyStatus);
+    if (stale) main.append(el('div', 'err-text small', stale));
     const rename = button('Rename', 'ghost');
     rename.addEventListener('click', () => {
       const f = el('form', 'inline-add');

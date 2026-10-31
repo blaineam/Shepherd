@@ -104,6 +104,15 @@ export function passkeyCardState(status, env) {
   return { canAdd: true, message: '', goTo: '' };
 }
 
+// staleNote explains a passkey that was registered for a different
+// hostname than the current relying party (the [tls] hostname changed): it
+// can never sign in again and is listed only so it can be removed. ''
+// for a passkey that is fine, or when passkeys are not configured at all.
+export function staleNote(pk, status) {
+  if (!status.configured || !pk.rp_id || pk.rp_id === status.rp_id) return '';
+  return `Registered for ${pk.rp_id}, not ${status.rp_id}: it cannot sign in here any more. Remove it and add a new one.`;
+}
+
 // sentence capitalizes a server message (Go error strings start lowercase)
 // for display on its own.
 function sentence(s) {

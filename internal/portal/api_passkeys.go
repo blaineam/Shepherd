@@ -107,8 +107,12 @@ func readCeremonyBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 }
 
 type passkeyView struct {
-	ID       string    `json:"id"`
-	Name     string    `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// RPID is the hostname it was registered for; one that differs from
+	// the current relying party (the [tls] hostname changed) can never
+	// sign in again and is only listed so it can be removed.
+	RPID     string    `json:"rp_id"`
 	Created  time.Time `json:"created"`
 	LastUsed time.Time `json:"last_used,omitzero"`
 	// Synced is the backup-state flag: a passkey kept in a synced keychain
@@ -118,7 +122,7 @@ type passkeyView struct {
 }
 
 func viewPasskey(p passkeys.Passkey) passkeyView {
-	return passkeyView{ID: p.ID, Name: p.Name, Created: p.Created, LastUsed: p.LastUsed, Synced: p.Credential.Flags.BackupState}
+	return passkeyView{ID: p.ID, Name: p.Name, RPID: p.RPID, Created: p.Created, LastUsed: p.LastUsed, Synced: p.Credential.Flags.BackupState}
 }
 
 // listPasskeys is the Locking screen's passkey card: whether passkeys can
@@ -253,10 +257,11 @@ func (s *Server) revokePasskey(w http.ResponseWriter, r *http.Request) {
 // passkeyAvailable tells the lock screen whether to offer "Sign in with a
 // passkey". It is unauthenticated, so it says only yes or no: never the
 // hostname (a visitor on the plain-HTTP address learns nothing) and never
-// how many passkeys exist.
+// how many passkeys exist. Only passkeys registered for the current
+// hostname count.
 func (s *Server) passkeyAvailable(w http.ResponseWriter, r *http.Request) {
 	svc, _ := s.passkeyHere(r)
-	writeJSON(w, map[string]bool{"available": svc != nil && s.passkeyStore != nil && s.passkeyStore.Len() > 0})
+	writeJSON(w, map[string]bool{"available": svc != nil && s.passkeyStore != nil && svc.Usable() > 0})
 }
 
 // notHere is the unauthenticated refusal: no hostname, no reason beyond

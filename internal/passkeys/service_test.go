@@ -477,3 +477,51 @@ func TestAnUnwritableStoreFailsCeremoniesCleanly(t *testing.T) {
 		t.Error("a failed begin must leave nothing behind")
 	}
 }
+
+// A passkey is bound to the RP ID it was registered under. If [tls]'s
+// hostname changes, the old passkeys can never work again: they stay
+// listed (so the owner can see and remove them) but are not offered at
+// login, and a login with only stale passkeys has nothing to offer.
+func TestPasskeysFromAnotherHostnameAreNotOffered(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "passkeys.json")
+	store, _ := Open(path, "h")
+	oldRP, _ := NewRelyingParty("old.example.com", ":8443")
+	oldSvc, _ := NewService(oldRP, store, nil)
+	pk := register(t, oldSvc, passkeystest.New("https://old.example.com:8443"), "old")
+	if pk.RPID != "old.example.com" {
+		t.Fatalf("RPID = %q, want the RP it was registered under", pk.RPID)
+	}
+
+	newRP, _ := NewRelyingParty("new.example.com", ":8443")
+	svc, _ := NewService(newRP, store, nil)
+	if _, _, err := svc.BeginLogin(); !errors.Is(err, ErrNoPasskeys) {
+		t.Errorf("only a passkey for another hostname: BeginLogin err = %v, want ErrNoPasskeys", err)
+	}
+	if n := svc.Usable(); n != 0 {
+		t.Errorf("Usable = %d, want 0", n)
+	}
+	a := passkeystest.New("https://new.example.com:8443")
+	register(t, svc, a, "new")
+	_, opts, err := svc.BeginLogin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var o struct {
+		PublicKey struct {
+			Allow []struct {
+				ID string `json:"id"`
+			} `json:"allowCredentials"`
+		} `json:"publicKey"`
+	}
+	json.Unmarshal(opts, &o)
+	if len(o.PublicKey.Allow) != 1 {
+		t.Errorf("allowCredentials = %v, want only the passkey for this hostname", o.PublicKey.Allow)
+	}
+	if svc.Usable() != 1 || store.Len() != 2 {
+		t.Errorf("usable %d of %d", svc.Usable(), store.Len())
+	}
+	if _, err := login(t, svc, a); err != nil {
+		t.Errorf("login with the current passkey: %v", err)
+	}
+}

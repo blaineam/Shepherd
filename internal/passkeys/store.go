@@ -47,8 +47,12 @@ var (
 // nothing it checks at login is lost in translation. None of it is secret:
 // the private key never leaves the authenticator.
 type Passkey struct {
-	ID         string              `json:"id"`
-	Name       string              `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// RPID is the relying party ID ([tls]'s hostname) it was registered
+	// under. A passkey only ever works for that RP ID, so one registered
+	// before the hostname changed stays listed but is never offered again.
+	RPID       string              `json:"rp_id"`
 	Created    time.Time           `json:"created"`
 	LastUsed   time.Time           `json:"last_used,omitzero"`
 	Credential webauthn.Credential `json:"credential"`
@@ -149,13 +153,16 @@ func (s *Store) List() []Passkey {
 	return slices.Clone(s.data.Passkeys)
 }
 
-// Credentials returns every passkey's credential record, for the library.
-func (s *Store) Credentials() []webauthn.Credential {
+// CredentialsFor returns the credential records of every passkey
+// registered under rpID, for the library.
+func (s *Store) CredentialsFor(rpID string) []webauthn.Credential {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make([]webauthn.Credential, len(s.data.Passkeys))
-	for i, p := range s.data.Passkeys {
-		out[i] = p.Credential
+	var out []webauthn.Credential
+	for _, p := range s.data.Passkeys {
+		if p.RPID == rpID {
+			out = append(out, p.Credential)
+		}
 	}
 	return out
 }
@@ -172,13 +179,14 @@ func (s *Store) ByCredentialID(credID []byte) (Passkey, bool) {
 	return Passkey{}, false
 }
 
-// Add registers a credential under name (empty means "Passkey").
-func (s *Store) Add(name string, cred webauthn.Credential, now time.Time) (Passkey, error) {
+// Add registers a credential, made for rpID, under name (empty means
+// "Passkey").
+func (s *Store) Add(name, rpID string, cred webauthn.Credential, now time.Time) (Passkey, error) {
 	n, err := normalizeName(name)
 	if err != nil {
 		return Passkey{}, err
 	}
-	p := Passkey{ID: hex.EncodeToString(randBytes(8)), Name: n, Created: now, Credential: cred}
+	p := Passkey{ID: hex.EncodeToString(randBytes(8)), Name: n, RPID: rpID, Created: now, Credential: cred}
 	return p, s.mutate(func(list []Passkey) ([]Passkey, error) {
 		if len(list) >= MaxPasskeys {
 			return nil, ErrTooMany

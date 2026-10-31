@@ -597,3 +597,28 @@ func TestPasskeyBeginFailsCleanlyWhenTheUserHandleCannotBeSaved(t *testing.T) {
 		t.Errorf("login begin with a read-only disk = %d, want 500", res.StatusCode)
 	}
 }
+
+func TestPasskeysFromAnOldHostnameAreListedButNotOffered(t *testing.T) {
+	p := passkeyHarness(t, nil)
+	p.registerPasskey(p.browserUnlocked(), passkeystest.New(pkOrigin), "old phone")
+	// [tls].hostname changes; same data directory, same token.
+	h2 := newHarnessWith(t, func(d *Deps) {
+		d.TLSHostname, d.TLSListen, d.DataDir = "portal.example.com", ":8443", p.dataDir
+	})
+	st := h2.ok("GET", "/api/passkeys", "", http.StatusOK)
+	pks := st["passkeys"].([]any)
+	if len(pks) != 1 || pks[0].(map[string]any)["rp_id"] != pkHost || st["rp_id"] != "portal.example.com" {
+		t.Errorf("status after a hostname change = %v", st)
+	}
+	ts := httptest.NewTLSServer(h2.srv.Handler())
+	t.Cleanup(ts.Close)
+	r, _ := http.NewRequest("GET", ts.URL+"/api/login/passkey", nil)
+	r.Host = "portal.example.com:8443"
+	res, err := ts.Client().Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if av := decodeJSON(t, res); av["available"] != false {
+		t.Errorf("with only a passkey for the old hostname, availability = %v, want false", av)
+	}
+}

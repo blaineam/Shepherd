@@ -22,7 +22,9 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   well-vetted library is for; it brings in CBOR, TPM-attestation, JWT and msgpack modules
   (docs/THIRD-PARTY.md). The relying party is `[tls].hostname`, its origin `https://<hostname>:<port of
   tls.listen>` (plus the same name on 443, for a container publishing 443 onto the listener); a passkey
-  registered there works only there, never at the LAN IP, another name, or plain HTTP. **Every ceremony is
+  registered there works only there, never at the LAN IP, another name, or plain HTTP; each passkey records
+  the hostname it was made for, so after a `[tls].hostname` change the old ones stay listed (flagged, to be
+  removed) but are never offered at sign-in. **Every ceremony is
   refused before it starts when it could not work**: with `[tls]` off the Locking screen says passkeys need
   it, and from any page that is not the HTTPS listener at that name (the plain-HTTP LAN address, or the
   HTTPS listener reached by IP) it names both where you are and where to go, instead of a WebAuthn error in
