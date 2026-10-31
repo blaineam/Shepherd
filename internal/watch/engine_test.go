@@ -4,6 +4,7 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"os"
 	"strings"
@@ -998,5 +999,110 @@ func TestRepeatedIdlenessDoesNotWidenThePause(t *testing.T) {
 		}
 		te.clock.Advance(idleRecheck + time.Second)
 		te.reg.Observe(devices.Observation{Source: devices.SourceDNS, MAC: phoneMAC.String(), IP: phoneIP.String()})
+	}
+}
+
+// The host's second interface on the same subnet. A NAS with wired and
+// wireless both on the LAN is the ordinary case, and this is what Shepherd
+// steered on the maintainer's network: wlan0 looked like a LAN device, so
+// the relay carried Shepherd's own traffic back to itself at 9 Gbit/s on a
+// 10 GbE link, for a million packets a second in each direction, while
+// Shepherd itself showed 3% CPU because the loop ran in the kernel.
+var (
+	wifiMAC = mustMAC("02:00:5e:00:00:20")
+	wifiIP  = netip.MustParseAddr("192.0.2.20")
+)
+
+func TestNeverSteersAnotherOfThisHostsInterfaces(t *testing.T) {
+	plat := newFakePlatform()
+	plat.extraMACs = []arp.MAC{wifiMAC}
+	plat.extraIPs = []netip.Addr{wifiIP}
+	te := newTestEngine(t, plat, nil)
+	phone := te.addPhone(t)
+	// The host's own wireless interface, indistinguishable from a device:
+	// its own MAC, its own address, seen by the ARP monitor.
+	self := te.reg.Observe(devices.Observation{Source: devices.SourceARP, MAC: wifiMAC.String(), IP: wifiIP.String(), Hostname: "nas-wifi"})
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	if te.isSteered(wifiMAC) {
+		t.Fatal("steered this host's own second interface: that is the relay loop")
+	}
+	ds := te.status(t, self)
+	if ds.State != StateSkipped || !strings.Contains(ds.Reason, "host") && !strings.Contains(ds.Reason, "own interface") {
+		t.Fatalf("self interface = %+v, want skipped for being this host", ds)
+	}
+	// The ordinary device is unaffected.
+	if !te.isSteered(phoneMAC) {
+		t.Fatalf("the phone should still be steered; phone status %+v", te.status(t, phone))
+	}
+}
+
+// The same host arriving under a MAC the registry has not tied to it. This
+// is the shape the live registry actually had: the ARP monitor learned
+// Shepherd's own steering frames, so a record ended up holding the wireless
+// MAC together with the gateway's address. Matching on address catches it
+// even when the MAC set does not.
+func TestNeverSteersADeviceHoldingOneOfThisHostsAddresses(t *testing.T) {
+	plat := newFakePlatform()
+	plat.extraIPs = []netip.Addr{wifiIP}
+	te := newTestEngine(t, plat, nil)
+	te.addPhone(t)
+	odd := te.reg.Observe(devices.Observation{Source: devices.SourceARP, MAC: "02:00:5e:00:00:21", IP: wifiIP.String()})
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	if te.isSteered(mustMAC("02:00:5e:00:00:21")) {
+		t.Fatal("steered a device holding one of this host's own addresses")
+	}
+	if ds := te.status(t, odd); ds.State != StateSkipped {
+		t.Fatalf("decision = %+v, want skipped", ds)
+	}
+}
+
+// The gateway's own address is refused the same way, not only its MAC.
+func TestNeverSteersADeviceHoldingTheGatewaysAddress(t *testing.T) {
+	te := newTestEngine(t, newFakePlatform(), nil)
+	te.addPhone(t)
+	gw := te.reg.Observe(devices.Observation{Source: devices.SourceARP, MAC: "02:00:5e:00:00:22", IP: gwIP.String()})
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+	if te.isSteered(mustMAC("02:00:5e:00:00:22")) {
+		t.Fatal("steered a device holding the gateway's address")
+	}
+	if ds := te.status(t, gw); ds.State != StateSkipped {
+		t.Fatalf("decision = %+v, want skipped", ds)
+	}
+}
+
+// If the host's own addresses cannot be read at all, nothing is steered.
+// Refusing costs visibility; steering the host costs the network.
+func TestSteersNothingWhenThisHostsAddressesCannotBeRead(t *testing.T) {
+	plat := newFakePlatform()
+	plat.localAddrsErr = errors.New("no interfaces for you")
+	te := newTestEngine(t, plat, nil)
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+
+	te.poke(te.kick)
+	time.Sleep(30 * time.Millisecond)
+	te.poke(te.kick)
+	time.Sleep(30 * time.Millisecond)
+	if te.isSteered(phoneMAC) {
+		t.Fatal("steered a device without knowing which addresses are this host's")
+	}
+	found := false
+	for _, l := range te.logs.all() {
+		if strings.Contains(l, "own addresses") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected a log line saying why nothing is steered; got %v", te.logs.all())
 	}
 }

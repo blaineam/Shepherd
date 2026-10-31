@@ -46,7 +46,8 @@ and again inside the interception library at the moment steering is requested:
 | Never steered | Why |
 |---|---|
 | Your router (the gateway) | Steering the gateway to itself is meaningless and would break the network |
-| Shepherd's own interfaces | Same |
+| **Every one of this host's interfaces**, not just the one the relay runs on, by MAC *and* by address | A host whose interfaces share a subnet — a NAS with wired and wireless both on the LAN is the ordinary case — has other interfaces that look exactly like LAN devices. Steering one makes Shepherd relay its own traffic to itself, in the kernel, at line rate. See the warning below |
+| Any device holding one of this host's addresses, or the gateway's, whatever MAC it arrived under | Catches the same machine under a MAC the registry has not tied to it: a merged record, a randomised MAC, or one learned from Shepherd's own steering frames |
 | Any device marked **Excluded** | Excluded means opted out of protection, and that includes this |
 | Any device whose **Watch** switch is off | The per-device opt-out, in the portal |
 | **Network infrastructure**: routers, mesh nodes, access points, switches, hubs and bridges | The network itself depends on them. Includes anything typed `router/infrastructure` or `smart-home hub`, and anything from a vendor that only makes network equipment |
@@ -202,6 +203,27 @@ the interface it settled on, and if it ever does end up somewhere the gateway
 does not resolve it refuses to steer anything there and comes back on its own.
 But naming the interface removes the ambiguity, and on the maintainer's own NAS
 that means `interface = "eth0"`.
+
+> **Naming the interface does not protect the host's *other* interfaces, and for a
+> while nothing did.** Watch mode used to treat only the relay's own interface and
+> the gateway as "this host". On a NAS with eth0 and wlan0 both on the LAN, wlan0
+> therefore looked like an ordinary device: its own MAC, its own address, seen by
+> the ARP monitor, typed by the classifier. Steering it made Shepherd relay its own
+> traffic back to itself. Measured live: **9 Gbit/s and about a million packets per
+> second in each direction on a 10 GbE link, sustained**, with the host's load
+> average above 20.
+>
+> Two things made it hard to spot, and both are worth remembering when judging this
+> feature's cost. Shepherd's own CPU stayed **under 4%**, because the loop ran in
+> the kernel at the driver, so every resource reading looked excellent. And the
+> portal showed no traffic worth speaking of, which was correct and was the real
+> clue: the traffic was not the network's.
+>
+> Watch mode now asks the operating system for **every** MAC and address on the
+> host, refreshed every 15 seconds, and refuses any device matching any of them, by
+> address as well as by MAC. If that list cannot be read at all, it steers nothing
+> and says so in the log: refusing costs visibility, steering the host costs the
+> network.
 
 ## What it needs
 

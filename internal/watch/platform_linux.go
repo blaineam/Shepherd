@@ -191,3 +191,40 @@ func (RealPlatform) SetGRO(iface string, on bool) error {
 }
 
 var _ Platform = RealPlatform{}
+
+// LocalAddrs enumerates every interface on the host, not just the one the
+// relay runs on. Loopback is included for completeness; what matters are
+// the other real interfaces, which on a host whose interfaces share a
+// subnet are indistinguishable from LAN devices to everything upstream of
+// the policy. An interface that cannot be read is skipped rather than
+// failing the whole set: a partial answer still excludes more than none,
+// and the caller treats an error as "refuse to steer anything new".
+func (RealPlatform) LocalAddrs() ([]arp.MAC, []netip.Addr, error) {
+	ifcs, err := net.Interfaces()
+	if err != nil {
+		return nil, nil, fmt.Errorf("watch: listing interfaces: %w", err)
+	}
+	var macs []arp.MAC
+	var ips []netip.Addr
+	for _, ifc := range ifcs {
+		var mac arp.MAC
+		copy(mac[:], ifc.HardwareAddr)
+		if !mac.IsZero() {
+			macs = append(macs, mac)
+		}
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipn, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			if ip, ok := netip.AddrFromSlice(ipn.IP); ok {
+				ips = append(ips, ip.Unmap())
+			}
+		}
+	}
+	return macs, ips, nil
+}

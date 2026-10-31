@@ -62,13 +62,18 @@ func mustMAC(s string) arp.MAC {
 // wants to turn is a field; the relays block until their context ends
 // unless told to fail.
 type fakePlatform struct {
-	mu        sync.Mutex
-	iface     string
-	gateway   netip.Addr
-	gwMAC     arp.MAC
-	link      Link
-	neighbors []Neighbor
-	sender    *intercept.FakeSender
+	// extraMACs/extraIPs are further interfaces this host has, for the
+	// multi-homed case; localAddrsErr makes the enumeration fail.
+	extraMACs     []arp.MAC
+	extraIPs      []netip.Addr
+	localAddrsErr error
+	mu            sync.Mutex
+	iface         string
+	gateway       netip.Addr
+	gwMAC         arp.MAC
+	link          Link
+	neighbors     []Neighbor
+	sender        *intercept.FakeSender
 
 	route6    Route6
 	route6Err error
@@ -126,6 +131,22 @@ func (p *fakePlatform) Link(name string) (Link, error) {
 	l := p.link
 	l.Name = name
 	return l, nil
+}
+
+// LocalAddrs is the host's own addresses. The fake answers with the links
+// it knows about, so a test can add a second interface on the same subnet
+// and check that Watch mode refuses to steer it.
+func (p *fakePlatform) LocalAddrs() ([]arp.MAC, []netip.Addr, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.localAddrsErr != nil {
+		return nil, nil, p.localAddrsErr
+	}
+	macs := []arp.MAC{shepherdMAC}
+	ips := []netip.Addr{shepherdIP}
+	macs = append(macs, p.extraMACs...)
+	ips = append(ips, p.extraIPs...)
+	return macs, ips, nil
 }
 
 func (p *fakePlatform) GatewayMAC(ctx context.Context, iface string, gw netip.Addr) (arp.MAC, error) {

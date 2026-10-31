@@ -53,6 +53,13 @@ type Platform interface {
 	DefaultRoute6() (Route6, error)
 	// Link describes the named interface.
 	Link(name string) (Link, error)
+	// LocalAddrs is every MAC and every IP address on this host, across
+	// all of its interfaces, for the Own set the policy refuses to steer.
+	// It must cover interfaces the relay is not attached to: those are
+	// the dangerous ones, because on a host whose interfaces share a
+	// subnet they look exactly like LAN devices and steering one relays
+	// Shepherd's traffic to itself at line rate (see watch.Own).
+	LocalAddrs() (macs []arp.MAC, ips []netip.Addr, err error)
 	// GatewayMAC finds the gateway's MAC in the host's neighbour table,
 	// prompting the kernel to resolve it when the entry is missing, and
 	// gives up when ctx ends.
