@@ -1687,6 +1687,20 @@ var _ intercept.Excluder = v6Excluder{}
 // such a host is much better than melting its network. The loop brake
 // (checkForLoop) remains the mechanism-independent backstop for everything
 // else.
+//
+// Two numbers from that host, measured with Watch mode off and nothing
+// steered, bound what a narrower test may assume. It forwards 3,900 to
+// 4,900 datagrams a second at rest (ForwDatagrams in /proc/net/snmp) --
+// the whole of the relay interface's inbound traffic, routed to a
+// container bridge for a service its owner runs on purpose -- so turning
+// forwarding off is not a remedy anyone can offer. And it transmits only
+// 1,100 to 1,700 packets a second against those 3,900 received, so none
+// of that routed traffic goes back out onto the relay's own segment. The
+// hazard is therefore narrower than what this function tests: a frame
+// arriving for a *steered* device's address and being routed back out the
+// interface it arrived on. Keying the refusal on that, rather than on the
+// host merely having forwarding plus a second address on the prefix, is
+// what would let Watch mode run on hardware like this.
 func (e *Engine) routingOwnSegment(link Link, own Own) (bool, string) {
 	fwd, err := e.plat.IPForwarding()
 	if err != nil || !fwd {

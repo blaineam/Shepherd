@@ -264,6 +264,21 @@ with wired and wireless on one LAN is ordinary — so this does disable Watch mo
 That is the right trade until the mechanism is measured and closed: unavailable is much better than
 melting the network.
 
+Forwarding on such a host is also not idle plumbing left on by a package manager. Measured on the
+same NAS with Watch mode **off** and nothing steered, `ForwDatagrams` in `/proc/net/snmp` climbs at
+**about 3,900 to 4,900 datagrams a second**, and that is essentially the whole of the relay
+interface's inbound traffic: it is being routed to a container bridge for a service the owner runs
+deliberately. So "sort out the routing" cannot mean clearing `net.ipv4.ip_forward` — that would cut
+off a container doing five thousand packets a second. Whatever closes this has to be narrower than
+the host-wide switch.
+
+It is worth being precise about which direction is dangerous, because at rest neither is happening.
+In that same measurement the relay interface transmitted only about 1,100 to 1,700 packets a second
+against 3,900 received, so **none** of the routed traffic was going back out onto the relay's own
+segment. The hazard is specific: frames that arrive for a *steered* device's address and get routed
+back out the same interface they came in on. A refusal keyed on that, rather than on the host having
+forwarding plus a second address on the prefix, is the shape the fix should take.
+
 > An earlier revision of this document blamed a polluted registry record that had merged the gateway
 > into a steerable device, and said the cause was settled. The single-device trial above disproved
 > it: no registry involvement, no gateway, same loop. That record is a real problem and is refused
