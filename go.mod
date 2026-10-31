@@ -8,6 +8,8 @@ require (
 	github.com/miekg/dns v1.1.73
 )
 
+require github.com/cilium/ebpf v0.22.0
+
 require (
 	github.com/maxmind/mmdbwriter v1.2.0
 	github.com/oschwald/maxminddb-golang/v2 v2.8.0
@@ -16,6 +18,8 @@ require (
 	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.49.0
 )
+
+tool github.com/cilium/ebpf/cmd/bpf2go
 
 // Pulled in by github.com/go-webauthn/webauthn (docs/PASSKEYS.md).
 require (

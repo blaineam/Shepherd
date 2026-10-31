@@ -42,6 +42,59 @@ type Config struct {
 	TLS            TLS            `toml:"tls"`
 	Nethealth      Nethealth      `toml:"nethealth"`
 	ReverseProxy   ReverseProxy   `toml:"reverseproxy"`
+	Watch          Watch          `toml:"watch"`
+}
+
+// Watch controls Watch mode (docs/WATCH.md): one-sided ARP steering of each
+// eligible device's outbound IPv4 traffic through Shepherd, relayed to the
+// real gateway in the kernel (XDP) or by a parallel userspace relay
+// (internal/intercept). Enabled defaults true, per the protect-by-default
+// decision in docs/DESIGN.md: every device is steered once it has been seen
+// with a MAC and an IPv4 address, except the gateway, Shepherd's own
+// interfaces, devices marked Excluded, network infrastructure (routers, mesh
+// nodes, access points, hubs and bridges, Thread border routers, anything
+// advertising Thread or Matter services) and any device whose own Watch
+// switch is off. It needs Linux with CAP_NET_RAW plus CAP_NET_ADMIN and
+// CAP_BPF; anywhere else, or without them, it logs why, reports itself
+// unavailable in the portal and Shepherd starts normally. Watch mode is
+// IPv4-only by the hard rule in docs/IPV6.md.
+type Watch struct {
+	Enabled bool `toml:"enabled"`
+	// Interface names the NIC to steer on. Empty picks the interface the
+	// default route leaves through, the same convention [arp] uses.
+	Interface string `toml:"interface"`
+	// Mode selects the relay: "auto" (XDP in the NIC driver, else XDP in
+	// the kernel's generic path, else the userspace ParallelRelay), "xdp"
+	// (XDP only; unavailable when it cannot load), "userspace" (never XDP)
+	// or "off" (same as enabled = false).
+	Mode string `toml:"mode"`
+	// Workers is how many parallel capture-and-relay workers the userspace
+	// relay runs; 0 means intercept.DefaultParallelism. Ignored under XDP.
+	Workers int `toml:"workers"`
+	// IPv6 additionally steers each eligible device's IPv6 traffic, by
+	// unicast Neighbor Advertisements (docs/IPV6-WATCH.md). Off by
+	// default, deliberately: it only earns its risk on a network with a
+	// global IPv6 route, and even then it never touches a smart-home hub,
+	// a Thread border router or a Matter device, whatever that device's
+	// own Watch switch says. On a network without a global IPv6 route —
+	// unique-local addresses only, which is the common case — it reports
+	// itself idle and steers nothing rather than pretending. Shepherd
+	// never sends Router Advertisements under any setting
+	// (docs/IPV6.md hard rule 1).
+	IPv6 bool `toml:"ipv6"`
+	// SteerInfrastructure steers router/infrastructure and smart-home hub
+	// devices too. Off by default: a mesh node or a Thread border router
+	// is exactly the kind of device whose traffic must not be touched.
+	SteerInfrastructure bool `toml:"steer_infrastructure"`
+	// ActiveWindowSeconds is how recently a device must have been seen to be
+	// steered at all; a device quiet longer than this is left alone until
+	// it shows up again. Default 900 (15 minutes).
+	ActiveWindowSeconds int `toml:"active_window_seconds"`
+	// Health knobs passed straight through to intercept.ControllerConfig
+	// (docs/INTERCEPT.md explains each); 0 keeps that package's default.
+	HealthIntervalSeconds int `toml:"health_interval_seconds"`
+	IdleGraceSeconds      int `toml:"idle_grace_seconds"`
+	StartupGraceSeconds   int `toml:"startup_grace_seconds"`
 }
 
 // ARP controls the passive ARP monitor (docs/ARP.md): a read-only listener
@@ -390,6 +443,19 @@ type DNS struct {
 	// Bootstrap are plain resolvers (IP addresses) used only to look up the
 	// hostnames of tls:// and https:// upstreams.
 	Bootstrap []string `toml:"bootstrap"`
+	// ListenLoopback also serves on 127.0.0.1 and [::1], on the same port
+	// as the first address in Listen. On by default, and worth leaving on:
+	// when Shepherd is the resolver its own host uses, a loopback listener
+	// is the one address that cannot disappear with an interface. Without
+	// it, a host pointed at Shepherd's LAN address loses name resolution
+	// the moment that interface goes down — which on a real install took
+	// sshd with it (it blocks on reverse lookups), so the machine could
+	// not be reached to fix the interface. Pair it with 127.0.0.1 first in
+	// the host's own resolver; a loopback listener nothing asks is no help.
+	// A loopback address already in Listen is not added twice, and one that
+	// cannot be bound (a system resolver often holds 127.0.0.1:53) is a
+	// logged warning, not a startup failure.
+	ListenLoopback *bool `toml:"listen_loopback"`
 	// BlockMode is "null" (answer 0.0.0.0 / ::) or "nxdomain".
 	BlockMode            string   `toml:"block_mode"`
 	ProbeIntervalSeconds int      `toml:"probe_interval_seconds"`
@@ -437,6 +503,7 @@ func Default() Config {
 		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600},
 		Nethealth:      Nethealth{Enabled: false, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
 		ReverseProxy:   ReverseProxy{Listen: ":8443"},
+		Watch:          Watch{Enabled: true, Mode: "auto", ActiveWindowSeconds: 900},
 		DataDir:        "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
@@ -552,6 +619,9 @@ func (c Config) Validate() error {
 	if err := c.validateReverseProxy(); err != nil {
 		return err
 	}
+	if err := c.validateWatch(); err != nil {
+		return err
+	}
 	if c.Nethealth.Enabled && c.Nethealth.IntervalSeconds < 60 {
 		return errors.New("nethealth.interval_seconds must be at least 60")
 	}
@@ -612,4 +682,77 @@ func (c Config) validateReverseProxy() error {
 		}
 	}
 	return nil
+}
+
+func (c Config) validateWatch() error {
+	w := c.Watch
+	switch w.Mode {
+	case "auto", "xdp", "userspace", "off":
+	default:
+		return fmt.Errorf(`watch.mode must be "auto", "xdp", "userspace" or "off", got %q`, w.Mode)
+	}
+	if w.Workers < 0 || w.Workers > 64 {
+		return errors.New("watch.workers must be between 0 (automatic) and 64")
+	}
+	if w.ActiveWindowSeconds < 60 {
+		return errors.New("watch.active_window_seconds must be at least 60")
+	}
+	if w.HealthIntervalSeconds < 0 || w.IdleGraceSeconds < 0 || w.StartupGraceSeconds < 0 {
+		return errors.New("watch.health_interval_seconds, watch.idle_grace_seconds and watch.startup_grace_seconds must not be negative")
+	}
+	return nil
+}
+
+// LoopbackEnabled reports whether dns.listen_loopback is on. It defaults to
+// true, which is why the field is a pointer: an explicit "false" in the file
+// has to be distinguishable from an absent key.
+func (d DNS) LoopbackEnabled() bool { return d.ListenLoopback == nil || *d.ListenLoopback }
+
+// ListenAddrs is the set of addresses to serve DNS on: everything in
+// dns.listen, plus the loopback addresses when dns.listen_loopback is on
+// (see ListenLoopback). The loopback port follows the first configured
+// address, so the host reaches Shepherd the same way the network does.
+// Addresses already covered by the configuration are never added twice.
+func (d DNS) ListenAddrs() []string {
+	all, _ := d.listenAddrs()
+	return all
+}
+
+// AddedLoopbackAddrs is just the loopback addresses ListenAddrs adds, the
+// ones the owner did not write in dns.listen. Shepherd puts them there
+// itself, so they are best-effort: a NAS's own resolver commonly owns
+// 127.0.0.1:53 already, and an address nobody asked for must never be able
+// to stop Shepherd from starting. cmd/shepherd passes these to
+// dnsengine.Optional.
+func (d DNS) AddedLoopbackAddrs() []string {
+	_, added := d.listenAddrs()
+	return added
+}
+
+func (d DNS) listenAddrs() (all, added []string) {
+	out := append([]string(nil), d.Listen...)
+	if !d.LoopbackEnabled() || len(d.Listen) == 0 {
+		return out, nil
+	}
+	_, port, err := net.SplitHostPort(d.Listen[0])
+	if err != nil || port == "" {
+		return out, nil
+	}
+	have := map[string]bool{}
+	for _, a := range out {
+		if host, p, err := net.SplitHostPort(a); err == nil {
+			have[net.JoinHostPort(strings.ToLower(host), p)] = true
+			// A wildcard listener already answers on loopback.
+			if host == "" || host == "0.0.0.0" || host == "::" {
+				return out, nil
+			}
+		}
+	}
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		if a := net.JoinHostPort(host, port); !have[a] {
+			out = append(out, a)
+			added = append(added, a)
+		}
+	}
+	return out, added
 }

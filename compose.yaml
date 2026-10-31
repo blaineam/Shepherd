@@ -37,6 +37,12 @@ services:
     volumes:
       - ./data/uptime-kuma:/app/data
 
+  # Shepherd itself is not in this testbed (it runs as the static binary, or
+  # from deploy/docker/compose.yaml). When you do containerise it, it needs
+  # NET_BIND_SERVICE and NET_RAW, plus NET_ADMIN, BPF and PERFMON for Watch
+  # mode's in-kernel XDP relay and GRO handling — PERFMON is not optional
+  # there, see the comment in deploy/docker/compose.yaml and docs/WATCH.md.
+
   # Subnet router + exit node. Already running Tailscale in another container?
   # Migrate its state instead of starting a second node: docs/MIGRATING-TAILSCALE.md
   tailscale:

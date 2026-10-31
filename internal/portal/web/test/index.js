@@ -32,3 +32,4 @@ import './nethealth.test.js';
 import './reverseproxy.test.js';
 import './secrets.test.js';
 import './passkeys.test.js';
+import './watch.test.js';

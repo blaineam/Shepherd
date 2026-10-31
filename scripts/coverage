@@ -6,16 +6,36 @@ set -eu
 cd "$(git rev-parse --show-toplevel)"
 floor=$(tr -d '[:space:]' < .coverage-floor)
 go test -race -count=1 -coverprofile=coverage.out ./...
-# cmd/intercept-trial is excluded from the floor: it is a hand-run, Linux-only
-# CLI that needs CAP_NET_RAW/CAP_NET_ADMIN and live hardware to exercise most
-# of its own logic (see docs/INTERCEPT.md), the same way internal/intercept's
-# own raw-socket code is untestable without it — its statement count would
-# otherwise drag the whole-repo total down by a couple of points on every CI
-# run (Linux-only code this package's own tests can't reach on a non-Linux
-# dev machine, so a local run never sees the gap the way CI's ubuntu-latest
-# runner does). Its own tests still run above, in the full suite; only the
-# floor calculation ignores it.
-grep -v '^shepherd/cmd/intercept-trial/' coverage.out > coverage.floor.out
+# What the floor deliberately ignores, and why. Everything here still runs in
+# the full suite above; only the percentage calculation skips it. Two kinds:
+#
+#   cmd/intercept-trial  A hand-run, Linux-only CLI that needs CAP_NET_RAW,
+#                        CAP_NET_ADMIN and live hardware to exercise most of
+#                        its own logic (docs/INTERCEPT.md).
+#
+#   *_linux.go, below    The operating-system boundary of Watch mode: raw
+#                        AF_PACKET sockets, PACKET_FANOUT capture, loading and
+#                        attaching the XDP program, and the ethtool ioctl. None
+#                        of it can run without CAP_NET_RAW/CAP_NET_ADMIN/CAP_BPF,
+#                        so an unprivileged CI runner cannot reach a line of it,
+#                        and all of it is deliberately thin: the logic lives
+#                        behind interfaces (intercept.Sender, watch.Platform)
+#                        that the tests drive with fakes instead. The XDP and
+#                        capture halves are covered for real by `make test-xdp`,
+#                        which runs the same tests against a live kernel in a
+#                        privileged container — that is where this code is
+#                        verified, not here.
+#
+# Keep this list short and specific. A new file belongs here only if it cannot
+# be tested without a capability, not merely because testing it is awkward.
+floor_excludes='^shepherd/cmd/intercept-trial/
+^shepherd/internal/arp/open_linux\.go
+^shepherd/internal/intercept/open_linux\.go
+^shepherd/internal/intercept/capture_linux\.go
+^shepherd/internal/intercept/xdp_linux\.go
+^shepherd/internal/watch/platform_linux\.go
+^shepherd/internal/watch/gro_linux\.go'
+grep -vE "$(printf '%s' "$floor_excludes" | paste -sd'|' -)" coverage.out > coverage.floor.out
 total=$(go tool cover -func=coverage.floor.out | awk '/^total:/ { sub("%", "", $3); print $3 }')
 echo "coverage: ${total}% (floor ${floor}%)"
 awk -v t="$total" -v f="$floor" 'BEGIN { exit !(t + 0 >= f + 0) }' || { echo "coverage fell below the floor" >&2; exit 1; }

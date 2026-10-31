@@ -333,4 +333,70 @@ test('secrets: the demo keeps only "set or not", checks input, and never echoes 
   assert.equal(JSON.stringify(r).includes('demo-pw'), false);
   const off = await call('DELETE', '/api/accountability/smtp');
   assert.deepEqual([off.configured, off.active, off.password_set], [false, false, false]);
+test('demo mode answers the Watch endpoints with plausible, policy-consistent data', async () => {
+  const { call } = rig();
+  const st = await call('GET', '/api/watch');
+  assert.equal(st.enabled, true);
+  assert.equal(st.phase, 'running');
+  assert.equal(st.armed, true);
+  assert.equal(st.relay, 'xdp-native');
+  assert.ok(st.steered > 0, 'some devices are watched');
+  assert.equal(st.steered, st.devices.filter((d) => d.state === 'steered').length);
+  assert.ok(st.stats.bytes_per_second > 0 && st.stats.packets_per_second > 0);
+  assert.ok(st.stats.bytes_relayed > 0);
+  assert.ok(st.history.length >= 2);
+
+  // The demo applies the real policy: a hub, an excluded device and one
+  // switched off are never watched, and each says why.
+  const byId = new Map(st.devices.map((d) => [d.device_id, d]));
+  const devs = buildDevices(38, NOW);
+  const hub = devs.find((d) => d.type === 'smart-home hub' && d.watch === 'auto' && !d.excluded);
+  assert.equal(byId.get(hub.id).state, 'skipped');
+  assert.match(byId.get(hub.id).reason, /hub/i);
+  const excluded = devs.find((d) => d.excluded);
+  assert.equal(byId.get(excluded.id).state, 'skipped');
+  assert.match(byId.get(excluded.id).reason, /excluded/i);
+  const off = devs.find((d) => d.watch === 'off');
+  assert.equal(byId.get(off.id).state, 'skipped');
+  assert.match(byId.get(off.id).reason, /switched off/i);
+  // Every watched device reports an address pair and a rate.
+  for (const d of st.devices.filter((x) => x.state === 'steered')) {
+    assert.equal(d.steered.length, 1);
+    assert.match(d.steered[0].mac, /^02:00:5e:/);
+    assert.match(d.steered[0].ip, /^(192\.0\.2\.|198\.51\.100\.|203\.0\.113\.)/);
+    if (d.healthy) assert.ok(d.bytes_per_second > 0, d.name);
+  }
+  assert.ok(st.devices.some((d) => d.state === 'steered' && !d.healthy), 'one device shows "no traffic yet"');
+});
+
+test('demo mode kill switch stops everything and re-arms', async () => {
+  const { call } = rig();
+  const before = await call('GET', '/api/watch');
+  const killed = await call('POST', '/api/watch/kill');
+  assert.equal(killed.armed, false);
+  assert.equal(killed.steered, 0);
+  assert.ok(killed.devices.every((d) => d.state === 'unavailable'));
+  assert.ok(killed.history.length > before.history.length, 'the kill is in the history');
+  assert.ok(killed.history.some((h) => h.reason === 'panic stop'));
+  const rearmed = await call('POST', '/api/watch/rearm');
+  assert.equal(rearmed.armed, true);
+  assert.equal(rearmed.steered, before.steered);
+});
+
+test('demo mode edits the Watch switch, one device and in bulk', async () => {
+  const { call } = rig();
+  const list = await call('GET', '/api/devices?limit=5');
+  const id = list.devices[0].id;
+  assert.equal(list.devices[0].watch, 'auto');
+  assert.ok(list.devices[0].watch_state, 'the list carries Watch state');
+
+  const off = await call('PATCH', '/api/devices/' + id, { watch: 'off' });
+  assert.equal(off.watch, 'off');
+  assert.equal(off.watch_state.state, 'skipped');
+  await fails(call('PATCH', '/api/devices/' + id, { watch: 'maybe' }), 400);
+
+  const res = await call('POST', '/api/devices/bulk', { ids: [id], op: 'set_watch', watch: 'on' });
+  assert.equal(res.changed, 1);
+  assert.equal((await call('GET', '/api/devices/' + id)).watch, 'on');
+  await fails(call('POST', '/api/devices/bulk', { ids: [id], op: 'set_watch', watch: 'nope' }), 400);
 });

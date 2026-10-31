@@ -409,3 +409,88 @@ func TestListAndGet(t *testing.T) {
 		t.Fatal("itoa")
 	}
 }
+
+func TestWatchSwitch(t *testing.T) {
+	r := New(Options{})
+	a := r.Observe(Observation{Source: SourceNeighbor, MAC: "02:00:5e:00:00:10", IP: "192.0.2.10"})
+	b := r.Observe(Observation{Source: SourceNeighbor, MAC: "02:00:5e:00:00:11", IP: "192.0.2.11"})
+
+	// Auto is the default and means "let the Watch policy decide".
+	if d, _ := r.Get(a); d.Watch != WatchAuto || d.Watch.String() != "auto" {
+		t.Fatalf("default watch = %q", d.Watch)
+	}
+	if err := r.SetWatch(a, WatchOff); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := r.Get(a); d.Watch != WatchOff {
+		t.Fatalf("watch = %q", d.Watch)
+	}
+	if r.SetWatch("nope", WatchOn) == nil {
+		t.Error("an unknown device must be an error")
+	}
+	res := r.BulkSetWatch([]string{a, b, "ghost"}, WatchOn)
+	if res.Changed != 2 || len(res.Missing) != 1 {
+		t.Fatalf("bulk = %+v", res)
+	}
+	if r.BulkSetWatch([]string{a, b}, WatchOn).Changed != 0 {
+		t.Error("setting the same value again should change nothing")
+	}
+
+	// Search filters on it.
+	if got := r.Search("watch:on", SearchOptions{}).Total; got != 2 {
+		t.Errorf("watch:on matched %d, want 2", got)
+	}
+	if err := r.SetWatch(b, WatchAuto); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Search("watch:on", SearchOptions{}).Total; got != 1 {
+		t.Errorf("watch:on matched %d, want 1", got)
+	}
+	if got := r.Search("-watch:on", SearchOptions{}).Total; got != 1 {
+		t.Errorf("-watch:on matched %d, want 1", got)
+	}
+	if got := r.Search("watch:nonsense", SearchOptions{}).Total; got != 0 {
+		t.Errorf("an unparsable value should match nothing, got %d", got)
+	}
+}
+
+func TestParseWatchMode(t *testing.T) {
+	for in, want := range map[string]WatchMode{"": WatchAuto, "auto": WatchAuto, " AUTO ": WatchAuto, "on": WatchOn, "Off": WatchOff} {
+		got, ok := ParseWatchMode(in)
+		if !ok || got != want {
+			t.Errorf("%q = %q %v, want %q", in, got, ok, want)
+		}
+	}
+	if _, ok := ParseWatchMode("maybe"); ok {
+		t.Error("maybe accepted")
+	}
+}
+
+// The more cautious switch wins a merge: an explicit off sticks, and an
+// explicit on only fills in an auto.
+func TestWatchSwitchSurvivesAMerge(t *testing.T) {
+	cases := []struct{ dst, src, want WatchMode }{
+		{WatchAuto, WatchOff, WatchOff},
+		{WatchOn, WatchOff, WatchOff},
+		{WatchAuto, WatchOn, WatchOn},
+		{WatchOff, WatchOn, WatchOff},
+		{WatchOff, WatchAuto, WatchOff},
+	}
+	for _, c := range cases {
+		r := New(Options{})
+		a := r.Observe(Observation{Source: SourceNeighbor, MAC: "02:00:5e:00:00:10", IP: "192.0.2.10"})
+		b := r.Observe(Observation{Source: SourceNeighbor, MAC: "02:00:5e:00:00:11", IP: "192.0.2.11"})
+		if err := r.SetWatch(a, c.dst); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.SetWatch(b, c.src); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.Merge(a, b); err != nil {
+			t.Fatal(err)
+		}
+		if d, _ := r.Get(a); d.Watch != c.want {
+			t.Errorf("merge %q + %q = %q, want %q", c.dst, c.src, d.Watch, c.want)
+		}
+	}
+}

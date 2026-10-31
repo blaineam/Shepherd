@@ -5,12 +5,16 @@
 monitor in [internal/arp](ARP.md) — reusing its Frame/MAC codec — but it is a different package
 with a different risk profile: this one transmits.
 
-**This package is a library only.** Nothing in Shepherd calls any of it automatically. No code in
-`cmd/shepherd`, `internal/portal`, or any startup path constructs a `Controller` or calls `Steer`.
-The only thing that ever invokes a real `Sender` outside this package's own tests is the maintainer,
-later, deliberately, by wiring a trial UI or API — and that wiring is out of scope for this change.
-Everything below documents what the package *can* do once something chooses to use it. For what
-Watch mode would actually add over the DNS-only baseline, row by row, see
+**This package is now wired in, and Watch mode is on by default.** With the maintainer's
+explicit go-ahead after the live measurements below, `internal/watch` owns a `Controller` for the
+life of the process, decides which devices are steered, and exposes it in the portal;
+[WATCH.md](WATCH.md) is the operator's view of that and the place to start if you want to know
+what Shepherd does rather than how. This document stays what it was: the engineering account of
+the interception engine itself — the mechanism, the safety model, the throughput investigation and
+the two relays. The division of labour is deliberate and worth keeping: **this package is the only
+thing that transmits, and the only authority on what is steered.** `internal/watch` can ask it to
+steer a device; it cannot make it steer the gateway, Shepherd itself, or anything its `Excluder`
+refuses. For what Watch mode adds over the DNS-only baseline, row by row, see
 [WATCH-MODE-COMPARISON.md](WATCH-MODE-COMPARISON.md).
 
 ## What one-sided ARP steering does
@@ -208,7 +212,7 @@ this result does not point at a syscall-rate ceiling in Shepherd's own relay, it
 
 This is a software relay, not a hardware switch, so steering a device will never be perfectly free —
 but a drop this large, confirmed unchanged across three real fixes, is not ordinary relay overhead.
-Watch mode stays a trial-only tool, not something left on indefinitely, until this is understood.
+(It was not: see "The cause the evidence points at" below, measured and closed.)
 
 ### A real, separate bug found via the planned `tcpdump` — not the throughput-ceiling cause, but fixed
 
@@ -235,15 +239,125 @@ happening on any future live trial. The eero-bridging-reaction and capture-ampli
 above remain open and still need that same `tcpdump`, since this fix does not, by itself, change the
 Mbps ceiling's own suspected cause.
 
-## IPv4 only, no exceptions
+### The cause the evidence points at: the relay was teaching the switch the wrong port
 
-IPv6 and NDP are never touched anywhere in this package. This is a hard rule carried over from
-[IPV6.md](IPV6.md): Thread border routers and Matter devices depend on IPv6 neighbor discovery and
-RAs working undisturbed, and a second actor on the LAN sending RAs or spoofing NDP breaks them
-silently. The `Relay` filters out IPv6-ethertype frames before anything else runs, and the `Spoofer`
-only ever builds plain IPv4-over-Ethernet ARP frames; both are proven with a fuzz/property test that
-feeds random and adversarial bytes at them (`go test -fuzz FuzzRelayHandleFrame`, and the Spoofer's
-own frame-builder property test).
+Re-read together, the live results above describe packet *loss* on the device's **inbound** side,
+not a slow relay: relayed traffic never left single digits per second during the slow runs (so the
+relay's own speed could not have mattered), the slowdown looked exactly like TCP and QUIC reacting
+to loss (abnormally fast retransmits, "thousands out, hundreds back"), and the `not_for_shepherd`
+burst tracked the transfer. One thing in the relay's own design produces precisely that.
+
+`Relay.HandleFrame` rewrote only the **destination** MAC and deliberately left the steered device's
+own MAC as the **source** of every frame it retransmitted ("a pure Ethernet-layer relay"). Every
+Ethernet switch, and every Wi-Fi/LAN bridge — a consumer mesh router like the eero is one — learns
+which port a MAC lives behind from the source address of the frames it sees. So each relayed frame
+taught the eero that the phone lives on Shepherd's wired port; the phone's next Wi-Fi frame taught
+it the opposite. While the entry pointed at Shepherd's port, the phone's **inbound** traffic — the
+download direction, the one that carries the bytes and the one Watch mode never even sees — was
+delivered to Shepherd's port and dropped. A handful of relayed frames per second is enough to flap
+the entry a handful of times per second, and a gigabit stream does not survive that.
+
+It also explains the `not_for_shepherd` burst without any amplification inside Shepherd: those were
+the misdirected inbound frames, addressed to the *phone's* MAC, arriving at Shepherd's port. A
+non-promiscuous NIC would have dropped them silently in hardware, so their showing up at all says
+the capturing NIC was in promiscuous mode for some other reason (a Docker `macvlan`, a VM bridge, a
+running `tcpdump` all do that). And it explains why the relayed count stayed tiny: a modern phone's
+speed test is likely to run over IPv6, which uses NDP, not ARP, and so never went near Shepherd —
+but the flapping MAC-table entry is protocol-agnostic, so the IPv6 download was hurt all the same.
+
+**The fix:** a relayed frame now leaves with *both* addresses rewritten — destination to the real
+gateway's MAC, source to Shepherd's own. The device's MAC is then only ever seen on its own port and
+Shepherd's only on Shepherd's; nothing flaps. The IP packet inside is still untouched (the gateway
+sees the device's own source IP and answers to it through its own, never spoofed, ARP entry), so
+this is still a pure Ethernet-layer relay with no NAT, and the one-sided scope is unchanged.
+
+**Measured live, 2026-10-30, and it is the fix.** Same NAS (12-core x86_64, Debian 12, kernel 6.18),
+same eero, same phone, 2-minute trial through `ParallelRelay` with this fix, the kernel-side capture
+filter and the lock-free counters below: the maintainer reported *"no perceivable slow down, reaching
+full 1 gig Wi-Fi speeds"*. The relay's own `rate:` line during the speed test peaked at **167,000
+relayed frames/s and 207 MB/s (about 1.6 Gbit/s)** of the phone's outbound traffic — the upload
+half of the test, every byte of which crossed the relay — with 5.39 GB relayed over the trial, zero
+send errors, the device healthy on every tick, `not_for_shepherd` at zero throughout, and a clean
+auto-revert with GRO restored. Against the ~300–400 Mbps that every earlier run measured on this
+exact path, that closes the investigation: the ceiling was the switch's MAC table, not the relay.
+
+Two more cost-only changes went in alongside it, both on the relay's per-frame path:
+
+- **A kernel-side capture filter.** Each `PACKET_FANOUT` capture socket now carries a classic BPF
+  program (`SO_ATTACH_FILTER`, built in `capture_filter.go` with `golang.org/x/net/bpf`) admitting
+  only IPv4 frames whose destination MAC is Shepherd's, so the kernel drops everything the Relay
+  would discard anyway — broadcast, multicast, a promiscuous NIC's traffic for other hosts, ARP,
+  IPv6, our own loopback copies — before copying it to userspace. The filter is attached before the
+  socket is bound (created with protocol 0, bound with `ETH_P_ALL`, the libpcap order), so no frame
+  ever slips in ahead of it. It is unit-tested on every platform through x/net/bpf's interpreter,
+  including a property test that it admits a frame if and only if `HandleFrame` would relay it.
+  That test found a real hole: `HandleFrame` filtered by denylist (not ARP, not IPv6), which let a
+  VLAN-tagged (`0x8100`) frame through — and whatever a VLAN tag wraps could be IPv6. `HandleFrame`
+  now positively matches plain IPv4 and nothing else. In the trial harness's `rate:` line,
+  `not_for_shepherd` should now read zero or nearly so: anything it counts got past the kernel
+  filter, which only an old kernel that refused to attach it should ever allow.
+- **No lock on the hot path.** Per-device counters (`BytesRelayed`, `PacketsRelayed`,
+  `LastVerified`, `Healthy`) are atomics reached through the same lock-free snapshot `Lookup`
+  already used, so the parallel workers no longer serialize on `Controller.mu` for every frame.
+
+### Beyond userspace: the XDP relay
+
+The userspace relay is bounded by two syscalls and one buffer copy per frame, which is fine for the
+ACK stream of a multi-gigabit download but a real ceiling for a multi-gigabit upload on a small
+NAS. `Controller.AttachXDP` (`xdp_linux.go`, program in `bpf/xdp_relay.c`) is the same relay as an
+XDP program on the interface: for a steered device's IPv4 frame addressed to Shepherd's MAC it
+rewrites both MACs, counts it, and bounces it straight back out the same interface (`XDP_TX`)
+without the frame ever becoming an skb, let alone crossing into userspace. Everything else is
+`XDP_PASS`, untouched, so with the program attached the kernel sees exactly what it would without
+it, minus the frames that were going to be relayed. Nothing is ever dropped. It runs in native
+(driver) mode where the NIC driver supports it and falls back to generic mode otherwise, which is
+slower but still skips userspace entirely.
+
+**Measured live, 2026-10-30, immediately after the userspace run above**, `-xdp auto` attached in
+native mode on the NAS's NIC and relayed the same phone's speed test at a peak of **180,000 frames/s
+and 221 MB/s (about 1.77 Gbit/s)**, 3.02 GB over the test, healthy throughout, with nothing but
+one-second counter reads crossing into userspace; the maintainer again saw no perceivable slowdown
+and about a gigabit, which is that phone's Wi-Fi maximum. One thing to know: the NIC driver took about eight
+seconds after the native attach before the program saw its first frame (the ring is torn down and
+rebuilt on attach), during which `examined` read zero; the device stayed inside `StartupGrace` and
+relaying began on its own. Generic mode has no such gap.
+
+Its decision rules are `HandleFrame`'s, plus one the Go relay gets for free from `AF_PACKET`'s
+copy semantics and the XDP program must do itself: a frame whose destination IPv4 address is one of
+Shepherd's own (a steered device's DNS query to Shepherd, a portal connection) is passed to the
+stack, never relayed. A steered-device map (`steered`, keyed by MAC) is kept in sync with the
+`Controller`'s own steered set at every `Steer`, `Unsteer` and `PanicStop`, so the safety model is
+unchanged: the Controller is still the only authority on what is steered, the program only consults
+it. Per-device packet and byte counters live in that map and are read back every second to feed
+`Status()` and the health loop, so fail-open on silence works identically. The program is compiled
+by `go generate` (`bpf2go`, needs a clang with the BPF backend; the generated objects are committed,
+so an ordinary `go build` needs no clang) and loaded with `github.com/cilium/ebpf`. Attaching needs
+`CAP_NET_ADMIN` and `CAP_BPF` (or `CAP_SYS_ADMIN` on kernels before 5.8) on top of `CAP_NET_RAW`
+for the Spoofer's sends. `cmd/intercept-trial -xdp auto` uses it in place of `ParallelRelay`.
+
+## IPv4 by default; IPv6 steering is opt-in and off unless enabled
+
+IPv4 is the only family steered unless IPv6 steering is explicitly turned on. IPv6 support exists in
+this package now — periodic unicast Neighbor Advertisements (`internal/ndp`), an IPv6 branch in the
+`Relay`, the capture filter and the XDP program, all gated by a per-device family flag — but it is
+**off by default and governed by a master switch** (`ControllerConfig.IPv6SteeringEnabled`, false by
+default), and even then only for a device explicitly steered with `SteerV6`, which the Controller
+refuses without a gateway link-local, a device IPv6 address, and (recommended) a `V6Excluder` that
+keeps every Thread / Matter / smart-home device out. The full design, the rationale, and the
+remaining go/no-go are in [IPV6-WATCH.md](IPV6-WATCH.md); the hard rules in [IPV6.md](IPV6.md) —
+no Router Advertisements, ever, and no multicast NDP — are preserved and machine-checked (the `ndp`
+package has no RA builder at all, and its frame builder refuses a multicast destination).
+
+The IPv6-only rule where IPv6 is *not* steered is still enforced exactly as before, per device: the
+`Relay` relays a frame only when its source-MAC device is steered for that frame's family, a
+positive match on IPv4 or IPv6 and never a denylist, so a VLAN tag cannot smuggle anything past it;
+the kernel-side capture filter admits IPv4 (and IPv6 only while IPv6 steering is enabled, purely as
+a cost choice — `HandleFrame` still gates); the `Spoofer` only ever builds IPv4 ARP, the `ndpSpoofer`
+only ever builds unicast NAs. All of it is proven with fuzz and property tests that feed random and
+adversarial bytes at them: `go test -fuzz FuzzRelayHandleFrame` (no IPv6 relayed for a v4-only
+device), `FuzzRelayHandleFrameV6Only` (no IPv4 relayed for a v6-only device), the capture-filter and
+XDP agreement tests across both families, and the `ndp` package's own frame-builder and
+Neighbor-Solicitation-parser tests.
 
 ## The safety model
 
@@ -306,18 +420,25 @@ only affects frames the kernel itself chooses to route between interfaces at Lay
 Layer 2 relay performed entirely in Shepherd's own process. Nothing in this package reads or writes
 `net.ipv4.ip_forward`, and nothing needs to.
 
-## How a future trial would use this
+## How a caller uses this
 
-Once the maintainer decides to wire a trial (a UI button, a CLI flag, a portal API — none of which
-exist yet):
+`internal/watch` is the real caller (see [WATCH.md](WATCH.md)); this is the shape of what it does,
+and what any other caller would have to do:
 
-1. Build a `Controller` with the real gateway's IP/MAC, Shepherd's own MAC, a real `Sender`
-   (`intercept.Open(iface)` on Linux), and the device registry wrapped to satisfy `Excluder`.
-2. `Steer(dev, SteerOptions{Trial: true, Duration: 2 * time.Minute})` (or whatever short window feels
-   safe for a first run).
-3. Watch `Status()` for `Healthy` and `BytesRelayed` moving.
-4. Call `PanicStop()` at the first sign of trouble; it works even if something else has gone wrong.
-5. Let the trial auto-revert on its own otherwise — nothing else needs to remember to clean up.
+1. Build one `Controller` with the real gateway's IP and MAC, Shepherd's own MAC and IPs, a real
+   `Sender` (`intercept.Open(iface)` on Linux), and the device registry wrapped to satisfy
+   `Excluder`. One per process, for the life of the process.
+2. Attach a data plane **once** — `AttachXDP` or `ParallelRelay` — and from then on only change
+   the steered set. A native XDP attach rebuilds the driver's rings (about eight seconds on the
+   NAS), so attaching per device would stall traffic every time a device woke up.
+3. `Steer(dev, SteerOptions{})` per device; `SteerOptions{Trial: true, Duration: d}` additionally
+   auto-reverts after `d`, which is what `cmd/intercept-trial` uses and what a cautious first run
+   on new hardware still wants.
+4. Watch `Status()` for `Healthy` and `BytesRelayed` moving, and `Stats()` for the overall rate.
+5. Call `PanicStop()` at the first sign of trouble; it works even if something else has gone
+   wrong, and `Rearm()` resumes. `internal/watch` exposes exactly this as the portal's kill
+   switch.
+6. `Close()` on shutdown: every device is unsteered with its corrective reply.
 
 ## The one-off trial harness
 
@@ -341,8 +462,11 @@ against the maintainer's own phone with the maintainer's explicit go-ahead, watc
 self-reverted within about a second, before the GRO handling existed. Confirms the maintainer's eero
 7 Max accepts one-sided ARP steering, which was an open question.
 
-None of this is wired into `cmd/shepherd` or the portal yet. Doing so happens later, only
-with the maintainer's explicit go-ahead.
+The harness is still useful and still shipped: it is how a capped, single-device, hand-watched
+run happens on new hardware before trusting the always-on engine with it. Watch mode itself no
+longer goes through it — `internal/watch` does, with no duration cap and no `-confirm` flag,
+because the health loop, the kill switch and the per-device switches are what make default-on
+safe (see [WATCH.md](WATCH.md)).
 
 ## Package layout
 
@@ -355,16 +479,30 @@ with the maintainer's explicit go-ahead.
   exercised by this package's own tests, the same pattern `internal/arp/open_linux.go` already uses
   on the read side. `open_other.go` reports `ErrUnsupported` everywhere else.
 - `capture_linux.go` *(build-tagged `linux`)* — the read side: `n` `AF_PACKET` sockets joined to one
-  `PACKET_FANOUT` group (hashed by flow, so one connection never gets reordered across workers), and
-  `Controller.ParallelRelay`, which pairs each capture socket with one of `OpenMany`'s senders via
-  `NewRelay` and runs each pair on its own goroutine. This is what makes the relay path use more than
-  one core; see "Throughput" above. `capture_other.go` reports `ErrUnsupported` everywhere else.
+  `PACKET_FANOUT` group (hashed by flow, so one connection never gets reordered across workers), each
+  carrying the kernel-side capture filter, and `Controller.ParallelRelay`, which pairs each capture
+  socket with one of `OpenMany`'s senders via `NewRelay` and runs each pair on its own goroutine.
+  This is what makes the relay path use more than one core; see "Throughput" above.
+  `capture_other.go` reports `ErrUnsupported` everywhere else.
+- `capture_filter.go` — the classic BPF program those capture sockets carry (destination MAC is
+  Shepherd's, ethertype is IPv4), built with `golang.org/x/net/bpf` and unit-tested through its
+  interpreter on every platform, including a property test that it agrees with `Relay.HandleFrame`
+  frame for frame.
+- `bpf/xdp_relay.c`, `xdp_bpfel.go`/`xdp_bpfeb.go` *(generated)*, `xdp_linux.go` *(build-tagged
+  `linux`)* — the XDP relay: the eBPF program, its `bpf2go`-generated loader, and
+  `Controller.AttachXDP`, which attaches it and keeps its steered-device map and counters in step
+  with the Controller. See "Beyond userspace" above.
 - `clock.go` — the `Clock` interface and `FakeClock`, so the Spoofer's periodic resend and the
   Controller's health loop and trial timers are all tested with no real sleeps.
-- `spoofer.go` — `Spoofer`: one device's periodic claim and its corrective revert on stop, panic, or
-  context cancellation.
-- `relay.go` — `Relay`: rewrites and retransmits a steered device's outbound frames; filters out ARP
-  and IPv6 before anything else runs.
+- `spoofer.go` — `Spoofer`: one device's periodic IPv4 ARP claim and its corrective revert on stop,
+  panic, or context cancellation.
+- `ndp_spoofer.go` — `ndpSpoofer`: the IPv6 counterpart, one device's periodic unicast Neighbor
+  Advertisement claim and its corrective revert, built on `internal/ndp`. Used only when a device is
+  steered with `SteerV6`.
+- `relay.go` — `Relay`: rewrites (both MACs) and retransmits a steered device's outbound frames;
+  relays a frame only for a device steered for that frame's family (IPv4 always, IPv6 only when
+  enabled), a positive ethertype match, so ARP and VLAN-tagged frames never get past it. Defines the
+  `Family` type (`SteerV4`, `SteerV6`).
 - `controller.go` — `Controller`: the safety-governed authority described above. `Steer`, `Unsteer`,
   `PanicStop`, `Rearm`, `Status`, `History`, `Close`, `HandleFrame`, and `NewRelay` (an additional
   `Relay` sharing this Controller's state but with its own `Sender`, which is all `ParallelRelay` is
@@ -372,9 +510,23 @@ with the maintainer's explicit go-ahead.
 
 ## Tests
 
-`go test -race ./internal/intercept`: every scenario in this document, plus concurrent
-`Steer`/`Unsteer`/`Status`, a fuzz test proving IPv6 is never relayed under any input, and a property
-test proving the Spoofer's frame builder never produces anything but a plain IPv4 ARP reply. No real
-interface and no real network anywhere; `FakeSender` and `FakeClock` throughout. `open_linux.go`
+`go test -race ./internal/intercept ./internal/ndp`: every scenario in this document, plus concurrent
+`Steer`/`Unsteer`/`Status`, fuzz tests proving the per-family rule in both directions (no IPv6
+relayed for a v4-only device, no IPv4 relayed for a v6-only device), a property test proving the
+Spoofer's frame builder never produces anything but a plain IPv4 ARP reply, the `ndp` package's own
+tests proving its builder only ever emits a unicast Neighbor Advertisement (never a Router
+Advertisement, never a multicast destination) and that its Neighbor-Solicitation parser never panics,
+the per-family health behaviour (IPv6 idle is lenient, a failed IPv6 flip reverts only IPv6), and the
+capture filter run through x/net/bpf's interpreter against the Go Relay frame for frame, both filter
+shapes. No real interface and no real network anywhere; `FakeSender` and `FakeClock` throughout. `open_linux.go`
 needs `CAP_NET_RAW` and cannot run unprivileged, so it is the one file this package's coverage floor
 excludes, same as `internal/arp`'s equivalent file.
+
+The XDP relay is the exception to "no real kernel anywhere", because there is no other way to run an
+eBPF program: `xdp_linux_test.go` loads the real program (so the kernel's verifier has to accept it)
+and runs it through `BPF_PROG_TEST_RUN` on the same frames the Go Relay is tested with, insisting the
+two agree; `xdp_attach_linux_test.go` goes end to end on a veth pair — attach, `Steer`, inject frames
+on the peer, read the relayed frames back with both MACs rewritten, see the counters reach `Status()`
+and `Stats()`, `Unsteer`, see relaying stop at once. Both need root (or `CAP_BPF`+`CAP_NET_ADMIN`)
+and skip without it; `make test-xdp` runs them for real in a privileged Linux container (Docker
+required, any host OS), which is also how they were run during development.

@@ -13,6 +13,7 @@ import { hostBody, formatTarget, sortHosts } from './reverseproxy.js';
 import { tokenBody, relayBody } from './secrets.js';
 
 const err = (status, msg) => new ApiError(msg, status);
+const strHashDemo = (s) => { let h = 0; for (let i = 0; i < String(s).length; i++) h = (h * 31 + String(s).charCodeAt(i)) >>> 0; return h; };
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function initialPolicy() {
@@ -60,6 +61,84 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
   let relay = { enabled: true, configured: true, active: true, host: 'smtp.example.com', port: 587, username: 'shepherd@example.com', password_set: true, from: 'shepherd@example.com', tls: 'starttls', source: 'portal', updated_at: new Date(now() - 9 * 86400000).toISOString() };
   const hist = { mode: history === 'memory' ? 'memory' : 'encrypted', locked: history === 'locked' || history === 'fresh', initialized: history !== 'fresh' };
   let lastBulk = 0;
+
+  // Watch mode, synthesized (docs/WATCH.md). The demo has no kernel and
+  // no network, so this stands in for the engine: it decides each demo
+  // device's state with the same policy the real one uses (never a
+  // smart-home hub, never an excluded device, never one switched off),
+  // and gives the watched ones rates that move with the clock so the
+  // panel looks as alive as it does against a real install.
+  let watchArmed = true;
+  const watchSince = now() - 3 * 3600000;
+  const watchDecide = (d) => {
+    if (!watchArmed) return { state: 'unavailable', reason: 'Watch mode is not running' };
+    if (d.excluded) return { state: 'skipped', reason: 'excluded from protection' };
+    if (d.watch === 'off') return { state: 'skipped', reason: 'Watch switched off for this device' };
+    if (d.watch !== 'on' && d.type === 'smart-home hub') return { state: 'skipped', reason: 'smart-home hub or bridge' };
+    const age = now() - Date.parse(d.last_seen);
+    if (age > 900000) return { state: 'idle', reason: 'not seen for ' + (age > 7200000 ? Math.round(age / 3600000) + ' h' : Math.round(age / 60000) + ' min') };
+    return { state: 'steered' };
+  };
+  // A device's share of the relayed traffic: steady per device, breathing
+  // with the clock, and zero for one device so "no traffic yet" shows up.
+  const watchRate = (d) => {
+    const h = strHashDemo(d.id);
+    if (h % 17 === 0) return { bps: 0, pps: 0, healthy: false };
+    const phase = Math.sin(now() / 7000 + (h % 100)) * 0.4 + 0.75;
+    const base = 12000 + (h % 900000);
+    const bps = Math.round(base * phase);
+    return { bps, pps: Math.max(1, Math.round(bps / 620)), healthy: true };
+  };
+  const watchStateFor = (d) => {
+    const dec = watchDecide(d);
+    const st = { device_id: d.id, name: d.name, state: dec.state, reason: dec.reason || '', healthy: false,
+      bytes_relayed: 0, packets_relayed: 0, bytes_per_second: 0, packets_per_second: 0 };
+    if (dec.state !== 'steered') return st;
+    const r = watchRate(d);
+    const secs = Math.max(60, (now() - watchSince) / 1000);
+    st.healthy = r.healthy;
+    st.bytes_per_second = r.bps;
+    st.packets_per_second = r.pps;
+    st.bytes_relayed = Math.round(r.bps * secs * 0.6);
+    st.packets_relayed = Math.round(r.pps * secs * 0.6);
+    st.families = ['ipv4'];
+    st.ipv6_reason = 'this network has no global IPv6 route (unique-local addresses only), so there is no off-link IPv6 traffic to steer';
+    st.steered = [{ mac: d.macs[0], ip: (d.ips || []).find((ip) => ip.includes('.')) || '192.0.2.0', families: ['ipv4'], since: new Date(watchSince).toISOString(), healthy: r.healthy, last_verified: new Date(now() - 500).toISOString() }];
+    return st;
+  };
+  const withWatch = (d) => ({ ...d, watch_state: watchStateFor(d) });
+  function watchStatus() {
+    const states = devices.map(watchStateFor);
+    const steered = states.filter((s) => s.state === 'steered');
+    const sum = (f) => steered.reduce((n, s) => n + f(s), 0);
+    return {
+      enabled: true, phase: 'running', reason: '', relay: 'xdp-native', armed: watchArmed,
+      interface: 'eth0', since: new Date(watchSince).toISOString(),
+      // IPv6 steering: asked for, idle. A demo network has no global IPv6
+      // route, which is the common real case too (docs/IPV6-WATCH.md).
+      ipv6: false, ipv6_wanted: true,
+      ipv6_reason: 'this network has no global IPv6 route (unique-local addresses only), so there is no off-link IPv6 traffic to steer',
+      gateway_link_local: '',
+      gateway_ip: '192.0.2.1', gateway_mac: '02:00:5e:00:00:01',
+      shepherd_mac: '02:00:5e:00:00:02', shepherd_ips: ['192.0.2.2'],
+      steered: steered.length,
+      stats: {
+        frames_examined: sum((s) => s.packets_relayed) * 3,
+        frames_relayed: sum((s) => s.packets_relayed),
+        bytes_relayed: sum((s) => s.bytes_relayed),
+        frames_for_shepherd_itself: Math.round(sum((s) => s.packets_relayed) * 0.02),
+        frames_not_for_shepherd: 0,
+        packets_per_second: sum((s) => s.packets_per_second),
+        bytes_per_second: sum((s) => s.bytes_per_second),
+      },
+      devices: states,
+      history: watchHistory,
+    };
+  }
+  let watchHistory = [
+    { time: new Date(now() - 42 * 60000).toISOString(), mac: '02:00:5e:00:00:1f', device_id: 'dev-0031', name: 'Guest Tablet', reason: 'no relayed traffic observed for 16.2s (grace 15s)' },
+    { time: new Date(now() - 3 * 3600000).toISOString(), mac: '02:00:5e:00:00:0c', device_id: 'dev-0012', name: 'Kids Laptop', reason: 'address changed to 192.0.2.118' },
+  ];
 
   const gname = (id) => (groups.find((g) => g.id === id) || {}).name || id;
   const withCount = (g) => ({ ...g, count: devices.filter((d) => d.groups.includes(g.id)).length });
@@ -148,13 +227,14 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       const t = now();
       const all = sortDevices(devices.filter((d) => matchDevice(d, parsed, { now: t, groupName: gnames })), q.get('sort') === 'name' ? 'name' : 'recent');
       const offset = Math.max(0, Number(q.get('offset')) || 0), limit = Math.min(500, Math.max(1, Number(q.get('limit')) || 100));
-      return { devices: all.slice(offset, offset + limit), total: all.length, offset, limit };
+      return { devices: all.slice(offset, offset + limit).map(withWatch), total: all.length, offset, limit };
     }
     if (path === '/api/devices/bulk' && method === 'POST') {
       const ids = Array.isArray(body.ids) ? body.ids : [];
       if (!ids.length) throw err(400, 'ids required');
       if (body.op === 'assign_group' && !groups.some((g) => g.id === body.group_id)) throw err(404, 'group not found');
-      if (!['assign_group', 'remove_group', 'set_excluded', 'set_wandering', 'set_tags', 'delete'].includes(body.op)) throw err(400, 'unknown op');
+      if (!['assign_group', 'remove_group', 'set_excluded', 'set_wandering', 'set_watch', 'set_tags', 'delete'].includes(body.op)) throw err(400, 'unknown op');
+      if (body.op === 'set_watch' && !['auto', 'on', 'off'].includes(body.watch)) throw err(400, 'watch must be "auto", "on" or "off"');
       const set = new Set(ids);
       const have = new Set(devices.map((d) => d.id));
       const missing = ids.filter((id) => !have.has(id));
@@ -175,22 +255,39 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
     }
     if ((m = /^\/api\/devices\/([^/]+)$/.exec(path))) {
       const id = decodeURIComponent(m[1]);
-      if (method === 'GET') return dev(id);
+      if (method === 'GET') return withWatch(dev(id));
       if (method === 'DELETE') { dev(id); devices = devices.filter((d) => d.id !== id); return { ok: true }; }
       if (method === 'PATCH') {
-        return setDev(id, (d) => {
+        return withWatch(setDev(id, (d) => {
           const n = { ...d };
           if (typeof body.alias === 'string') n.alias = body.alias.trim().slice(0, 64);
           if (typeof body.notes === 'string') n.notes = body.notes.slice(0, 1000);
           if (typeof body.type === 'string') n.type = body.type;
           if (typeof body.excluded === 'boolean') n.excluded = body.excluded;
+          if (typeof body.watch === 'string') {
+            if (!['auto', 'on', 'off'].includes(body.watch)) throw err(400, 'watch must be "auto", "on" or "off"');
+            n.watch = body.watch;
+          }
           if (typeof body.wandering === 'boolean') { const m = applyModeLocal(n, body, now()); n.wandering = m.wandering; n.excluded = m.excluded; if (m.wandering_until) n.wandering_until = m.wandering_until; else delete n.wandering_until; }
           if (Array.isArray(body.tags)) n.tags = [...new Set(body.tags.map(normTag).filter(Boolean))];
           n.name = fallbackName(n);
           return n;
-        });
+        }));
       }
     }
+    // ---- watch
+    if (path === '/api/watch' && method === 'GET') return watchStatus();
+    if (path === '/api/watch/kill' && method === 'POST') {
+      // Whose steering the kill switch stopped has to be read before it is
+      // flipped: afterwards nothing reports itself steered.
+      const stopped = devices.filter((d) => watchStateFor(d).state === 'steered').slice(0, 6);
+      watchArmed = false;
+      const t = new Date(now()).toISOString();
+      watchHistory = [...watchHistory, ...stopped.map((d) => ({ time: t, mac: d.macs[0], device_id: d.id, name: d.name, reason: 'panic stop' }))];
+      return watchStatus();
+    }
+    if (path === '/api/watch/rearm' && method === 'POST') { watchArmed = true; return watchStatus(); }
+
     // ---- groups
     if (path === '/api/groups') {
       if (method === 'GET') return { groups: groups.map(withCount) };

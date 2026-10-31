@@ -13,6 +13,81 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **DNS keeps serving when one listen address goes away, and can always be reached over loopback.**
+  Both halves of a real outage. Shepherd was configured to listen on three addresses; the wired
+  interface holding one of them lost carrier, and because `dnsengine.Serve` required every bind to
+  succeed, Shepherd refused to start — so a network whose resolver was fine on two other addresses
+  had none at all, in a restart loop. `Serve` now takes `TolerateMissingAddresses`, which
+  `cmd/shepherd` passes: an address **this host does not have** is a loud warning naming it, startup
+  carries on with the rest, and binding nothing at all is still fatal. The tolerance is deliberately
+  narrow — an address **another process already holds** stays a hard failure, because then something
+  else *is* answering on it and starting anyway would leave the owner believing Shepherd was handling
+  their DNS when a different resolver was; `TestRunFailsFastOnBusyPorts` holds that line, and it
+  caught exactly this when a first, broader version of the change made it hang. An address is never
+  half-served (if its TCP half fails the UDP half is closed too), and without the option the strict
+  behaviour is unchanged. Second half: new
+  `dns.listen_loopback` (**on by default**) also serves 127.0.0.1 and `[::1]` on the port of the
+  first configured address, because when Shepherd is its own host's resolver, loopback is the one
+  address that cannot vanish with an interface — in the outage the host lost name resolution
+  entirely, which wedged `sshd` (it blocks on reverse lookups) and left the machine unreachable to
+  fix the very interface that had failed. Addresses already covered are not duplicated and a
+  wildcard listener is left alone. Because Shepherd adds these itself rather than the owner asking
+  for them, they are **best-effort in a way the configured addresses are not** (`dnsengine.Optional`):
+  *any* bind failure on one is a logged warning, the port already being taken included, which on a
+  NAS whose system resolver owns `127.0.0.1:53` is the normal case and not a fault. Without that
+  distinction this option would have refused to start on exactly the hosts it was written for, and
+  on a default install, since it is on by default. An address in `dns.listen` is still strict: one
+  another process holds stays fatal there. It only helps if the host's own resolver lists 127.0.0.1,
+  which the example config now says.
+- **Watch mode is wired in and on by default (`[watch]`, `internal/watch`, docs/WATCH.md)** — [ROADMAP.md](docs/ROADMAP.md)
+  step 11, after the throughput ceiling that held it back for months was root-caused and fixed and the relay was
+  measured at full gigabit on real hardware, with the maintainer's explicit go-ahead. Until now
+  `internal/intercept` was a library nothing called except a hand-run CLI. Now `cmd/shepherd` runs one engine for the
+  life of the process: it finds the interface from the default route, the gateway's MAC from the kernel's neighbour
+  table, and Shepherd's own MAC and addresses from the interface; attaches the relay **once** (in-kernel XDP in the
+  NIC driver, else XDP generic, else the parallel userspace relay — a native attach rebuilds the driver's rings for
+  about eight seconds, so attaching per device would stall traffic every time a phone woke up) and from then on only
+  toggles the steered set. **Every eligible device is steered**: never the gateway, never Shepherd's own interfaces,
+  never an excluded device, never network or smart-home infrastructure (router/mesh/AP/switch/hub types, anything
+  advertising Thread or Matter over mDNS, vendors that only make network gear), and never a device not seen for 15
+  minutes. Wandering and quarantined devices are steered like any other, since Watch mode is visibility and blocks
+  nothing. Every device gets a three-way **Watch** switch (automatic/always/never) in the registry, the portal, bulk
+  actions and search (`watch:off`), and the engine re-steers by MAC on an address change. Safety: the engine owns a
+  **kill switch** that panic-stops every device at once and **persists across restarts** until re-armed
+  (`<data_dir>/watch.json`, the only thing it saves; a Shepherd with Watch mode switched off reports
+  itself armed, since nothing is holding steering down — reporting otherwise would read as a kill
+  switch somebody pressed); the interception library's health loop still fails a device
+  open on silence, now with a widening retry backoff so a failing device is not flapped; a relay that dies unsteers
+  everything and the engine restarts on a backoff; the passive ARP monitor's `gateway-mac-changed` event makes the
+  engine re-read the kernel's neighbour table (the event's own MAC is never trusted) and restart with the new MAC.
+  GRO is turned off on the interface for the userspace relay's lifetime and restored on shutdown, done with the
+  `ETHTOOL_SGRO` ioctl rather than by shelling out to `ethtool`, which the container image does not have. A host that
+  cannot run any of this — not Linux, missing `CAP_NET_RAW`/`CAP_NET_ADMIN`/`CAP_BPF`, no usable interface — logs one
+  clear reason, reports itself unavailable in the portal, retries quietly and changes nothing else; DNS filtering is
+  never affected. New **Watch** tab (`js/watchview.js`, pure logic in `js/watch.js` with its own tests) with the
+  relay in effect, live relayed bits and packets per second overall and per device, every unwatched device's reason,
+  the recent "stopped watching" log and the kill switch; a **Watch column** and per-device panel on the Devices
+  screen; `GET /api/watch`, `POST /api/watch/kill`, `POST /api/watch/rearm`, `watch`/`watch_state` on every device,
+  and a `set_watch` bulk op. Demo mode synthesizes the whole thing, policy and live rates included. New config:
+  `watch.enabled` (**true**), `interface`, `mode` (`auto`/`xdp`/`userspace`/`off`), `workers`,
+  `steer_infrastructure`, `active_window_seconds` and the health/grace knobs. `NET_ADMIN` and `BPF` added alongside
+  `NET_RAW` in both compose files.
+- **IPv6 Watch-mode steering (`watch.ipv6`, `internal/ndp`, docs/IPV6-WATCH.md), off by default.** The IPv6 mirror of
+  the IPv4 mechanism, and the narrowest shape that could work: unsolicited **unicast** Neighbor Advertisements sent
+  only to a device being steered, claiming the router's link-local address for Shepherd's MAC, with a solicited reply
+  to that device's own revalidation probe and a corrective advertisement on unsteer and panic-stop. **Shepherd never
+  sends Router Advertisements under any setting** — docs/IPV6.md hard rule 1 stands unchanged, and rule 6 now records
+  this unicast-only, per-device exception to it. The relay (userspace and XDP both) relays IPv6 only for a device
+  explicitly steered for IPv6, and the Controller keeps a master switch, a required gateway link-local address and a
+  **separate, stricter IPv6 excluder** so a smart-home hub, Thread border router or Matter device can never be
+  IPv6-steered — a refusal the per-device "always watch" switch cannot override, unlike for IPv4. The engine engages
+  it only where the network can carry it: an IPv6 default route whose next hop is link-local, a global (`2000::/3`)
+  address on the interface, and an IPv6 address on the device (its link-local preferred). With unique-local addresses
+  only — the maintainer's own network, and a common case — there is no off-link IPv6 traffic to steer, so it reports
+  itself idle with that reason instead of pretending. A device merged from several MACs stays IPv4-only, because
+  which of its MACs holds its IPv6 address cannot be known from the IPv4 neighbour table. An IPv6 refusal never costs
+  a device its IPv4 steering. **Never run against a live global-IPv6 network**: the design's own recommendation was
+  to wait for one, and the maintainer does not have one.
 - **Secrets managed in the portal (`internal/secrets`):** the two credentials Shepherd cannot generate for
   itself — the DNS provider token ACME DNS-01 needs, and the accountability SMTP relay — no longer mean
   hand-editing `shepherd.toml` and restarting. Both live in `<data_dir>/secrets.json`, the same JSON, atomic
@@ -139,6 +214,18 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   from an existing reverse-proxy manager and verified one by one (including a real WebSocket handshake
   against a live backend), and a real cutover of port 443 itself. See docs/REVERSEPROXY.md, including its
   "Before you point real traffic at this" checklist.
+- **Watch mode: in-kernel XDP relay (`internal/intercept.Controller.AttachXDP`, Linux).** The same
+  one-sided ARP relay as an eBPF/XDP program on the interface: a steered device's IPv4 frame to
+  Shepherd's MAC gets both MACs rewritten and is bounced straight back out (`XDP_TX`) without ever
+  reaching the kernel stack or userspace; everything else, including the device's traffic for
+  Shepherd itself, is passed through untouched. The Controller stays the only authority on what is
+  steered; the program only consults a map kept in step with it. Native (driver) mode with a
+  generic-mode fallback. `cmd/intercept-trial -xdp auto` uses it in place of `ParallelRelay`. The
+  program is compiled by `go generate` (needs a clang with the BPF backend); the generated objects
+  are committed so `go build` needs nothing new. Verified against a real kernel's verifier and
+  `BPF_PROG_TEST_RUN` and end to end on a veth pair (`make test-xdp`), then live on the NAS in native
+  mode: 180k frames/s and ~1.77 Gbit/s relayed during a phone's speed test, healthy throughout. See
+  docs/INTERCEPT.md, "Beyond userspace".
 - **Marketing site (`site/`):** a public, vanilla-HTML/CSS/JS landing page — hero, the real shipped feature
   set (DNS filtering and the 95-list catalog, devices, the globe HUD, alarms, port and vulnerability
   scanning, geo-block, portal locking, self-healing upstreams and more), an honest "what's coming" section
@@ -385,6 +472,28 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- **Watch mode treated an idle device as a failing one, which on a real network meant constant ARP
+  churn and a ten-minute blind spot.** The interception library's health loop cannot tell a device
+  with nothing to relay from one whose steering never took, so it fails both open — correct, since
+  silence might mean a device cut off. But the engine counted every one of those fail-opens as a
+  failure, and the retry backoff doubles from 30 seconds to a 10-minute cap. On the maintainer's
+  network, 84 of 109 devices are active in any 15-minute window and most are idle at any moment,
+  so each of them cycled steer → 15 seconds of silence → unsteer → re-steer, flipping its ARP entry
+  to Shepherd and back for traffic that did not exist, while a phone that genuinely woke up could
+  go unwatched for up to ten minutes. The mismatch was between two windows that were never
+  reconciled: the policy keeps steering a device for 15 minutes after it was last seen, while the
+  health loop drops it after 15 seconds of silence. The engine now tells idleness from breakage
+  using its own two pieces of evidence, without touching `internal/intercept`: frames really were
+  relayed for that MAC at least once (steering provably worked, so the silence is the device), or
+  nothing other than the relay has seen it for a minute (it is asleep). Either way it is not a
+  failure, the pause is flat rather than widening, and the device is not steered again until the
+  registry sees it later than it did when it went quiet — which the passive ARP monitor and DNS
+  supply within seconds of a real wake-up, so the blind spot goes from ten minutes to about
+  fifteen seconds. A device something *has* seen lately that never relayed a frame is still a
+  failure, still widens and still retries on the timer, because that is steering not taking and is
+  exactly what the backoff is for. The evidence is deliberately cleared only when the unsteer is
+  reported and never by the sampler: the Controller drops a device from `Status()` before it says
+  why, and a sample landing in that window would erase the evidence just as it is needed.
 - **The globe's per-frame comet-arrival check scanned all 600 comet slots every frame**, regardless of
   how many were actually animating — cheap enough with a JIT to go unnoticed, real cost without one
   (Safari Lockdown Mode disables it entirely, and the portal felt sluggish there as a direct result).
@@ -407,6 +516,18 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   `internal/reverseproxy.Proxy` always sets and always overwrites (never passes through from a client) —
   this gate is an availability check, not the actual WebAuthn trust boundary, which the library enforces
   independently against the browser-signed origin regardless of this header. See docs/PASSKEYS.md.
+- **Watch mode relayed frames with the steered device's own source MAC**, which taught every switch
+  and Wi-Fi/LAN bridge in between that the device lived on Shepherd's port and misdelivered the
+  device's *inbound* traffic there until its next frame flipped the entry back. This is the first
+  explanation that fits every live measurement of the ~300 Mbps ceiling while steered (near-zero
+  relayed packets, loss-shaped slowdown, the `not_for_shepherd` burst). Relayed frames now carry
+  Shepherd's MAC as source; the IP packet inside is untouched. **Measured live on the NAS against the
+  maintainer's phone: full gigabit Wi-Fi speed with no perceivable slowdown while steered**, the relay
+  peaking at 167k frames/s and ~1.6 Gbit/s outbound with zero errors, where every earlier run on the
+  same path measured 300–400 Mbps. See docs/INTERCEPT.md, "The cause the evidence points at".
+- **Watch mode's Relay let VLAN-tagged frames through.** It filtered by denylist (not ARP, not IPv6),
+  and a VLAN tag hides the real ethertype one header in, so it could wrap IPv6. `Relay.HandleFrame`
+  now positively matches plain IPv4 only. Found by the new capture-filter agreement test.
 - `internal/intercept.Relay` relayed *every* frame a steered device addressed to Shepherd's own MAC to
   the real gateway, including frames genuinely destined for Shepherd itself (a DNS query to the resolver
   Shepherd runs, a connection to its portal) — because a steered device's ARP entry for the real gateway
@@ -486,6 +607,11 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Four `internal/alarms` tests polled a background worker with a 3-second real-wall-clock deadline against a fake-clock-advanced tick; under load (the full suite running concurrently) that was occasionally too tight and failed even though the worker itself was fine (instant in isolation). Widened to 10 seconds.
 
 ### Changed
+- **Watch mode's capture sockets filter in the kernel.** Each `PACKET_FANOUT` socket carries a
+  classic BPF filter (IPv4, destination MAC is Shepherd's) so frames the Relay would discard are
+  dropped before being copied to userspace; attached before bind so nothing slips in ahead of it.
+  Per-device relay counters are now atomics, so the parallel relay workers no longer serialize on a
+  mutex for every frame.
 - The optional Docker packaging (`deploy/docker/compose.yaml`) now also grants `NET_RAW`, alongside the existing `NET_BIND_SERVICE`, so the passive ARP monitor (read-only) can actually run in the container; `cap_drop: [ALL]` otherwise, unchanged.
 - **Policy lives in `<data_dir>/policy.json`.** On the first start after upgrading, `rules.json` (allow, block, policy switches) and `[[lists]]` are migrated into it with nothing lost and the same blocking; a catalog entry with the same URL replaces the old list, anything else becomes a custom list. An install that already existed does **not** gain the recommended catalog lists; a new install does. After that `rules.json`, `[[lists]]` and `no_default_lists` are no longer read (they only seed a first run) and the portal owns the policy. The old rule, policy and list endpoints now act on the network scope.
 - **Protection is on by default; you opt out, not in.** A fresh install now ships with a blocklist and blocks Apple iCloud Private Relay (devices see a notice that it is unavailable on the network). Opt out with `block_private_relay = false` or `no_default_lists = true`, or from the portal. Lists you define always replace the built-in one. Watch mode will follow the same rule (default-on with automatic exclusions and a fail-open watchdog); see the design doc.

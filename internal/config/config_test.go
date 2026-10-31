@@ -710,3 +710,181 @@ func TestExampleConfigShowsTheTLSDefaults(t *testing.T) {
 		t.Errorf("example %+v differs from the defaults %+v", ex.TLS, Default().TLS)
 	}
 }
+
+func TestWatchDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Watch mode is on by default (docs/DESIGN.md's protect-by-default
+	// decision), in auto mode, and never steers infrastructure.
+	if !cfg.Watch.Enabled || cfg.Watch.Mode != "auto" || cfg.Watch.SteerInfrastructure || cfg.Watch.ActiveWindowSeconds != 900 {
+		t.Errorf("watch defaults = %+v", cfg.Watch)
+	}
+	if cfg.Watch.Interface != "" || cfg.Watch.Workers != 0 {
+		t.Errorf("watch defaults = %+v", cfg.Watch)
+	}
+}
+
+func TestWatchOverridesAndValidation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "shepherd.toml")
+	write := func(body string) (Config, error) {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return Load(path)
+	}
+	cfg, err := write(`[watch]
+enabled = false
+interface = "eth1"
+mode = "xdp"
+workers = 8
+steer_infrastructure = true
+active_window_seconds = 120
+health_interval_seconds = 5
+idle_grace_seconds = 20
+startup_grace_seconds = 45
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Watch.Enabled || cfg.Watch.Interface != "eth1" || cfg.Watch.Mode != "xdp" || cfg.Watch.Workers != 8 {
+		t.Errorf("watch = %+v", cfg.Watch)
+	}
+	if !cfg.Watch.SteerInfrastructure || cfg.Watch.ActiveWindowSeconds != 120 || cfg.Watch.HealthIntervalSeconds != 5 {
+		t.Errorf("watch = %+v", cfg.Watch)
+	}
+	if cfg.Watch.IdleGraceSeconds != 20 || cfg.Watch.StartupGraceSeconds != 45 {
+		t.Errorf("watch = %+v", cfg.Watch)
+	}
+
+	for body, want := range map[string]string{
+		"[watch]\nmode = \"kernel\"\n":            "watch.mode",
+		"[watch]\nworkers = -1\n":                 "watch.workers",
+		"[watch]\nworkers = 99\n":                 "watch.workers",
+		"[watch]\nactive_window_seconds = 30\n":   "watch.active_window_seconds",
+		"[watch]\nidle_grace_seconds = -5\n":      "watch.idle_grace_seconds",
+		"[watch]\nhealth_interval_seconds = -1\n": "watch.health_interval_seconds",
+	} {
+		if _, err := write(body); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: err = %v, want one naming %s", body, err, want)
+		}
+	}
+}
+
+func TestWatchIPv6IsOffByDefaultAndSettable(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// IPv6 steering is opt-in, unlike Watch mode itself: docs/IPV6-WATCH.md
+	// only recommends it on a network with a global IPv6 route.
+	if cfg.Watch.IPv6 {
+		t.Error("watch.ipv6 must default to false")
+	}
+	path := filepath.Join(t.TempDir(), "shepherd.toml")
+	if err := os.WriteFile(path, []byte("[watch]\nipv6 = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(path)
+	if err != nil || !cfg.Watch.IPv6 {
+		t.Fatalf("watch.ipv6 = %v err = %v", cfg.Watch.IPv6, err)
+	}
+}
+
+func TestDNSListenAddrsAddsLoopbackByDefault(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// On by default: when Shepherd is its own host's resolver, loopback is
+	// the one address that cannot vanish with an interface.
+	if !cfg.DNS.LoopbackEnabled() {
+		t.Fatal("dns.listen_loopback must default to on")
+	}
+	cfg.DNS.Listen = []string{"192.0.2.20:53"}
+	got := cfg.DNS.ListenAddrs()
+	want := []string{"192.0.2.20:53", "127.0.0.1:53", "[::1]:53"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("addrs = %v, want %v", got, want)
+	}
+}
+
+func TestDNSListenAddrsPortAndDeduplication(t *testing.T) {
+	cases := []struct {
+		name   string
+		listen []string
+		want   []string
+	}{
+		{"the loopback port follows the first address",
+			[]string{"192.0.2.20:5353"}, []string{"192.0.2.20:5353", "127.0.0.1:5353", "[::1]:5353"}},
+		{"a loopback address already configured is not added twice",
+			[]string{"127.0.0.1:53"}, []string{"127.0.0.1:53", "[::1]:53"}},
+		{"both already configured",
+			[]string{"127.0.0.1:53", "[::1]:53"}, []string{"127.0.0.1:53", "[::1]:53"}},
+		{"a wildcard listener already answers on loopback",
+			[]string{"0.0.0.0:53"}, []string{"0.0.0.0:53"}},
+		{"so does an IPv6 wildcard",
+			[]string{"[::]:53"}, []string{"[::]:53"}},
+		{"several addresses keep their order",
+			[]string{"192.0.2.20:53", "192.0.2.102:53"}, []string{"192.0.2.20:53", "192.0.2.102:53", "127.0.0.1:53", "[::1]:53"}},
+		{"nothing configured stays nothing", nil, nil},
+		{"an unparsable address is left alone rather than guessed at",
+			[]string{"not-an-address"}, []string{"not-an-address"}},
+	}
+	for _, c := range cases {
+		d := DNS{Listen: c.listen}
+		if got := d.ListenAddrs(); !slices.Equal(got, c.want) {
+			t.Errorf("%s: addrs = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestDNSListenLoopbackCanBeTurnedOff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "shepherd.toml")
+	if err := os.WriteFile(path, []byte("[dns]\nlisten = [\"192.0.2.20:53\"]\nlisten_loopback = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DNS.LoopbackEnabled() {
+		t.Fatal("an explicit false must win over the default")
+	}
+	if got := cfg.DNS.ListenAddrs(); !slices.Equal(got, []string{"192.0.2.20:53"}) {
+		t.Fatalf("addrs = %v", got)
+	}
+}
+
+// The loopback addresses Shepherd adds are identifiable, because startup
+// treats them as best-effort while the configured ones stay strict.
+func TestDNSAddedLoopbackAddrsAreOnlyTheOnesShepherdAdds(t *testing.T) {
+	d := DNS{Listen: []string{"192.0.2.20:53"}}
+	if got, want := d.AddedLoopbackAddrs(), []string{"127.0.0.1:53", "[::1]:53"}; !slices.Equal(got, want) {
+		t.Fatalf("added = %v, want %v", got, want)
+	}
+	// Nothing is added when the owner already listed loopback, when a
+	// wildcard listener covers it, or when the option is off.
+	off := false
+	for _, c := range []struct {
+		name string
+		d    DNS
+	}{
+		{"already configured", DNS{Listen: []string{"127.0.0.1:53", "[::1]:53"}}},
+		{"wildcard covers it", DNS{Listen: []string{"0.0.0.0:53"}}},
+		{"switched off", DNS{Listen: []string{"192.0.2.20:53"}, ListenLoopback: &off}},
+		{"nothing configured", DNS{}},
+	} {
+		if got := c.d.AddedLoopbackAddrs(); len(got) != 0 {
+			t.Fatalf("%s: added = %v, want none", c.name, got)
+		}
+	}
+	// Whatever is added is also in ListenAddrs, and only at the end.
+	d = DNS{Listen: []string{"192.0.2.20:5353"}}
+	all, added := d.ListenAddrs(), d.AddedLoopbackAddrs()
+	if !slices.Equal(all[len(all)-len(added):], added) {
+		t.Fatalf("added %v are not the tail of %v", added, all)
+	}
+}

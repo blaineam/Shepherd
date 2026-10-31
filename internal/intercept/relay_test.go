@@ -12,12 +12,18 @@ import (
 	"shepherd/internal/arp"
 )
 
-func steeredLookup(mac arp.MAC, ip netip.Addr) func(arp.MAC) (netip.Addr, bool) {
-	return func(m arp.MAC) (netip.Addr, bool) {
+// steeredLookup reports mac as steered for IPv4 only, the default these
+// tests exercise. Use steeredLookupFam for a different family set.
+func steeredLookup(mac arp.MAC, ip netip.Addr) func(arp.MAC) (netip.Addr, Family, bool) {
+	return steeredLookupFam(mac, ip, SteerV4)
+}
+
+func steeredLookupFam(mac arp.MAC, ip netip.Addr, fam Family) func(arp.MAC) (netip.Addr, Family, bool) {
+	return func(m arp.MAC) (netip.Addr, Family, bool) {
 		if m == mac {
-			return ip, true
+			return ip, fam, true
 		}
-		return netip.Addr{}, false
+		return netip.Addr{}, 0, false
 	}
 }
 
@@ -28,7 +34,7 @@ func TestRelayRewritesDestinationAndRelays(t *testing.T) {
 	r := &Relay{
 		Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC,
 		Lookup:    steeredLookup(devMAC, devIP),
-		OnRelayed: func(mac arp.MAC, n int, _ time.Time) { relayedMAC, relayedN = mac, n },
+		OnRelayed: func(mac arp.MAC, _ Family, n int, _ time.Time) { relayedMAC, relayedN = mac, n },
 	}
 	raw := ethFrame(shepherdMAC, devMAC, 0x0800, []byte("payload"))
 	ok, err := r.HandleFrame(raw)
@@ -49,8 +55,12 @@ func TestRelayRewritesDestinationAndRelays(t *testing.T) {
 	if gotDst != gwMAC {
 		t.Fatalf("destination not rewritten to the gateway: %v", gotDst)
 	}
-	if gotSrc != devMAC {
-		t.Fatalf("source MAC must stay untouched: %v", gotSrc)
+	if gotSrc != shepherdMAC {
+		// Not cosmetic: a relayed frame carrying the device's own source
+		// MAC makes every switch between Shepherd and the device learn
+		// the device on Shepherd's port and misdeliver its inbound
+		// traffic there. See the Relay type comment and docs/INTERCEPT.md.
+		t.Fatalf("source MAC must be rewritten to Shepherd's own, got %v", gotSrc)
 	}
 	if string(sent[14:]) != "payload" {
 		t.Fatal("payload was altered")
@@ -58,6 +68,26 @@ func TestRelayRewritesDestinationAndRelays(t *testing.T) {
 	// The original buffer must not have been mutated.
 	if raw[0] != shepherdMAC[0] {
 		t.Fatal("HandleFrame mutated the caller's buffer")
+	}
+}
+
+// A relayed frame's own loopback copy (as a capture socket without
+// PACKET_IGNORE_OUTGOING would deliver it) must never be relayed again:
+// with the source now rewritten to Shepherd's MAC, the destination check
+// still discards it, and so would the Lookup even if it did not, since
+// Shepherd's own MAC is never a steered device.
+func TestRelayNeverReRelaysItsOwnOutput(t *testing.T) {
+	sender := NewFakeSender()
+	r := &Relay{Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC, Lookup: steeredLookup(devMAC, devIP)}
+	if ok, err := r.HandleFrame(ethFrame(shepherdMAC, devMAC, 0x0800, []byte("first"))); !ok || err != nil {
+		t.Fatalf("first HandleFrame = %v, %v", ok, err)
+	}
+	loopedBack := append([]byte(nil), sender.Frames()[0]...)
+	if ok, err := r.HandleFrame(loopedBack); ok || err != nil {
+		t.Fatalf("re-relayed Shepherd's own output: %v, %v", ok, err)
+	}
+	if len(sender.Frames()) != 1 {
+		t.Fatalf("want exactly 1 sent frame, got %d", len(sender.Frames()))
 	}
 }
 
@@ -160,6 +190,26 @@ func TestRelayIgnoresIPv6(t *testing.T) {
 	}
 }
 
+// A VLAN tag (0x8100) hides the real ethertype one header further in;
+// what it wraps could be IPv6. Only plain IPv4 is ever relayed.
+func TestRelayIgnoresVLANTaggedAndOtherEthertypes(t *testing.T) {
+	sender := NewFakeSender()
+	r := &Relay{Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC, Lookup: steeredLookup(devMAC, devIP)}
+	vlanIPv6 := ethFrame(shepherdMAC, devMAC, 0x8100, []byte{0x00, 0x01, 0x86, 0xdd, 0x60, 0, 0, 0})
+	for _, f := range [][]byte{
+		vlanIPv6,
+		ethFrame(shepherdMAC, devMAC, 0x88cc, []byte("lldp")),
+		ethFrame(shepherdMAC, devMAC, 0x8863, []byte("pppoe")),
+	} {
+		if ok, err := r.HandleFrame(f); ok || err != nil {
+			t.Fatalf("ethertype %#04x: got %v, %v", binary.BigEndian.Uint16(f[12:14]), ok, err)
+		}
+	}
+	if len(sender.Frames()) != 0 {
+		t.Fatal("only plain IPv4 may ever be relayed")
+	}
+}
+
 func TestRelayIgnoresUnmatchedDevice(t *testing.T) {
 	sender := NewFakeSender()
 	r := &Relay{Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC, Lookup: steeredLookup(devMAC, devIP)}
@@ -204,8 +254,8 @@ func TestRelayReportsSendErrorAndDoesNotCountAsRelayed(t *testing.T) {
 	r := &Relay{
 		Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC,
 		Lookup:       steeredLookup(devMAC, devIP),
-		OnRelayed:    func(arp.MAC, int, time.Time) { relayedCalled = true },
-		OnRelayError: func(mac arp.MAC, err error) { gotErrMAC = mac },
+		OnRelayed:    func(arp.MAC, Family, int, time.Time) { relayedCalled = true },
+		OnRelayError: func(mac arp.MAC, _ Family, err error) { gotErrMAC = mac },
 	}
 	raw := ethFrame(shepherdMAC, devMAC, 0x0800, []byte("x"))
 	ok, err := r.HandleFrame(raw)
@@ -272,8 +322,8 @@ func TestRelayOnFrameNotForShepherdFiresOnlyForWrongDestination(t *testing.T) {
 	}
 
 	// This is the case that matters: a loopback copy of a frame Shepherd
-	// itself just relayed (dst rewritten to the gateway, not Shepherd).
-	if _, err := r.HandleFrame(ethFrame(gwMAC, devMAC, 0x0800, []byte("looped back"))); err != nil {
+	// itself just relayed (dst rewritten to the gateway, src to Shepherd).
+	if _, err := r.HandleFrame(ethFrame(gwMAC, shepherdMAC, 0x0800, []byte("looped back"))); err != nil {
 		t.Fatal(err)
 	}
 	if notForShepherd != 1 {
@@ -305,7 +355,7 @@ func FuzzRelayHandleFrame(f *testing.F) {
 			// Lookup always says "steered" so the only thing that can
 			// stop a relay is the ethertype/destination checks: exactly
 			// what this test wants to stress.
-			Lookup: func(arp.MAC) (netip.Addr, bool) { return devIP, true },
+			Lookup: func(arp.MAC) (netip.Addr, Family, bool) { return devIP, SteerV4, true },
 		}
 		ok, err := r.HandleFrame(in) // must never panic
 		if len(in) >= 14 {

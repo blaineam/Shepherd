@@ -105,8 +105,8 @@ seen. You can rename or recolor the group; it cannot be deleted, because new dev
 Turn off automatic assignment with `devices.quarantine_new_devices = false` in the configuration (the group itself still exists, so you
 can set up its policy ahead of time); the default is on, matching the rest of Shepherd's protect-by-default convention.
 
-**What quarantine does not do.** Shepherd enforces quarantine's rules the same way it enforces any group's: through DNS, and, once Watch
-mode is trialed and enabled, through steering a device's own outbound traffic. Neither of those stops a quarantined device from talking
+**What quarantine does not do.** Shepherd enforces quarantine's rules the same way it enforces any group's: through DNS. Watch mode
+steers a quarantined device like any other, which makes what it reaches visible, but Watch mode blocks nothing. Neither of those stops a quarantined device from talking
 directly to another device on your LAN — that traffic never goes through DNS, and one-sided Watch mode only sees a device's traffic
 *toward the gateway*, not toward its neighbors. Real LAN isolation needs your router: a guest network (which eero and most consumer mesh
 routers support, as an isolated SSID and subnet) is the practical way to keep a new or untrusted device off the rest of your network
@@ -116,15 +116,22 @@ items.
 
 ## Excluded
 
-**Excluded** means the device has opted out of protection. Today that means its DNS queries are answered with no blocking at all (the log
-says `excluded`), but it is still named and logged. When Watch mode arrives (planned), excluded also means the device is never steered
-through Shepherd.
+**Excluded** means the device has opted out of protection: its DNS queries are answered with no blocking at all (the log
+says `excluded`), and it is never steered through Watch mode either — a refusal enforced both by the Watch engine and
+by the interception library itself, so nothing can steer an excluded device. It is still named and logged.
 
-## What needs Watch mode
+Separately from exclusion, every device has its own three-way **Watch** switch (Automatic, Always watch, Never watch)
+on the Devices screen, for opting one device out of traffic steering while leaving its DNS filtering alone. See
+[WATCH.md](WATCH.md).
 
-Today's registry needs no special placement, only that devices use Shepherd for DNS or show up in the neighbor table. Watch mode (planned)
-adds ARP-based steering and with it: seeing devices that never ask Shepherd for DNS, per-device bandwidth, pause, and the exact moment a
-new device joins. Until then a device that does not use Shepherd for DNS and is not in the neighbor table is not seen.
+## What Watch mode adds
+
+The registry itself needs no special placement, only that devices use Shepherd for DNS or show up in the neighbor table.
+[Watch mode](WATCH.md) — on by default — adds ARP-based steering of each eligible device's outbound traffic, and with it
+the destinations a device reaches without ever asking Shepherd for DNS, plus its outbound byte and packet rates per
+device. It sees the outbound half only, and it blocks nothing: per-device pause and bandwidth limits would need the
+return path too. A device that neither uses Shepherd for DNS nor appears in the neighbor table is still not seen at all,
+since there would be nothing to steer.
 
 ## API
 
@@ -148,7 +155,7 @@ Every device is in one of three modes, set from the Devices screen (or `PATCH /a
 |---|---|---|---|
 | **Protected** (default) | Everything that applies: blocklists, app and category blocks, rules, policies | Yes | Normal devices |
 | **Wandering** | **None at all.** Not even the Private Relay policy | **Yes, every request**, flagged as wandering | A device that misbehaves under filtering, a device you want to study, or a guest you want to see but not restrict |
-| **Excluded** | None | Yes (DNS), but the device is left alone | Infrastructure that must never be touched (routers, mesh nodes, Thread border routers) and, later, devices that must never be steered by Watch mode |
+| **Excluded** | None | Yes (DNS), but the device is left alone | Infrastructure that must never be touched (routers, mesh nodes, Thread border routers) and any device that must never be steered by Watch mode. Watch mode also excludes infrastructure on its own, without this |
 
 Like a sheep wandering off while the shepherd keeps watch, a wandering device talks freely and nothing it does goes unseen.
 
@@ -157,4 +164,4 @@ Like a sheep wandering off while the shepherd keeps watch, a wandering device ta
 - **Visible everywhere.** Wandering queries carry `wandering: true` and the reason `wandering` in the live stream, the in-memory view and the encrypted history, so they are easy to filter and replay. The HUD marks them distinctly.
 - **If both are set**, Wandering wins, so the shadow is still recorded.
 - **Search:** `wandering:true` finds the devices currently wandering.
-- **In Watch mode** (later) a wandering device is steered through Shepherd and its flows and bytes are recorded in full, with no blocking of any kind (no geo rules, no automatic blocks).
+- **In Watch mode** a wandering device is steered like any other, and its outbound destinations and bytes are recorded in full, with no blocking of any kind (no geo rules, no automatic blocks). Watch mode never blocks anything, so steering a wandering device is pure visibility, which is exactly what the mode is for.
