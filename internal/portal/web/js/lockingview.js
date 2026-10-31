@@ -1,15 +1,24 @@
-// The Locking settings screen: idle auto-lock, PIN setup/change/removal, and
-// the trusted-browser list with revoke. Not shown in demo mode (there is no
-// real session to manage).
+// The Locking settings screen: idle auto-lock, PIN setup/change/removal,
+// passkeys (add, rename, remove), and the trusted-browser list with revoke.
+// Not shown in demo mode (there is no real session to manage).
 import { el } from './dom.js';
 import { button, confirmDialog, relTime, emptyState, unavailableCard } from './ui.js';
 import { unavailable } from './mgmt.js';
 import { idleChoices, pinIssue } from './locking.js';
+import { creationOptions, registrationJSON, passkeyCardState, ceremonyError } from './passkeys.js';
 
-export function createLocking({ root, mgmt, notify }) {
+// webauthn and env are seams for the browser's WebAuthn API and secure-
+// context state; the defaults are the real ones.
+export function createLocking({
+  root, mgmt, notify,
+  webauthn = globalThis.navigator && globalThis.navigator.credentials,
+  env = () => ({ secureContext: !!globalThis.isSecureContext, hasWebAuthn: !!globalThis.PublicKeyCredential }),
+}) {
   let settings = null; // { idle_lock_minutes, pin_set, trusted_device_count }
   let devices = [];
   let loadError = null;
+  let passkeyStatus = null; // GET /api/passkeys
+  let passkeyError = null;
 
   root.replaceChildren();
   const head = el('div', 'pg-head stack');
@@ -19,8 +28,9 @@ export function createLocking({ root, mgmt, notify }) {
   );
   const idleCard = el('section', 'card');
   const pinCard = el('section', 'card');
+  const passkeyCard = el('section', 'card');
   const devicesCard = el('section', 'card');
-  root.append(head, idleCard, pinCard, devicesCard);
+  root.append(head, idleCard, pinCard, passkeyCard, devicesCard);
 
   function paintIdle() {
     idleCard.replaceChildren(el('h3', 'card-t', 'Auto-lock after idle'));
@@ -155,6 +165,120 @@ export function createLocking({ root, mgmt, notify }) {
     return off;
   }
 
+  // paintPasskeys shows the passkey card. "Add a passkey" is only enabled
+  // when a ceremony can actually work from this page (see passkeyCardState):
+  // otherwise the card says why - [tls] is off, or this is not the portal's
+  // own HTTPS address, with a link there - before anything is attempted.
+  function paintPasskeys() {
+    passkeyCard.replaceChildren(el('h3', 'card-t', 'Passkeys'));
+    if (passkeyError) {
+      passkeyCard.append(unavailable(passkeyError) ? unavailableCard('Passkeys') : emptyState('Passkeys are unavailable', passkeyError.message, button('Try again', 'ghost', load)));
+      return;
+    }
+    if (!passkeyStatus) return;
+    passkeyCard.append(el('p', 'muted small', 'Unlock with Face ID, Touch ID, Windows Hello, your phone or a security key instead of typing a PIN. The token and PIN keep working either way.'));
+    const state = passkeyCardState(passkeyStatus, env());
+    if (state.message) {
+      const note = el('div', 'note-card');
+      const text = el('p', '', state.message);
+      note.append(text);
+      if (state.goTo) {
+        const a = el('a', '', 'Open ' + state.goTo);
+        a.href = state.goTo + '/#locking';
+        note.append(a);
+      }
+      passkeyCard.append(note);
+    }
+    const f = el('form', 'inline-add');
+    const name = el('input');
+    name.placeholder = 'Name, e.g. My phone';
+    name.maxLength = 64;
+    name.setAttribute('aria-label', 'Passkey name');
+    const add = button('Add a passkey', 'primary');
+    add.type = 'submit';
+    add.disabled = name.disabled = !state.canAdd;
+    const err = el('p', 'err small');
+    f.append(name, add);
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.textContent = '';
+      add.disabled = true;
+      try {
+        const opts = await mgmt.beginPasskeyRegistration(name.value.trim());
+        const cred = await webauthn.create({ publicKey: creationOptions(opts) });
+        if (!cred) throw new Error('Cancelled.');
+        await mgmt.finishPasskeyRegistration(registrationJSON(cred));
+        name.value = '';
+        notify('Passkey added. Lock and sign in with it once to make sure it works before you rely on it.');
+        await load();
+      } catch (er) {
+        err.textContent = ceremonyError(er);
+        add.disabled = false;
+      }
+    });
+    passkeyCard.append(f, err);
+
+    const list = passkeyStatus.passkeys || [];
+    if (!list.length) {
+      passkeyCard.append(el('p', 'muted small', 'No passkeys yet.'));
+      return;
+    }
+    const ul = el('ul', 'list');
+    for (const pk of list) ul.append(passkeyRow(pk));
+    passkeyCard.append(ul);
+  }
+
+  function passkeyRow(pk) {
+    const li = el('li');
+    const main = el('div', 'grow');
+    const title = el('div', 'small', pk.name);
+    const meta = 'Added ' + relTime(pk.created) + ' · ' + (pk.last_used ? 'last used ' + relTime(pk.last_used) : 'never used yet') + (pk.synced ? ' · synced' : '');
+    main.append(title, el('div', 'muted small', meta));
+    const rename = button('Rename', 'ghost');
+    rename.addEventListener('click', () => {
+      const f = el('form', 'inline-add');
+      const inp = el('input');
+      inp.value = pk.name;
+      inp.maxLength = 64;
+      inp.setAttribute('aria-label', 'New name for ' + pk.name);
+      const save = button('Save', 'primary');
+      save.type = 'submit';
+      const cancel = button('Cancel', 'ghost', () => paintPasskeys());
+      f.append(inp, save, cancel);
+      f.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          await mgmt.renamePasskey(pk.id, inp.value.trim());
+          notify('Renamed');
+          await load();
+        } catch (er) {
+          notify('Could not rename: ' + er.message);
+        }
+      });
+      title.replaceWith(f);
+      rename.hidden = true;
+      inp.focus();
+    });
+    const rm = button('Remove', 'ghost danger');
+    rm.addEventListener('click', async () => {
+      const ok = await confirmDialog({
+        title: 'Remove this passkey?',
+        body: pk.name + ' will no longer unlock this portal, and any session it opened ends now. The passkey stays on the device itself; delete it there too if you like.',
+        confirm: 'Remove', danger: true,
+      });
+      if (!ok) return;
+      try {
+        await mgmt.revokePasskey(pk.id);
+        notify('Passkey removed');
+        await load();
+      } catch (e) {
+        notify('Could not remove: ' + e.message);
+      }
+    });
+    li.append(main, rename, rm);
+    return li;
+  }
+
   function paintDevices() {
     devicesCard.replaceChildren(el('h3', 'card-t', 'Trusted browsers'));
     if (loadError) {
@@ -204,6 +328,9 @@ export function createLocking({ root, mgmt, notify }) {
   }
 
   async function load() {
+    // Passkeys load on their own, so a passkey problem (say, an unreadable
+    // passkeys.json) never hides the PIN or trusted-browser cards.
+    const pk = mgmt.passkeys().then((p) => { passkeyStatus = p; passkeyError = null; }, (e) => { passkeyError = e; });
     try {
       const [s, d] = await Promise.all([mgmt.settings(), mgmt.trustedDevices()]);
       settings = (s && s.locking) || settings;
@@ -212,8 +339,10 @@ export function createLocking({ root, mgmt, notify }) {
     } catch (e) {
       loadError = e;
     }
+    await pk;
     paintIdle();
     paintPIN();
+    paintPasskeys();
     paintDevices();
   }
 

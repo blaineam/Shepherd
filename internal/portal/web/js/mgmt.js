@@ -83,6 +83,11 @@ export function createMgmt(api) {
     trustedDevices: () => api('/api/trusted-devices'),
     revokeTrustedDevice: (id) => api('/api/trusted-devices/' + encodeURIComponent(id), { method: 'DELETE' }),
     lock: () => post('/api/lock', {}),
+    passkeys: () => api('/api/passkeys'),
+    beginPasskeyRegistration: (name) => post('/api/passkeys/register/begin', { name }),
+    finishPasskeyRegistration: (credential) => post('/api/passkeys/register/finish', credential),
+    renamePasskey: (id, name) => api('/api/passkeys/' + encodeURIComponent(id), { method: 'PATCH', body: J({ name }) }),
+    revokePasskey: (id) => api('/api/passkeys/' + encodeURIComponent(id), { method: 'DELETE' }),
 
     vulnscanStatus: () => api('/api/vulnscan'),
     vulnscanDevices: () => api('/api/vulnscan/devices'),
