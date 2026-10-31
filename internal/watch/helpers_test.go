@@ -71,6 +71,10 @@ type fakePlatform struct {
 	driverErr    error
 	carrier      uint64
 	carrierErr   error
+	counters     Counters
+	countersErr  error
+	ipForward    bool
+	ipForwardErr error
 	// extraMACs/extraIPs are further interfaces this host has, for the
 	// multi-homed case; localAddrsErr makes the enumeration fail.
 	extraMACs     []arp.MAC
@@ -455,4 +459,70 @@ func (p *fakePlatform) requestedXDP() intercept.XDPMode {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.xdpRequested
+}
+
+// InterfaceCounters stands in for sysfs. addCounters drives it, so a test
+// can make the interface look like it is relaying its own output back.
+func (p *fakePlatform) InterfaceCounters(string) (Counters, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.countersErr != nil {
+		return Counters{}, p.countersErr
+	}
+	return p.counters, nil
+}
+
+// addCounters advances the fake interface counters, as a second of traffic
+// would.
+func (p *fakePlatform) addCounters(rxB, rxP, txB, txP uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.counters.RxBytes += rxB
+	p.counters.RxPackets += rxP
+	p.counters.TxBytes += txB
+	p.counters.TxPackets += txP
+}
+
+// IPForwarding stands in for net.ipv4.ip_forward.
+func (p *fakePlatform) IPForwarding() (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.ipForward, p.ipForwardErr
+}
+
+// retrySnapshot reads one MAC's retry state straight out of the engine,
+// under its own lock. Tests that care about the backoff assert on this
+// rather than on Snapshot's NextRetry, because the snapshot is a view of a
+// moving target: reconcile can re-steer the device and clear the entry
+// between the fail-open and the assertion.
+type retrySnapshot struct {
+	present  bool
+	failures int
+	idle     bool
+	until    time.Time
+}
+
+func (te *testEngine) retryFor(mac arp.MAC) retrySnapshot {
+	te.mu.Lock()
+	defer te.mu.Unlock()
+	rs, ok := te.retry[mac]
+	if !ok || rs == nil {
+		return retrySnapshot{}
+	}
+	return retrySnapshot{present: true, failures: rs.failures, idle: rs.idle, until: rs.until}
+}
+
+// waitFailOpen waits for the Controller to drop mac, then returns the retry
+// state as it stood at that moment.
+func (te *testEngine) waitFailOpen(t *testing.T, mac arp.MAC) retrySnapshot {
+	t.Helper()
+	var snap retrySnapshot
+	waitFor(t, "fail-open for "+mac.String(), func() bool {
+		if te.isSteered(mac) {
+			return false
+		}
+		snap = te.retryFor(mac)
+		return snap.present
+	})
+	return snap
 }

@@ -26,6 +26,13 @@ type Link struct {
 	// is for Shepherd itself and must be passed, never relayed. They go to
 	// intercept.ControllerConfig.ShepherdIPs.
 	IPv4s []netip.Addr
+	// IPv4Nets are the IPv4 prefixes configured on the interface, which is
+	// what says whether a device could be on this L2 segment at all. A
+	// device with an address outside every one of them cannot be reached
+	// by an ARP reply here, so steering it is meaningless -- and this
+	// host's own Docker containers arrive in the registry looking exactly
+	// like that.
+	IPv4Nets []netip.Prefix
 	// IPv6s are Shepherd's own IPv6 addresses on the interface, the
 	// counterpart of IPv4s for IPv6 steering
 	// (intercept.ControllerConfig.ShepherdIPs6).
@@ -64,6 +71,17 @@ type Platform interface {
 	// Shepherd learns that this driver drops the link when its rings are
 	// rebuilt, without having to know the driver in advance.
 	CarrierChanges(iface string) (uint64, error)
+	// IPForwarding reports whether this host forwards IPv4. A host that
+	// both forwards and has a second interface on the relay's own subnet
+	// is routing the segment Shepherd is doing Layer 2 steering on, and
+	// the two roles conflict: see the forwarding guard in engine.go.
+	IPForwarding() (bool, error)
+	// InterfaceCounters reads the kernel's own byte and packet counters
+	// for iface. The loop brake compares the relay's reported throughput
+	// against these: a relay carrying almost everything the interface
+	// receives, while the interface transmits the same amount it receives,
+	// is relaying its own output back to itself.
+	InterfaceCounters(iface string) (Counters, error)
 	// LocalAddrs is every MAC and every IP address on this host, across
 	// all of its interfaces, for the Own set the policy refuses to steer.
 	// It must cover interfaces the relay is not attached to: those are
@@ -89,4 +107,9 @@ type Platform interface {
 	// with it on: see the GRO discussion in docs/INTERCEPT.md.
 	GRO(iface string) (on bool, err error)
 	SetGRO(iface string, on bool) error
+}
+
+// Counters is one reading of an interface's kernel counters.
+type Counters struct {
+	RxBytes, RxPackets, TxBytes, TxPackets uint64
 }

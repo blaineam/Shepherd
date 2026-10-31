@@ -82,6 +82,11 @@ func (RealPlatform) Link(name string) (Link, error) {
 		}
 		if ip = ip.Unmap(); ip.Is4() {
 			l.IPv4s = append(l.IPv4s, ip)
+			if ones, _ := ipn.Mask.Size(); ones > 0 {
+				if pre, err := ip.Prefix(ones); err == nil {
+					l.IPv4Nets = append(l.IPv4Nets, pre)
+				}
+			}
 		} else if ip.Is6() {
 			l.IPv6s = append(l.IPv6s, ip)
 		}
@@ -274,4 +279,42 @@ func validIfaceName(iface string) error {
 		return fmt.Errorf("watch: invalid interface name %q", iface)
 	}
 	return nil
+}
+
+// InterfaceCounters reads iface's byte and packet counters from sysfs.
+func (RealPlatform) InterfaceCounters(iface string) (Counters, error) {
+	if err := validIfaceName(iface); err != nil {
+		return Counters{}, err
+	}
+	read := func(name string) (uint64, error) {
+		b, err := os.ReadFile(filepath.Join("/sys/class/net", iface, "statistics", name))
+		if err != nil {
+			return 0, err
+		}
+		return strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+	}
+	var c Counters
+	for _, f := range []struct {
+		name string
+		dst  *uint64
+	}{
+		{"rx_bytes", &c.RxBytes}, {"rx_packets", &c.RxPackets},
+		{"tx_bytes", &c.TxBytes}, {"tx_packets", &c.TxPackets},
+	} {
+		v, err := read(f.name)
+		if err != nil {
+			return Counters{}, fmt.Errorf("watch: %s of %s: %w", f.name, iface, err)
+		}
+		*f.dst = v
+	}
+	return c, nil
+}
+
+// IPForwarding reads net.ipv4.ip_forward.
+func (RealPlatform) IPForwarding() (bool, error) {
+	b, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
+	if err != nil {
+		return false, fmt.Errorf("watch: reading ip_forward: %w", err)
+	}
+	return strings.TrimSpace(string(b)) == "1", nil
 }
