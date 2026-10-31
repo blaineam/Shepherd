@@ -98,7 +98,12 @@ func makeTestCertDER(hostname string, csrDER []byte) ([]byte, error) {
 		return nil, err
 	}
 	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: hostname}, DNSNames: []string{hostname},
+		// DNSNames mirrors the real CSR, not just hostname: a test that sets
+		// Obtainer.ExtraHostnames (e.g. the bare base domain alongside its
+		// wildcard) needs the issued fake certificate to actually cover
+		// every name that was really requested, the same way a real CA's
+		// certificate would.
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: hostname}, DNSNames: csr.DNSNames,
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(90 * 24 * time.Hour),
 	}
 	return x509.CreateCertificate(rand.Reader, tmpl, tmpl, csr.PublicKey, issuerKey)

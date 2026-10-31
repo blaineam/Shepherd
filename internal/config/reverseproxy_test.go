@@ -21,6 +21,9 @@ func TestReverseProxyDefaultsAreOffAndInert(t *testing.T) {
 	if rp.Listen != ":8443" {
 		t.Errorf("listen default = %q, want :8443 (never 443: binding it is the owner's call)", rp.Listen)
 	}
+	if rp.RedirectListen != ":80" {
+		t.Errorf("redirect_listen default = %q, want :80", rp.RedirectListen)
+	}
 	if rp.Domain != "" || rp.CloudflareAPIToken != "" || rp.CloudflareAPITokenFile != "" || rp.Email != "" {
 		t.Errorf("a fresh install must configure no domain or secret under [reverseproxy]: %+v", rp)
 	}
@@ -49,10 +52,12 @@ cloudflare_api_token = "cf-test-token"
 		ok + "domain = \"exa mple.com\"":    "reverseproxy.domain",
 		ok + "domain = \"*.*.example.com\"": "reverseproxy.domain",
 		ok + "domain = \"example.com:443\"": "reverseproxy.domain",
-		"[reverseproxy]\nenabled = true\nlisten = \"\"\ndomain = \"example.com\"\ncloudflare_api_token = \"t\"":                                     "reverseproxy.listen",
-		"[reverseproxy]\nenabled = true\ndomain = \"example.com\"":                                                                                  "cloudflare_api_token",
-		"[reverseproxy]\nenabled = true\ndomain = \"example.com\"\ncloudflare_api_token = \"t\"\ncloudflare_api_token_file = \"/tmp/x\"":            "not both",
-		"[tls]\nenabled = true\nhostname = \"h.example.com\"\nlisten = \":9443\"\ncloudflare_api_token = \"t\"\n" + ok + "domain = \"example.com\"": "same address",
+		"[reverseproxy]\nenabled = true\nlisten = \"\"\ndomain = \"example.com\"\ncloudflare_api_token = \"t\"":                                                              "reverseproxy.listen",
+		"[reverseproxy]\nenabled = true\ndomain = \"example.com\"":                                                                                                           "cloudflare_api_token",
+		"[reverseproxy]\nenabled = true\ndomain = \"example.com\"\ncloudflare_api_token = \"t\"\ncloudflare_api_token_file = \"/tmp/x\"":                                     "not both",
+		"[tls]\nenabled = true\nhostname = \"h.example.com\"\nlisten = \":9443\"\ncloudflare_api_token = \"t\"\n" + ok + "domain = \"example.com\"":                          "same address",
+		ok + "domain = \"example.com\"\nredirect_listen = \":9443\"":                                                                                                         "same address",
+		"[tls]\nenabled = true\nhostname = \"h.example.com\"\nlisten = \":80\"\ncloudflare_api_token = \"t\"\n" + ok + "domain = \"example.com\"\nredirect_listen = \":80\"": "same address",
 	}
 	for body, want := range bad {
 		path := filepath.Join(t.TempDir(), "c.toml")

@@ -271,6 +271,14 @@ type ReverseProxy struct {
 	// 443: taking over the standard port from an existing reverse proxy is
 	// a cutover the owner makes deliberately (docs/REVERSEPROXY.md).
 	Listen string `toml:"listen"`
+	// RedirectListen is where a plain-HTTP listener answers every request
+	// with a 302 to the same host and path over https, so a bookmark or
+	// hardcoded "http://" link to a proxied host still gets there instead
+	// of just failing to connect once nothing else is listening on 80.
+	// ":80" by default, like Listen itself never bound unless this is
+	// also [reverseproxy].enabled; empty turns the redirect off (say, to
+	// leave port 80 for something else) without disabling the proxy.
+	RedirectListen string `toml:"redirect_listen"`
 	// Domain is the zone the wildcard certificate covers: "example.com"
 	// (or "*.example.com", the same thing) gets "*.example.com", valid for
 	// jellyfin.example.com but not for example.com itself or a.b.example.com.
@@ -417,7 +425,7 @@ func Default() Config {
 		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600, WANExposure: WANExposure{Enabled: true, RefreshIntervalSeconds: 600}},
 		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600},
 		Nethealth:      Nethealth{Enabled: false, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
-		ReverseProxy:   ReverseProxy{Listen: ":8443"},
+		ReverseProxy:   ReverseProxy{Listen: ":8443", RedirectListen: ":80"},
 		DataDir:        "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
@@ -589,6 +597,14 @@ func (c Config) validateReverseProxy() error {
 	}
 	if c.TLS.Enabled && c.TLS.Listen == rp.Listen {
 		return fmt.Errorf("tls.listen and reverseproxy.listen are the same address (%s); each needs its own", rp.Listen)
+	}
+	if rp.RedirectListen != "" {
+		if rp.RedirectListen == rp.Listen {
+			return fmt.Errorf("reverseproxy.redirect_listen and reverseproxy.listen are the same address (%s); each needs its own", rp.Listen)
+		}
+		if c.TLS.Enabled && c.TLS.Listen == rp.RedirectListen {
+			return fmt.Errorf("tls.listen and reverseproxy.redirect_listen are the same address (%s); each needs its own", rp.RedirectListen)
+		}
 	}
 	return nil
 }

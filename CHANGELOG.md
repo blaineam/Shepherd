@@ -33,7 +33,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   **One wildcard certificate** (`*.<domain>`) covers every host, issued over the same Cloudflare DNS-01
   flow as `[tls]` (now shared as `startCertManager`; `[tls]` behaves exactly as before) but kept in its
   own `<data_dir>/reverseproxy/tls/`; `tlscert.Obtainer` was already wildcard-capable and a test now
-  proves the CSR and challenge naming. Backend certificates are verified by default, with an explicit
+  proves the CSR and challenge naming. The same order also asks for the bare base domain itself
+  (`Obtainer.ExtraHostnames`, a general "more names on the same certificate" seam): a pure wildcard never
+  covers `example.com` on its own, only `*.example.com`, which the first live cutover hit directly (a
+  host at the bare apex domain). A plain-HTTP listener (`redirect_listen`, `:80` by default, empty to
+  turn it off) answers every request with a 302 to the same host and path over https, so a bookmarked or
+  hardcoded `http://` link still gets there instead of failing to connect once nothing else owns port 80.
+  Backend certificates are verified by default, with an explicit
   per-host "accept any backend certificate" switch for self-signed backends (a typical manager never
   verified them at all). Hosts live in `<data_dir>/reverseproxy.json` (0600), managed only from the
   portal — never seeded from `shepherd.toml`, nothing written until the first edit, editable while the
@@ -43,12 +49,15 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   tests) that badges any name the wildcard cannot cover and any backend left unverified. New config:
   `[reverseproxy]`'s `enabled` (**false by default**), `listen` (`:8443` by default, never 443: moving
   the standard port over is the owner's deliberate cutover), `domain`, `email` and
-  `cloudflare_api_token`/`cloudflare_api_token_file` (same rules as `[tls]`). A taken listen port stops
-  startup with a clear error; obtaining the certificate never blocks it. Not yet: per-host access control
-  of any kind, custom per-host config, an HTTP-to-HTTPS redirect listener, an access log, or import from
-  an existing manager — a straight migration can lose per-host features a manager had. Every test runs
-  against fakes and loopback; a real wildcard issuance and real application traffic have not been tried.
-  See docs/REVERSEPROXY.md, including its "Before you point real traffic at this" checklist.
+  `cloudflare_api_token`/`cloudflare_api_token_file` (same rules as `[tls]`), and `redirect_listen`
+  (`:80` by default). A taken listen port (either one) stops startup with a clear error; obtaining the
+  certificate never blocks it. Not yet: per-host access control of any kind, custom per-host config, an
+  access log, or import from an existing manager — a straight migration can lose per-host features a
+  manager had. Every automated test runs against fakes and loopback, but this has also now been run for
+  real: a real wildcard certificate issued against a live Cloudflare zone, a dozen real services imported
+  from an existing reverse-proxy manager and verified one by one (including a real WebSocket handshake
+  against a live backend), and a real cutover of port 443 itself. See docs/REVERSEPROXY.md, including its
+  "Before you point real traffic at this" checklist.
 - **Marketing site (`site/`):** a public, vanilla-HTML/CSS/JS landing page — hero, the real shipped feature
   set (DNS filtering and the 95-list catalog, devices, the globe HUD, alarms, port and vulnerability
   scanning, geo-block, portal locking, self-healing upstreams and more), an honest "what's coming" section

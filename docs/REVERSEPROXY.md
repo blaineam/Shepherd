@@ -45,6 +45,7 @@ Any `X-Forwarded-*` header the client sent is dropped before these are set.
 [reverseproxy]
 enabled = false
 listen = ":8443"                # binding 443 is your call, not a default
+redirect_listen = ":80"         # 302s every request to https://; "" leaves port 80 alone
 domain = ""                     # e.g. "example.com" -> certificate for *.example.com
 email = ""                      # optional; Let's Encrypt expiry-notice contact
 cloudflare_api_token = ""
@@ -111,11 +112,19 @@ feature can overwrite the other. Renewal, caching and the "never block startup o
 Cloudflare" behavior are `[tls]`'s, shared through `startCertManager`; see [TLS.md](TLS.md#renewal).
 `[tls]` itself is unchanged.
 
-**What a wildcard does not cover**, and the portal flags with a badge:
+**The certificate also covers the bare base domain itself.** A pure `*.example.com` wildcard is valid for
+`jellyfin.example.com` but never for `example.com` itself — a real surprise the first live cutover hit
+directly (a host pointed at the bare apex domain, a legacy service predating any subdomain convention).
+Rather than live with that gap, the same order also asks for the bare base domain as a second name
+(`Obtainer.ExtraHostnames`): one ACME order, two authorizations, one certificate whose SANs are
+`["*.example.com", "example.com"]`. A test proves both the CSR and the issued leaf cover both forms, and
+that a host pointed directly at the bare base domain actually gets served, not just a startup warning.
 
-- **Exactly one label.** `*.example.com` is valid for `jellyfin.example.com` but **not** for
-  `a.b.example.com`. If your hosts are all `name.home.example.com`, set `domain = "home.example.com"`.
-- **Not the bare domain.** `example.com` itself is not covered.
+**What this one certificate still does not cover**, and the portal flags with a badge:
+
+- **Exactly one label beyond the base.** `*.example.com` (plus the base domain itself, see above) is
+  valid for `jellyfin.example.com` and `example.com`, but **not** for `a.b.example.com`. If your hosts are
+  all `name.home.example.com`, set `domain = "home.example.com"`.
 - **One zone.** Hosts under two different domains cannot share one wildcard; that would need design (2).
 
 ## Backend certificates
@@ -166,9 +175,10 @@ proxies a name to one backend, and that is all. Not built:
 - **No custom per-host configuration**: no extra headers, no custom locations (sending one path to a
   different backend), no rewrites, no "advanced" free-form server config, no caching, no "block common
   exploits"-style filtering, no per-host body size limits or timeouts.
-- **No plain-HTTP listener and no HTTP-to-HTTPS redirect.** If clients reach your services on port 80
-  today (or rely on a "force SSL" redirect), something else must answer port 80 after a cutover.
-- **No HSTS** or other security headers added to responses.
+- **`redirect_listen` only redirects; it does not terminate anything on port 80.** It answers every
+  request with a 302 to the same host and path over https (no per-host matching — unknown names get
+  redirected too, same as nginx's typical catch-all). Off entirely with `redirect_listen = ""`, say to
+  leave port 80 for something else. No HSTS is added on the https side.
 - **No per-host certificates, no custom (uploaded) certificates, no second zone.**
 - **No TCP/UDP stream forwarding, redirection hosts or dead-host pages**: HTTP(S) proxy hosts only.
 - **No access log.** Backend failures are logged by host name only (never the path or query, which can
@@ -207,7 +217,8 @@ Read this before moving DNS or port 443 over. It is the honest list.
    proxies (Home Assistant's `trusted_proxies`, Jellyfin's known proxies, and similar) must list the
    address Shepherd connects to them from. If the old proxy ran on the same host and connected over
    loopback, that may already match; check, do not assume.
-7. **Decide what answers port 80** (see Limits), and whether anything relied on a redirect.
+7. **`redirect_listen` (`:80` by default) answers port 80 with a redirect automatically** once
+   `[reverseproxy]` is enabled; set it to `""` instead if you want to leave port 80 to something else.
 8. **Cut over with a rollback ready.** Stop the old proxy (freeing 443), set `listen = ":443"` (with the
    privilege to bind it), restart Shepherd. Leave the old proxy's configuration and certificates in place:
    rolling back is setting `listen` back, restarting Shepherd and starting the old proxy again.
@@ -228,8 +239,16 @@ WebSocket through `run()` with the host added over the portal API; the portal AP
 mapping; the Proxy tab's pure logic. The Proxy tab was also exercised by hand in a browser against a
 loopback-only development instance, at phone and desktop widths.
 
-**Not verified:** a real wildcard issuance against Let's Encrypt and Cloudflare (`[tls]`'s single-name
-flow has had live trial runs; a wildcard has never been requested from a real CA); real Jellyfin, Immich, Home Assistant or other application
-traffic, and real browsers' WebSocket clients, through Shepherd; throughput or latency under real load
-compared to the proxy it would replace; and any real backend's self-signed certificate. Those belong to
-the supervised steps in the checklist above, not to this change.
+**Verified live, against a real deployment, following the checklist above:** a real wildcard certificate
+(covering the base domain too, per the ExtraHostnames fix) issued against a live Cloudflare zone and a
+real Let's Encrypt account; a dozen real services imported from an existing reverse-proxy manager and
+checked one by one on a spare port before cutover; a real browser-equivalent WebSocket handshake
+(`101 Switching Protocols`) against a live backend that genuinely depends on it; and a real cutover of
+port 443 away from that manager, with several of the real services confirmed working on the actual
+hostnames afterward.
+
+**Still not verified:** throughput or latency under real sustained load compared to the proxy it
+replaced; a real backend's self-signed certificate with `skip_tls_verify`; the handful of services that
+were already stopped at cutover time (their routes are configured and should work the same way once
+they are running again, but that is a claim, not yet a check); and `redirect_listen`'s 302 against a
+real browser rather than a direct HTTP client.

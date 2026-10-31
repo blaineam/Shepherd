@@ -81,13 +81,18 @@ type certSpec struct {
 	logPrefix string
 	dir       string
 	hostname  string
-	email     string
-	token     func() (string, error)
-	bootstrap []string
-	acme      tlscert.ACMEClient
-	dns01     tlscert.DNS01Provider
-	propagate func(ctx context.Context, fqdn, value string) error
-	every     time.Duration
+	// extraHostnames are additional names on the same certificate as
+	// hostname — see tlscert.Obtainer.ExtraHostnames. Empty for [tls],
+	// which only ever has the one name; startReverseProxy sets it to the
+	// bare base domain, since a wildcard never covers that on its own.
+	extraHostnames []string
+	email          string
+	token          func() (string, error)
+	bootstrap      []string
+	acme           tlscert.ACMEClient
+	dns01          tlscert.DNS01Provider
+	propagate      func(ctx context.Context, fqdn, value string) error
+	every          time.Duration
 }
 
 // startCertManager is the shared half of startTLS and startReverseProxy:
@@ -123,6 +128,7 @@ func startCertManager(ctx context.Context, spec certSpec) (*tlscert.Manager, err
 		ACME:             acmeClient,
 		DNS01:            dns01,
 		Hostname:         spec.hostname,
+		ExtraHostnames:   spec.extraHostnames,
 		Contact:          spec.email,
 		PropagationCheck: propagationCheck,
 		OnCleanupError:   func(err error) { log.Printf("%s: %v", spec.logPrefix, err) },
