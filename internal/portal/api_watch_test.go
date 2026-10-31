@@ -70,6 +70,11 @@ func TestWatchStatusWithoutAnEngineIsHonestNotAnError(t *testing.T) {
 	if out["enabled"] != false || out["phase"] != watch.PhaseDisabled || out["reason"] == "" {
 		t.Fatalf("status = %v", out)
 	}
+	// Not armed=false: that would read as "someone pressed the kill
+	// switch", which is a different and alarming claim.
+	if out["armed"] != true {
+		t.Fatalf("a switched-off Watch mode must not look kill-switched: %v", out)
+	}
 	if len(out["devices"].([]any)) != 0 || len(out["history"].([]any)) != 0 {
 		t.Fatalf("status = %v", out)
 	}

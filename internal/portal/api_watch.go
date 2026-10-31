@@ -29,8 +29,13 @@ func watchJSON(snap watch.Snapshot) map[string]any {
 
 func (s *Server) getWatch(w http.ResponseWriter, r *http.Request) {
 	if s.Watch == nil {
-		writeJSON(w, watchJSON(watch.Snapshot{Phase: watch.PhaseDisabled,
-			Reason:  "Watch mode is not wired into this build",
+		// Armed is true deliberately, even though nothing is running:
+		// "armed" means the kill switch is not holding steering down, and
+		// reporting false here would say someone had pressed it when the
+		// truth is that Watch mode is switched off. The live install hit
+		// exactly that reading.
+		writeJSON(w, watchJSON(watch.Snapshot{Phase: watch.PhaseDisabled, Armed: true,
+			Reason:  "Watch mode is turned off in the configuration",
 			Devices: []watch.DeviceStatus{}, History: []watch.HistoryRecord{}}))
 		return
 	}

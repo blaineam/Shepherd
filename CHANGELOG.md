@@ -28,7 +28,9 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   nothing. Every device gets a three-way **Watch** switch (automatic/always/never) in the registry, the portal, bulk
   actions and search (`watch:off`), and the engine re-steers by MAC on an address change. Safety: the engine owns a
   **kill switch** that panic-stops every device at once and **persists across restarts** until re-armed
-  (`<data_dir>/watch.json`, the only thing it saves); the interception library's health loop still fails a device
+  (`<data_dir>/watch.json`, the only thing it saves; a Shepherd with Watch mode switched off reports
+  itself armed, since nothing is holding steering down — reporting otherwise would read as a kill
+  switch somebody pressed); the interception library's health loop still fails a device
   open on silence, now with a widening retry backoff so a failing device is not flapped; a relay that dies unsteers
   everything and the engine restarts on a backoff; the passive ARP monitor's `gateway-mac-changed` event makes the
   engine re-read the kernel's neighbour table (the event's own MAC is never trusted) and restart with the new MAC.
