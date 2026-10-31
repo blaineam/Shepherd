@@ -31,25 +31,28 @@ func TestAttachXDPRelaysOnVeth(t *testing.T) {
 		t.Skip("needs the ip tool")
 	}
 	const a, b = "shepxdp0", "shepxdp1"
-	run := func(args ...string) {
+	// Setting the test's own interfaces up is not what is under test, and
+	// it is the part that depends on the environment: being root is not
+	// enough (an unprivileged container is root without CAP_NET_ADMIN, and
+	// refuses to create a veth pair at all), and busybox's cut-down `ip`,
+	// which is what a plain Alpine image provides, satisfies LookPath above
+	// and then cannot bring the peer up. Neither is a failure of this
+	// package, so the whole setup skips instead of failing and `make
+	// test-xdp` — a privileged container with the real iproute2 — is how it
+	// actually runs. Everything after the setup is the real assertion and
+	// still fails loudly.
+	setUp := func(args ...string) {
 		t.Helper()
 		if out, err := exec.Command("ip", args...).CombinedOutput(); err != nil {
-			t.Fatalf("ip %v: %v: %s", args, err, out)
+			t.Skipf("cannot set up the veth pair (needs CAP_NET_ADMIN and a full iproute2): ip %v: %v: %s", args, err, out)
 		}
 	}
 	_ = exec.Command("ip", "link", "del", a).Run()
-	// Being root is not enough: an unprivileged container runs as root
-	// without CAP_NET_ADMIN, where creating a veth pair is refused. Skip
-	// on that rather than failing, so a plain `go test` in a container
-	// behaves like one on a developer's machine. `make test-xdp` runs this
-	// for real in a privileged container.
-	if out, err := exec.Command("ip", "link", "add", a, "type", "veth", "peer", "name", b).CombinedOutput(); err != nil {
-		t.Skipf("cannot create a veth pair (needs CAP_NET_ADMIN): %v: %s", err, out)
-	}
+	setUp("link", "add", a, "type", "veth", "peer", "name", b)
 	t.Cleanup(func() { _ = exec.Command("ip", "link", "del", a).Run() })
-	run("link", "set", a, "up")
-	run("link", "set", b, "up")
-	run("addr", "add", "192.0.2.2/24", "dev", a)
+	setUp("link", "set", a, "up")
+	setUp("link", "set", b, "up")
+	setUp("addr", "add", "192.0.2.2/24", "dev", a)
 
 	ifA, err := net.InterfaceByName(a)
 	if err != nil {

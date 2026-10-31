@@ -267,11 +267,14 @@ type Engine struct {
 	gateway netip.Addr
 	gwMAC   arp.MAC
 	gwLL    netip.Addr // the gateway's link-local address, for IPv6 steering
-	v6      bool       // IPv6 steering is in effect this session
-	v6Why   string     // why it is not, when it was asked for
-	since   time.Time
-	ctrl    *intercept.Controller
-	killed  bool
+	// pinnedIface is the interface a session last ran on, kept so a moving
+	// default route does not drag a working relay onto another interface.
+	pinnedIface string
+	v6          bool   // IPv6 steering is in effect this session
+	v6Why       string // why it is not, when it was asked for
+	since       time.Time
+	ctrl        *intercept.Controller
+	killed      bool
 	// Per-MAC bookkeeping.
 	retry       map[arp.MAC]*retryState
 	refused     map[arp.MAC]string // last Steer refusal, for the pending state's reason
@@ -413,8 +416,29 @@ func (e *Engine) session(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("default route: %w", err)
 	}
-	if e.cfg.Interface != "" {
+	switch {
+	case e.cfg.Interface != "":
 		iface = e.cfg.Interface
+	default:
+		// Stay on the interface an earlier session settled on, even if the
+		// default route has since moved. A host with both a wired and a
+		// wireless interface on one subnet can briefly publish a default
+		// route through the wrong one (a Wi-Fi DHCP renew is enough), and
+		// chasing it means tearing down a working relay to re-attach on an
+		// interface whose gateway may not even resolve -- which is exactly
+		// what happened on the live host, where the engine jumped from eth0
+		// to wlan0 for five seconds and refused to steer there at all.
+		// Picking once and keeping it is what an operator would do, and
+		// watch.interface overrides it outright.
+		e.mu.Lock()
+		pinned := e.pinnedIface
+		e.mu.Unlock()
+		if pinned != "" && pinned != iface {
+			if _, err := e.plat.Link(pinned); err == nil {
+				e.logOnce("watch: the default route moved to %s; staying on %s (set watch.interface to choose)", iface, pinned)
+				iface = pinned
+			}
+		}
 	}
 	link, err := e.plat.Link(iface)
 	if err != nil {
@@ -471,6 +495,7 @@ func (e *Engine) session(ctx context.Context) error {
 	e.mu.Lock()
 	e.phase, e.reason, e.relay = PhaseRunning, "", relay
 	e.link, e.gateway, e.gwMAC, e.ctrl, e.since = link, gw, gwMAC, ctrl, now
+	e.pinnedIface = iface
 	e.gwLL, e.v6, e.v6Why = gwLL, v6, v6Why
 	e.global = rateSample{at: now}
 	e.rates = map[arp.MAC]*rateSample{}

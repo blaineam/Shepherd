@@ -94,6 +94,7 @@ func newFakePlatform() *fakePlatform {
 		neighbors: []Neighbor{{IP: gwIP, MAC: gwMAC}},
 		sender:    intercept.NewFakeSender(),
 		xdpMode:   intercept.XDPNative,
+		xdpDie:    make(chan error, 1),
 		gro:       true,
 	}
 }

@@ -119,6 +119,17 @@ that. This matters: a native XDP attach makes the driver tear down and rebuild i
 which took about eight seconds on the NAS — so attaching per device would stall traffic every
 time a phone woke up.
 
+> **A native XDP attach resets the network interface, and on some drivers that means the link.**
+> On the maintainer's NAS — a 10G Aquantia/Marvell card on the `atlantic` driver — a sequence of
+> container restarts, each attaching and detaching the program, left the interface with
+> `NO-CARRIER` and took it off the network until it was brought down and up again by hand. The
+> kernel's own counters recorded five up/down transitions across those restarts. One attach is
+> fine and is what normal operation does; **repeatedly restarting Shepherd in quick succession on
+> such a driver is not.** If you are iterating on the configuration, or if a crash loop is
+> restarting Shepherd over and over, set `mode = "userspace"` (or `enabled = false`) first, and
+> check `ip link` afterwards. `mode = "userspace"` never touches the interface this way; generic
+> XDP does not reinitialise the driver either.
+
 The userspace relay needs **GRO** (generic receive offload) off on the interface, because it
 retransmits what it captures and a GRO-coalesced super-frame is bigger than Ethernet allows.
 Shepherd turns GRO off itself for as long as that relay runs and restores it on shutdown. The XDP
@@ -174,6 +185,15 @@ startup_grace_seconds = 0
 `mode = "xdp"` refuses to fall back to the userspace relay: use it when you would rather have no
 Watch mode at all than a software relay. `mode = "off"` is the same as `enabled = false`.
 
+**Set `interface` explicitly on a host with more than one interface on the same
+network.** Left empty, Shepherd follows the default route, and a machine with
+both a wired and a wireless connection can briefly publish that route through
+the wrong one — a Wi-Fi DHCP renewal is enough. Shepherd handles it: it stays on
+the interface it settled on, and if it ever does end up somewhere the gateway
+does not resolve it refuses to steer anything there and comes back on its own.
+But naming the interface removes the ambiguity, and on the maintainer's own NAS
+that means `interface = "eth0"`.
+
 ## What it needs
 
 Linux, and three capabilities:
@@ -183,6 +203,14 @@ Linux, and three capabilities:
 | `CAP_NET_RAW` | Sending the ARP replies, and the userspace relay's capture and send sockets |
 | `CAP_NET_ADMIN` | Attaching the XDP program to the interface, and toggling GRO |
 | `CAP_BPF` | Loading the XDP program (`CAP_SYS_ADMIN` before kernel 5.8) |
+| `CAP_PERFMON` | **Also required for the in-kernel relay**, and easy to miss. The kernel gates the pointer arithmetic the program does on `perfmon_capable()`, so with `CAP_BPF` alone the verifier refuses to load it (`pointer -= pointer prohibited`) and Watch mode falls back to the userspace relay. `CAP_SYS_ADMIN` covers it too, but is far broader |
+
+Only `CAP_NET_RAW` is needed for the userspace relay. The other three are what
+the in-kernel relay needs, and all three have to be present: miss `CAP_PERFMON`
+and everything still works, just through the slower path, with the reason in the
+log and on the Watch screen. This is worth checking after any change to how
+Shepherd is run — it was found on the live host, where the container had
+`CAP_BPF` but not `CAP_PERFMON` and had quietly been using the userspace relay.
 
 In Docker, with host networking:
 
@@ -190,7 +218,7 @@ In Docker, with host networking:
 services:
   shepherd:
     network_mode: host
-    cap_add: [NET_BIND_SERVICE, NET_RAW, NET_ADMIN, BPF]
+    cap_add: [NET_BIND_SERVICE, NET_RAW, NET_ADMIN, BPF, PERFMON]
 ```
 
 `net.ipv4.ip_forward` is **not** needed and is never touched: this is a Layer 2 relay done

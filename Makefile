@@ -31,8 +31,20 @@ hooks:
 # llvm-strip: Homebrew's llvm on macOS (not Apple's clang), or any distro
 # clang on Linux. Only maintainers who change the .c file run this; a plain
 # `go build` uses the committed objects and needs no clang.
+# bpf2go is invoked directly rather than through `go generate`, which would
+# silently do nothing here: the //go:generate line lives in xdp_linux.go, and
+# on a non-Linux host `go generate` skips that file for failing its build
+# constraint -- printing no error and leaving the committed objects stale,
+# which is exactly how a verifier fix once got lost. GOOS stays native on
+# purpose: setting GOOS=linux would cross-compile bpf2go itself and fail to
+# exec. clang cross-compiles the BPF object regardless of the host.
 generate-bpf:
-	PATH="/opt/homebrew/opt/llvm/bin:$$PATH" go generate ./internal/intercept/
+	cd internal/intercept && PATH="/opt/homebrew/opt/llvm/bin:$$PATH" \
+		go tool bpf2go -target bpfel,bpfeb -go-package intercept -tags linux \
+		xdp bpf/xdp_relay.c -- -I bpf/include -Wall -Werror
+	@git diff --stat -- internal/intercept/xdp_bpfe*.o | tail -1 | grep -q . \
+		&& echo "objects changed: commit internal/intercept/xdp_bpfe*.o" \
+		|| echo "objects unchanged"
 
 # Run the XDP program through a real kernel's verifier and BPF_PROG_TEST_RUN.
 # Needs Docker (the program loads inside a privileged Linux container); the

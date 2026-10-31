@@ -801,3 +801,54 @@ func TestIPv6SteeringSkipsAMultiMACDevice(t *testing.T) {
 		t.Fatalf("device = %+v", ds)
 	}
 }
+
+// A host with a wired and a wireless interface on one subnet can briefly
+// publish its default route through the wrong one. The engine must not drag
+// a working relay onto that interface; it stays where it was.
+func TestADefaultRouteThatMovesDoesNotMoveTheRelay(t *testing.T) {
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, nil)
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	if snap := te.Snapshot(); snap.Interface != "eth0" {
+		t.Fatalf("interface = %q", snap.Interface)
+	}
+
+	// The route moves to a second interface, and the session restarts.
+	plat.mu.Lock()
+	plat.iface = "wlan0"
+	plat.mu.Unlock()
+	plat.xdpDie <- errBoom
+	waitFor(t, "a restart", func() bool { return te.Snapshot().Phase != PhaseRunning })
+	waitFor(t, "running again", func() bool {
+		if te.clock.Pending() > 0 {
+			te.clock.Advance(restartBackoffMin)
+		}
+		return te.Snapshot().Phase == PhaseRunning
+	})
+	if snap := te.Snapshot(); snap.Interface != "eth0" {
+		t.Fatalf("interface = %q, want eth0: a moving route must not move the relay", snap.Interface)
+	}
+	var said bool
+	for _, l := range te.logs.all() {
+		if strings.Contains(l, "default route moved") && strings.Contains(l, "staying on eth0") {
+			said = true
+		}
+	}
+	if !said {
+		t.Fatalf("the engine should say it stayed put: %v", te.logs.all())
+	}
+}
+
+// watch.interface overrides all of that, including the pin.
+func TestConfiguredInterfaceWinsOverTheRoute(t *testing.T) {
+	plat := newFakePlatform()
+	plat.iface = "eth9" // the route says one thing
+	te := newTestEngine(t, plat, func(c *Config) { c.Interface = "eth0" })
+	te.start(t)
+	te.waitRunning(t)
+	if snap := te.Snapshot(); snap.Interface != "eth0" {
+		t.Fatalf("interface = %q, want the configured eth0", snap.Interface)
+	}
+}

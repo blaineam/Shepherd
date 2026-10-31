@@ -27,7 +27,16 @@ func loadXDPForTest(t *testing.T) *xdpObjects {
 	var objs xdpObjects
 	if err := loadXdpObjects(&objs, nil); err != nil {
 		if errors.Is(err, os.ErrPermission) || errors.Is(err, ebpf.ErrNotSupported) || os.Geteuid() != 0 {
-			t.Skipf("cannot load the XDP program here (need CAP_BPF or root): %v", err)
+			// CAP_BPF alone is not enough, and saying so matters: the
+			// kernel gates the pointer arithmetic this program does on
+			// perfmon_capable(), so a loader needs CAP_PERFMON (or
+			// CAP_SYS_ADMIN) on top of CAP_BPF or the verifier rejects it
+			// with "pointer -= pointer prohibited". That is exactly how
+			// Shepherd's own container was configured when this skip was
+			// first written, so these tests skipped in the one
+			// configuration the product actually ships -- see
+			// docs/WATCH.md's capability table.
+			t.Skipf("cannot load the XDP program here (needs CAP_BPF plus CAP_PERFMON or CAP_SYS_ADMIN, or root): %v", err)
 		}
 		t.Fatalf("load XDP objects: %v", err)
 	}
