@@ -588,12 +588,11 @@ func (e *Engine) session(ctx context.Context) error {
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	e.setPhase(PhaseStarting, "attaching the relay to "+iface)
-	// Say so before anything is attached if this host also routes the
-	// segment the relay will work on. This is a warning, not a refusal:
-	// see routingOwnSegment.
+	// Refuse before anything is attached or steered if this host is
+	// routing the very segment the relay would work on.
 	if ownNow, ok := e.own(e.clock.Now()); ok {
 		if routing, why := e.routingOwnSegment(link, ownNow); routing {
-			e.logf("watch: WARNING: %s", why)
+			return errors.New(why)
 		}
 	}
 
@@ -1656,34 +1655,38 @@ func familyNames(f intercept.Family) []string {
 
 var _ intercept.Excluder = v6Excluder{}
 
-// routingOwnSegment reports whether this host also routes the subnet the
-// relay runs on: IPv4 forwarding is on and a second interface sits in the
-// relay interface's own prefix. It is worth telling the operator, because
-// it means frames have more than one way back onto the segment.
+// routingOwnSegment reports whether this host is routing the very subnet
+// the relay runs on, which Watch mode will not steer into: IPv4
+// forwarding is on and a second interface sits in the relay interface's
+// own prefix.
 //
-// It used to refuse to start. It no longer does, for two reasons.
+// The mechanism is not fully established, but the correlation is as strong
+// as a single host can make it, and it is the only shape that has ever
+// looped. Measured on the maintainer's NAS (forwarding on, eth0 and wlan0
+// both on one /24), steering a *single ordinary device* -- one phone, by
+// explicit MAC, nothing to do with the registry or the gateway -- took the
+// interface to about 465,000 packets a second in and 517,000 out, mirrored,
+// in roughly ten seconds. The telling number is that the relay itself
+// accounted for only 41,000 packets a second of that, under a tenth: most
+// of the storm was not the relay's own output at all, which is what the
+// kernel forwarding the steered device's return traffic looks like. One
+// -sided steering teaches the router the client's address at Shepherd's
+// MAC, because that is the source address on every relayed frame, so the
+// router starts sending that client's downloads here; with forwarding on,
+// the kernel then routes them back onto the same segment.
 //
-// First, it was a precaution against an unproven mechanism, written while
-// the cause of two line-rate relay loops on the maintainer's NAS was
-// unknown. That cause is now known and is not this: the device registry
-// had merged the gateway, both host interfaces and every container bridge
-// address into one record (the ARP monitor learning Shepherd's own
-// steering frames), so the *gateway itself* became eligible to steer.
-// Steering the gateway makes the relay bounce the gateway's own frames
-// back to it, and the gateway -- having learned those clients at
-// Shepherd's MAC -- returns them, which is a tight loop at line rate.
-// Decide() now refuses any record carrying a host or gateway address, by
-// MAC and by address, which closes it at the source.
+// An earlier version of this comment blamed a polluted registry record
+// that had merged the gateway in, and a commit went out saying so. The
+// single-device trial above disproved it: no registry, no gateway, same
+// loop. That record is a real problem and Decide() refuses it by address
+// now, but it is not this.
 //
-// Second, the condition is far too broad to refuse on. Any machine running
-// Docker has IPv4 forwarding on, and a NAS with both wired and wireless on
-// one LAN is ordinary, so refusing here disabled Watch mode on exactly the
-// hardware it is meant for. XDP runs before the routing stack, so a
-// relayed frame never meets the host's routing table at all.
-//
-// The loop brake (checkForLoop) remains the backstop for any mechanism not
-// yet understood, and it is mechanism-independent: it watches for the relay
-// carrying its own output and stops steering.
+// So the refusal stands until the mechanism is measured and closed, even
+// though the condition is broad -- every Docker host forwards IPv4, and a
+// NAS with wired and wireless on one LAN is ordinary. Being unavailable on
+// such a host is much better than melting its network. The loop brake
+// (checkForLoop) remains the mechanism-independent backstop for everything
+// else.
 func (e *Engine) routingOwnSegment(link Link, own Own) (bool, string) {
 	fwd, err := e.plat.IPForwarding()
 	if err != nil || !fwd {

@@ -1413,12 +1413,12 @@ func TestAnUnknownSegmentRefusesNothing(t *testing.T) {
 }
 
 // A host that both forwards IPv4 and has a second interface on the relay's
-// own subnet is also routing the segment Watch mode steers. Shepherd says
-// so and carries on: every Docker host forwards, and a NAS with wired and
-// wireless on one LAN is ordinary, so refusing here disabled Watch mode on
-// exactly the hardware it is for. XDP runs before the routing stack. The
-// loop brake is the backstop.
-func TestWarnsButStillRelaysOnAHostRoutingItsOwnSegment(t *testing.T) {
+// own subnet is routing the segment Watch mode would steer. On the one host
+// with that shape, steering a single ordinary device took the interface to
+// ~465k packets/s in and ~517k out, mirrored, in about ten seconds -- with
+// the relay accounting for under a tenth of it. So Shepherd refuses rather
+// than relay into it. See routingOwnSegment.
+func TestRefusesToRelayOnAHostRoutingItsOwnSegment(t *testing.T) {
 	plat := newFakePlatform()
 	plat.ipForward = true
 	plat.link.IPv4Nets = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
@@ -1427,17 +1427,17 @@ func TestWarnsButStillRelaysOnAHostRoutingItsOwnSegment(t *testing.T) {
 	te := newTestEngine(t, plat, nil)
 	te.addPhone(t)
 	te.start(t)
-	te.waitRunning(t)
-	te.waitSteered(t, phoneMAC, true)
 
-	var warned bool
-	for _, l := range te.logs.all() {
-		if strings.Contains(l, "routing the segment") && strings.Contains(l, "WARNING") {
-			warned = true
-		}
+	waitFor(t, "the refusal", func() bool { return te.Snapshot().Phase == PhaseUnavailable })
+	snap := te.Snapshot()
+	if !strings.Contains(snap.Reason, "routing the segment") {
+		t.Fatalf("reason = %q, want it to explain the refusal", snap.Reason)
 	}
-	if !warned {
-		t.Fatalf("want a warning that the host routes the segment; logs = %v", te.logs.all())
+	if te.isSteered(phoneMAC) {
+		t.Fatal("nothing should be steered on such a host")
+	}
+	if x, _ := plat.counts(); x != 0 {
+		t.Fatalf("the relay should never have been attached; attaches = %d", x)
 	}
 }
 

@@ -244,29 +244,37 @@ that means `interface = "eth0"`.
 
 ## Two things that stop it by themselves
 
-**Shepherd never steers the gateway, or itself.** This is what caused both line-rate relay loops,
-and it is worth being plain about it. The device registry had merged the gateway, both of the host's
-LAN interfaces and all nine of its container bridge addresses into a *single* device record — the
-ARP monitor learning Shepherd's own steering frames as though they were a device's. That record was
-eligible to steer, so the relay ended up steering the gateway. Steering the gateway is fatal in a
-specific way: the relay bounces the gateway's own frames straight back to it, and the gateway — which
-has meanwhile learned those clients at Shepherd's MAC, because that is the source address on every
-relayed frame — returns them. That is a tight loop at line rate, in the kernel, which is why it cost
-almost no CPU and was invisible until the interface counters were read.
+**Shepherd refuses to relay on a host that routes the relay's own segment.** If IPv4 forwarding is
+on **and** another of this host's interfaces has an address inside the relay interface's own prefix,
+Watch mode reports itself unavailable with that reason and attaches nothing.
 
-The policy now refuses any record that carries a host or gateway address, **by MAC and by address**,
-and checks every address on the record rather than its primary one. A merged record, a randomised
-MAC or an address the ARP monitor learned from Shepherd's own frames is caught by the address even
-when the MAC looks like an ordinary device's. Devices off the relay interface's subnet are refused
-too, which is what the host's own containers look like.
+The mechanism is still not fully established, but the evidence is now much stronger than a
+precaution. Measured on the maintainer's NAS — forwarding on, `eth0` and `wlan0` both on one `/24` —
+steering a **single ordinary device**, one phone named by explicit MAC with the registry and the
+gateway out of the picture entirely, took the interface to about **465,000 packets a second in and
+517,000 out, mirrored, within ten seconds**. The telling number is that the relay itself accounted
+for only **41,000 packets a second** of that, under a tenth: most of the storm was not the relay's
+own output. That is the shape of the *kernel* forwarding the steered device's return traffic.
+One-sided steering teaches the router the client's address at Shepherd's MAC, because that is the
+source address on every relayed frame, so the router begins sending that client's downloads to this
+host; with forwarding on, the kernel routes them straight back onto the same segment.
 
-**A host that also routes the relay's segment is a warning, not a refusal.** If IPv4 forwarding is
-on and another of this host's interfaces has an address inside the relay interface's own prefix,
-Watch mode says so in the log and carries on. It used to refuse. That was a precaution against an
-unproven mechanism, written before the cause above was known, and the condition is far too broad to
-refuse on: every machine running Docker has IPv4 forwarding on, and a NAS with wired and wireless on
-one LAN is ordinary, so refusing disabled Watch mode on exactly the hardware it is for. XDP runs
-before the routing stack, so a relayed frame never meets the host's routing table at all.
+The condition is admittedly broad — every machine running Docker has IPv4 forwarding on, and a NAS
+with wired and wireless on one LAN is ordinary — so this does disable Watch mode on common hardware.
+That is the right trade until the mechanism is measured and closed: unavailable is much better than
+melting the network.
+
+> An earlier revision of this document blamed a polluted registry record that had merged the gateway
+> into a steerable device, and said the cause was settled. The single-device trial above disproved
+> it: no registry involvement, no gateway, same loop. That record is a real problem and is refused
+> now, but it was not the cause.
+
+**Shepherd never steers the gateway, or itself.** The policy refuses any record carrying a host or
+gateway address, **by MAC and by address**, checking every address on the record rather than its
+primary one. A merged record, a randomised MAC, or an address the ARP monitor learned from
+Shepherd's own steering frames is caught by the address even when the MAC looks like an ordinary
+device's. Devices off the relay interface's subnet are refused too, which is what the host's own
+containers look like.
 
 **The loop brake.** Whatever the cause, a relay carrying its own output is caught in three seconds
 rather than by a person noticing. Every second the engine compares the relay's own throughput
