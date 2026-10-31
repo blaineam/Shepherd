@@ -90,7 +90,7 @@ anything runs against a live network ([INTERCEPT.md](docs/INTERCEPT.md)); an **a
 ntfy delivery, mute rules and batch actions ([ALARMS.md](docs/ALARMS.md)); and **router importers** for eero
 and CSV ([IMPORT.md](docs/IMPORT.md)). Coming next: device quarantine for newly discovered devices, port and
 exposure management, a reverse proxy with certificates and tunnels, portal locking (demo data until unlocked,
-PIN, passkeys), inbound protection, the mesh, signed self-updates, the local AI and one-click installers. A
+PIN, passkeys; passkeys are now built, see [PASSKEYS.md](docs/PASSKEYS.md)), inbound protection, the mesh, signed self-updates, the local AI and one-click installers. A
 dual-NIC router profile is a stated future direction, not yet scheduled. See the [roadmap](docs/ROADMAP.md).
 
 ## How it fits together

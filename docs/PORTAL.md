@@ -35,8 +35,8 @@ the top instead of mixed alphabetically into (for a real network) dozens of othe
 trying the interface. Options: `rate=N` events per second (default 5), `demo=bytes` to see byte-weighted lanes,
 `rotate=0` to stop the auto-rotate, `nogl=1` to force the 2D map, `debug=1` to expose `window.__hud` for measuring.
 
-The portal is also locked behind demo data by default until you sign in with the token or a PIN, and relocks itself
-after you are idle. See [LOCKING.md](LOCKING.md).
+The portal is also locked behind demo data by default until you sign in with the token, a PIN or (at the portal's own
+HTTPS address) a passkey, and relocks itself after you are idle. See [LOCKING.md](LOCKING.md) and [PASSKEYS.md](PASSKEYS.md).
 
 ## How it gets data
 

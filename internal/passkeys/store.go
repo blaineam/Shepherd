@@ -232,12 +232,18 @@ func (s *Store) Remove(id string) error {
 
 // RecordLogin stores the credential record the library returned after a
 // successful login (its new sign count and flags) and the time it was used.
+// It never lowers the stored sign count: two logins racing with one key can
+// both validate against the same stored value, and the slower save must not
+// move the counter back under the faster one.
 func (s *Store) RecordLogin(cred webauthn.Credential, now time.Time) (Passkey, error) {
 	var out Passkey
 	return out, s.mutate(func(list []Passkey) ([]Passkey, error) {
 		i := slices.IndexFunc(list, func(p Passkey) bool { return bytes.Equal(p.Credential.ID, cred.ID) })
 		if i < 0 {
 			return nil, ErrNotFound
+		}
+		if stored := list[i].Credential.Authenticator.SignCount; cred.Authenticator.SignCount < stored {
+			cred.Authenticator.SignCount = stored
 		}
 		list[i].Credential = cred
 		list[i].LastUsed = now

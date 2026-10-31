@@ -4,7 +4,7 @@ Built. The portal never shows real data to someone who has not unlocked it.
 
 ## Behavior
 
-- **Locked** is the default. Opening the portal shows the full interface running on **synthetic demo data**, generated in the browser exactly like `/?demo=1` always has (see [PORTAL.md](PORTAL.md)). It makes no API calls for real data, so there is nothing to leak from a screen on a wall, a screen share or a passer-by. A "Locked" card sits over the demo view with **Unlock with PIN** and **Unlock with token** forms.
+- **Locked** is the default. Opening the portal shows the full interface running on **synthetic demo data**, generated in the browser exactly like `/?demo=1` always has (see [PORTAL.md](PORTAL.md)). It makes no API calls for real data, so there is nothing to leak from a screen on a wall, a screen share or a passer-by. A "Locked" card sits over the demo view with **Unlock with PIN** and **Unlock with token** forms (and, at the portal's own HTTPS address once one is registered, **Sign in with a passkey**; see [PASSKEYS.md](PASSKEYS.md)).
 - **Unlock** with a PIN, once you have set one, or with the portal token. The very first unlock uses the token; right after it (when no PIN is set yet) the portal sends you straight to the Locking screen to set one, so you do not have to paste the long token again next time. Unlocking reloads the page into the real, authenticated view.
 - **Idle relock.** After a period with no real activity (default 10 minutes, configurable, 0 disables it) the server-side session expires. The next request the page makes gets `401`, which bounces it back to the locked demo view, the same one shown on first visit.
 - **Explicit lock.** A **Lock** button (next to the demo-data toggle, hidden while already showing demo data) ends the session immediately and locks.
@@ -31,24 +31,22 @@ A PIN is short, so it is only accepted together with something an attacker does 
 - **Management.** The portal's **Locking** screen (a tab beside Details, hidden while viewing demo data since there is no real session to manage) lists trusted browsers with when each was added and last used, and lets you revoke any of them. Its PIN card shows one of three things depending on the situation: **Set PIN** when none exists yet, **Trust this browser** (asking for the existing PIN, not a new one) when a PIN exists but this browser is not yet trusted, or **Change PIN** (with a confirmation dialog warning about every other trusted browser) when this browser is already trusted. Turning the PIN off (from either of the latter two cards) revokes every trusted browser at once, since a trusted cookie with no PIN to pair it with cannot unlock anything. Forgot the PIN entirely? Unlock with the token and set a new one.
 - **Token rotation.** The lock state file (`locking.json` in the data directory) records a hash of the token it was written under. If the portal starts with a different token than that hash matches — because `portal-token` was regenerated, for instance — every PIN and trusted browser is wiped at that startup, before anything can use them. Sessions do not need separate handling here: they are in-memory only and do not survive a restart regardless.
 
-## Passkeys: designed, not built
+## Passkeys
 
-Passkeys (Face ID, Touch ID, Windows Hello, a phone, or a hardware security key) would unlock the portal with a
-biometric and nothing to type, using the WebAuthn standard. **This is out of scope for the locking work in this
-change and is not implemented.** The reason is a hard platform requirement, not an oversight:
+Built; see [PASSKEYS.md](PASSKEYS.md), and its "Before you rely on this" checklist, since no real browser or
+authenticator has been tried yet. Passkeys (Face ID, Touch ID, Windows Hello, a phone, or a hardware security
+key) unlock the portal with a biometric and nothing to type, using WebAuthn, **in addition to** the token and
+the PIN above, never instead of them. They followed the design this page laid out while they waited on HTTPS:
 
-- Browsers only allow WebAuthn on a secure (HTTPS) page with a real hostname, or on `localhost` — never on a plain
-  `http://` address or a bare LAN IP, which is how the portal is reached by default. `[tls]` (see
-  [TLS.md](TLS.md)) now gives the portal an optional real HTTPS listener on its own hostname — the first,
-  additive step of [ROADMAP.md](ROADMAP.md) item 18 ("Access") — but passkeys are still not implemented here;
-  this remains a known, deliberate gap until that settings-screen registration flow below is actually built.
-  The fuller reverse-proxy / Cloudflare Tunnel story item 18 also covers is separate again and still planned.
-- Once the portal has a stable HTTPS hostname to act as the passkey's relying-party ID, passkeys can be added the
-  same way the PIN was here: a settings-screen registration flow, a credential store next to the trusted-device
-  registry, and "Order of preference: passkey, then PIN on a trusted browser, then the token" ahead of the PIN at
-  unlock time. Rotating the token should revoke passkeys the same way it revokes PINs and trusted browsers.
-
-So this is a known, deliberate gap, not a forgotten one: do not build WebAuthn against the plain-HTTP portal.
+- They work only at `[tls]`'s own HTTPS hostname ([TLS.md](TLS.md)), the passkey's relying-party ID. On the
+  plain-HTTP address or the bare LAN IP the Locking screen says so, and where to go, before anything is
+  attempted; the lock screen simply does not offer them there.
+- A registration flow on this Locking screen (a Passkeys card beside the PIN), needing an already-unlocked
+  session; a credential store (`passkeys.json`) next to the trusted-device registry; the lock screen in the
+  order "passkey, then PIN on a trusted browser, then the token".
+- A passkey sign-in opens the same session as a token or PIN sign-in, so idle relock and the 30-day cap apply
+  unchanged; removing a passkey ends the sessions it opened, as revoking a trusted browser does.
+- Rotating the token revokes every passkey, the same way it revokes the PIN and trusted browsers.
 
 ## Settings: auto-lock is optional
 
@@ -59,6 +57,7 @@ Auto-lock is on by default but you can change or turn it off, in the configurati
 | Auto-lock after idle | **Never**, 5, 10 (default), 30, 60 minutes — plus whatever value is already saved, if it is not one of those | **Never** keeps you unlocked until you press Lock or sign out. |
 | PIN | none, or one you choose | Faster than pasting the token, bound to trusted browsers. Set it the first time, trust additional browsers with the existing PIN, change it (affects every trusted browser) or clear it, all while unlocked. |
 | Trusted browsers | however many are registered (up to 20) | Listed with when each was added and last used; revoke any of them individually. |
+| Passkeys | none, or up to 20 | Added only at the portal's own HTTPS address, while unlocked; listed with name, when added and last used; rename or remove any of them. See [PASSKEYS.md](PASSKEYS.md). |
 
 ```toml
 [portal]

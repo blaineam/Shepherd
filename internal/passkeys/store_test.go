@@ -275,3 +275,26 @@ func TestStoreMemoryOnly(t *testing.T) {
 		t.Error("an empty path keeps passkeys in memory")
 	}
 }
+
+// Two logins racing with the same key can each validate against the same
+// stored counter; whichever saves last must not move the counter back, or
+// the next clone check would compare against a stale, lower value.
+func TestStoreRecordLoginNeverLowersTheCounter(t *testing.T) {
+	s, _ := Open("", "h")
+	s.Add("a", "shepherd.example.com", cred("c1"), t0)
+	high := cred("c1")
+	high.Authenticator.SignCount = 9
+	if _, err := s.RecordLogin(high, t0); err != nil {
+		t.Fatal(err)
+	}
+	low := cred("c1")
+	low.Authenticator.SignCount = 8
+	later := t0.Add(time.Minute)
+	pk, err := s.RecordLogin(low, later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pk.Credential.Authenticator.SignCount != 9 || !pk.LastUsed.Equal(later) {
+		t.Errorf("after a late, lower save: count %d, last used %v", pk.Credential.Authenticator.SignCount, pk.LastUsed)
+	}
+}

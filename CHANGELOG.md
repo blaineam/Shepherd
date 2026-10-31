@@ -32,7 +32,8 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   gain first access; registration and login require user verification (a biometric or device PIN, since a
   passkey stands in for a PIN plus a trusted browser), ask for no attestation, prefer but do not require
   discoverable credentials so hardware keys without resident-key storage still work, and refuse a
-  signature counter that goes backwards (a possible clone) without saving it. Ceremonies are single use
+  signature counter that goes backwards (a possible clone) without saving it (and never lower the stored counter
+  when two sign-ins race). Ceremonies are single use
   (a finish attempt consumes one, right or wrong), expire after 5 minutes, are tied to the browser that
   began them by an `HttpOnly`/`Secure`/`SameSite=Strict` cookie holding only a random id (the challenge
   stays on the server), and are capped at 32 pending. A successful passkey login opens exactly the session
