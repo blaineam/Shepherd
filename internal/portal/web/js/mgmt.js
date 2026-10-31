@@ -35,6 +35,9 @@ export function createMgmt(api) {
     subscriptions: (contactId) => api('/api/accountability/subscriptions' + Q({ contact_id: contactId })),
     addSubscription: (body) => post('/api/accountability/subscriptions', body),
     deleteSubscription: (id) => api('/api/accountability/subscriptions/' + encodeURIComponent(id), { method: 'DELETE' }),
+    smtpRelay: () => api('/api/accountability/smtp'),
+    setSMTPRelay: (body) => api('/api/accountability/smtp', { method: 'PUT', body: J(body) }),
+    clearSMTPRelay: () => api('/api/accountability/smtp', { method: 'DELETE' }),
 
     geoBlock: () => api('/api/geoblock'),
     setCountries: (scope, countries) => post('/api/geoblock', { scope, countries }),
@@ -104,5 +107,8 @@ export function createMgmt(api) {
     addProxyHost: (body) => post('/api/reverseproxy/hosts', body),
     updateProxyHost: (id, body) => api('/api/reverseproxy/hosts/' + encodeURIComponent(id), { method: 'PUT', body: J(body) }),
     deleteProxyHost: (id) => api('/api/reverseproxy/hosts/' + encodeURIComponent(id), { method: 'DELETE' }),
+    dnsProvider: () => api('/api/dns-provider'),
+    setDNSProvider: (body) => api('/api/dns-provider', { method: 'PUT', body: J(body) }),
+    clearDNSProvider: () => api('/api/dns-provider', { method: 'DELETE' }),
   };
 }

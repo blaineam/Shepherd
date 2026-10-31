@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -88,7 +89,7 @@ func waitForCert(t *testing.T, rp *reverseProxyServer) {
 func TestStartReverseProxyDisabledStartsNothing(t *testing.T) {
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
-	rp, err := startReverseProxy(context.Background(), cfg, openTestStore(t, cfg), nil)
+	rp, err := startReverseProxy(context.Background(), cfg, openTestStore(t, cfg), nil, nil)
 	if err != nil || rp != nil {
 		t.Fatalf("startReverseProxy(disabled) = %v, %v; want nil, nil", rp, err)
 	}
@@ -122,7 +123,7 @@ func TestStartReverseProxyServesAWildcardAndProxies(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rp, err := startReverseProxy(ctx, cfg, store, nil)
+	rp, err := startReverseProxy(ctx, cfg, store, nil, nil)
 	if err != nil {
 		t.Fatalf("startReverseProxy: %v", err)
 	}
@@ -190,13 +191,127 @@ func TestStartReverseProxyCarriesWebSockets(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rp, err := startReverseProxy(ctx, cfg, store, nil)
+	rp, err := startReverseProxy(ctx, cfg, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rp.Close()
 	waitForCert(t, rp)
 	wsRoundTrip(t, rp.addr.String(), "jellyfin.example.com")
+}
+
+// TestStartReverseProxyCertificateAlsoCoversTheBareBaseDomain proves the
+// fix for a real gap: "*.example.com" alone never covers "example.com"
+// itself, which is exactly the surprise a maintainer migrating a bare-apex
+// host (an existing site at the root domain, not under a subdomain) onto
+// this certificate would otherwise hit.
+func TestStartReverseProxyCertificateAlsoCoversTheBareBaseDomain(t *testing.T) {
+	fakeWildcardIssuance(t)
+	cfg := reverseProxyConfig(t)
+	store := openTestStore(t, cfg)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "backend saw %s", r.Host)
+	}))
+	t.Cleanup(backend.Close)
+	if _, err := store.Add(backendHost(t, "example.com", backend)); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rp, err := startReverseProxy(ctx, cfg, store, nil, nil)
+	if err != nil {
+		t.Fatalf("startReverseProxy: %v", err)
+	}
+	defer rp.Close()
+	waitForCert(t, rp)
+	if leaf := rp.cert.Certificate().Leaf; !slices.Contains(leaf.DNSNames, "example.com") {
+		t.Fatalf("certificate SANs = %v, want the bare base domain alongside the wildcard", leaf.DNSNames)
+	}
+
+	addr := rp.addr.String()
+	conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, ServerName: "example.com"})
+	if err != nil {
+		t.Fatalf("TLS handshake for the bare base domain: %v", err)
+	}
+	if err := conn.ConnectionState().PeerCertificates[0].VerifyHostname("example.com"); err != nil {
+		t.Errorf("served certificate does not cover the bare base domain: %v", err)
+	}
+	conn.Close()
+
+	client := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	req, _ := http.NewRequest("GET", "https://"+addr+"/", nil)
+	req.Host = "example.com"
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	if res.StatusCode != 200 || string(b) != "backend saw example.com" {
+		t.Errorf("proxied GET to the bare base domain = %d %q", res.StatusCode, b)
+	}
+}
+
+func TestStartReverseProxyRedirectsPlainHTTPToHTTPS(t *testing.T) {
+	fakeWildcardIssuance(t)
+	cfg := reverseProxyConfig(t)
+	cfg.ReverseProxy.RedirectListen = "127.0.0.1:0"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rp, err := startReverseProxy(ctx, cfg, openTestStore(t, cfg), nil, nil)
+	if err != nil {
+		t.Fatalf("startReverseProxy: %v", err)
+	}
+	defer rp.Close()
+	waitForCert(t, rp) // nothing may still be writing into the temp dir when the test ends
+	if rp.redirectLn == nil {
+		t.Fatal("RedirectListen was set but no redirect listener was started")
+	}
+
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	req, _ := http.NewRequest("GET", "http://"+rp.redirectLn.Addr().String()+"/web/?x=1", nil)
+	req.Host = "jellyfin.example.com:" + req.URL.Port()
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusFound {
+		t.Fatalf("status = %d, want %d", res.StatusCode, http.StatusFound)
+	}
+	if got, want := res.Header.Get("Location"), "https://jellyfin.example.com/web/?x=1"; got != want {
+		t.Errorf("Location = %q, want %q (no port, same path and query)", got, want)
+	}
+}
+
+func TestStartReverseProxyRedirectListenEmptyLeavesItOff(t *testing.T) {
+	fakeWildcardIssuance(t)
+	cfg := reverseProxyConfig(t) // RedirectListen left at its zero value
+	rp, err := startReverseProxy(context.Background(), cfg, openTestStore(t, cfg), nil, nil)
+	if err != nil {
+		t.Fatalf("startReverseProxy: %v", err)
+	}
+	defer rp.Close()
+	waitForCert(t, rp) // nothing may still be writing into the temp dir when the test ends
+	if rp.redirectLn != nil || rp.redirectSrv != nil {
+		t.Error("an empty RedirectListen must start no redirect listener at all")
+	}
+}
+
+func TestStartReverseProxyRedirectFailsFastOnABusyPort(t *testing.T) {
+	fakeWildcardIssuance(t)
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	cfg := reverseProxyConfig(t)
+	cfg.ReverseProxy.RedirectListen = busy.Addr().String()
+	if rp, err := startReverseProxy(context.Background(), cfg, openTestStore(t, cfg), nil, nil); err == nil {
+		rp.Close()
+		t.Fatal("expected an error for a redirect_listen address already in use")
+	}
 }
 
 func TestStartReverseProxyFailsFastOnABusyPort(t *testing.T) {
@@ -210,7 +325,7 @@ func TestStartReverseProxyFailsFastOnABusyPort(t *testing.T) {
 	cfg.ReverseProxy.Listen = busy.Addr().String()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if rp, err := startReverseProxy(ctx, cfg, openTestStore(t, cfg), nil); err == nil {
+	if rp, err := startReverseProxy(ctx, cfg, openTestStore(t, cfg), nil, nil); err == nil {
 		rp.Close()
 		t.Fatal("expected an error for a listen address already in use")
 	}
@@ -226,7 +341,7 @@ func TestStartReverseProxyNeverBlocksOnAnUnreachableCA(t *testing.T) {
 	defer cancel()
 	done := make(chan *reverseProxyServer, 1)
 	go func() {
-		rp, err := startReverseProxy(ctx, cfg, openTestStore(t, cfg), nil)
+		rp, err := startReverseProxy(ctx, cfg, openTestStore(t, cfg), nil, nil)
 		if err != nil {
 			t.Errorf("startReverseProxy: %v", err)
 		}
@@ -249,26 +364,13 @@ func TestStartReverseProxyNeverBlocksOnAnUnreachableCA(t *testing.T) {
 	}
 }
 
-func TestStartReverseProxyBadTokenFileFailsFast(t *testing.T) {
-	resetReverseProxySeams(t) // rproxyDNS01 nil: the token is really resolved
-	cfg := reverseProxyConfig(t)
-	cfg.ReverseProxy.CloudflareAPIToken = ""
-	cfg.ReverseProxy.CloudflareAPITokenFile = filepath.Join(t.TempDir(), "missing")
-	if rp, err := startReverseProxy(context.Background(), cfg, openTestStore(t, cfg), nil); err == nil {
-		rp.Close()
-		t.Fatal("expected an error for a missing Cloudflare token file")
-	} else if !strings.Contains(err.Error(), "reverseproxy.cloudflare_api_token_file") {
-		t.Errorf("error %q should name the setting", err)
-	}
-}
-
 func TestStartReverseProxyReportsAServeFailure(t *testing.T) {
 	fakeWildcardIssuance(t)
 	cfg := reverseProxyConfig(t)
 	failed := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rp, err := startReverseProxy(ctx, cfg, openTestStore(t, cfg), func(err error) { failed <- err })
+	rp, err := startReverseProxy(ctx, cfg, openTestStore(t, cfg), nil, func(err error) { failed <- err })
 	if err != nil {
 		t.Fatal(err)
 	}

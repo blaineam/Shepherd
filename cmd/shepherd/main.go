@@ -80,6 +80,14 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		fmt.Fprintln(stdout, token)
 		return nil
 	}
+	// The credentials Shepherd cannot generate itself (the DNS provider
+	// token, the mail relay) live in the portal-managed secrets.json;
+	// shepherd.toml's old fields for them are imported here once and
+	// ignored afterwards (see openSecrets).
+	sec, err := openSecrets(cfg)
+	if err != nil {
+		return err
+	}
 
 	filter := dnsengine.NewFilter()
 	policy, err := openPolicy(cfg, filter, existing)
@@ -202,7 +210,7 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		deps.ARP = arpMon
 	}
 
-	acctEngine, err := startAccountability(ctx, cfg, engine, registry)
+	acctEngine, acctRelay, err := startAccountability(ctx, cfg, engine, registry, sec)
 	if err != nil {
 		return err
 	}
@@ -210,6 +218,17 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		defer acctEngine.Close()
 		deps.Accountability = acctEngine
 	}
+
+	// Secrets are edited in the portal and applied to the running process
+	// at once: a new mail relay is swapped into acctRelay, and a new DNS
+	// provider token makes every certificate manager (added below as each
+	// starts) check right away.
+	kicker := &certKicker{}
+	deps.Secrets = sec
+	deps.VerifyDNSProvider = verifyDNSProvider(cfg)
+	deps.VerifySMTP = verifySMTP
+	deps.DNSProviderUsers = dnsProviderUsers(cfg)
+	deps.OnSecretsChanged = secretsChanged(sec, acctRelay, kicker)
 
 	if cfg.Portscan.Enabled {
 		scanner, err := startPortscan(ctx, cfg, registry)
@@ -274,12 +293,13 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	}
 	deps.ReverseProxy = proxyHosts
 	deps.ReverseProxyStatus = portal.ReverseProxyStatus{Listen: cfg.ReverseProxy.Listen, Wildcard: cfg.ReverseProxy.Wildcard()}
-	proxySrv, err := startReverseProxy(ctx, cfg, proxyHosts, stopOnFailure(portalErr, cancel))
+	proxySrv, err := startReverseProxy(ctx, cfg, proxyHosts, sec, stopOnFailure(portalErr, cancel))
 	if err != nil {
 		return err
 	}
 	if proxySrv != nil {
 		defer proxySrv.Close()
+		kicker.add(proxySrv.cert)
 		deps.ReverseProxyStatus.Enabled = true
 		deps.ReverseProxyStatus.Certificate = proxySrv.cert.Certificate
 		log.Printf("shepherd %s: reverse proxy on https://%s (%s)", version, proxySrv.addr, cfg.ReverseProxy.Wildcard())
@@ -299,11 +319,12 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	// working exactly as it does today whether or not [tls] is configured.
 	// startTLS returns a nil Manager when it is off, in which case no
 	// second, HTTPS listener is started at all.
-	tlsMgr, err := startTLS(ctx, cfg)
+	tlsMgr, err := startTLS(ctx, cfg, sec)
 	if err != nil {
 		return err
 	}
 	if tlsMgr != nil {
+		kicker.add(tlsMgr)
 		httpsSrv := &http.Server{
 			Addr:              cfg.TLS.Listen,
 			Handler:           srv.Handler(),

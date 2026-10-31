@@ -88,7 +88,11 @@ export function covers(wildcard, domain) {
 // longer explanation for its tooltip.
 export function hostWarnings(h, wildcard) {
   const out = [];
-  if (covers(wildcard, h.domain) === false) {
+  // The server also requests the bare base domain itself alongside the
+  // wildcard (docs/REVERSEPROXY.md), which covers() alone does not know
+  // about: it answers pure "*.base" coverage only, by design.
+  const base = wildcard ? String(wildcard).replace(/^\*\./, '') : '';
+  if (h.domain !== base && covers(wildcard, h.domain) === false) {
     out.push({ kind: 'uncovered', label: 'Not covered by ' + wildcard, title: 'The certificate is only valid for one label under the domain, so browsers will refuse this name. Use a name directly under the domain.' });
   }
   if (h.target_scheme === 'https' && h.skip_tls_verify) {

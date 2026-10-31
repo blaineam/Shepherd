@@ -244,3 +244,117 @@ func TestOutcomeString(t *testing.T) {
 		}
 	}
 }
+
+func verifySender(t *testing.T, srv *fakeSMTP, mod func(*SMTPConfig)) *SMTPSender {
+	t.Helper()
+	cfg := SMTPConfig{
+		Host: "127.0.0.1", Port: srv.port(), Username: "shepherd", Password: "app-password",
+		From: "shepherd@example.com", TLS: TLSStartTLS, InsecureSkipVerify: true, Timeout: 5 * time.Second,
+	}
+	if mod != nil {
+		mod(&cfg)
+	}
+	s, err := NewSMTPSender(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestSMTPSenderVerifyAuthenticatesWithoutSendingMail(t *testing.T) {
+	srv := newFakeSMTP(t)
+	srv.offerStartTLS = true
+	srv.start()
+	res := verifySender(t, srv, nil).Verify(context.Background())
+	if !res.OK() {
+		t.Fatalf("Verify() = %+v, want OK", res)
+	}
+	cmds := strings.Join(srv.commandsSeen(), " ")
+	for _, want := range []string{"STARTTLS", "AUTH", "QUIT"} {
+		if !strings.Contains(cmds, want) {
+			t.Errorf("Verify never sent %s (saw %s)", want, cmds)
+		}
+	}
+	for _, never := range []string{"MAIL", "RCPT", "DATA"} {
+		if strings.Contains(cmds, never) {
+			t.Errorf("Verify sent %s: a check must never send mail (saw %s)", never, cmds)
+		}
+	}
+	srv.mu.Lock()
+	queued := len(srv.received)
+	srv.mu.Unlock()
+	if queued != 0 {
+		t.Error("Verify queued a message")
+	}
+}
+
+func TestSMTPSenderVerifyClassifiesFailures(t *testing.T) {
+	authFail := newFakeSMTP(t)
+	authFail.offerStartTLS = true
+	authFail.authFail = true
+	authFail.start()
+	if res := verifySender(t, authFail, nil).Verify(context.Background()); res.Outcome != OutcomeAuthFailed {
+		t.Errorf("wrong password: %v", res.Outcome)
+	}
+
+	noStartTLS := newFakeSMTP(t)
+	noStartTLS.start()
+	if res := verifySender(t, noStartTLS, nil).Verify(context.Background()); res.Outcome != OutcomeConnectionFailed {
+		t.Errorf("no STARTTLS offered: %v", res.Outcome)
+	}
+
+	implicit := newFakeSMTP(t)
+	implicit.implicitTLS = true
+	implicit.start()
+	if res := verifySender(t, implicit, func(c *SMTPConfig) { c.TLS = TLSImplicit }).Verify(context.Background()); !res.OK() {
+		t.Errorf("implicit TLS: %+v", res)
+	}
+
+	plain := newFakeSMTP(t)
+	plain.start()
+	if res := verifySender(t, plain, func(c *SMTPConfig) { c.TLS, c.Username, c.Password = TLSNone, "", "" }).Verify(context.Background()); !res.OK() {
+		t.Errorf("unauthenticated local relay: %+v", res)
+	}
+
+	ln := newFakeSMTP(t) // never started, then closed: nothing answers
+	port := ln.port()
+	ln.ln.Close()
+	if res := verifySender(t, ln, func(c *SMTPConfig) { c.Port = port }).Verify(context.Background()); res.Outcome != OutcomeConnectionFailed {
+		t.Errorf("nothing listening: %v", res.Outcome)
+	}
+}
+
+func TestRelaySenderSwapsTheRelayLive(t *testing.T) {
+	var r RelaySender
+	if r.Configured() {
+		t.Error("a zero RelaySender has no relay")
+	}
+	res := r.Send(context.Background(), testMessage())
+	if res.Outcome != OutcomeInvalid || !errors.Is(res.Err, ErrNoRelay) {
+		t.Errorf("send with no relay = %+v, want OutcomeInvalid/ErrNoRelay", res)
+	}
+
+	srv := newFakeSMTP(t)
+	srv.offerStartTLS = true
+	srv.start()
+	r.Set(verifySender(t, srv, func(c *SMTPConfig) { c.From = "relay@example.com" }))
+	if !r.Configured() {
+		t.Error("Set must configure the relay")
+	}
+	if res := r.Send(context.Background(), testMessage()); !res.OK() {
+		t.Fatalf("send through the relay = %+v", res)
+	}
+	srv.mu.Lock()
+	got := srv.received[0]
+	srv.mu.Unlock()
+	if !strings.Contains(got, "From: relay@example.com") {
+		t.Errorf("the relay's own From must be used, got:\n%s", got)
+	}
+	r.Set(nil)
+	if r.Configured() {
+		t.Error("Set(nil) must remove the relay")
+	}
+	if res := r.Send(context.Background(), testMessage()); res.Outcome != OutcomeInvalid {
+		t.Errorf("after removal = %+v", res)
+	}
+}

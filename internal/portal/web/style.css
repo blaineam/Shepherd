@@ -796,6 +796,11 @@ tr.a-error .h-dom { color: var(--amber); }
 
 /* ---------- Accountability ---------- */
 .acct-content { max-width: 900px; }
+.acct-relay { margin-bottom: 14px; }
+.acct-relay .card-t { margin: 0; font: 600 10.5px var(--mono); letter-spacing: .2em; text-transform: uppercase; color: var(--muted); }
+.acct-relay > p { margin: 0 0 8px; }
+.acct-relay .cust-form { padding: 0; margin: 10px 0 0; max-width: none; }
+.acct-relay .cf-row input[type=number] { flex: 0 1 110px; }
 .acct-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 14px; border: 1px solid var(--line2); background: var(--panel2); padding: 10px; max-height: 220px; overflow-y: auto; }
 .acct-item-row { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .f-shadow { grid-column: 3 / -1; font-size: 10px; color: #b9a8f5; font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: -2px; }

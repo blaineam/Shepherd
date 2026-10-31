@@ -30,4 +30,5 @@ import './locking.test.js';
 import './vulnscan.test.js';
 import './nethealth.test.js';
 import './reverseproxy.test.js';
+import './secrets.test.js';
 import './watch.test.js';

@@ -17,7 +17,11 @@ no_default_lists = false
 
 [dns]
 # host:port addresses, each served over UDP and TCP. Use your LAN address
-# (not 0.0.0.0) on hosts where system DNS already holds 127.0.0.1:53.
+# (not 0.0.0.0) on hosts where system DNS already holds 127.0.0.1:53. List
+# one address per interface you want this reachable on — e.g. a wired LAN
+# address, a separate Wi-Fi NIC's address, and a Tailscale address, all at
+# once, if your host has more than one and you want every one of them
+# answering queries.
 listen = ["127.0.0.1:5353"]
 # Also serve on 127.0.0.1 and [::1], on the port of the first address above.
 # On by default, and worth leaving on if this host uses Shepherd as its own
@@ -119,23 +123,24 @@ password = ""
 # Accountability-partner email alerts (docs/ACCOUNTABILITY.md): email a
 # trusted contact when a device in a group or scope they chose accesses a
 # category they chose, whether or not it was blocked. Enabled by default is
-# safe: the library starts with no contacts and no subscriptions (manage both
-# from the portal's Accountability screen), and smtp.host below is empty by
-# default too, so a fresh install sends no mail until you add a subscription
-# AND configure an SMTP relay here.
+# safe: the library starts with no contacts and no subscriptions, and there
+# is no mail relay, so a fresh install sends no mail until you add a
+# subscription AND set up a relay — all three from the portal's
+# Accountability screen, no restart needed.
 enabled = true
 
 [accountability.smtp]
-# A relay you already have: a Gmail or iCloud app password, a self-hosted
-# Postfix. An empty host (the default) leaves the whole feature inert.
+# Optional, and read ONCE: the mail relay is set up in the portal's
+# Accountability screen and kept in <data_dir>/secrets.json (0600). A relay
+# set here (host non-empty) is imported the first time Shepherd starts
+# without one in the portal, password included, and this section is ignored
+# from then on (a startup line says so if it differs). Useful for automated
+# provisioning, or to keep an existing setup working across the upgrade.
 host = ""               # e.g. "smtp.example.com"
 port = 587
 username = ""
-# The password is a real secret. Either set it here directly (protected only
-# by this file's own 0600 permissions, like every other secret in this
-# project today), or point password_file at a separate 0600 file holding just
-# the password, so the secret need not live inside shepherd.toml itself.
-# Setting both is a configuration error. See docs/ACCOUNTABILITY.md.
+# Set the password directly or point password_file at a 0600 file holding
+# just the password, never both. See docs/ACCOUNTABILITY.md.
 password = ""
 password_file = ""      # e.g. "/etc/shepherd/accountability-smtp-password"
 from = ""               # e.g. "shepherd@example.com"
@@ -194,18 +199,21 @@ idle_lock_minutes = 10           # relock to demo data after this long idle; 0 =
 # A real certificate for the portal's own hostname, issued via ACME's
 # DNS-01 challenge against Cloudflare DNS (docs/TLS.md). Off by default:
 # both a real DNS hostname pointed at this machine and a scoped Cloudflare
-# API token (DNS edit on the one zone, nothing broader) are needed before
-# this does anything. Leaving it off (or enabled = false) changes nothing
+# API token (DNS edit on the one zone, nothing broader; set it in the
+# portal's Proxy tab, shared with [reverseproxy]) are needed before this
+# does anything. Leaving it off (or enabled = false) changes nothing
 # about the existing plain-HTTP portal.listen above; this only ever adds a
 # second, HTTPS listener alongside it.
 enabled = false
 hostname = ""                   # e.g. "shepherd.example.com"
 listen = ""                     # e.g. "0.0.0.0:8443"; separate from portal.listen
 email = ""                      # optional; Let's Encrypt expiry-notice contact
-# The token is a real secret. Either set it here directly (protected only
-# by this file's own 0600 permissions, like every other secret in this
-# project today), or point cloudflare_api_token_file at a separate 0600
-# file holding just the token. Setting both is a configuration error.
+# Optional, and read ONCE: the Cloudflare token is the one "DNS provider"
+# token in the portal's Proxy tab, shared by [tls] and [reverseproxy] and
+# kept in <data_dir>/secrets.json (0600). A token set here (directly, or in
+# a 0600 file named by cloudflare_api_token_file; never both) is imported
+# the first time Shepherd starts without one in the portal, and ignored from
+# then on. If [tls] and [reverseproxy] name different tokens, [tls]'s wins.
 cloudflare_api_token = ""
 cloudflare_api_token_file = ""  # e.g. "/etc/shepherd/cloudflare-api-token"
 
@@ -219,10 +227,11 @@ cloudflare_api_token_file = ""  # e.g. "/etc/shepherd/cloudflare-api-token"
 # section before moving port 443 over from another reverse proxy.
 enabled = false
 listen = ":8443"                # binding 443 is your call, not a default
+redirect_listen = ""            # e.g. ":80" once your deployment can bind it; answers plain http:// with a 302 to https://
 domain = ""                     # e.g. "example.com" -> certificate for *.example.com
 email = ""                      # optional; Let's Encrypt expiry-notice contact
-# Same rules as [tls]: set the token or a 0600 token file, never both. Both
-# sections may use the same token (scoped to DNS edit on the one zone).
+# Same read-once seed as [tls]'s, for the same single shared token: set it in
+# the portal's Proxy tab instead. Never both fields.
 cloudflare_api_token = ""
 cloudflare_api_token_file = ""  # e.g. "/etc/shepherd/cloudflare-api-token"
 

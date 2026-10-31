@@ -40,6 +40,10 @@ func newFakeCloudflare(t *testing.T, zones map[string]string) *httptest.Server {
 			var result []map[string]string
 			if id, ok := fc.zones[name]; ok {
 				result = []map[string]string{{"id": id}}
+			} else if name == "" {
+				for _, id := range fc.zones { // no filter: every zone the token can see
+					result = append(result, map[string]string{"id": id})
+				}
 			}
 			json.NewEncoder(w).Encode(map[string]any{"success": true, "errors": []any{}, "result": result})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/dns_records") && strings.HasPrefix(r.URL.Path, "/zones/"):
@@ -167,5 +171,68 @@ func TestCloudflareCleanUpAPIError(t *testing.T) {
 	// zone lookup failure path by cleaning up against an fqdn with no zone.
 	if err := p.CleanUp(context.Background(), "_acme-challenge.nowhere.invalid", "rec1"); err == nil {
 		t.Fatal("expected an error when the zone cannot be found")
+	}
+}
+
+func TestCloudflareVerifyChecksEveryNameWithReadOnlyCalls(t *testing.T) {
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Query().Get("name"))
+		var result []map[string]string
+		if r.URL.Query().Get("name") == "example.com" {
+			result = []map[string]string{{"id": "zone-apex"}}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"success": true, "result": result})
+	}))
+	t.Cleanup(srv.Close)
+	p := &CloudflareProvider{APIToken: "test-token-1234", BaseURL: srv.URL}
+	if err := p.Verify(context.Background(), "*.example.com", "shepherd.fort.example.com.", "example.com"); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	want := []string{
+		"GET example.com",                                                          // *.example.com: the wildcard's challenge lives at the base
+		"GET shepherd.fort.example.com", "GET fort.example.com", "GET example.com", // walked outward
+		"GET example.com",
+	}
+	if strings.Join(requests, ",") != strings.Join(want, ",") {
+		t.Errorf("requests = %q, want %q (zone lookups only, never a write)", requests, want)
+	}
+}
+
+func TestCloudflareVerifyWithoutNamesNeedsSomeZone(t *testing.T) {
+	srv := newFakeCloudflare(t, map[string]string{"example.com": "zone-apex"})
+	if err := (&CloudflareProvider{APIToken: "test-token-1234", BaseURL: srv.URL}).Verify(context.Background()); err != nil {
+		t.Errorf("a token that sees a zone: %v", err)
+	}
+	empty := newFakeCloudflare(t, map[string]string{})
+	if err := (&CloudflareProvider{APIToken: "test-token-1234", BaseURL: empty.URL}).Verify(context.Background()); err == nil || !strings.Contains(err.Error(), "zone") {
+		t.Errorf("a token that sees no zone must fail and say why: %v", err)
+	}
+	if err := (&CloudflareProvider{APIToken: "wrong", BaseURL: srv.URL}).Verify(context.Background()); err == nil || !strings.Contains(err.Error(), "invalid token") {
+		t.Errorf("a rejected token must fail with Cloudflare's reason: %v", err)
+	}
+}
+
+func TestCloudflareVerifyFailures(t *testing.T) {
+	srv := newFakeCloudflare(t, map[string]string{"example.com": "zone-apex"})
+	p := &CloudflareProvider{APIToken: "wrong", BaseURL: srv.URL}
+	if err := p.Verify(context.Background(), "example.com"); err == nil {
+		t.Error("a rejected token must fail")
+	}
+	p.APIToken = "test-token-1234"
+	if err := p.Verify(context.Background(), "*.example.net"); err == nil || !strings.Contains(err.Error(), "example.net") {
+		t.Errorf("a name in a zone the token cannot see must fail and name it: %v", err)
+	}
+	if err := p.Verify(context.Background(), "", " "); err != nil {
+		t.Errorf("blank names are skipped, falling back to any zone: %v", err)
+	}
+	down := &CloudflareProvider{APIToken: "t", BaseURL: "http://127.0.0.1:1"}
+	if err := down.Verify(context.Background()); err == nil {
+		t.Error("an unreachable API must fail")
+	}
+	garbage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("<html>")) }))
+	t.Cleanup(garbage.Close)
+	if err := (&CloudflareProvider{APIToken: "t", BaseURL: garbage.URL}).Verify(context.Background()); err == nil {
+		t.Error("an undecodable answer must fail")
 	}
 }

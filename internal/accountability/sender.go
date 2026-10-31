@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"net"
 	"net/smtp"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -205,52 +207,11 @@ func (s *SMTPSender) Send(ctx context.Context, msg Message) Result {
 	if msg.To == "" {
 		return Result{Outcome: OutcomeInvalid, Err: errors.New("accountability: message has no recipient")}
 	}
-	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
-
-	deadline := time.Now().Add(s.cfg.Timeout)
-	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
-		deadline = dl
+	client, closeAll, fail := s.open(ctx)
+	if fail != nil {
+		return *fail
 	}
-	timeout := time.Until(deadline)
-	if timeout <= 0 {
-		return Result{Outcome: OutcomeTransient, Err: context.DeadlineExceeded}
-	}
-
-	var conn net.Conn
-	var err error
-	if s.cfg.TLS == TLSImplicit {
-		d := &net.Dialer{Timeout: timeout}
-		conn, err = tls.DialWithDialer(d, "tcp", addr, s.tlsConfig())
-	} else {
-		conn, err = s.dial("tcp", addr, timeout)
-	}
-	if err != nil {
-		return Result{Outcome: OutcomeConnectionFailed, Err: fmt.Errorf("accountability: connect: %w", err)}
-	}
-	_ = conn.SetDeadline(deadline)
-	defer conn.Close()
-
-	client, err := smtp.NewClient(conn, s.cfg.Host)
-	if err != nil {
-		return Result{Outcome: OutcomeConnectionFailed, Err: fmt.Errorf("accountability: smtp handshake: %w", err)}
-	}
-	defer client.Close()
-
-	if s.cfg.TLS == TLSStartTLS {
-		if ok, _ := client.Extension("STARTTLS"); !ok {
-			return Result{Outcome: OutcomeConnectionFailed, Err: errors.New("accountability: server does not offer STARTTLS")}
-		}
-		if err := client.StartTLS(s.tlsConfig()); err != nil {
-			return Result{Outcome: OutcomeConnectionFailed, Err: fmt.Errorf("accountability: starttls: %w", err)}
-		}
-	}
-
-	if s.cfg.Username != "" {
-		auth := smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)
-		if err := client.Auth(auth); err != nil {
-			return Result{Outcome: OutcomeAuthFailed, Err: fmt.Errorf("accountability: auth: %w", err)}
-		}
-	}
+	defer closeAll()
 
 	from := s.cfg.From
 	if err := client.Mail(from); err != nil {
@@ -272,6 +233,111 @@ func (s *SMTPSender) Send(ctx context.Context, msg Message) Result {
 	}
 	_ = client.Quit()
 	return Result{Outcome: OutcomeOK}
+}
+
+// Verify checks that the relay is reachable, negotiates TLS the way it is
+// configured to, and accepts the username and password — every step Send
+// takes before MAIL FROM — then says goodbye without sending anything. It is
+// what the portal runs before saving a relay, so a wrong password or port is
+// reported right away instead of when the first digest fails to go out.
+// The outcomes are Send's: OutcomeOK, OutcomeConnectionFailed,
+// OutcomeAuthFailed, or OutcomeTransient for a deadline.
+func (s *SMTPSender) Verify(ctx context.Context) Result {
+	client, closeAll, fail := s.open(ctx)
+	if fail != nil {
+		return *fail
+	}
+	defer closeAll()
+	_ = client.Quit()
+	return Result{Outcome: OutcomeOK}
+}
+
+// open connects, negotiates TLS as configured and authenticates. On
+// success the caller must call closeAll; on failure fail is the classified
+// result and nothing is left open.
+func (s *SMTPSender) open(ctx context.Context) (client *smtp.Client, closeAll func(), fail *Result) {
+	failed := func(o Outcome, err error) (*smtp.Client, func(), *Result) {
+		return nil, nil, &Result{Outcome: o, Err: err}
+	}
+	addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(s.cfg.Port))
+
+	deadline := time.Now().Add(s.cfg.Timeout)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
+	}
+	timeout := time.Until(deadline)
+	if timeout <= 0 {
+		return failed(OutcomeTransient, context.DeadlineExceeded)
+	}
+
+	var conn net.Conn
+	var err error
+	if s.cfg.TLS == TLSImplicit {
+		d := &net.Dialer{Timeout: timeout}
+		conn, err = tls.DialWithDialer(d, "tcp", addr, s.tlsConfig())
+	} else {
+		conn, err = s.dial("tcp", addr, timeout)
+	}
+	if err != nil {
+		return failed(OutcomeConnectionFailed, fmt.Errorf("accountability: connect: %w", err))
+	}
+	_ = conn.SetDeadline(deadline)
+
+	c, err := smtp.NewClient(conn, s.cfg.Host)
+	if err != nil {
+		conn.Close()
+		return failed(OutcomeConnectionFailed, fmt.Errorf("accountability: smtp handshake: %w", err))
+	}
+	closeAll = func() { c.Close(); conn.Close() }
+
+	if s.cfg.TLS == TLSStartTLS {
+		if ok, _ := c.Extension("STARTTLS"); !ok {
+			closeAll()
+			return failed(OutcomeConnectionFailed, errors.New("accountability: server does not offer STARTTLS"))
+		}
+		if err := c.StartTLS(s.tlsConfig()); err != nil {
+			closeAll()
+			return failed(OutcomeConnectionFailed, fmt.Errorf("accountability: starttls: %w", err))
+		}
+	}
+
+	if s.cfg.Username != "" {
+		auth := smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)
+		if err := c.Auth(auth); err != nil {
+			closeAll()
+			return failed(OutcomeAuthFailed, fmt.Errorf("accountability: auth: %w", err))
+		}
+	}
+	return c, closeAll, nil
+}
+
+// ErrNoRelay is RelaySender's error while no relay is set.
+var ErrNoRelay = errors.New("accountability: no mail relay is configured")
+
+// RelaySender is a Sender whose relay can be set, replaced or removed while
+// an Engine keeps using it, so a relay entered in the portal takes effect
+// without restarting Shepherd. With no relay set, Send sends nothing and
+// reports OutcomeInvalid with ErrNoRelay. Each Send uses whichever relay is
+// current when it starts, and the relay's own From address (SMTPSender
+// always does), whatever Message.From says. The zero value is ready to use
+// and safe for concurrent use.
+type RelaySender struct {
+	cur atomic.Pointer[SMTPSender]
+}
+
+// Set makes s the relay for every later Send; nil removes it.
+func (r *RelaySender) Set(s *SMTPSender) { r.cur.Store(s) }
+
+// Configured reports whether a relay is set.
+func (r *RelaySender) Configured() bool { return r.cur.Load() != nil }
+
+// Send delivers msg through the current relay.
+func (r *RelaySender) Send(ctx context.Context, msg Message) Result {
+	s := r.cur.Load()
+	if s == nil {
+		return Result{Outcome: OutcomeInvalid, Err: ErrNoRelay}
+	}
+	return s.Send(ctx, msg)
 }
 
 func (s *SMTPSender) tlsConfig() *tls.Config {

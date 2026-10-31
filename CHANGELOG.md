@@ -82,6 +82,45 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   which of its MACs holds its IPv6 address cannot be known from the IPv4 neighbour table. An IPv6 refusal never costs
   a device its IPv4 steering. **Never run against a live global-IPv6 network**: the design's own recommendation was
   to wait for one, and the maintainer does not have one.
+- **Secrets managed in the portal (`internal/secrets`):** the two credentials Shepherd cannot generate for
+  itself — the DNS provider token ACME DNS-01 needs, and the accountability SMTP relay — no longer mean
+  hand-editing `shepherd.toml` and restarting. Both live in `<data_dir>/secrets.json`, the same JSON, atomic
+  save (temp file, fsync, rename), mode 0600, nothing-written-until-there-is-something shape as
+  `reverseproxy.json` and `devices.json`, and the same honest security model as every other secret this
+  project persists: 0600 is the whole protection, no encryption at rest. Both are **write-only** through the
+  API (only "set or not", where it came from and when it changed ever come back; the types also redact
+  themselves under `%v` so a stray log line cannot leak one), and both are **checked before they are saved**
+  with a real, side-effect-free call, so a bad credential is refused now (422, nothing stored) instead of
+  surfacing hours later as a failed renewal or a digest that never went out: the Cloudflare token with the
+  read-only zone lookup issuance already makes (`tlscert.CloudflareProvider.Verify`, never a record write),
+  for the names `[tls]` and `[reverseproxy]` will actually issue for; the relay with a real connect,
+  TLS/STARTTLS and AUTH that quits before `MAIL FROM` (`accountability.SMTPSender.Verify`, nothing is ever
+  sent). **One DNS provider token, shared:** `[tls]` and `[reverseproxy]` each had their own Cloudflare token
+  fields for what is one credential on one zone; now both read the same portal-managed entry, set from the
+  **Proxy** tab, and the record carries a `provider` field (only `cloudflare` exists) so another provider can
+  be added without a format change. **The SMTP relay** (host, port, username, password, From, TLS mode) is set
+  from the **Accountability** tab. **Neither needs a restart:** certificate issuance reads the token fresh on
+  every attempt, and a save kicks each certificate manager to check at once (`tlscert.Manager.Kick`), so a
+  first certificate that was waiting on a token arrives within seconds; the accountability engine now sends
+  through an `accountability.RelaySender` a newly saved relay is swapped into live. The engine is also now
+  built whenever `[accountability]` is enabled (the default), relay or not, so the Accountability tab no
+  longer 404s on every call when no relay is set — the confusing "looks broken" state it showed before —
+  and a saved relay's password is only ever reused for the same host and username (a changed host must have
+  its password typed again, so a saved one can never be redirected to another server). A default install
+  still pays nothing on the DNS hot path for it: a new `dnsengine.Engine.OnAccessWanted` gate skips even the
+  item lookup while no relay is set, and no access is queued or persisted without one.
+  **Upgrading keeps what `shepherd.toml` already has:** `[tls]`/`[reverseproxy]`'s
+  `cloudflare_api_token`/`cloudflare_api_token_file` and the whole `[accountability.smtp]` section
+  (`password_file` included) become read-once seeds, the `[[lists]]` precedent applied per secret — imported
+  the first time Shepherd starts without a portal-managed value, and ignored from then on (a startup line says
+  so when the file's value differs). If both sections hold different tokens at import, `[tls]`'s wins and the
+  conflict is logged by setting name; a seed that cannot be read yet (a missing token file) is logged and
+  retried at the next start rather than lost; clearing a secret in the portal is remembered, so the file never
+  brings it back. Neither token field is required by `[tls]`/`[reverseproxy]` any more; enabling either with
+  no token anywhere starts normally and says in the log (and the Proxy tab) that a token is needed. New API:
+  `GET/PUT/DELETE /api/dns-provider` and `GET/PUT/DELETE /api/accountability/smtp`. Not done: encryption at
+  rest, other DNS providers, a "send a test email" button, and turning `[accountability]`, `[tls]` or
+  `[reverseproxy]` themselves on or off from the portal (those switches, and hostnames, are still config).
 - **2D map fallback for the HUD:** browsers without WebGL, notably Safari in Lockdown Mode, now get a
   flat canvas map (`js/flatmap.js`) with the same arcs, comets, pulses, picking, Set home and panning and
   zooming, plus day/night shading, instead of a "needs WebGL" notice. `?nogl=1` forces it.
@@ -102,7 +141,15 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   **One wildcard certificate** (`*.<domain>`) covers every host, issued over the same Cloudflare DNS-01
   flow as `[tls]` (now shared as `startCertManager`; `[tls]` behaves exactly as before) but kept in its
   own `<data_dir>/reverseproxy/tls/`; `tlscert.Obtainer` was already wildcard-capable and a test now
-  proves the CSR and challenge naming. Backend certificates are verified by default, with an explicit
+  proves the CSR and challenge naming. The same order also asks for the bare base domain itself
+  (`Obtainer.ExtraHostnames`, a general "more names on the same certificate" seam): a pure wildcard never
+  covers `example.com` on its own, only `*.example.com`, which the first live cutover hit directly (a
+  host at the bare apex domain). A plain-HTTP listener (`redirect_listen`, off by default like `listen`
+  itself never defaulting to `:443` — binding a port below 1024 needs a capability a fresh install does
+  not have) answers every request with a 302 to the same host and path over https when set (e.g. `:80`),
+  so a bookmarked or hardcoded `http://` link still gets there instead of failing to connect once
+  nothing else owns port 80.
+  Backend certificates are verified by default, with an explicit
   per-host "accept any backend certificate" switch for self-signed backends (a typical manager never
   verified them at all). Hosts live in `<data_dir>/reverseproxy.json` (0600), managed only from the
   portal — never seeded from `shepherd.toml`, nothing written until the first edit, editable while the
@@ -112,12 +159,15 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   tests) that badges any name the wildcard cannot cover and any backend left unverified. New config:
   `[reverseproxy]`'s `enabled` (**false by default**), `listen` (`:8443` by default, never 443: moving
   the standard port over is the owner's deliberate cutover), `domain`, `email` and
-  `cloudflare_api_token`/`cloudflare_api_token_file` (same rules as `[tls]`). A taken listen port stops
-  startup with a clear error; obtaining the certificate never blocks it. Not yet: per-host access control
-  of any kind, custom per-host config, an HTTP-to-HTTPS redirect listener, an access log, or import from
-  an existing manager — a straight migration can lose per-host features a manager had. Every test runs
-  against fakes and loopback; a real wildcard issuance and real application traffic have not been tried.
-  See docs/REVERSEPROXY.md, including its "Before you point real traffic at this" checklist.
+  `cloudflare_api_token`/`cloudflare_api_token_file` (same rules as `[tls]`), and `redirect_listen`
+  (empty/off by default). A taken listen port (either one) stops startup with a clear error; obtaining the
+  certificate never blocks it. Not yet: per-host access control of any kind, custom per-host config, an
+  access log, or import from an existing manager — a straight migration can lose per-host features a
+  manager had. Every automated test runs against fakes and loopback, but this has also now been run for
+  real: a real wildcard certificate issued against a live Cloudflare zone, a dozen real services imported
+  from an existing reverse-proxy manager and verified one by one (including a real WebSocket handshake
+  against a live backend), and a real cutover of port 443 itself. See docs/REVERSEPROXY.md, including its
+  "Before you point real traffic at this" checklist.
 - **Watch mode: in-kernel XDP relay (`internal/intercept.Controller.AttachXDP`, Linux).** The same
   one-sided ARP relay as an eBPF/XDP program on the interface: a steered device's IPv4 frame to
   Shepherd's MAC gets both MACs rewritten and is bounced straight back out (`XDP_TX`) without ever
@@ -478,3 +528,6 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Licensed AGPL-3.0-or-later.
 - The in-memory query log now keeps 20,000 entries by default (was 5,000) so replay reaches further back.
 - Direction: a native single binary with a Go control plane and a Rust data plane (Wave 6), instead of containers.
+- `shepherd.example.toml`'s `[dns].listen` comment now says explicitly that one address per interface can
+  be listed at once (a wired LAN address, a separate Wi-Fi NIC's address, a Tailscale address, and so on),
+  not just a single choice — a real deployment hit this directly wanting all three reachable together.

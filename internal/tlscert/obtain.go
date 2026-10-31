@@ -68,6 +68,16 @@ type Obtainer struct {
 	// the challenge record all handle the prefix, so one certificate can
 	// cover every direct subdomain (docs/REVERSEPROXY.md).
 	Hostname string
+	// ExtraHostnames, when set, are additional names on the same order and
+	// the same certificate as Hostname — e.g. the bare base domain
+	// alongside its wildcard, since "*.example.com" never covers
+	// "example.com" itself. Each gets its own authorization and its own
+	// dns-01 challenge record, satisfied the same way Hostname's is; Go's
+	// DNS-01 propagation check and the Cloudflare TXT record are both
+	// per-name already, so this needs no special casing beyond asking
+	// for every name up front. Hostname is always the certificate's
+	// CommonName; order within ExtraHostnames does not matter.
+	ExtraHostnames []string
 	// Contact is an optional "mailto:" address used only on first account
 	// registration (Let's Encrypt uses it for expiry notices). Empty omits it.
 	Contact string
@@ -97,7 +107,8 @@ func (o *Obtainer) Obtain(ctx context.Context) (tls.Certificate, error) {
 		return tls.Certificate{}, fmt.Errorf("tlscert: registering ACME account: %w", err)
 	}
 
-	order, err := o.ACME.AuthorizeOrder(ctx, acme.DomainIDs(o.Hostname))
+	names := append([]string{o.Hostname}, o.ExtraHostnames...)
+	order, err := o.ACME.AuthorizeOrder(ctx, acme.DomainIDs(names...))
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("tlscert: authorizing order for %s: %w", o.Hostname, err)
 	}
@@ -119,7 +130,7 @@ func (o *Obtainer) Obtain(ctx context.Context) (tls.Certificate, error) {
 	}
 	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
 		Subject:  pkix.Name{CommonName: o.Hostname},
-		DNSNames: []string{o.Hostname},
+		DNSNames: names,
 	}, key)
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("tlscert: creating the certificate request: %w", err)

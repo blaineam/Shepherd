@@ -10,6 +10,7 @@ import { GROUP_COLORS } from './devtypes.js';
 import { classifyAddr, isIP } from './upstreams.js';
 import { normalizeDomain, scopeKey } from './scope.js';
 import { hostBody, formatTarget, sortHosts } from './reverseproxy.js';
+import { tokenBody, relayBody } from './secrets.js';
 
 const err = (status, msg) => new ApiError(msg, status);
 const strHashDemo = (s) => { let h = 0; for (let i = 0; i < String(s).length; i++) h = (h * 31 + String(s).charCodeAt(i)) >>> 0; return h; };
@@ -55,6 +56,9 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
     { id: 'rp-4', domain: 'old.wiki.example.com', target_scheme: 'http', target_host: '192.0.2.23', target_port: 3000, skip_tls_verify: false, enabled: false },
   ];
   let nextProxyId = 5;
+  // Secrets are write-only in demo mode too: only whether one is set is kept.
+  let dnsProvider = { provider: 'cloudflare', configured: true, source: 'portal', updated_at: new Date(now() - 9 * 86400000).toISOString(), used_by: ['reverseproxy'], providers: ['cloudflare'] };
+  let relay = { enabled: true, configured: true, active: true, host: 'smtp.example.com', port: 587, username: 'shepherd@example.com', password_set: true, from: 'shepherd@example.com', tls: 'starttls', source: 'portal', updated_at: new Date(now() - 9 * 86400000).toISOString() };
   const hist = { mode: history === 'memory' ? 'memory' : 'encrypted', locked: history === 'locked' || history === 'fresh', initialized: history !== 'fresh' };
   let lastBulk = 0;
 
@@ -438,6 +442,31 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       if (method === 'PUT') {
         proxyHosts[i] = { id, enabled: proxyHosts[i].enabled, ...r.body };
         return proxyHosts[i];
+      }
+    }
+    // ---- secrets (never stored here: the demo only remembers "set or not")
+    if (path === '/api/dns-provider') {
+      if (method === 'GET') return { ...dnsProvider };
+      const stamp = { source: 'portal', updated_at: new Date(now()).toISOString() };
+      if (method === 'DELETE') { dnsProvider = { ...dnsProvider, ...stamp, configured: false }; return { ...dnsProvider }; }
+      if (method === 'PUT') {
+        const r = tokenBody(body.api_token, body.provider || 'cloudflare');
+        if (!r.ok) throw err(400, r.error);
+        if (r.body.api_token === 'bad') throw err(422, 'Cloudflare did not accept that token: 9109: Invalid access token. Nothing was saved.');
+        dnsProvider = { ...dnsProvider, ...stamp, configured: true };
+        return { ...dnsProvider };
+      }
+    }
+    if (path === '/api/accountability/smtp') {
+      if (method === 'GET') return { ...relay };
+      const stamp = { source: 'portal', updated_at: new Date(now()).toISOString() };
+      if (method === 'DELETE') { relay = { ...relay, ...stamp, configured: false, active: false, host: '', username: '', password_set: false, from: '', port: 587, tls: 'starttls' }; return { ...relay }; }
+      if (method === 'PUT') {
+        const r = relayBody({ ...body, clearPassword: body.clear_password }, relay);
+        if (!r.ok) throw err(400, r.error);
+        const b = r.body;
+        relay = { ...relay, ...stamp, configured: true, active: true, host: b.host, port: b.port, username: b.username, from: b.from, tls: b.tls, password_set: b.clear_password ? false : (!!b.password || relay.password_set) };
+        return { ...relay };
       }
     }
     // ---- history

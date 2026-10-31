@@ -11,7 +11,6 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"math/big"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -98,7 +97,12 @@ func makeTestCertDER(hostname string, csrDER []byte) ([]byte, error) {
 		return nil, err
 	}
 	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: hostname}, DNSNames: []string{hostname},
+		// DNSNames mirrors the real CSR, not just hostname: a test that sets
+		// Obtainer.ExtraHostnames (e.g. the bare base domain alongside its
+		// wildcard) needs the issued fake certificate to actually cover
+		// every name that was really requested, the same way a real CA's
+		// certificate would.
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: hostname}, DNSNames: csr.DNSNames,
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(90 * 24 * time.Hour),
 	}
 	return x509.CreateCertificate(rand.Reader, tmpl, tmpl, csr.PublicKey, issuerKey)
@@ -118,7 +122,7 @@ func TestStartTLSDisabledReturnsNilManager(t *testing.T) {
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
 	cfg.TLS.Enabled = false
-	mgr, err := startTLS(context.Background(), cfg)
+	mgr, err := startTLS(context.Background(), cfg, nil)
 	if err != nil || mgr != nil {
 		t.Fatalf("startTLS(disabled) = %v, %v; want nil, nil", mgr, err)
 	}
@@ -139,7 +143,7 @@ func TestStartTLSObtainsACertificateInTheBackground(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	mgr, err := startTLS(ctx, cfg)
+	mgr, err := startTLS(ctx, cfg, nil)
 	if err != nil {
 		t.Fatalf("startTLS: %v", err)
 	}
@@ -185,7 +189,7 @@ func TestStartTLSNeverBlocksStartupWhenUnreachable(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		if _, err := startTLS(ctx, cfg); err != nil {
+		if _, err := startTLS(ctx, cfg, nil); err != nil {
 			t.Errorf("startTLS: %v", err)
 		}
 		close(done)
@@ -223,41 +227,6 @@ func (failingACME) CreateCertFromOrder(context.Context, *acme.Order, []byte, boo
 func (failingACME) DNS01ChallengeRecord(string) (string, error) { return "", errors.New("unreachable") }
 
 var _ tlscert.ACMEClient = failingACME{}
-
-func TestCloudflareAPITokenDirect(t *testing.T) {
-	token, err := cloudflareAPIToken(config.TLS{CloudflareAPIToken: "direct-token"})
-	if err != nil || token != "direct-token" {
-		t.Fatalf("token = %q, err = %v", token, err)
-	}
-}
-
-func TestCloudflareAPITokenFromFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(path, []byte("file-token\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	token, err := cloudflareAPIToken(config.TLS{CloudflareAPITokenFile: path})
-	if err != nil || token != "file-token" {
-		t.Fatalf("token = %q, err = %v", token, err)
-	}
-}
-
-func TestCloudflareAPITokenFileMissing(t *testing.T) {
-	if _, err := cloudflareAPIToken(config.TLS{CloudflareAPITokenFile: filepath.Join(t.TempDir(), "missing")}); err == nil {
-		t.Fatal("expected an error for a missing token file")
-	}
-}
-
-func TestStartTLSBadTokenFileFailsFast(t *testing.T) {
-	resetTLSSeams(t)
-	// tlsDNS01 left nil so startTLS actually resolves the token itself.
-	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
-	cfg.TLS = config.TLS{Enabled: true, Hostname: "shepherd.example.com", Listen: "127.0.0.1:0", CloudflareAPITokenFile: filepath.Join(t.TempDir(), "missing")}
-	if _, err := startTLS(context.Background(), cfg); err == nil {
-		t.Fatal("expected an error for a missing Cloudflare token file")
-	}
-}
 
 // fakeExchange lets a test script canned responses (or errors) per server
 // address, so dnsLookupTXT's fallback-across-servers behavior can be

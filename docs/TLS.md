@@ -93,7 +93,7 @@ enabled = false
 hostname = ""                   # e.g. "shepherd.example.com"
 listen = ""                     # e.g. "0.0.0.0:8443"; separate from portal.listen
 email = ""                      # optional; Let's Encrypt expiry-notice contact
-cloudflare_api_token = ""
+cloudflare_api_token = ""       # read-once seed: the token lives in the portal (see below)
 cloudflare_api_token_file = ""  # e.g. "/etc/shepherd/cloudflare-api-token"
 ```
 
@@ -107,12 +107,24 @@ cloudflare_api_token_file = ""  # e.g. "/etc/shepherd/cloudflare-api-token"
   typically resolves to an address other than loopback, so the HTTPS listener needs to bind
   somewhere that address actually reaches — `0.0.0.0:8443`, or the specific LAN/tailnet address, not
   `127.0.0.1`.
-- **`cloudflare_api_token`** / **`cloudflare_api_token_file`** supply the Cloudflare API token, and
-  follow the exact secret-handling convention `[accountability.smtp]`'s `password` /
-  `password_file` already uses: set the token directly (protected only by `shepherd.toml`'s own
-  0600 permissions, the same honest limit this project already notes for other secrets), or point
-  `cloudflare_api_token_file` at a separate 0600 file holding just the token, so the secret need not
-  live inside `shepherd.toml` itself. Setting both is a configuration error.
+- **The Cloudflare API token is set in the portal, not here.** It is the one "DNS provider" token on the
+  **Proxy** tab, shared with `[reverseproxy]` (one zone, one credential) and kept in
+  `<data_dir>/secrets.json` (mode 0600, the same honest "file permissions are the whole protection" limit
+  as every other secret this project persists). The portal checks a token with Cloudflare before saving it
+  (a read-only zone lookup for `hostname`, nothing is created or changed), and certificate issuance reads
+  it fresh at every attempt, so saving or rotating it needs no restart: a save also makes the renewal loop
+  check at once, so a first certificate that was waiting on a token arrives within seconds. Enabling
+  `[tls]` with no token anywhere is not an error: Shepherd starts, logs that a token is needed, and the
+  HTTPS listener fails its handshakes until one is set. See [REVERSEPROXY.md](REVERSEPROXY.md#the-dns-provider-token).
+- **`cloudflare_api_token`** / **`cloudflare_api_token_file`** are now **read-once seeds** for that portal
+  token, the same precedent `[[lists]]` sets: the first time Shepherd starts without a portal-managed
+  token, whatever is set here (directly, or the trimmed contents of a 0600 file; setting both is still a
+  configuration error) is imported, and from then on the portal's value is used and these are ignored. A
+  deployment that already uses `cloudflare_api_token_file` therefore keeps working across the upgrade with
+  nothing re-entered; afterwards, rotating the token means saving it in the Proxy tab — editing the file
+  no longer changes anything (a startup line says so when the file differs). If `[tls]` and
+  `[reverseproxy]` hold different tokens at the import, `[tls]`'s wins and the conflict is logged by
+  setting name. A token file that cannot be read at that moment is retried at the next start, never lost.
 
   **Recommended minimum token scope:** create a Cloudflare API token scoped to **Zone → DNS → Edit**
   on the one zone your hostname lives in, nothing broader. It never needs account-level access, never
@@ -148,6 +160,8 @@ the same schedule, with no need to restart Shepherd.
 - `<data_dir>/tls/account.key` — the ACME account's own key (ECDSA P-256, PEM, mode 0600). This
   identifies the Let's Encrypt account, not any certificate, and is generated once, the first time
   `[tls]` is enabled.
+- `<data_dir>/secrets.json` — the shared DNS provider token (mode 0600), with the accountability mail
+  relay; see [REVERSEPROXY.md](REVERSEPROXY.md#the-dns-provider-token).
 - `<data_dir>/tls/cert.pem` and `<data_dir>/tls/key.pem` — the obtained certificate's full chain and
   its private key (mode 0600 each), the same honest "0600 is the whole protection" convention every
   other secret this project persists already uses (see `docs/DEVICES.md`, `docs/HISTORY.md`).

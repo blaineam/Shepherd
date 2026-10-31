@@ -47,6 +47,14 @@ type Engine struct {
 	// (docs/ACCOUNTABILITY.md) want to know about a watched access whether
 	// or not it was blocked. Must be cheap; nil disables it.
 	OnAccess func(AccessInfo)
+	// OnAccessWanted, when set, is asked first, before the item lookup
+	// OnAccess needs, and a false answer skips both for that query. It lets
+	// a caller keep OnAccess installed for the life of the process (the
+	// field must not change once ServeDNS is running) while paying nothing
+	// on the DNS hot path until it actually has a use for the events —
+	// cmd/shepherd answers "is an accountability mail relay set up right
+	// now". It must be cheap and must not block; nil means always wanted.
+	OnAccessWanted func() bool
 	// CountryBlock, when set, runs after a query would otherwise be answered
 	// (allowed or cached) and may turn it into a blocked one. It receives the
 	// client's address and the already-geolocated answer destinations (nil
@@ -229,7 +237,7 @@ func (e *Engine) done(entry Entry, start time.Time) {
 // entry.Action): accountability's whole point is that a category can be
 // watched whether or not it is actually blocked for this client.
 func (e *Engine) reportAccess(entry Entry) {
-	if e.OnAccess == nil {
+	if e.OnAccess == nil || (e.OnAccessWanted != nil && !e.OnAccessWanted()) {
 		return
 	}
 	items := e.Filter.ItemsFor(entry.Name)
