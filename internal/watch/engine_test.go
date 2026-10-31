@@ -852,3 +852,151 @@ func TestConfiguredInterfaceWinsOverTheRoute(t *testing.T) {
 		t.Fatalf("interface = %q, want the configured eth0", snap.Interface)
 	}
 }
+
+// relayFor credits the phone with relayed frames and waits until sample()
+// has seen them, which is what makes the engine sure steering worked.
+func (te *testEngine) relayFor(t *testing.T, id string, frames int) {
+	t.Helper()
+	te.mu.Lock()
+	c := te.ctrl
+	te.mu.Unlock()
+	for i := 0; i < frames; i++ {
+		if relayed, err := c.HandleFrame(relayFrame()); err != nil || !relayed {
+			t.Fatalf("relay: %v %v", relayed, err)
+		}
+	}
+	// Wait on the rate, not the total: the total comes straight from the
+	// Controller and is there before sample() has run, and it is sample()
+	// that records steering as having demonstrably worked.
+	te.clock.Advance(time.Second) // one tick: sample() runs
+	waitFor(t, "relayed traffic credited", func() bool { return te.status(t, id).PacketsPerSecond > 0 })
+}
+
+// A device that relayed and then went quiet is idle, not failing. Steering
+// provably worked for it, so the silence is the device, and punishing it
+// with the widening backoff is what left a waking phone unwatched for up to
+// ten minutes.
+func TestADeviceThatGoesQuietAfterRelayingIsIdleNotFailing(t *testing.T) {
+	te := newTestEngine(t, newFakePlatform(), func(c *Config) {
+		c.IdleGrace = 10 * time.Second
+		c.StartupGrace = 10 * time.Second
+		c.HealthInterval = time.Second
+	})
+	id := te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+	te.relayFor(t, id, 10)
+
+	// Now it goes quiet for longer than IdleGrace.
+	te.clock.Advance(11 * time.Second)
+	te.waitSteered(t, phoneMAC, false)
+	ds := te.status(t, id)
+	if ds.Failures != 0 {
+		t.Fatalf("idleness must not count as a failure: %+v", ds)
+	}
+	if ds.NextRetry.IsZero() || ds.NextRetry.Sub(te.clock.Now()) > idleRecheck {
+		t.Fatalf("want a flat recheck no longer than %s: %+v now=%s", idleRecheck, ds, te.clock.Now())
+	}
+
+	// Past the recheck it is still left alone: nothing has seen it, so it
+	// is asleep and re-steering would only flip its ARP entry for nothing.
+	te.clock.Advance(idleRecheck + time.Second)
+	te.poke(te.kick)
+	time.Sleep(20 * time.Millisecond)
+	if te.isSteered(phoneMAC) {
+		t.Fatal("re-steered a device nothing has seen since it went quiet")
+	}
+	if f := te.status(t, id).Failures; f != 0 {
+		t.Fatalf("waiting to be seen is not failing: failures = %d", f)
+	}
+
+	// Seen again by something other than the relay: steered at once.
+	te.reg.Observe(devices.Observation{Source: devices.SourceDNS, MAC: phoneMAC.String(), IP: phoneIP.String()})
+	te.waitSteered(t, phoneMAC, true)
+}
+
+// A device that never relayed and has not been seen lately either is asleep,
+// so that fail-open is idleness too.
+func TestASleepingDeviceThatNeverRelayedIsIdleNotFailing(t *testing.T) {
+	te := newTestEngine(t, newFakePlatform(), func(c *Config) {
+		// Longer than awakeWithin, so its last sighting is already stale
+		// by the time the grace runs out.
+		c.StartupGrace = awakeWithin + 30*time.Second
+		c.HealthInterval = time.Second
+	})
+	id := te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	te.clock.Advance(awakeWithin + 31*time.Second)
+	te.waitSteered(t, phoneMAC, false)
+	ds := te.status(t, id)
+	if ds.Failures != 0 {
+		t.Fatalf("a device nothing has seen is asleep, not failing: %+v", ds)
+	}
+	te.clock.Advance(idleRecheck + time.Second)
+	te.poke(te.kick)
+	time.Sleep(20 * time.Millisecond)
+	if te.isSteered(phoneMAC) {
+		t.Fatal("re-steered a sleeping device on a timer")
+	}
+	te.reg.Observe(devices.Observation{Source: devices.SourceDNS, MAC: phoneMAC.String(), IP: phoneIP.String()})
+	te.waitSteered(t, phoneMAC, true)
+}
+
+// The distinction that makes the backoff worth keeping: a device something
+// has seen lately, which never relayed a frame, is steering that did not
+// take. That still counts as a failure, still widens, and still retries on
+// the timer without needing a fresh sighting.
+func TestAnAwakeDeviceThatNeverRelaysStillCountsAsAFailure(t *testing.T) {
+	te := newTestEngine(t, newFakePlatform(), func(c *Config) {
+		c.StartupGrace = 10 * time.Second
+		c.HealthInterval = time.Second
+	})
+	id := te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	// Fails open while its sighting is still fresh: that is suspicious.
+	te.clock.Advance(11 * time.Second)
+	te.waitSteered(t, phoneMAC, false)
+	te.waitFailures(t, id, 1)
+	if ds := te.status(t, id); ds.NextRetry.Sub(te.clock.Now()) <= idleRecheck {
+		t.Fatalf("a real failure should back off further than an idle recheck: %+v", ds)
+	}
+	// No new sighting, and it is steered again purely on the backoff.
+	te.clock.Advance(retryBase)
+	te.waitSteered(t, phoneMAC, true)
+}
+
+// Repeated idleness must not creep upwards the way failures do, or a device
+// that sleeps and wakes all day drifts towards the retryMax blind window.
+func TestRepeatedIdlenessDoesNotWidenThePause(t *testing.T) {
+	te := newTestEngine(t, newFakePlatform(), func(c *Config) {
+		c.IdleGrace = 10 * time.Second
+		c.StartupGrace = 10 * time.Second
+		c.HealthInterval = time.Second
+	})
+	id := te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+
+	for round := 0; round < 3; round++ {
+		te.waitSteered(t, phoneMAC, true)
+		te.relayFor(t, id, 5)
+		te.clock.Advance(11 * time.Second)
+		te.waitSteered(t, phoneMAC, false)
+		ds := te.status(t, id)
+		if ds.Failures != 0 {
+			t.Fatalf("round %d: failures = %d, want 0", round, ds.Failures)
+		}
+		if d := ds.NextRetry.Sub(te.clock.Now()); d > idleRecheck {
+			t.Fatalf("round %d: pause %s grew past the flat %s", round, d, idleRecheck)
+		}
+		te.clock.Advance(idleRecheck + time.Second)
+		te.reg.Observe(devices.Observation{Source: devices.SourceDNS, MAC: phoneMAC.String(), IP: phoneIP.String()})
+	}
+}

@@ -76,6 +76,15 @@ Underneath it, Watch mode is designed to give up on its own:
   unsteered automatically, with a corrective ARP reply, and the reason is recorded.
 - Any failure to send while relaying unsteers that device immediately.
 - A device that keeps failing is retried on a widening backoff rather than flapped.
+- **An idle device is not treated as a failing one.** The check above cannot tell a device with
+  nothing to relay from one whose steering never took, and it fails both open, which is correct.
+  The engine can tell them apart, and does: if frames really were relayed for that device, or if
+  nothing other than the relay has seen it for a minute, it is simply quiet. That is not counted
+  as a failure and does not widen anything. The device is then left alone until something sees it
+  again, rather than being steered afresh every few seconds while it sleeps. This matters on a
+  real network: most devices on a hundred-device LAN are idle most of the time, and without it
+  every one of them flips its ARP entry to Shepherd and back continuously, while the widening
+  backoff leaves a waking phone unwatched for up to ten minutes.
 - If the relay itself dies, every device is unsteered at once and Shepherd keeps running.
 - If the router's MAC address changes, everything is unsteered and the engine starts again with
   the new one. The passive ARP monitor's `gateway-mac-changed` event prompts this, but the event

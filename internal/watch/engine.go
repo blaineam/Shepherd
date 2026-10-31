@@ -127,6 +127,19 @@ const (
 	retryBase  = 30 * time.Second
 	retryMax   = 10 * time.Minute
 	retryReset = 2 * time.Minute
+	// idleRecheck is the flat pause after a fail-open that was only the
+	// device having nothing to relay. It deliberately does not widen:
+	// idleness is not a fault, and a device punished for it ends up
+	// unwatched for up to retryMax after it wakes.
+	idleRecheck = 15 * time.Second
+	// awakeWithin is how recently the registry must have seen a device for
+	// a fail-open with no relayed traffic at all to look like steering
+	// failing rather than the device being asleep. While a device relays,
+	// the engine itself reports sightings (observeEvery), but it only does
+	// so when traffic actually moved -- so for a device with no relayed
+	// traffic, LastSeen reflects the passive ARP monitor and DNS alone,
+	// which is exactly the independent evidence this needs.
+	awakeWithin = time.Minute
 	// observeEvery bounds how often a steered device's relayed traffic is
 	// reported to the registry as a sighting.
 	observeEvery = time.Minute
@@ -241,6 +254,24 @@ type retryState struct {
 	// healthySince is when the device was last seen steered and verified,
 	// for forgiving failures after retryReset of good behaviour.
 	healthySince time.Time
+	// idle marks a fail-open that was the device having nothing to relay
+	// rather than steering failing. It is not counted as a failure, and
+	// the device is not steered again until the registry has seen it
+	// later than seenAt. Without this a sleeping device is re-steered
+	// every few seconds for as long as it sleeps, flipping its ARP entry
+	// back and forth each time for no traffic at all -- and because every
+	// one of those fail-opens counted as a failure, the widening backoff
+	// left it unwatched for up to retryMax once it finally woke.
+	idle   bool
+	seenAt time.Time
+}
+
+// retryGate is one device's backoff as reconcile needs it: when it may be
+// steered again, and whether it must be seen again first.
+type retryGate struct {
+	until  time.Time
+	idle   bool
+	seenAt time.Time
 }
 
 type rateSample struct {
@@ -292,9 +323,18 @@ type Engine struct {
 	believed map[arp.MAC]bool
 	rates    map[arp.MAC]*rateSample
 	observed map[arp.MAC]time.Time
-	global   rateSample
-	history  []HistoryRecord
-	lastLog  string
+	// relayed records that a MAC's steering demonstrably worked at least
+	// once this attempt: frames really were relayed for it. A later
+	// fail-open on silence is then the device going quiet, not steering
+	// having failed, which is the difference between a flat recheck and a
+	// widening backoff. Only onUnsteer clears it, never sample: the
+	// Controller drops a device from Status() before it says why, and a
+	// sample landing in that window would erase the evidence just as
+	// onUnsteer is about to need it.
+	relayed map[arp.MAC]bool
+	global  rateSample
+	history []HistoryRecord
+	lastLog string
 
 	kick    chan struct{} // reconcile now
 	gwCheck chan struct{} // re-read the gateway MAC now
@@ -331,7 +371,8 @@ func New(cfg Config) (*Engine, error) {
 		selfUnsteer: map[arp.MAC]bool{},
 		believed:    map[arp.MAC]bool{},
 		rates:       map[arp.MAC]*rateSample{}, observed: map[arp.MAC]time.Time{},
-		kick: make(chan struct{}, 1), gwCheck: make(chan struct{}, 1),
+		relayed: map[arp.MAC]bool{},
+		kick:    make(chan struct{}, 1), gwCheck: make(chan struct{}, 1),
 		attachTimeout: 30 * time.Second, relayGrace: time.Second,
 	}
 	if cfg.Enabled && cfg.Mode != ModeOff {
@@ -702,8 +743,10 @@ func (e *Engine) ownMACs() []arp.MAC {
 // so the device is not re-steered at once only to fail open again.
 func (e *Engine) onUnsteer(r intercept.UnsteerRecord) {
 	rec := HistoryRecord{Time: r.Time, MAC: r.MAC.String(), Reason: r.Reason}
+	var lastSeen time.Time
 	if d, ok := e.reg.FindByMAC(r.MAC.String()); ok {
 		rec.DeviceID, rec.Name = d.ID, d.DisplayName()
+		lastSeen = d.LastSeen
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -711,6 +754,8 @@ func (e *Engine) onUnsteer(r intercept.UnsteerRecord) {
 	if len(e.history) > historyCap {
 		e.history = e.history[len(e.history)-historyCap:]
 	}
+	relayedEver := e.relayed[r.MAC]
+	delete(e.relayed, r.MAC)
 	delete(e.rates, r.MAC)
 	delete(e.believed, r.MAC)
 	if e.selfUnsteer[r.MAC] {
@@ -725,8 +770,23 @@ func (e *Engine) onUnsteer(r intercept.UnsteerRecord) {
 		rs = &retryState{}
 		e.retry[r.MAC] = rs
 	}
-	rs.failures++
 	rs.healthySince = time.Time{}
+	// Two things look identical to the interception library's health loop
+	// -- a device with nothing to relay and a device whose steering never
+	// took -- and it fails both open, correctly, because it cannot tell
+	// them apart and silence might mean a device cut off. The engine can
+	// tell them apart, from its own two pieces of evidence: whether frames
+	// were ever relayed for this MAC (steering provably worked, so this
+	// silence is the device), and whether anything other than the relay
+	// has seen the device lately (it is awake, so silence is suspicious).
+	if relayedEver || r.Time.Sub(lastSeen) > awakeWithin {
+		rs.idle = true
+		rs.seenAt = lastSeen
+		rs.until = r.Time.Add(idleRecheck)
+		return
+	}
+	rs.idle, rs.seenAt = false, time.Time{}
+	rs.failures++
 	rs.until = r.Time.Add(backoffFor(rs.failures))
 }
 
@@ -772,6 +832,9 @@ func (e *Engine) sample(now time.Time) {
 			rs.bps = float64(d.BytesRelayed-rs.bytes) / el
 		}
 		moved := d.PacketsRelayed > rs.packets
+		if d.PacketsRelayed > 0 {
+			e.relayed[d.MAC] = true
+		}
 		rs.packets, rs.bytes, rs.at = d.PacketsRelayed, d.BytesRelayed, now
 		if moved && now.Sub(e.observed[d.MAC]) >= observeEvery {
 			e.observed[d.MAC] = now
@@ -837,6 +900,10 @@ func (e *Engine) reconcile(now time.Time) {
 	wantFam := map[arp.MAC]intercept.Family{}
 	refused := map[arp.MAC]string{}
 	v6Why := map[arp.MAC]string{}
+	// seen is each eligible MAC's registry LastSeen, the evidence a device
+	// that went quiet is awake again. It must come from this pass, not
+	// from when the device was unsteered.
+	seen := map[arp.MAC]time.Time{}
 	for _, d := range e.reg.List() {
 		d := d
 		dec := Decide(&d, e.cfg.Policy, own, now)
@@ -886,6 +953,7 @@ func (e *Engine) reconcile(now time.Time) {
 			t.IP6 = ip6
 			want[t.MAC] = t
 			wantFam[t.MAC] = fam
+			seen[t.MAC] = d.LastSeen
 		}
 	}
 	for mac, sd := range steered {
@@ -903,9 +971,9 @@ func (e *Engine) reconcile(now time.Time) {
 		}
 	}
 	e.mu.Lock()
-	retry := make(map[arp.MAC]time.Time, len(e.retry))
+	retry := make(map[arp.MAC]retryGate, len(e.retry))
 	for mac, rs := range e.retry {
-		retry[mac] = rs.until
+		retry[mac] = retryGate{until: rs.until, idle: rs.idle, seenAt: rs.seenAt}
 	}
 	inFlight := map[arp.MAC]bool{}
 	for mac := range e.believed {
@@ -921,8 +989,18 @@ func (e *Engine) reconcile(now time.Time) {
 		if inFlight[mac] {
 			continue // an unsteer is in flight; wait for its reason
 		}
-		if until, ok := retry[mac]; ok && now.Before(until) {
-			continue
+		if g, ok := retry[mac]; ok {
+			if now.Before(g.until) {
+				continue
+			}
+			// A device that fell open because it had nothing to relay is
+			// left alone until something other than the relay has seen it
+			// again. Steering it on a timer while it sleeps only flips its
+			// ARP entry to Shepherd and back every few seconds, for no
+			// traffic, across every idle device on the network at once.
+			if g.idle && !seen[mac].After(g.seenAt) {
+				continue
+			}
 		}
 		ref := intercept.DeviceRef{MAC: mac, IP: t.IP, IP6: t.IP6}
 		fam := wantFam[mac]
@@ -937,6 +1015,11 @@ func (e *Engine) reconcile(now time.Time) {
 		case err == nil, errors.Is(err, intercept.ErrAlreadySteered):
 			e.mu.Lock()
 			e.believed[mac] = true
+			if rs := e.retry[mac]; rs != nil && rs.idle {
+				// Judge the next fail-open afresh; genuine failures from
+				// before are left on the count.
+				rs.idle, rs.seenAt = false, time.Time{}
+			}
 			e.mu.Unlock()
 		case errors.Is(err, intercept.ErrPanicked), errors.Is(err, intercept.ErrClosed):
 			return

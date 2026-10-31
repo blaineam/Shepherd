@@ -472,6 +472,28 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- **Watch mode treated an idle device as a failing one, which on a real network meant constant ARP
+  churn and a ten-minute blind spot.** The interception library's health loop cannot tell a device
+  with nothing to relay from one whose steering never took, so it fails both open — correct, since
+  silence might mean a device cut off. But the engine counted every one of those fail-opens as a
+  failure, and the retry backoff doubles from 30 seconds to a 10-minute cap. On the maintainer's
+  network, 84 of 109 devices are active in any 15-minute window and most are idle at any moment,
+  so each of them cycled steer → 15 seconds of silence → unsteer → re-steer, flipping its ARP entry
+  to Shepherd and back for traffic that did not exist, while a phone that genuinely woke up could
+  go unwatched for up to ten minutes. The mismatch was between two windows that were never
+  reconciled: the policy keeps steering a device for 15 minutes after it was last seen, while the
+  health loop drops it after 15 seconds of silence. The engine now tells idleness from breakage
+  using its own two pieces of evidence, without touching `internal/intercept`: frames really were
+  relayed for that MAC at least once (steering provably worked, so the silence is the device), or
+  nothing other than the relay has seen it for a minute (it is asleep). Either way it is not a
+  failure, the pause is flat rather than widening, and the device is not steered again until the
+  registry sees it later than it did when it went quiet — which the passive ARP monitor and DNS
+  supply within seconds of a real wake-up, so the blind spot goes from ten minutes to about
+  fifteen seconds. A device something *has* seen lately that never relayed a frame is still a
+  failure, still widens and still retries on the timer, because that is steering not taking and is
+  exactly what the backoff is for. The evidence is deliberately cleared only when the unsteer is
+  reported and never by the sampler: the Controller drops a device from `Status()` before it says
+  why, and a sample landing in that window would erase the evidence just as it is needed.
 - **The globe's per-frame comet-arrival check scanned all 600 comet slots every frame**, regardless of
   how many were actually animating — cheap enough with a JIT to go unnoticed, real cost without one
   (Safari Lockdown Mode disables it entirely, and the portal felt sluggish there as a direct result).

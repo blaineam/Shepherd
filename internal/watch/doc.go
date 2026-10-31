@@ -23,7 +23,10 @@
 //     (XDP in the NIC driver, else XDP generic, else the userspace
 //     ParallelRelay with GRO turned off for its duration) and from then
 //     on only toggle the steered set, re-steering a device whose address
-//     changed and backing off one the health loop keeps failing open.
+//     changed and backing off one the health loop keeps failing open --
+//     distinguishing a device that is merely idle, which is not a failure
+//     and must not be re-steered until something sees it again, from one
+//     whose steering never took, which is.
 //   - Safety surface: a kill switch (Kill/Rearm) that calls PanicStop and
 //     stays off across restarts until re-armed, the Controller's own
 //     unsteer history with device names attached, and a Snapshot for the
