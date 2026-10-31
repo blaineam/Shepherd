@@ -21,6 +21,9 @@ func TestReverseProxyDefaultsAreOffAndInert(t *testing.T) {
 	if rp.Listen != ":8443" {
 		t.Errorf("listen default = %q, want :8443 (never 443: binding it is the owner's call)", rp.Listen)
 	}
+	if rp.RedirectListen != "" {
+		t.Errorf("redirect_listen default = %q, want empty: binding :80 by default needs a capability a fresh install does not have", rp.RedirectListen)
+	}
 	if rp.Domain != "" || rp.CloudflareAPIToken != "" || rp.CloudflareAPITokenFile != "" || rp.Email != "" {
 		t.Errorf("a fresh install must configure no domain or secret under [reverseproxy]: %+v", rp)
 	}
@@ -49,10 +52,11 @@ cloudflare_api_token = "cf-test-token"
 		ok + "domain = \"exa mple.com\"":    "reverseproxy.domain",
 		ok + "domain = \"*.*.example.com\"": "reverseproxy.domain",
 		ok + "domain = \"example.com:443\"": "reverseproxy.domain",
-		"[reverseproxy]\nenabled = true\nlisten = \"\"\ndomain = \"example.com\"\ncloudflare_api_token = \"t\"":                                     "reverseproxy.listen",
-		"[reverseproxy]\nenabled = true\ndomain = \"example.com\"":                                                                                  "cloudflare_api_token",
-		"[reverseproxy]\nenabled = true\ndomain = \"example.com\"\ncloudflare_api_token = \"t\"\ncloudflare_api_token_file = \"/tmp/x\"":            "not both",
-		"[tls]\nenabled = true\nhostname = \"h.example.com\"\nlisten = \":9443\"\ncloudflare_api_token = \"t\"\n" + ok + "domain = \"example.com\"": "same address",
+		"[reverseproxy]\nenabled = true\nlisten = \"\"\ndomain = \"example.com\"\ncloudflare_api_token = \"t\"":                                                              "reverseproxy.listen",
+		"[reverseproxy]\nenabled = true\ndomain = \"example.com\"\ncloudflare_api_token = \"t\"\ncloudflare_api_token_file = \"/tmp/x\"":                                     "not both",
+		"[tls]\nenabled = true\nhostname = \"h.example.com\"\nlisten = \":9443\"\ncloudflare_api_token = \"t\"\n" + ok + "domain = \"example.com\"":                          "same address",
+		ok + "domain = \"example.com\"\nredirect_listen = \":9443\"":                                                                                                         "same address",
+		"[tls]\nenabled = true\nhostname = \"h.example.com\"\nlisten = \":80\"\ncloudflare_api_token = \"t\"\n" + ok + "domain = \"example.com\"\nredirect_listen = \":80\"": "same address",
 	}
 	for body, want := range bad {
 		path := filepath.Join(t.TempDir(), "c.toml")
@@ -62,6 +66,15 @@ cloudflare_api_token = "cf-test-token"
 		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: %v, want %q", body, err, want)
 		}
+	}
+}
+
+func TestReverseProxyNeedsNoTokenInTheConfigFile(t *testing.T) {
+	// The DNS provider token is managed in the portal; the config file's
+	// token fields only seed it once (docs/REVERSEPROXY.md).
+	cfg := writeCfg(t, "[reverseproxy]\nenabled = true\ndomain = \"example.com\"\n")
+	if !cfg.ReverseProxy.Enabled {
+		t.Error("reverseproxy enabled without a token in shepherd.toml must load")
 	}
 }
 

@@ -70,6 +70,10 @@ test('hostWarnings names everything that will surprise someone', () => {
   const base = { domain: 'jellyfin.example.com', target_scheme: 'http', enabled: true };
   assert.deepEqual(hostWarnings(base, '*.example.com'), []);
   assert.deepEqual(hostWarnings({ ...base, domain: 'a.b.example.com' }, '*.example.com').map((w) => w.kind), ['uncovered']);
+  // The server also requests the bare base domain itself alongside the
+  // wildcard (docs/REVERSEPROXY.md), so a host pointed directly at it is
+  // covered too, even though covers() alone (pure "*.base" matching) says no.
+  assert.deepEqual(hostWarnings({ ...base, domain: 'example.com' }, '*.example.com'), []);
   assert.deepEqual(hostWarnings({ ...base, target_scheme: 'https', skip_tls_verify: true }, '').map((w) => w.kind), ['noverify']);
   for (const w of hostWarnings({ ...base, domain: 'x.y.example.com', target_scheme: 'https', skip_tls_verify: true }, '*.example.com')) {
     assert.ok(w.label && w.title, 'each warning has a label and an explanation');

@@ -7,6 +7,7 @@
 import { el } from './dom.js';
 import { button, iconButton, toggle, emptyState, confirmDialog } from './ui.js';
 import { unavailable } from './mgmt.js';
+import { TLS_MODES, portForMode, relayStatus, relayBody, sourceText, passwordPlaceholder } from './secrets.js';
 
 const DETAILS = [['summary', 'Summary — category and roughly when, never a domain'], ['detailed', 'Detailed — also names the exact domain']];
 const MODES = [['digest', 'Digest — one rollup per window'], ['immediate', 'Immediate — sent promptly, bursts still combined']];
@@ -18,6 +19,7 @@ export function createAccountability({ root, mgmt, notify, getGroups }) {
   let catalog = { entries: [] };
   let devices = [];
   let loadError = null;
+  let relay = null; // null: a server that predates the portal-managed relay
   let started = false;
 
   root.replaceChildren();
@@ -25,7 +27,7 @@ export function createAccountability({ root, mgmt, notify, getGroups }) {
   const title = el('h2', 'pg-title');
   title.append(el('span', '', 'Accountability'));
   head.append(title);
-  const lead = el('p', 'intro muted', 'Email a trusted contact when a device in a group or scope they chose accesses a category they chose, whether or not it was blocked. Nothing is watched until a subscription exists below.');
+  const lead = el('p', 'intro muted', 'Email a trusted contact when a device in a group or scope they chose accesses a category they chose, whether or not it was blocked. Nothing is watched until a mail relay and a subscription both exist below.');
   const content = el('div', 'acct-content');
   root.append(head, lead, content);
 
@@ -44,13 +46,16 @@ export function createAccountability({ root, mgmt, notify, getGroups }) {
 
   function paint() {
     content.replaceChildren();
+    if (relay) content.append(relayCard());
     if (loadError) {
-      // A 404 here almost always means the feature exists but is not
-      // configured (no SMTP relay set in shepherd.toml), not that the
-      // server predates it — api_accountability.go says so explicitly in
-      // the response body. Show that real reason instead of the generic
-      // "update the server" copy unavailableCard would give, which reads
-      // as broken/stuck rather than "needs configuration."
+      // Contacts answer 404 only when accountability is turned off in
+      // shepherd.toml (a missing relay no longer stops the engine), and
+      // the response body says so; show that real reason rather than the
+      // generic "update the server" copy, which reads as broken.
+      if (unavailable(loadError) && relay && !relay.enabled) {
+        content.append(emptyState('Accountability is turned off', 'Contacts can be added once [accountability] enabled = true is set in shepherd.toml and Shepherd restarts.'));
+        return;
+      }
       content.append(unavailable(loadError)
         ? emptyState('Accountability is not available', loadError.message || 'This Shepherd does not have that part of the API yet.')
         : emptyState('Could not load accountability settings', loadError.message, button('Try again', 'ghost', () => load(true))));
@@ -62,6 +67,88 @@ export function createAccountability({ root, mgmt, notify, getGroups }) {
       return;
     }
     for (const c of contacts) content.append(contactCard(c));
+  }
+
+  // The outgoing mail relay: set, changed or removed here and used from the
+  // next email on, with no restart. The password is write-only: the field
+  // always starts empty, and leaving it empty keeps the saved one.
+  function relayCard() {
+    const card = el('section', 'card acct-relay');
+    const h = el('div', 'card-h');
+    h.append(el('h3', 'card-t', 'Mail relay'));
+    card.append(h);
+    const st = relayStatus(relay);
+    card.append(el('p', 'rp-tone-' + st.tone, st.text));
+    const src = sourceText(relay);
+    if (src) card.append(el('p', 'muted small', src + '.'));
+
+    const f = el('form', 'cust-form');
+    f.autocomplete = 'off';
+    const input = (label, value, type = 'text') => {
+      const i = el('input');
+      i.type = type;
+      i.value = value || '';
+      i.placeholder = label;
+      i.autocomplete = 'off';
+      i.spellcheck = false;
+      i.setAttribute('aria-label', label);
+      return i;
+    };
+    const host = input('Host, like smtp.example.com', relay.host);
+    const port = input('Port', relay.port, 'number');
+    port.min = '1';
+    port.max = '65535';
+    const tls = selectFrom(TLS_MODES, relay.tls || 'starttls');
+    tls.setAttribute('aria-label', 'Connection security');
+    tls.addEventListener('change', () => { port.value = String(portForMode(tls.value, port.value)); });
+    const username = input('Username (often an email address)', relay.username);
+    const password = input(passwordPlaceholder(relay), '', 'password');
+    password.autocomplete = 'new-password';
+    const from = input('Send from (an email address)', relay.from, 'email');
+    const r1 = el('div', 'cf-row');
+    r1.append(host, port, tls);
+    const r2 = el('div', 'cf-row');
+    r2.append(username, password);
+    const r3 = el('div', 'cf-row');
+    r3.append(from);
+    const save = button(relay.configured ? 'Save changes' : 'Save relay', 'primary');
+    save.type = 'submit';
+    const acts = el('div', 'cf-row');
+    acts.append(save);
+    if (relay.configured) acts.append(button('Remove relay', 'ghost', removeRelay));
+    const err = el('p', 'err small');
+    err.setAttribute('role', 'status');
+    f.append(r1, r2, r3, acts, err, el('p', 'muted small', 'Use a relay you already have: a Gmail or iCloud app password, or your own mail server. Shepherd connects and signs in to check it before saving (no email is sent), and uses it from the next email on: no restart.'));
+    const fields = { host, port, tls, username, password, from };
+    f.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const r = relayBody({ host: host.value, port: port.value, tls: tls.value, username: username.value, password: password.value, from: from.value }, relay);
+      err.textContent = r.ok ? '' : r.error;
+      if (!r.ok) { (fields[r.field] || host).focus(); return; }
+      save.disabled = true;
+      save.textContent = 'Checking…';
+      try {
+        relay = await mgmt.setSMTPRelay(r.body);
+        notify('Mail relay saved');
+        await load(true);
+      } catch (e) {
+        err.textContent = e.message;
+        save.disabled = false;
+        save.textContent = relay.configured ? 'Save changes' : 'Save relay';
+      }
+    });
+    card.append(f);
+    return card;
+  }
+
+  async function removeRelay() {
+    const ok = await confirmDialog({ title: 'Remove the mail relay?', body: 'No accountability email is sent until a relay is set again. Contacts and subscriptions are kept.', confirm: 'Remove relay', danger: true });
+    if (!ok) return;
+    try {
+      relay = await mgmt.clearSMTPRelay();
+      notify('Mail relay removed');
+      paint();
+    } catch (e) { notify(e.message); }
   }
 
   function contactForm() {
@@ -221,6 +308,12 @@ export function createAccountability({ root, mgmt, notify, getGroups }) {
 
   async function load(force) {
     loadError = null;
+    try {
+      relay = await mgmt.smtpRelay();
+    } catch (e) {
+      relay = null; // an older server: the relay is still config-only there
+      if (!unavailable(e)) { loadError = e; paint(); return; }
+    }
     try {
       if (force || !catalog.entries.length) catalog = await mgmt.catalog();
       await ensureDevices();

@@ -136,6 +136,42 @@ func (p *CloudflareProvider) findZoneID(ctx context.Context, fqdn string) (strin
 	return "", fmt.Errorf("no Cloudflare zone found that covers %s", fqdn)
 }
 
+// Verify checks the token before anyone relies on it, using only the
+// read-only zone lookup Present already makes (never a record write, so a
+// check has no side effect on the zone at all). For each name — a
+// certificate hostname such as "shepherd.example.com", or a wildcard such as
+// "*.example.com" — it confirms the token authenticates and can see the zone
+// that name's DNS-01 challenge would be published in. With no names it only
+// confirms the token authenticates and can see at least one zone. Blank
+// names are ignored.
+func (p *CloudflareProvider) Verify(ctx context.Context, names ...string) error {
+	checked := false
+	for _, name := range names {
+		name = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(name), "*."), ".")
+		if name == "" {
+			continue
+		}
+		checked = true
+		if _, err := p.findZoneID(ctx, "_acme-challenge."+name); err != nil {
+			return err
+		}
+	}
+	if checked {
+		return nil
+	}
+	var resp cfZonesResponse
+	if err := p.do(ctx, http.MethodGet, "/zones?per_page=1", nil, &resp); err != nil {
+		return fmt.Errorf("listing zones: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("listing zones: %s", resp.String())
+	}
+	if len(resp.Result) == 0 {
+		return fmt.Errorf("the token works but cannot see any zone; give it Zone → DNS → Edit on the zone your certificates are for")
+	}
+	return nil
+}
+
 // Present creates fqdn as a TXT record holding value and returns Cloudflare's
 // record id, which CleanUp needs to remove exactly that record.
 func (p *CloudflareProvider) Present(ctx context.Context, fqdn, value string) (string, error) {

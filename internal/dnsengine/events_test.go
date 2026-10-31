@@ -417,3 +417,24 @@ func TestOnAccessSeesBlockedAndAllowedQueriesThatMatchAWatchedItem(t *testing.T)
 		t.Errorf("an upstream error must never report an access: %+v", errCalls)
 	}
 }
+
+func TestOnAccessWantedSkipsTheLookupWhenNobodyIsListening(t *testing.T) {
+	var hits atomicInt
+	up := fakeUpstreamAnswering(t, "198.51.100.7", &hits)
+	pool, _ := NewPool([]string{up})
+	e := &Engine{Filter: NewFilter(), Pool: pool, Cache: NewCache(10), Log: NewQueryLog(20), Stats: NewStats()}
+	e.Filter.SetList("gaming", set("roblox.example"))
+	var calls int
+	e.OnAccess = func(AccessInfo) { calls++ }
+	wanted := false
+	e.OnAccessWanted = func() bool { return wanted }
+	e.ServeDNS(udpWriter(), query("roblox.example.", dns.TypeA))
+	if calls != 0 {
+		t.Errorf("OnAccess ran %d times while OnAccessWanted said no", calls)
+	}
+	wanted = true
+	e.ServeDNS(udpWriter(), query("roblox.example.", dns.TypeA))
+	if calls != 1 {
+		t.Errorf("OnAccess ran %d times once wanted, want 1", calls)
+	}
+}

@@ -13,23 +13,58 @@ import (
 	"shepherd/internal/config"
 	"shepherd/internal/devices"
 	"shepherd/internal/dnsengine"
+	"shepherd/internal/secrets"
 )
 
-func accountabilitySMTPConfig() config.AccountabilitySMTP {
-	return config.AccountabilitySMTP{Host: "127.0.0.1", Port: 587, From: "shepherd@example.com", TLS: "starttls"} // leakcheck:allow test fixture address
+// testRelay is a relay pointing at nothing real: these tests never send
+// mail (no digest window closes within a test), they only need one to be set.
+func testRelay() secrets.SMTP {
+	return secrets.SMTP{Host: "127.0.0.1", Port: 587, From: "shepherd@example.com", TLS: "starttls"} // leakcheck:allow test fixture address
 }
 
-func TestStartAccountabilityNotWiredWithoutSMTPHost(t *testing.T) {
+// secretsWithRelay is an in-memory secrets store, with the test relay set
+// when withRelay is true.
+func secretsWithRelay(t *testing.T, withRelay bool) *secrets.Store {
+	t.Helper()
+	sec, err := secrets.Open("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withRelay {
+		if _, err := sec.SetSMTP(testRelay()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return sec
+}
+
+func TestStartAccountabilityIsBuiltButInertWithoutARelay(t *testing.T) {
 	engine, reg := testEngineAndRegistry(t)
-	cfg := config.Default() // Accountability.Enabled is true, but SMTP.Host is empty
+	cfg := config.Default() // Accountability.Enabled is true; no relay anywhere
+	cfg.DataDir = t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	eng, err := startAccountability(ctx, cfg, engine, reg)
-	if err != nil || eng != nil {
-		t.Fatalf("eng=%v err=%v, want (nil, nil): an unconfigured relay must leave the feature inert", eng, err)
+	eng, relay, err := startAccountability(ctx, cfg, engine, reg, secretsWithRelay(t, false))
+	if err != nil || eng == nil || relay == nil {
+		t.Fatalf("eng=%v relay=%v err=%v: enabled must always build the engine, so the portal's contacts work before a relay exists", eng, relay, err)
 	}
-	if engine.OnAccess != nil {
-		t.Error("OnAccess must not be wired when accountability is not configured")
+	defer eng.Close()
+	if relay.Configured() {
+		t.Error("no relay is set anywhere")
+	}
+	if engine.OnAccessWanted == nil || engine.OnAccessWanted() {
+		t.Error("with no relay the DNS engine must not even look up a query's items")
+	}
+	deviceID := reg.Observe(devices.Observation{Source: devices.SourceNeighbor, MAC: "02:00:5e:00:00:09", IP: "203.0.113.9", Time: time.Now()})
+	c, _ := eng.AddContact("Jordan", "jordan@example.net")
+	if _, err := eng.AddSubscription(accountability.Subscription{ContactID: c.ID, Scope: accountability.DeviceScope(deviceID), Items: []string{"*"},
+		Detail: accountability.DetailSummary, Mode: accountability.ModeDigest, Trigger: accountability.TriggerAny}); err != nil {
+		t.Fatal(err)
+	}
+	engine.OnAccess(dnsengine.AccessInfo{Time: time.Now(), ClientIP: "203.0.113.9", Items: []string{"gaming"}, Domain: "roblox.example", Action: "allowed"})
+	time.Sleep(50 * time.Millisecond)
+	if eng.Pending() != 0 {
+		t.Error("nothing may be recorded while there is no relay to send it through")
 	}
 }
 
@@ -37,12 +72,14 @@ func TestStartAccountabilityNotWiredWhenDisabled(t *testing.T) {
 	engine, reg := testEngineAndRegistry(t)
 	cfg := config.Default()
 	cfg.Accountability.Enabled = false
-	cfg.Accountability.SMTP = accountabilitySMTPConfig()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	eng, err := startAccountability(ctx, cfg, engine, reg)
-	if err != nil || eng != nil {
-		t.Fatalf("eng=%v err=%v, want (nil, nil) when accountability.enabled is false", eng, err)
+	eng, relay, err := startAccountability(ctx, cfg, engine, reg, secretsWithRelay(t, true))
+	if err != nil || eng != nil || relay != nil {
+		t.Fatalf("eng=%v relay=%v err=%v, want all nil when accountability.enabled is false", eng, relay, err)
+	}
+	if engine.OnAccess != nil {
+		t.Error("OnAccess must not be wired when accountability is off")
 	}
 }
 
@@ -50,16 +87,18 @@ func TestStartAccountabilityWiresOnAccessAndRecordsMatchingSubscription(t *testi
 	engine, reg := testEngineAndRegistry(t)
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
-	cfg.Accountability.SMTP = accountabilitySMTPConfig()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	eng, err := startAccountability(ctx, cfg, engine, reg)
+	eng, relay, err := startAccountability(ctx, cfg, engine, reg, secretsWithRelay(t, true))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if eng == nil {
-		t.Fatal("a configured SMTP relay must wire the engine")
+	if eng == nil || !relay.Configured() {
+		t.Fatal("a relay in the secrets store must wire the engine and the relay")
+	}
+	if !engine.OnAccessWanted() {
+		t.Error("with a relay set the DNS engine must report watched accesses")
 	}
 	defer eng.Close()
 	if engine.OnAccess == nil {
@@ -107,11 +146,10 @@ func TestStartAccountabilityUnknownClientStillRecordsNetworkWideSubscriptions(t 
 	engine, reg := testEngineAndRegistry(t)
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
-	cfg.Accountability.SMTP = accountabilitySMTPConfig()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	eng, err := startAccountability(ctx, cfg, engine, reg)
+	eng, _, err := startAccountability(ctx, cfg, engine, reg, secretsWithRelay(t, true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,4 +196,54 @@ func TestSMTPPassword(t *testing.T) {
 	if _, err := smtpPassword(config.AccountabilitySMTP{PasswordFile: filepath.Join(t.TempDir(), "missing")}); err == nil {
 		t.Error("a missing password_file must be an error")
 	}
+}
+
+func TestARelaySavedInThePortalLaterTakesEffectWithoutARestart(t *testing.T) {
+	engine, reg := testEngineAndRegistry(t)
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	sec := secretsWithRelay(t, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	eng, relay, err := startAccountability(ctx, cfg, engine, reg, sec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	deviceID := reg.Observe(devices.Observation{Source: devices.SourceNeighbor, MAC: "02:00:5e:00:00:07", IP: "203.0.113.17", Time: time.Now()})
+	c, _ := eng.AddContact("Avery", "avery@example.net")
+	if _, err := eng.AddSubscription(accountability.Subscription{ContactID: c.ID, Scope: accountability.DeviceScope(deviceID), Items: []string{"*"},
+		Detail: accountability.DetailSummary, Mode: accountability.ModeDigest, Trigger: accountability.TriggerAny,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	changed := secretsChanged(sec, relay, &certKicker{})
+
+	// What the portal does on PUT /api/accountability/smtp: save, then notify.
+	if _, err := sec.SetSMTP(testRelay()); err != nil {
+		t.Fatal(err)
+	}
+	changed("smtp")
+	if !relay.Configured() || !engine.OnAccessWanted() {
+		t.Fatal("a relay saved in the portal must be live at once")
+	}
+	engine.OnAccess(dnsengine.AccessInfo{Time: time.Now(), ClientIP: "203.0.113.17", Items: []string{"gaming"}, Domain: "roblox.example", Action: "allowed"})
+	deadline := time.Now().Add(2 * time.Second)
+	for eng.Pending() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("an access after the relay was saved never reached the engine")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Clearing it in the portal stops it again, just as live.
+	if err := sec.ClearSMTP(); err != nil {
+		t.Fatal(err)
+	}
+	changed("smtp")
+	if relay.Configured() || engine.OnAccessWanted() {
+		t.Error("a relay cleared in the portal must stop at once")
+	}
+	changed("unknown kind")                         // ignored
+	secretsChanged(sec, nil, &certKicker{})("smtp") // accountability off: stored, not applied, no panic
 }

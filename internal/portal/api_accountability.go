@@ -12,12 +12,13 @@ import (
 
 // acctEngine returns the accountability engine, or answers 404 and reports
 // false when the feature is not wired up (cmd/shepherd's startAccountability
-// returns nil when no SMTP relay is configured, or the feature is off): the
-// same "not available on this version" shape the frontend already recognises
-// via mgmt.js's unavailable(), rather than a 500 or a panic.
+// returns nil only when [accountability] enabled = false; a missing mail
+// relay no longer stops it, see /api/accountability/smtp): the same "not
+// available" shape the frontend already recognises via mgmt.js's
+// unavailable(), rather than a 500 or a panic.
 func (s *Server) acctEngine(w http.ResponseWriter) (*accountability.Engine, bool) {
 	if s.Accountability == nil {
-		notFound(w, "accountability is not configured on this server")
+		notFound(w, "accountability is turned off on this server ([accountability] enabled = false in shepherd.toml)")
 		return nil, false
 	}
 	return s.Accountability, true

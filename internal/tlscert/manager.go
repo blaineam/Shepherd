@@ -81,6 +81,7 @@ type Manager struct {
 	onObtained    func(time.Time)
 
 	cert atomic.Pointer[tls.Certificate]
+	kick chan struct{} // see Kick
 }
 
 // New validates opts and returns a Manager with no certificate loaded yet;
@@ -106,6 +107,7 @@ func New(opts Options) (*Manager, error) {
 		obtainTimeout: opts.ObtainTimeout,
 		onError:       opts.OnError,
 		onObtained:    opts.OnObtained,
+		kick:          make(chan struct{}, 1),
 	}
 	if m.renewBefore <= 0 {
 		m.renewBefore = DefaultRenewBefore
@@ -197,7 +199,26 @@ func (m *Manager) Run(ctx context.Context, every time.Duration) {
 				return
 			}
 			m.attempt(ctx)
+		case <-m.kick:
+			if ctx.Err() != nil {
+				return
+			}
+			m.attempt(ctx)
 		}
+	}
+}
+
+// Kick asks a running Run loop to check right away instead of waiting for
+// its next tick: cmd/shepherd calls it when the DNS provider token changes
+// in the portal, so a first certificate that was waiting on a token is
+// obtained within seconds rather than up to a whole check interval later.
+// It never blocks, several kicks before the loop wakes count as one, and
+// a kick changes nothing about what a check does: a certificate that is
+// still comfortably valid is left alone (EnsureFresh does no network I/O).
+func (m *Manager) Kick() {
+	select {
+	case m.kick <- struct{}{}:
+	default:
 	}
 }
 
