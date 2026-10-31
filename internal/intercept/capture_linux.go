@@ -52,14 +52,14 @@ type captureSocket struct{ fd int }
 // everything the Relay would discard anyway before it is ever copied to
 // userspace. See capture_filter.go for why that matters and why it is a
 // cost removal, not a behaviour change.
-func openCaptureGroup(iface string, shepherdMAC arp.MAC, n int) ([]*captureSocket, error) {
+func openCaptureGroup(iface string, shepherdMAC arp.MAC, n int, admitV6 bool) ([]*captureSocket, error) {
 	ifc, err := net.InterfaceByName(iface)
 	if err != nil {
 		return nil, fmt.Errorf("intercept: interface %q: %w", iface, err)
 	}
 	groupID := os.Getpid() & 0xffff
 
-	filter, err := captureFilter(shepherdMAC)
+	filter, err := captureFilter(shepherdMAC, admitV6)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +177,11 @@ func (c *Controller) ParallelRelay(ctx context.Context, iface string, n int) err
 		}
 	}()
 
-	captures, err := openCaptureGroup(iface, c.cfg.ShepherdMAC, n)
+	// Admit IPv6 in the kernel filter whenever IPv6 steering is enabled at
+	// all; HandleFrame's per-device family check does the real gating, so
+	// this is only about not paying to copy IPv6 frames up when no device
+	// could ever match. See captureFilter.
+	captures, err := openCaptureGroup(iface, c.cfg.ShepherdMAC, n, c.cfg.IPv6SteeringEnabled)
 	if err != nil {
 		return err
 	}

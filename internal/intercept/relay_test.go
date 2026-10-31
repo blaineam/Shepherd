@@ -12,12 +12,18 @@ import (
 	"shepherd/internal/arp"
 )
 
-func steeredLookup(mac arp.MAC, ip netip.Addr) func(arp.MAC) (netip.Addr, bool) {
-	return func(m arp.MAC) (netip.Addr, bool) {
+// steeredLookup reports mac as steered for IPv4 only, the default these
+// tests exercise. Use steeredLookupFam for a different family set.
+func steeredLookup(mac arp.MAC, ip netip.Addr) func(arp.MAC) (netip.Addr, Family, bool) {
+	return steeredLookupFam(mac, ip, SteerV4)
+}
+
+func steeredLookupFam(mac arp.MAC, ip netip.Addr, fam Family) func(arp.MAC) (netip.Addr, Family, bool) {
+	return func(m arp.MAC) (netip.Addr, Family, bool) {
 		if m == mac {
-			return ip, true
+			return ip, fam, true
 		}
-		return netip.Addr{}, false
+		return netip.Addr{}, 0, false
 	}
 }
 
@@ -28,7 +34,7 @@ func TestRelayRewritesDestinationAndRelays(t *testing.T) {
 	r := &Relay{
 		Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC,
 		Lookup:    steeredLookup(devMAC, devIP),
-		OnRelayed: func(mac arp.MAC, n int, _ time.Time) { relayedMAC, relayedN = mac, n },
+		OnRelayed: func(mac arp.MAC, _ Family, n int, _ time.Time) { relayedMAC, relayedN = mac, n },
 	}
 	raw := ethFrame(shepherdMAC, devMAC, 0x0800, []byte("payload"))
 	ok, err := r.HandleFrame(raw)
@@ -248,8 +254,8 @@ func TestRelayReportsSendErrorAndDoesNotCountAsRelayed(t *testing.T) {
 	r := &Relay{
 		Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC,
 		Lookup:       steeredLookup(devMAC, devIP),
-		OnRelayed:    func(arp.MAC, int, time.Time) { relayedCalled = true },
-		OnRelayError: func(mac arp.MAC, err error) { gotErrMAC = mac },
+		OnRelayed:    func(arp.MAC, Family, int, time.Time) { relayedCalled = true },
+		OnRelayError: func(mac arp.MAC, _ Family, err error) { gotErrMAC = mac },
 	}
 	raw := ethFrame(shepherdMAC, devMAC, 0x0800, []byte("x"))
 	ok, err := r.HandleFrame(raw)
@@ -349,7 +355,7 @@ func FuzzRelayHandleFrame(f *testing.F) {
 			// Lookup always says "steered" so the only thing that can
 			// stop a relay is the ethertype/destination checks: exactly
 			// what this test wants to stress.
-			Lookup: func(arp.MAC) (netip.Addr, bool) { return devIP, true },
+			Lookup: func(arp.MAC) (netip.Addr, Family, bool) { return devIP, SteerV4, true },
 		}
 		ok, err := r.HandleFrame(in) // must never panic
 		if len(in) >= 14 {

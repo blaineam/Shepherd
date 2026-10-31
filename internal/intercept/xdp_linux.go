@@ -76,6 +76,24 @@ func (c *Controller) AttachXDP(ctx context.Context, iface string, opts XDPOption
 		}
 	}
 
+	// Shepherd's own IPv6 addresses, used only when IPv6 steering is on:
+	// the caller's, the Controller's (ShepherdIPs6), else the interface's.
+	// An XDP_TX frame never reaches the stack, so a steered device's IPv6
+	// traffic to Shepherd itself must be recognized here and passed.
+	var localIPs6 []netip.Addr
+	if c.cfg.IPv6SteeringEnabled {
+		localIPs6 = opts.LocalIPs6
+		if len(localIPs6) == 0 {
+			localIPs6 = c.cfg.ShepherdIPs6
+		}
+		if len(localIPs6) == 0 {
+			localIPs6, err = interfaceIPv6s(ifc)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	// Kernels before 5.11 charge BPF memory to RLIMIT_MEMLOCK, which is
 	// tiny by default; on 5.11+ this is a no-op.
 	if err := rlimit.RemoveMemlock(); err != nil {
@@ -89,7 +107,7 @@ func (c *Controller) AttachXDP(ctx context.Context, iface string, opts XDPOption
 	defer objs.Close()
 
 	dp := &xdpDataPlane{objs: &objs}
-	if err := dp.configure(c.cfg.ShepherdMAC, c.cfg.GatewayMAC, localIPs); err != nil {
+	if err := dp.configure(c.cfg.ShepherdMAC, c.cfg.GatewayMAC, localIPs, localIPs6); err != nil {
 		return err
 	}
 
@@ -119,7 +137,7 @@ func (c *Controller) AttachXDP(ctx context.Context, iface string, opts XDPOption
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			dp.resync(c.steeredMACs())
+			dp.resync(c.steeredEntries())
 			dp.harvest(c)
 		}
 	}
@@ -176,6 +194,27 @@ func interfaceIPv4s(ifc *net.Interface) ([]netip.Addr, error) {
 	return out, nil
 }
 
+// interfaceIPv6s returns the IPv6 addresses configured on ifc (link-local,
+// ULA and global), so a steered device's IPv6 traffic to any of Shepherd's
+// own addresses is passed through rather than relayed.
+func interfaceIPv6s(ifc *net.Interface) ([]netip.Addr, error) {
+	addrs, err := ifc.Addrs()
+	if err != nil {
+		return nil, fmt.Errorf("intercept: addresses of %s: %w", ifc.Name, err)
+	}
+	var out []netip.Addr
+	for _, a := range addrs {
+		ipn, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		if ip, ok := netip.AddrFromSlice(ipn.IP); ok && ip.Is6() && !ip.Is4In6() {
+			out = append(out, ip)
+		}
+	}
+	return out, nil
+}
+
 // xdpDataPlane owns the loaded maps and mirrors the Controller's steered
 // set into the program's `steered` map. It implements steeredSetObserver.
 type xdpDataPlane struct {
@@ -202,7 +241,14 @@ func ipKey(ip netip.Addr) uint32 {
 	return binary.NativeEndian.Uint32(b[:])
 }
 
-func (dp *xdpDataPlane) configure(shepherdMAC, gatewayMAC arp.MAC, localIPs []netip.Addr) error {
+// ip6Key is the map key for an IPv6 address: the program compares the
+// packet's 16 destination bytes in place, so the key holds the address's
+// bytes in network order.
+func ip6Key(ip netip.Addr) xdpIn6Key {
+	return xdpIn6Key{Addr: ip.As16()}
+}
+
+func (dp *xdpDataPlane) configure(shepherdMAC, gatewayMAC arp.MAC, localIPs, localIPs6 []netip.Addr) error {
 	cfg := xdpRelayConfig{ShepherdMac: shepherdMAC, GatewayMac: gatewayMAC}
 	if err := dp.objs.Config.Put(uint32(0), cfg); err != nil {
 		return fmt.Errorf("intercept: set XDP relay config: %w", err)
@@ -215,55 +261,76 @@ func (dp *xdpDataPlane) configure(shepherdMAC, gatewayMAC arp.MAC, localIPs []ne
 			return fmt.Errorf("intercept: add local IP %s to XDP relay: %w", ip, err)
 		}
 	}
+	for _, ip := range localIPs6 {
+		if !ip.Is6() || ip.Is4In6() {
+			continue
+		}
+		if err := dp.objs.LocalIps6.Put(ip6Key(ip), uint8(1)); err != nil {
+			return fmt.Errorf("intercept: add local IPv6 %s to XDP relay: %w", ip, err)
+		}
+	}
 	return nil
 }
 
 // steeredSetChanged implements steeredSetObserver: called by the
 // Controller, outside its lock, with the complete new steered set.
-func (dp *xdpDataPlane) steeredSetChanged(macs []arp.MAC) { dp.resync(macs) }
+func (dp *xdpDataPlane) steeredSetChanged(entries []steeredEntry) { dp.resync(entries) }
 
-// resync makes the program's steered map hold exactly macs: new ones are
-// added with zeroed counters, missing ones removed. Entries already
-// present keep their counters, guaranteed two ways: the whole resync runs
-// under dp.mu (the Controller's observer call and the poll loop's safety
-// resync can otherwise interleave, and an add decided on a stale
-// iteration would reset counters the kernel had since bumped), and adds
-// use UpdateNoExist, so even then the kernel refuses to overwrite an
-// entry that exists. Errors are deliberately swallowed here (there is no
-// one to return them to from the observer path, and the next poll
-// retries); the health loop is what fails a device open if it is steered
-// but nothing is ever relayed for it.
-func (dp *xdpDataPlane) resync(macs []arp.MAC) {
+// resync makes the program's steered map hold exactly entries: new devices
+// are added with zeroed counters and their steered families, devices no
+// longer present are removed, and a device whose families changed (e.g. a
+// single-family unsteer that kept the other) has just its families field
+// updated in place. Counters already present are never reset, guaranteed
+// three ways: the whole resync runs under dp.mu (the Controller's observer
+// call and the poll loop's safety resync can otherwise interleave, and an
+// add decided on a stale iteration would reset counters the kernel had
+// since bumped); adds use UpdateNoExist, so even then the kernel refuses to
+// overwrite an entry that exists; and a families-only change reads the live
+// counters first and writes them straight back. Errors are deliberately
+// swallowed here (there is no one to return them to from the observer path,
+// and the next poll retries); the health loop is what fails a device open
+// if it is steered but nothing is ever relayed for it.
+func (dp *xdpDataPlane) resync(entries []steeredEntry) {
 	dp.mu.Lock()
 	defer dp.mu.Unlock()
 
-	want := make(map[arp.MAC]struct{}, len(macs))
-	for _, m := range macs {
-		want[m] = struct{}{}
+	want := make(map[arp.MAC]Family, len(entries))
+	for _, e := range entries {
+		want[e.MAC] = e.Fam
 	}
 
-	// Remove what should no longer be there.
-	var have []xdpMacKey
+	// Pass over what is there: remove the unwanted, fix a changed family.
 	var k xdpMacKey
 	var v xdpDevCounters
+	type present struct {
+		key xdpMacKey
+		val xdpDevCounters
+	}
+	var have []present
 	it := dp.objs.Steered.Iterate()
 	for it.Next(&k, &v) {
-		have = append(have, k)
+		have = append(have, present{k, v})
 	}
-	for _, k := range have {
+	for _, p := range have {
 		var mac arp.MAC
-		copy(mac[:], k.Mac[:])
-		if _, ok := want[mac]; !ok {
-			_ = dp.objs.Steered.Delete(k)
+		copy(mac[:], p.key.Mac[:])
+		fam, ok := want[mac]
+		if !ok {
+			_ = dp.objs.Steered.Delete(p.key)
 			delete(dp.last, mac)
-		} else {
-			delete(want, mac) // already present
+			continue
 		}
+		if p.val.Families != uint8(fam) {
+			nv := p.val
+			nv.Families = uint8(fam)
+			_ = dp.objs.Steered.Update(p.key, nv, ebpf.UpdateExist)
+		}
+		delete(want, mac) // already present
 	}
-	// Add what is missing, with zeroed counters, never touching an
-	// entry that exists.
-	for mac := range want {
-		_ = dp.objs.Steered.Update(macKey(mac), xdpDevCounters{}, ebpf.UpdateNoExist)
+	// Add what is missing, with zeroed counters and its families, never
+	// touching an entry that exists.
+	for mac, fam := range want {
+		_ = dp.objs.Steered.Update(macKey(mac), xdpDevCounters{Families: uint8(fam)}, ebpf.UpdateNoExist)
 	}
 }
 
@@ -286,7 +353,10 @@ func (dp *xdpDataPlane) harvest(c *Controller) {
 		prev := dp.last[mac]
 		dp.last[mac] = v
 		if v.Packets > prev.Packets {
-			c.recordRelayedBatch(mac, v.Packets-prev.Packets, v.Bytes-prev.Bytes, now)
+			c.recordRelayedBatch(mac, SteerV4, v.Packets-prev.Packets, v.Bytes-prev.Bytes, now)
+		}
+		if v.Packets6 > prev.Packets6 {
+			c.recordRelayedBatch(mac, SteerV6, v.Packets6-prev.Packets6, v.Bytes6-prev.Bytes6, now)
 		}
 	}
 

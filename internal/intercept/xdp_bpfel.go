@@ -14,10 +14,20 @@ import (
 )
 
 type xdpDevCounters struct {
-	_          structs.HostLayout
-	Packets    uint64
-	Bytes      uint64
-	LastSeenNs uint64
+	_           structs.HostLayout
+	Packets     uint64
+	Bytes       uint64
+	LastSeenNs  uint64
+	Packets6    uint64
+	Bytes6      uint64
+	LastSeenNs6 uint64
+	Families    uint8
+	Pad         [7]uint8
+}
+
+type xdpIn6Key struct {
+	_    structs.HostLayout
+	Addr [16]uint8
 }
 
 type xdpMacKey struct {
@@ -46,6 +56,7 @@ type xdpRelayStats struct {
 const (
 	xdpMapConfig    = "config"
 	xdpMapLocalIps  = "local_ips"
+	xdpMapLocalIps6 = "local_ips6"
 	xdpMapStats     = "stats"
 	xdpMapSteered   = "steered"
 	xdpProgXdpRelay = "xdp_relay"
@@ -100,10 +111,11 @@ type xdpProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type xdpMapSpecs struct {
-	Config   *ebpf.MapSpec `ebpf:"config"`
-	LocalIps *ebpf.MapSpec `ebpf:"local_ips"`
-	Stats    *ebpf.MapSpec `ebpf:"stats"`
-	Steered  *ebpf.MapSpec `ebpf:"steered"`
+	Config    *ebpf.MapSpec `ebpf:"config"`
+	LocalIps  *ebpf.MapSpec `ebpf:"local_ips"`
+	LocalIps6 *ebpf.MapSpec `ebpf:"local_ips6"`
+	Stats     *ebpf.MapSpec `ebpf:"stats"`
+	Steered   *ebpf.MapSpec `ebpf:"steered"`
 }
 
 // xdpVariableSpecs contains global variables before they are loaded into the kernel.
@@ -132,16 +144,18 @@ func (o *xdpObjects) Close() error {
 //
 // It can be passed to loadXdpObjects or ebpf.CollectionSpec.LoadAndAssign.
 type xdpMaps struct {
-	Config   *ebpf.Map `ebpf:"config"`
-	LocalIps *ebpf.Map `ebpf:"local_ips"`
-	Stats    *ebpf.Map `ebpf:"stats"`
-	Steered  *ebpf.Map `ebpf:"steered"`
+	Config    *ebpf.Map `ebpf:"config"`
+	LocalIps  *ebpf.Map `ebpf:"local_ips"`
+	LocalIps6 *ebpf.Map `ebpf:"local_ips6"`
+	Stats     *ebpf.Map `ebpf:"stats"`
+	Steered   *ebpf.Map `ebpf:"steered"`
 }
 
 func (m *xdpMaps) Close() error {
 	return _XdpClose(
 		m.Config,
 		m.LocalIps,
+		m.LocalIps6,
 		m.Stats,
 		m.Steered,
 	)

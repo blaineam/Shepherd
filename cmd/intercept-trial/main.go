@@ -68,6 +68,9 @@ func run() error {
 	duration := flag.Duration("duration", 45*time.Second, "trial duration; auto-reverts on its own, capped at 5m")
 	workers := flag.Int("workers", intercept.DefaultParallelism, "parallel capture/relay workers (PACKET_FANOUT); more cores, more throughput; ignored with -xdp")
 	xdpFlag := flag.String("xdp", "off", "relay in the kernel with XDP instead of ParallelRelay: off, auto (native, else generic), native, or generic")
+	ipv6Flag := flag.Bool("ipv6", false, "also steer the device's IPv6 traffic via Neighbor Advertisements (docs/IPV6-WATCH.md); off by default")
+	gatewayLLFlag := flag.String("gateway-ll", "", "the gateway's IPv6 link-local address (required with -ipv6)")
+	targetIP6Flag := flag.String("target-ip6", "", "an IPv6 address of the device to steer, its link-local is the usual choice (required with -ipv6)")
 	flag.Parse()
 
 	useXDP := *xdpFlag != "off"
@@ -106,6 +109,26 @@ func run() error {
 		return fmt.Errorf("intercept-trial: -target-ip: %w", err)
 	}
 
+	// IPv6 steering is opt-in (docs/IPV6-WATCH.md). When on, it rides
+	// alongside IPv4 as a second family on the same device.
+	fam := intercept.SteerV4
+	var gatewayLL, targetIP6 netip.Addr
+	if *ipv6Flag {
+		fam |= intercept.SteerV6
+		if *gatewayLLFlag == "" || *targetIP6Flag == "" {
+			return errors.New("intercept-trial: -ipv6 requires -gateway-ll and -target-ip6")
+		}
+		if gatewayLL, err = netip.ParseAddr(*gatewayLLFlag); err != nil {
+			return fmt.Errorf("intercept-trial: -gateway-ll: %w", err)
+		}
+		if targetIP6, err = netip.ParseAddr(*targetIP6Flag); err != nil {
+			return fmt.Errorf("intercept-trial: -target-ip6: %w", err)
+		}
+		if !gatewayLL.Is6() || gatewayLL.Is4In6() || !targetIP6.Is6() || targetIP6.Is4In6() {
+			return errors.New("intercept-trial: -gateway-ll and -target-ip6 must be IPv6 addresses")
+		}
+	}
+
 	ifc, err := net.InterfaceByName(*iface)
 	if err != nil {
 		return fmt.Errorf("intercept-trial: interface %q: %w", *iface, err)
@@ -125,14 +148,21 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("intercept-trial: reading addresses on %q: %w", *iface, err)
 	}
-	var shepherdIPs []netip.Addr
+	var shepherdIPs, shepherdIPs6 []netip.Addr
 	for _, a := range addrs {
 		ipNet, ok := a.(*net.IPNet)
 		if !ok {
 			continue
 		}
-		if addr, ok := netip.AddrFromSlice(ipNet.IP); ok && addr.Unmap().Is4() {
+		addr, ok := netip.AddrFromSlice(ipNet.IP)
+		if !ok {
+			continue
+		}
+		switch {
+		case addr.Unmap().Is4():
 			shepherdIPs = append(shepherdIPs, addr.Unmap())
+		case addr.Is6() && !addr.Is4In6():
+			shepherdIPs6 = append(shepherdIPs6, addr)
 		}
 	}
 
@@ -177,11 +207,14 @@ func run() error {
 	}
 
 	ctrl, err := intercept.NewController(intercept.ControllerConfig{
-		Sender:      sender,
-		ShepherdMAC: shepherdMAC,
-		ShepherdIPs: shepherdIPs,
-		GatewayIP:   gatewayIP,
-		GatewayMAC:  gatewayMAC,
+		Sender:              sender,
+		ShepherdMAC:         shepherdMAC,
+		ShepherdIPs:         shepherdIPs,
+		ShepherdIPs6:        shepherdIPs6,
+		GatewayIP:           gatewayIP,
+		GatewayMAC:          gatewayMAC,
+		GatewayLinkLocal:    gatewayLL,
+		IPv6SteeringEnabled: *ipv6Flag,
 		OnUnsteer: func(r intercept.UnsteerRecord) {
 			log.Printf("unsteered %s: %s", r.MAC, r.Reason)
 		},
@@ -226,11 +259,16 @@ func run() error {
 		}()
 		log.Printf("relaying across %d parallel workers", *workers)
 	}
-	log.Printf("steering %s (%s) for %s, trial mode (auto-revert)", targetMAC, targetIP, *duration)
+	if *ipv6Flag {
+		log.Printf("IPv6 steering ENABLED: gateway-ll=%s target-ip6=%s shepherd-ipv6=%v", gatewayLL, targetIP6, shepherdIPs6)
+		log.Printf("NOTE: on a ULA-only LAN with no global IPv6 route there is nothing off-link to relay; see docs/IPV6-WATCH.md")
+	}
+	log.Printf("steering %s (%s) families=%s for %s, trial mode (auto-revert)", targetMAC, targetIP, fam, *duration)
 
-	if err := ctrl.Steer(intercept.DeviceRef{MAC: targetMAC, IP: targetIP}, intercept.SteerOptions{
+	if err := ctrl.Steer(intercept.DeviceRef{MAC: targetMAC, IP: targetIP, IP6: targetIP6}, intercept.SteerOptions{
 		Trial:    true,
 		Duration: *duration,
+		Family:   fam,
 	}); err != nil {
 		ctrl.Close()
 		return fmt.Errorf("intercept-trial: Steer: %w", err)
@@ -277,8 +315,8 @@ func reportStatus(ctx context.Context, ctrl *intercept.Controller, relayFailed <
 				return
 			}
 			for _, d := range st {
-				log.Printf("status: %s healthy=%v bytes_relayed=%d packets_relayed=%d last_verified=%s",
-					d.MAC, d.Healthy, d.BytesRelayed, d.PacketsRelayed, formatSince(d.LastVerified))
+				log.Printf("status: %s families=%s healthy=%v bytes_relayed=%d packets_relayed=%d last_verified=%s",
+					d.MAC, d.Family, d.Healthy, d.BytesRelayed, d.PacketsRelayed, formatSince(d.LastVerified))
 			}
 			curStats := ctrl.Stats()
 			log.Printf("rate: %s", statsRate(prevStats, curStats, now.Sub(prevTime)))

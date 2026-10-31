@@ -61,10 +61,10 @@ func TestXDPRelayVerdictsAndRewrite(t *testing.T) {
 	objs := loadXDPForTest(t)
 	dp := &xdpDataPlane{objs: objs}
 	shepherdIP := ip(2)
-	if err := dp.configure(shepherdMAC, gwMAC, []netip.Addr{shepherdIP}); err != nil {
+	if err := dp.configure(shepherdMAC, gwMAC, []netip.Addr{shepherdIP}, nil); err != nil {
 		t.Fatal(err)
 	}
-	dp.resync([]arp.MAC{devMAC})
+	dp.resync([]steeredEntry{{devMAC, SteerV4}})
 
 	remote := netip.AddrFrom4([4]byte{203, 0, 113, 7})
 	other := rndMAC(99)
@@ -127,29 +127,86 @@ func TestXDPRelayVerdictsAndRewrite(t *testing.T) {
 	})
 }
 
+// TestXDPRelayIPv6 exercises the IPv6 branch: a v6-steered device's IPv6
+// traffic is relayed (both MACs rewritten, hop limit untouched, counted in
+// the v6 counters), its traffic to Shepherd's own IPv6 is passed, and a
+// device steered only for IPv4 has its IPv6 passed.
+func TestXDPRelayIPv6(t *testing.T) {
+	objs := loadXDPForTest(t)
+	dp := &xdpDataPlane{objs: objs}
+	if err := dp.configure(shepherdMAC, gwMAC, nil, []netip.Addr{shepIP6}); err != nil {
+		t.Fatal(err)
+	}
+	dp.resync([]steeredEntry{{devMAC, SteerV4 | SteerV6}})
+
+	t.Run("v6-steered device to the internet is relayed", func(t *testing.T) {
+		in := ipv6Frame(shepherdMAC, devMAC, devIP6, someV6, 42, []byte("hello6"))
+		verdict, out := runXDP(t, objs, in)
+		if verdict != xdpTX {
+			t.Fatalf("verdict = %d, want XDP_TX", verdict)
+		}
+		if arp.MAC(out[0:6]) != gwMAC || arp.MAC(out[6:12]) != shepherdMAC {
+			t.Fatalf("MACs after relay: dst=%v src=%v", arp.MAC(out[0:6]), arp.MAC(out[6:12]))
+		}
+		if out[ethHeaderLen+7] != 42 {
+			t.Fatalf("hop limit = %d, want 42 untouched", out[ethHeaderLen+7])
+		}
+		var v xdpDevCounters
+		if err := objs.Steered.Lookup(macKey(devMAC), &v); err != nil {
+			t.Fatal(err)
+		}
+		if v.Packets6 != 1 || v.Bytes6 != uint64(len(in)) || v.Packets != 0 {
+			t.Fatalf("counters = %+v, want 1 v6 packet and 0 v4", v)
+		}
+	})
+
+	t.Run("v6 to Shepherd itself is passed", func(t *testing.T) {
+		in := ipv6Frame(shepherdMAC, devMAC, devIP6, shepIP6, 64, []byte("dns"))
+		verdict, _ := runXDP(t, objs, in)
+		if verdict != xdpPass {
+			t.Fatalf("verdict = %d, want XDP_PASS", verdict)
+		}
+	})
+
+	t.Run("v4-only device has its IPv6 passed", func(t *testing.T) {
+		dp.resync([]steeredEntry{{devMAC, SteerV4}})
+		in := ipv6Frame(shepherdMAC, devMAC, devIP6, someV6, 64, []byte("x"))
+		verdict, _ := runXDP(t, objs, in)
+		if verdict != xdpPass {
+			t.Fatalf("v6 frame from a v4-only device: verdict = %d, want XDP_PASS", verdict)
+		}
+	})
+}
+
 // The program and the Go Relay must agree frame for frame on what gets
 // relayed, exactly as the classic-BPF capture filter must; the one
 // deliberate difference (frames for Shepherd's own IP) is tested above.
 func TestXDPRelayAgreesWithHandleFrame(t *testing.T) {
 	objs := loadXDPForTest(t)
 	dp := &xdpDataPlane{objs: objs}
-	if err := dp.configure(shepherdMAC, gwMAC, nil); err != nil {
+	if err := dp.configure(shepherdMAC, gwMAC, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	dp.resync([]arp.MAC{devMAC})
+	// Steer the device for both families so the agreement covers IPv6 too;
+	// the Go Relay's Lookup reports the same families.
+	const fam = SteerV4 | SteerV6
+	dp.resync([]steeredEntry{{devMAC, fam}})
 	remote := netip.AddrFrom4([4]byte{203, 0, 113, 7})
 
 	for _, dst := range []arp.MAC{shepherdMAC, gwMAC, devMAC, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}} {
 		for _, src := range []arp.MAC{devMAC, rndMAC(5), shepherdMAC} {
 			for _, et := range []uint16{0x0800, 0x0806, 0x86dd, 0x8100} {
 				var frame []byte
-				if et == 0x0800 {
+				switch et {
+				case 0x0800:
 					frame = ipv4Frame(dst, src, devIP, remote, []byte("p"))
-				} else {
+				case 0x86dd:
+					frame = ipv6Frame(dst, src, devIP6, someV6, 64, []byte("p"))
+				default:
 					frame = ethFrame(dst, src, et, make([]byte, 28))
 				}
 				sender := NewFakeSender()
-				r := &Relay{Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC, Lookup: steeredLookup(devMAC, devIP)}
+				r := &Relay{Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC, Lookup: steeredLookupFam(devMAC, devIP, fam)}
 				relayed, _ := r.HandleFrame(append([]byte(nil), frame...))
 				verdict, _ := runXDP(t, objs, frame)
 				if (verdict == xdpTX) != relayed {
@@ -165,8 +222,8 @@ func TestXDPResyncConverges(t *testing.T) {
 	objs := loadXDPForTest(t)
 	dp := &xdpDataPlane{objs: objs}
 	a, b, c := rndMAC(1), rndMAC(2), rndMAC(3)
-	dp.resync([]arp.MAC{a, b})
-	dp.resync([]arp.MAC{b, c})
+	dp.resync([]steeredEntry{{a, SteerV4}, {b, SteerV4}})
+	dp.resync([]steeredEntry{{b, SteerV4}, {c, SteerV4}})
 	var have []arp.MAC
 	var k xdpMacKey
 	var v xdpDevCounters
@@ -192,12 +249,12 @@ func TestXDPResyncConverges(t *testing.T) {
 func TestXDPResyncKeepsExistingCounters(t *testing.T) {
 	objs := loadXDPForTest(t)
 	dp := &xdpDataPlane{objs: objs}
-	dp.resync([]arp.MAC{devMAC})
-	if err := objs.Steered.Put(macKey(devMAC), xdpDevCounters{Packets: 7, Bytes: 700, LastSeenNs: 1}); err != nil {
+	dp.resync([]steeredEntry{{devMAC, SteerV4}})
+	if err := objs.Steered.Put(macKey(devMAC), xdpDevCounters{Packets: 7, Bytes: 700, LastSeenNs: 1, Families: uint8(SteerV4)}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
-		dp.resync([]arp.MAC{devMAC})
+		dp.resync([]steeredEntry{{devMAC, SteerV4}})
 	}
 	// And the exact shape of the race the lock guards against: a stale
 	// decision to add the device must not overwrite the entry either.

@@ -331,17 +331,29 @@ so an ordinary `go build` needs no clang) and loaded with `github.com/cilium/ebp
 `CAP_NET_ADMIN` and `CAP_BPF` (or `CAP_SYS_ADMIN` on kernels before 5.8) on top of `CAP_NET_RAW`
 for the Spoofer's sends. `cmd/intercept-trial -xdp auto` uses it in place of `ParallelRelay`.
 
-## IPv4 only, no exceptions
+## IPv4 by default; IPv6 steering is opt-in and off unless enabled
 
-IPv6 and NDP are never touched anywhere in this package. This is a hard rule carried over from
-[IPV6.md](IPV6.md): Thread border routers and Matter devices depend on IPv6 neighbor discovery and
-RAs working undisturbed, and a second actor on the LAN sending RAs or spoofing NDP breaks them
-silently. The `Relay` relays plain IPv4-ethertype frames and nothing else — a positive match, not a
-denylist, so a VLAN tag cannot smuggle IPv6 past it — the kernel-side capture filter admits only
-the same, and the `Spoofer` only ever builds plain IPv4-over-Ethernet ARP frames; all of it is
-proven with a fuzz/property test that feeds random and adversarial bytes at them (`go test -fuzz
-FuzzRelayHandleFrame`, the capture-filter agreement test, and the Spoofer's own frame-builder
-property test). The XDP program checks the ethertype before anything else, for the same reason.
+IPv4 is the only family steered unless IPv6 steering is explicitly turned on. IPv6 support exists in
+this package now — periodic unicast Neighbor Advertisements (`internal/ndp`), an IPv6 branch in the
+`Relay`, the capture filter and the XDP program, all gated by a per-device family flag — but it is
+**off by default and governed by a master switch** (`ControllerConfig.IPv6SteeringEnabled`, false by
+default), and even then only for a device explicitly steered with `SteerV6`, which the Controller
+refuses without a gateway link-local, a device IPv6 address, and (recommended) a `V6Excluder` that
+keeps every Thread / Matter / smart-home device out. The full design, the rationale, and the
+remaining go/no-go are in [IPV6-WATCH.md](IPV6-WATCH.md); the hard rules in [IPV6.md](IPV6.md) —
+no Router Advertisements, ever, and no multicast NDP — are preserved and machine-checked (the `ndp`
+package has no RA builder at all, and its frame builder refuses a multicast destination).
+
+The IPv6-only rule where IPv6 is *not* steered is still enforced exactly as before, per device: the
+`Relay` relays a frame only when its source-MAC device is steered for that frame's family, a
+positive match on IPv4 or IPv6 and never a denylist, so a VLAN tag cannot smuggle anything past it;
+the kernel-side capture filter admits IPv4 (and IPv6 only while IPv6 steering is enabled, purely as
+a cost choice — `HandleFrame` still gates); the `Spoofer` only ever builds IPv4 ARP, the `ndpSpoofer`
+only ever builds unicast NAs. All of it is proven with fuzz and property tests that feed random and
+adversarial bytes at them: `go test -fuzz FuzzRelayHandleFrame` (no IPv6 relayed for a v4-only
+device), `FuzzRelayHandleFrameV6Only` (no IPv4 relayed for a v6-only device), the capture-filter and
+XDP agreement tests across both families, and the `ndp` package's own frame-builder and
+Neighbor-Solicitation-parser tests.
 
 ## The safety model
 
@@ -468,10 +480,15 @@ with the maintainer's explicit go-ahead.
   with the Controller. See "Beyond userspace" above.
 - `clock.go` — the `Clock` interface and `FakeClock`, so the Spoofer's periodic resend and the
   Controller's health loop and trial timers are all tested with no real sleeps.
-- `spoofer.go` — `Spoofer`: one device's periodic claim and its corrective revert on stop, panic, or
-  context cancellation.
+- `spoofer.go` — `Spoofer`: one device's periodic IPv4 ARP claim and its corrective revert on stop,
+  panic, or context cancellation.
+- `ndp_spoofer.go` — `ndpSpoofer`: the IPv6 counterpart, one device's periodic unicast Neighbor
+  Advertisement claim and its corrective revert, built on `internal/ndp`. Used only when a device is
+  steered with `SteerV6`.
 - `relay.go` — `Relay`: rewrites (both MACs) and retransmits a steered device's outbound frames;
-  relays plain IPv4 only, so ARP, IPv6 and VLAN-tagged frames never get past it.
+  relays a frame only for a device steered for that frame's family (IPv4 always, IPv6 only when
+  enabled), a positive ethertype match, so ARP and VLAN-tagged frames never get past it. Defines the
+  `Family` type (`SteerV4`, `SteerV6`).
 - `controller.go` — `Controller`: the safety-governed authority described above. `Steer`, `Unsteer`,
   `PanicStop`, `Rearm`, `Status`, `History`, `Close`, `HandleFrame`, and `NewRelay` (an additional
   `Relay` sharing this Controller's state but with its own `Sender`, which is all `ParallelRelay` is
@@ -479,11 +496,15 @@ with the maintainer's explicit go-ahead.
 
 ## Tests
 
-`go test -race ./internal/intercept`: every scenario in this document, plus concurrent
-`Steer`/`Unsteer`/`Status`, a fuzz test proving IPv6 is never relayed under any input, a property
-test proving the Spoofer's frame builder never produces anything but a plain IPv4 ARP reply, and the
-capture filter run through x/net/bpf's interpreter against the Go Relay frame for frame. No real
-interface and no real network anywhere; `FakeSender` and `FakeClock` throughout. `open_linux.go`
+`go test -race ./internal/intercept ./internal/ndp`: every scenario in this document, plus concurrent
+`Steer`/`Unsteer`/`Status`, fuzz tests proving the per-family rule in both directions (no IPv6
+relayed for a v4-only device, no IPv4 relayed for a v6-only device), a property test proving the
+Spoofer's frame builder never produces anything but a plain IPv4 ARP reply, the `ndp` package's own
+tests proving its builder only ever emits a unicast Neighbor Advertisement (never a Router
+Advertisement, never a multicast destination) and that its Neighbor-Solicitation parser never panics,
+the per-family health behaviour (IPv6 idle is lenient, a failed IPv6 flip reverts only IPv6), and the
+capture filter run through x/net/bpf's interpreter against the Go Relay frame for frame, both filter
+shapes. No real interface and no real network anywhere; `FakeSender` and `FakeClock` throughout. `open_linux.go`
 needs `CAP_NET_RAW` and cannot run unprivileged, so it is the one file this package's coverage floor
 excludes, same as `internal/arp`'s equivalent file.
 

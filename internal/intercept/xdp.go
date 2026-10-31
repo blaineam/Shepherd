@@ -68,6 +68,11 @@ type XDPOptions struct {
 	// Empty means "every IPv4 address configured on the interface", read
 	// at attach time.
 	LocalIPs []netip.Addr
+	// LocalIPs6 are Shepherd's own IPv6 addresses on the interface, the
+	// IPv6 counterpart of LocalIPs. Used only when IPv6 steering is
+	// enabled; empty means "every IPv6 address configured on the
+	// interface", read at attach time.
+	LocalIPs6 []netip.Addr
 	// OnAttached, if set, is called once the program is attached, with the
 	// mode actually in effect (meaningful when Mode is XDPAuto). Optional.
 	OnAttached func(mode XDPMode)

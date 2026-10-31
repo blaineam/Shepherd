@@ -95,7 +95,7 @@ func TestAttachXDPRelaysOnVeth(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer peerSender.(interface{ Close() error }).Close()
-	caps, err := openCaptureGroup(b, gwMAC, 1) // filter: IPv4 to gwMAC, i.e. exactly the relayed frames
+	caps, err := openCaptureGroup(b, gwMAC, 1, false) // filter: IPv4 to gwMAC, i.e. exactly the relayed frames
 	if err != nil {
 		t.Fatal(err)
 	}

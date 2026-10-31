@@ -15,7 +15,7 @@ import (
 // through x/net/bpf's interpreter and check it admits precisely the frames
 // HandleFrame can relay, and nothing else.
 func TestCaptureFilterAdmitsOnlyIPv4ForShepherd(t *testing.T) {
-	raw, err := captureFilter(shepherdMAC)
+	raw, err := captureFilter(shepherdMAC, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,33 +68,86 @@ func TestCaptureFilterAdmitsOnlyIPv4ForShepherd(t *testing.T) {
 	}
 }
 
-// Whatever the filter admits, HandleFrame would have relayed (given a
-// steered source); whatever HandleFrame relays, the filter admits. The
-// two must agree, or the kernel-side filter would silently change what
-// Watch mode does rather than just what it costs.
-func TestCaptureFilterAgreesWithHandleFrame(t *testing.T) {
-	raw, err := captureFilter(shepherdMAC)
+// TestCaptureFilterAdmitsIPv4AndIPv6WhenV6 checks the admitV6 shape: both
+// IPv4 and IPv6 to Shepherd pass, everything else still drops.
+func TestCaptureFilterAdmitsIPv4AndIPv6WhenV6(t *testing.T) {
+	raw, err := captureFilter(shepherdMAC, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	insns, _ := bpf.Disassemble(raw)
+	insns, ok := bpf.Disassemble(raw)
+	if !ok {
+		t.Fatal("assembled filter does not disassemble cleanly")
+	}
 	vm, err := bpf.NewVM(insns)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("NewVM: %v", err)
 	}
-	for _, dst := range []arp.MAC{shepherdMAC, gwMAC, devMAC, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}} {
-		for _, et := range []uint16{0x0800, 0x0806, 0x86dd, 0x8100, 0x88cc} {
-			frame := ethFrame(dst, devMAC, et, []byte("payload"))
-			sender := NewFakeSender()
-			r := &Relay{Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC, Lookup: steeredLookup(devMAC, devIP)}
-			relayed, _ := r.HandleFrame(frame)
-			n, err := vm.Run(frame)
+	bcast := arp.MAC{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+	cases := []struct {
+		name  string
+		frame []byte
+		want  bool
+	}{
+		{"ipv4 to shepherd", ethFrame(shepherdMAC, devMAC, 0x0800, []byte("x")), true},
+		{"ipv6 to shepherd", ethFrame(shepherdMAC, devMAC, 0x86dd, []byte("x")), true},
+		{"ipv6 to gateway (loopback)", ethFrame(gwMAC, shepherdMAC, 0x86dd, []byte("x")), false},
+		{"ipv6 broadcast/multicast dst", ethFrame(bcast, devMAC, 0x86dd, []byte("x")), false},
+		{"arp to shepherd", ethFrame(shepherdMAC, devMAC, 0x0806, []byte("x")), false},
+		{"vlan-tagged to shepherd", ethFrame(shepherdMAC, devMAC, 0x8100, []byte{0, 1, 0x86, 0xdd}), false},
+		{"other ethertype to shepherd", ethFrame(shepherdMAC, devMAC, 0x88cc, []byte("x")), false},
+		{"too short", []byte{1, 2, 3}, false},
+	}
+	for _, tc := range cases {
+		n, err := vm.Run(tc.frame)
+		if err != nil {
+			t.Fatalf("%s: vm.Run: %v", tc.name, err)
+		}
+		if got := n > 0; got != tc.want {
+			t.Errorf("%s: filter accepted=%v (ret %d), want %v", tc.name, got, n, tc.want)
+		}
+	}
+}
+
+// Whatever the filter admits, HandleFrame would have relayed (given a
+// source steered for that family); whatever HandleFrame relays, the filter
+// admits. The two must agree, or the kernel-side filter would silently
+// change what Watch mode does rather than just what it costs. Checked for
+// both filter shapes against a device steered for the matching families.
+func TestCaptureFilterAgreesWithHandleFrame(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		admitV6 bool
+		fam     Family
+	}{
+		{"v4 only", false, SteerV4},
+		{"v4 and v6", true, SteerV4 | SteerV6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := captureFilter(shepherdMAC, tc.admitV6)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if admitted := n > 0; admitted != relayed {
-				t.Errorf("dst=%v ethertype=%#04x: filter admits=%v but HandleFrame relays=%v", dst, et, admitted, relayed)
+			insns, _ := bpf.Disassemble(raw)
+			vm, err := bpf.NewVM(insns)
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
+			for _, dst := range []arp.MAC{shepherdMAC, gwMAC, devMAC, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}} {
+				for _, et := range []uint16{0x0800, 0x0806, 0x86dd, 0x8100, 0x88cc} {
+					frame := ethFrame(dst, devMAC, et, []byte("payload"))
+					sender := NewFakeSender()
+					r := &Relay{Sender: sender, ShepherdMAC: shepherdMAC, GatewayMAC: gwMAC, Lookup: steeredLookupFam(devMAC, devIP, tc.fam)}
+					relayed, _ := r.HandleFrame(frame)
+					n, err := vm.Run(frame)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if admitted := n > 0; admitted != relayed {
+						t.Errorf("dst=%v ethertype=%#04x: filter admits=%v but HandleFrame relays=%v", dst, et, admitted, relayed)
+					}
+				}
+			}
+		})
 	}
 }
