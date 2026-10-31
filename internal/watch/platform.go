@@ -53,6 +53,17 @@ type Platform interface {
 	DefaultRoute6() (Route6, error)
 	// Link describes the named interface.
 	Link(name string) (Link, error)
+	// Driver names the kernel driver bound to iface ("atlantic", "igc",
+	// "e1000e"), which is what decides whether a native XDP attach is
+	// safe: see driversThatFlapOnNativeAttach. An empty name with no
+	// error means the interface has no driver to report (a veth or a
+	// virtual device), which is not a failure.
+	Driver(iface string) (string, error)
+	// CarrierChanges is the kernel's count of link up/down transitions on
+	// iface. Sampling it either side of a native XDP attach is how
+	// Shepherd learns that this driver drops the link when its rings are
+	// rebuilt, without having to know the driver in advance.
+	CarrierChanges(iface string) (uint64, error)
 	// LocalAddrs is every MAC and every IP address on this host, across
 	// all of its interfaces, for the Own set the policy refuses to steer.
 	// It must cover interfaces the relay is not attached to: those are
