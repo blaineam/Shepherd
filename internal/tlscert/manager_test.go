@@ -242,3 +242,33 @@ func TestRunTicksUntilContextCancelled(t *testing.T) {
 		t.Errorf("Obtain calls = %d, want at least 2 ticks", obt.callCount())
 	}
 }
+
+func TestKickChecksRightAwayInsteadOfWaitingForTheTick(t *testing.T) {
+	obt := &fakeObtainer{err: errors.New("no token yet")}
+	m := newTestManager(t, obt)
+	m.Kick() // before Run: counted once, never blocks
+	m.Kick()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { m.Run(ctx, time.Hour); close(done) }() // the ticker never fires in this test
+	waitCalls := func(n int) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for obt.callCount() < n {
+			if time.Now().After(deadline) {
+				t.Fatalf("Obtain calls = %d, want %d", obt.callCount(), n)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	waitCalls(2) // the first check, then the queued kick
+	m.Kick()
+	waitCalls(3)
+	cancel()
+	m.Kick() // after cancellation: must not attempt again
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after context cancellation")
+	}
+}

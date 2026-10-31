@@ -313,3 +313,24 @@ test('reverse proxy: status, hosts, add, edit, toggle, remove', async () => {
   assert.deepEqual(await call('DELETE', '/api/reverseproxy/hosts/' + added.id), { ok: true });
   await fails(call('DELETE', '/api/reverseproxy/hosts/' + added.id), 404);
 });
+
+test('secrets: the demo keeps only "set or not", checks input, and never echoes a secret', async () => {
+  const { call } = rig();
+  assert.equal((await call('GET', '/api/dns-provider')).configured, true);
+  await fails(call('PUT', '/api/dns-provider', { api_token: '' }), 400);
+  await fails(call('PUT', '/api/dns-provider', { api_token: 'bad' }), 422);
+  const saved = await call('PUT', '/api/dns-provider', { api_token: 'demo-token' });
+  assert.equal(saved.configured, true);
+  assert.equal(JSON.stringify(saved).includes('demo-token'), false);
+  assert.equal((await call('DELETE', '/api/dns-provider')).configured, false);
+
+  const relay = await call('GET', '/api/accountability/smtp');
+  assert.equal(relay.active, true);
+  await fails(call('PUT', '/api/accountability/smtp', { host: 'bad host', port: 587, from: 'a@example.com' }), 400);
+  const r = await call('PUT', '/api/accountability/smtp', { host: 'smtp.example.com', port: 465, username: 'shepherd@example.com', from: 'shepherd@example.com', tls: 'tls', password: 'demo-pw' });
+  assert.equal(r.port, 465);
+  assert.equal(r.password_set, true);
+  assert.equal(JSON.stringify(r).includes('demo-pw'), false);
+  const off = await call('DELETE', '/api/accountability/smtp');
+  assert.deepEqual([off.configured, off.active, off.password_set], [false, false, false]);
+});

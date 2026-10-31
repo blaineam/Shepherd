@@ -679,7 +679,6 @@ cloudflare_api_token = "cf-test-token"
 	bad := map[string]string{
 		"[tls]\nenabled = true\nlisten = \"0.0.0.0:8443\"\ncloudflare_api_token = \"t\"":                                                           "hostname",
 		"[tls]\nenabled = true\nhostname = \"h\"\ncloudflare_api_token = \"t\"":                                                                    "listen",
-		"[tls]\nenabled = true\nhostname = \"h\"\nlisten = \"0.0.0.0:8443\"":                                                                       "cloudflare_api_token",
 		"[tls]\nenabled = true\nhostname = \"h\"\nlisten = \"0.0.0.0:8443\"\ncloudflare_api_token = \"t\"\ncloudflare_api_token_file = \"/tmp/x\"": "not both",
 	}
 	for body, want := range bad {
@@ -694,6 +693,11 @@ cloudflare_api_token = "cf-test-token"
 	// Disabled (the default) needs none of this set.
 	if _, err := Load(filepath.Join(t.TempDir(), "absent.toml")); err != nil {
 		t.Errorf("tls.enabled = false (the default) must need no other field: %v", err)
+	}
+	// The token is no longer required here: it can be set in the portal
+	// (docs/TLS.md), and these fields are only read-once seeds for it.
+	if cfg := writeCfg(t, "[tls]\nenabled = true\nhostname = \"h.example.com\"\nlisten = \"0.0.0.0:8443\"\n"); !cfg.TLS.Enabled {
+		t.Error("tls enabled without a token in shepherd.toml must load")
 	}
 }
 

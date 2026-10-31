@@ -16,8 +16,8 @@ import (
 	"time"
 )
 
-// Options configures an Engine. Sender and From are required; everything
-// else has a sensible default.
+// Options configures an Engine. Sender is required; everything else has a
+// sensible default.
 type Options struct {
 	// Dir, when set, is where ContactsFile and PendingFile persist. It is
 	// created (mode 0700) and loaded on New.
@@ -29,8 +29,11 @@ type Options struct {
 
 	// Sender delivers composed emails. Required.
 	Sender Sender
-	// From is the envelope and header From address for every email this
-	// engine sends. Required.
+	// From is the Message.From handed to Sender with every email. Optional:
+	// SMTPSender (and so RelaySender) always uses its own relay's
+	// SMTPConfig.From for both the envelope and the header, which is what
+	// lets a relay changed in the portal change the From address too
+	// without rebuilding the engine. It only matters to a custom Sender.
 	From string
 
 	// ImmediateWindow is the dedupe window applied to immediate-mode
@@ -106,9 +109,6 @@ func randomID() string {
 func New(o Options) (*Engine, error) {
 	if o.Sender == nil {
 		return nil, fmt.Errorf("%w: a Sender is required", ErrInvalid)
-	}
-	if o.From == "" {
-		return nil, fmt.Errorf("%w: a From address is required", ErrInvalid)
 	}
 	e := &Engine{
 		dir: o.Dir, clock: o.Clock, codec: o.Codec, newID: o.NewID,

@@ -35,13 +35,17 @@ func newTestEngine(t *testing.T, dir string, clock Clock, sender Sender) *Engine
 	return e
 }
 
-func TestNewRequiresSenderAndFrom(t *testing.T) {
+func TestNewRequiresSenderButNotFrom(t *testing.T) {
 	if _, err := New(Options{From: "a@example.com"}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("New() without Sender = %v, want ErrInvalid", err)
 	}
-	if _, err := New(Options{Sender: &FakeSender{}}); !errors.Is(err, ErrInvalid) {
-		t.Errorf("New() without From = %v, want ErrInvalid", err)
+	// From is optional: SMTPSender and RelaySender use their relay's own
+	// From address, which can change at runtime (set in the portal).
+	e, err := New(Options{Sender: &FakeSender{}})
+	if err != nil {
+		t.Fatalf("New() without From = %v, want nil", err)
 	}
+	e.Close()
 }
 
 func TestContactCRUD(t *testing.T) {

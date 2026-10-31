@@ -36,6 +36,15 @@ type fakeSMTP struct {
 
 	mu       sync.Mutex
 	received []string // successfully queued message bodies, for assertions
+	commands []string // every command verb received, for assertions
+}
+
+// commandsSeen returns every command verb (EHLO, AUTH, MAIL, ...) the
+// server has received so far, in order.
+func (s *fakeSMTP) commandsSeen() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.commands...)
 }
 
 func newFakeSMTP(t *testing.T) *fakeSMTP {
@@ -90,6 +99,10 @@ func (s *fakeSMTP) handle(conn net.Conn) {
 			return
 		}
 		upper := strings.ToUpper(line)
+		verb, _, _ := strings.Cut(upper, " ")
+		s.mu.Lock()
+		s.commands = append(s.commands, verb)
+		s.mu.Unlock()
 		switch {
 		case strings.HasPrefix(upper, "EHLO") || strings.HasPrefix(upper, "HELO"):
 			_ = tp.PrintfLine("250-fake.example.com greets you")

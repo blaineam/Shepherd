@@ -32,6 +32,7 @@ import (
 	"shepherd/internal/nethealth"
 	"shepherd/internal/portscan"
 	"shepherd/internal/reverseproxy"
+	"shepherd/internal/secrets"
 	"shepherd/internal/settings"
 	"shepherd/internal/vulnscan"
 )
@@ -154,6 +155,25 @@ type Deps struct {
 	ReverseProxy *reverseproxy.Store
 	// ReverseProxyStatus describes that listener; the zero value is "off".
 	ReverseProxyStatus ReverseProxyStatus
+
+	// Secrets holds the portal-managed credentials (internal/secrets): the
+	// DNS provider token [tls] and [reverseproxy] share, and the
+	// accountability mail relay. Nil gets a memory-only store, so the API
+	// still works but nothing persists.
+	Secrets *secrets.Store
+	// VerifyDNSProvider and VerifySMTP check a credential with a real,
+	// side-effect-free call before it is saved (api_secrets.go); an error
+	// refuses the save. cmd/shepherd always sets both; nil skips the
+	// check, which only tests of unrelated routes rely on.
+	VerifyDNSProvider func(context.Context, secrets.DNSProvider) error
+	VerifySMTP        func(context.Context, secrets.SMTP) error
+	// OnSecretsChanged is called after a secret is saved or cleared, with
+	// SecretDNSProvider or SecretSMTP, so cmd/shepherd can apply it to the
+	// running process without a restart. Nil does nothing.
+	OnSecretsChanged func(kind string)
+	// DNSProviderUsers names the enabled features ("tls", "reverseproxy")
+	// that issue certificates with the DNS provider token.
+	DNSProviderUsers []string
 }
 
 type Server struct {
@@ -218,6 +238,9 @@ func New(d Deps) *Server {
 	}
 	if d.ReverseProxy == nil {
 		d.ReverseProxy, _ = reverseproxy.Open("") // empty path never errors
+	}
+	if d.Secrets == nil {
+		d.Secrets, _ = secrets.Open("") // empty path never errors
 	}
 	if d.Heartbeat <= 0 {
 		d.Heartbeat = 15 * time.Second
@@ -504,6 +527,13 @@ func (s *Server) routes() {
 	h("GET /api/accountability/subscriptions", s.listSubscriptions)
 	h("POST /api/accountability/subscriptions", s.addSubscription)
 	h("DELETE /api/accountability/subscriptions/{id}", s.deleteSubscription)
+	h("GET /api/accountability/smtp", s.getSMTP)
+	h("PUT /api/accountability/smtp", s.putSMTP)
+	h("DELETE /api/accountability/smtp", s.deleteSMTP)
+
+	h("GET /api/dns-provider", s.getDNSProvider)
+	h("PUT /api/dns-provider", s.putDNSProvider)
+	h("DELETE /api/dns-provider", s.deleteDNSProvider)
 
 	h("GET /api/geoblock", s.getGeoBlock)
 	h("POST /api/geoblock", s.setGeoBlock)

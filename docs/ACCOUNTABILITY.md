@@ -283,47 +283,44 @@ Postfix. `SMTPSender` (`internal/accountability/sender.go`) speaks SMTP with onl
 library (`net/smtp`), supporting STARTTLS (port 587 convention), implicit TLS (port 465 convention),
 or no TLS at all (only sane against a local, trusted relay).
 
-### SMTP secret handling (the wiring's choice)
+### Setting up the relay: the portal, not `shepherd.toml`
 
-`internal/config`'s `Accountability.SMTP` (`internal/config/config.go`) is now the real
-`[accountability.smtp]` section of `shepherd.toml`:
+The relay is set, changed and removed on the **Accountability** tab's **Mail relay** card (host, port, TLS
+mode, username, password, From), entirely from the browser, and kept with the DNS provider token in
+`<data_dir>/secrets.json` (`internal/secrets`: JSON, atomic save, mode 0600, the same shape as
+`devices.json` and `policy.json`).
 
-```toml
-[accountability]
-enabled = true          # default; inert until smtp.host is also set
+- **Write-only password.** Nothing ever sends the password back: the card's password field is always
+  empty, saying only that one is saved. Leaving it empty on a later save keeps the saved password — but only
+  for the same host and username. Change either and the password must be typed again, so a saved password
+  can never be pointed at a different server (which would be a way to read it back). `clear_password`
+  removes it, for an unauthenticated local relay.
+- **Checked before it is saved.** `SMTPSender.Verify` does every step `Send` does before `MAIL FROM` —
+  connect, STARTTLS or implicit TLS as chosen, AUTH — then `QUIT`s. Nothing is ever sent (a test proves the
+  fake server never sees `MAIL`, `RCPT` or `DATA`). A wrong password, port or TLS mode is refused right away
+  (HTTP 422, with the classified reason), and the working relay, if any, stays in place.
+- **No restart.** The engine sends through an `accountability.RelaySender`; a saved relay is swapped into it
+  at once, and a cleared one removed, so the next digest uses whatever the card says now. `From` comes from
+  the relay itself, so it changes with it too.
+- **The engine is always there when `[accountability]` is enabled** (the default), relay or not, so contacts
+  and subscriptions can be managed before a relay exists and the tab no longer answers 404 everywhere — the
+  state that, before this, looked broken rather than "needs two minutes of setup". Without a relay it costs
+  nothing: `dnsengine.Engine.OnAccessWanted` skips even the item lookup on the DNS hot path, and no access is
+  queued, recorded or persisted, so nothing piles up to be sent later. Only `enabled = false` turns the
+  routes back into 404s (the card still answers, and says so).
 
-[accountability.smtp]
-host = ""                # empty = feature stays inert, no matter what else is set
-port = 587
-username = ""
-password = ""            # a real secret, see below
-password_file = ""       # alternative to password; mutually exclusive with it
-from = ""
-tls = "starttls"         # "starttls" | "tls" | "none"
-```
+**Upgrading from a `shepherd.toml` relay.** `[accountability.smtp]` is now a read-once seed, the
+`[[lists]]` precedent applied to this one secret: the first time Shepherd starts without a portal-managed
+relay, a relay set there (`host` non-empty, `password` or `password_file` — never both — included) is
+imported, and from then on the section is ignored (a startup line says so when it differs). An existing
+setup keeps sending across the upgrade with nothing re-entered. A `password_file` that cannot be read at
+that moment is retried at the next start rather than lost, and a relay cleared in the portal stays cleared.
 
-This project has one existing precedent for a secret in configuration: `internal/history`'s
-encryption key, which is *generated* by Shepherd itself and stored in a key file
-(`history.KeySource = "file"`) or derived from a passphrase typed at unlock time
-(`history.KeySource = "passphrase"`, `SHEPHERD_HISTORY_PASSPHRASE`). Neither fits here: an SMTP
-password is not something Shepherd can generate — it is an existing credential from the person's
-own mail provider, needed the moment the process starts (there is no "locked until someone types a
-passphrase in the portal" state for outgoing mail the way there is for reading past history). So
-the wiring (`cmd/shepherd/accountability.go`) uses the simplest option the brief allows: a plain
-`password` field alongside a `password_file` field that, when set, is read fresh (and
-whitespace-trimmed) on every startup instead. `internal/config.Validate` rejects setting both.
-
-**The tradeoff, plainly:** `password` set directly in `shepherd.toml` is protected only by that
-file's own permissions — exactly the same honest limit this document already states for the
-password field itself (see "Honest limits" below) and the same one `docs/DEVICES.md` and
-`docs/HISTORY.md` note for other secrets in this project. `password_file` does not encrypt
-anything either; it only keeps the secret out of `shepherd.toml` itself, so a config file shared,
-backed up, or pasted into an issue does not also leak the SMTP password, and the password file can
-be given narrower permissions or live on a separate volume. Neither option is "secure at rest" in
-any stronger sense — there is no precedent in this project for encrypting a bring-your-own
-credential like this, unlike the random key `internal/history` generates for itself. Encrypting it
-the way `history.json` can be encrypted (a key file or passphrase, Argon2id) remains a reasonable
-future improvement, exactly as already noted below; it is not built here.
+**The tradeoff, plainly:** `secrets.json` is protected only by its 0600 permissions — the same honest limit
+this project states for the portal token, the history key file and the ACME keys. Moving the password out of
+`shepherd.toml` does mean a config file that is shared, backed up or pasted into an issue no longer carries
+it. Encrypting it at rest (a key file or passphrase, Argon2id, the way `history.json` can be encrypted)
+remains a possible future improvement; it is not built.
 
 ### Send-outcome classification
 
@@ -361,14 +358,11 @@ package's own `Engine.SendLog`) can tell "this will never work until the configu
   held for a retry (`TestSendFailureIsLoggedAndWindowCleared`). This is a deliberate simplicity choice
   given the explicit non-goal of guaranteed delivery; a future version could add bounded retries if
   that trade-off ever changes.
-- **The SMTP password is a real secret, protected today only by file permissions.** `cmd/shepherd`
-  loads `SMTPConfig.Password` from `shepherd.toml`'s `[accountability.smtp]` (directly, or from a
-  separate file via `password_file`) and hands it to `NewSMTPSender`; wherever it is stored at
-  rest, the only protection today is the file's own permissions (0600, the same convention as
-  `devices.json` and `policy.json`) — there is no encryption. This is the same gap `docs/DEVICES.md`
+- **The SMTP password is a real secret, protected today only by file permissions.** It is kept in
+  `<data_dir>/secrets.json` (entered in the portal, or imported once from `shepherd.toml`), whose only
+  protection is its own 0600 permissions — there is no encryption. This is the same gap `docs/DEVICES.md`
   and `docs/HISTORY.md` already note for other secrets in this project (an API token, an encryption
-  passphrase); see "SMTP secret handling" below for exactly what `password_file` does and does not
-  buy you. Encrypting it the way `history.json` can be encrypted (a key file or passphrase,
+  passphrase); see "Setting up the relay" above. Encrypting it the way `history.json` can be encrypted (a key file or passphrase,
   Argon2id) is a reasonable future improvement; it is not built here, and this package's own `Codec`
   interface (the same shape used throughout the project) is where that encryption would plug in
   without changing anything else.
@@ -397,9 +391,10 @@ This package itself still has no dependency on `internal/dnsengine` or `internal
   that matches a subscription, and `OnAccess` itself runs synchronously inside `ServeDNS` — on the
   DNS hot path, a disk write must never happen inline. A full queue drops the event rather than
   blocking a DNS response, the same choice `ClientSeen` and `Observe` already make elsewhere in
-  `dnsengine`. Gated by `cfg.Accountability.Enabled` *and* an SMTP host actually being configured:
-  with either absent, `startAccountability` returns `(nil, nil)` — not wired, not an error — which
-  is how `enabled = true` by default stays safe (see "SMTP secret handling" above).
+  `dnsengine`. Gated by `cfg.Accountability.Enabled` alone: the engine is built relay or not, sending
+  through a `RelaySender` the portal swaps relays into live, and `Engine.OnAccessWanted` (the relay is
+  set) keeps the hook free on the DNS hot path until there is a relay. With the feature disabled,
+  `startAccountability` returns nil values — not wired, not an error.
 - **Portal API (`internal/portal/api_accountability.go`), routes under `/api/accountability/...`:**
   `GET`/`POST /contacts`, `DELETE /contacts/{id}`, `GET`/`POST /subscriptions` (optionally filtered
   by `?contact_id=`), `DELETE /subscriptions/{id}`. A subscription's scope accepts only `"group"`
@@ -408,12 +403,17 @@ This package itself still has no dependency on `internal/dnsengine` or `internal
   Items are validated against the catalog and custom lists (`Server.knownItem`, reused from
   `api_policy.go`) or the wildcard `"*"`. When `Deps.Accountability` is nil (not wired up), every
   route answers 404, the same "not available on this version" shape the portal's own frontend
-  already recognises (`mgmt.js`'s `unavailable()`), not a panic.
+  already recognises (`mgmt.js`'s `unavailable()`), not a panic — which now happens only when
+  `[accountability] enabled = false`. The relay itself: `GET /api/accountability/smtp` (host, port,
+  username, From, TLS mode, `password_set`, `configured`, `active`, `enabled`, `source`, `updated_at` —
+  never the password), `PUT` (checked with `SMTPSender.Verify` first; 400 for a malformed relay, 422 when
+  the check fails, nothing saved either way) and `DELETE` (clear, remembered). These answer even when
+  the feature is disabled.
 - **Portal UI (`internal/portal/web/js/accountability.js`), a new Accountability tab:** add or
   remove a contact (name, email), and per contact, add or remove a subscription — a scope picker
   (group or device), an item picker (every catalog entry, plus a "watch anything" wildcard toggle),
-  and detail/mode/trigger selectors, with the SMTP relay the only thing it cannot configure (that
-  stays in `shepherd.toml`, matching every other secret in this project). Built in the same style
+  and detail/mode/trigger selectors, plus the **Mail relay** card above them (pure form logic in
+  `js/secrets.js`, with its own tests). Built in the same style
   as the Blocking screen's panels and list rows, not a copy of `scope.js` (that module computes
   blocking-policy "effective" status, which has no meaning for a subscription).
 
@@ -426,8 +426,10 @@ This package itself still has no dependency on `internal/dnsengine` or `internal
   its own security review; it is left as a clearly scoped future addition rather than rushed in here.
 - **No multi-user portal authentication of any kind**, by design rule 5 — the accountability partner
   never gets anything but email.
-- **No encryption of the SMTP password at rest**, beyond the file-permission and
-  keep-it-out-of-`shepherd.toml` choices in "SMTP secret handling" above.
+- **No encryption of the SMTP password at rest**, beyond `secrets.json`'s 0600 permissions (see
+  "Setting up the relay" above).
+- **No "send a test email" button.** The save-time check proves the relay accepts the connection and the
+  credentials, not that mail to a given recipient is delivered.
 
 ## Go API for wiring
 

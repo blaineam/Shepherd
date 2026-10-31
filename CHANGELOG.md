@@ -13,6 +13,45 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Secrets managed in the portal (`internal/secrets`):** the two credentials Shepherd cannot generate for
+  itself — the DNS provider token ACME DNS-01 needs, and the accountability SMTP relay — no longer mean
+  hand-editing `shepherd.toml` and restarting. Both live in `<data_dir>/secrets.json`, the same JSON, atomic
+  save (temp file, fsync, rename), mode 0600, nothing-written-until-there-is-something shape as
+  `reverseproxy.json` and `devices.json`, and the same honest security model as every other secret this
+  project persists: 0600 is the whole protection, no encryption at rest. Both are **write-only** through the
+  API (only "set or not", where it came from and when it changed ever come back; the types also redact
+  themselves under `%v` so a stray log line cannot leak one), and both are **checked before they are saved**
+  with a real, side-effect-free call, so a bad credential is refused now (422, nothing stored) instead of
+  surfacing hours later as a failed renewal or a digest that never went out: the Cloudflare token with the
+  read-only zone lookup issuance already makes (`tlscert.CloudflareProvider.Verify`, never a record write),
+  for the names `[tls]` and `[reverseproxy]` will actually issue for; the relay with a real connect,
+  TLS/STARTTLS and AUTH that quits before `MAIL FROM` (`accountability.SMTPSender.Verify`, nothing is ever
+  sent). **One DNS provider token, shared:** `[tls]` and `[reverseproxy]` each had their own Cloudflare token
+  fields for what is one credential on one zone; now both read the same portal-managed entry, set from the
+  **Proxy** tab, and the record carries a `provider` field (only `cloudflare` exists) so another provider can
+  be added without a format change. **The SMTP relay** (host, port, username, password, From, TLS mode) is set
+  from the **Accountability** tab. **Neither needs a restart:** certificate issuance reads the token fresh on
+  every attempt, and a save kicks each certificate manager to check at once (`tlscert.Manager.Kick`), so a
+  first certificate that was waiting on a token arrives within seconds; the accountability engine now sends
+  through an `accountability.RelaySender` a newly saved relay is swapped into live. The engine is also now
+  built whenever `[accountability]` is enabled (the default), relay or not, so the Accountability tab no
+  longer 404s on every call when no relay is set — the confusing "looks broken" state it showed before —
+  and a saved relay's password is only ever reused for the same host and username (a changed host must have
+  its password typed again, so a saved one can never be redirected to another server). A default install
+  still pays nothing on the DNS hot path for it: a new `dnsengine.Engine.OnAccessWanted` gate skips even the
+  item lookup while no relay is set, and no access is queued or persisted without one.
+  **Upgrading keeps what `shepherd.toml` already has:** `[tls]`/`[reverseproxy]`'s
+  `cloudflare_api_token`/`cloudflare_api_token_file` and the whole `[accountability.smtp]` section
+  (`password_file` included) become read-once seeds, the `[[lists]]` precedent applied per secret — imported
+  the first time Shepherd starts without a portal-managed value, and ignored from then on (a startup line says
+  so when the file's value differs). If both sections hold different tokens at import, `[tls]`'s wins and the
+  conflict is logged by setting name; a seed that cannot be read yet (a missing token file) is logged and
+  retried at the next start rather than lost; clearing a secret in the portal is remembered, so the file never
+  brings it back. Neither token field is required by `[tls]`/`[reverseproxy]` any more; enabling either with
+  no token anywhere starts normally and says in the log (and the Proxy tab) that a token is needed. New API:
+  `GET/PUT/DELETE /api/dns-provider` and `GET/PUT/DELETE /api/accountability/smtp`. Not done: encryption at
+  rest, other DNS providers, a "send a test email" button, and turning `[accountability]`, `[tls]` or
+  `[reverseproxy]` themselves on or off from the portal (those switches, and hostnames, are still config).
 - **2D map fallback for the HUD:** browsers without WebGL, notably Safari in Lockdown Mode, now get a
   flat canvas map (`js/flatmap.js`) with the same arcs, comets, pulses, picking, Set home and panning and
   zooming, plus day/night shading, instead of a "needs WebGL" notice. `?nogl=1` forces it.

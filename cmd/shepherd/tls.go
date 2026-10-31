@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"shepherd/internal/config"
+	"shepherd/internal/secrets"
 	"shepherd/internal/tlscert"
 
 	"github.com/miekg/dns"
@@ -51,7 +52,13 @@ const letsEncryptDirectoryURL = "https://acme-v02.api.letsencrypt.org/directory"
 // working over plain HTTP, and the next scheduled attempt tries again.
 // Returns (nil, nil) when [tls].enabled is false, so cmd/shepherd's main
 // just skips starting the HTTPS listener entirely.
-func startTLS(ctx context.Context, cfg config.Config) (*tlscert.Manager, error) {
+//
+// The DNS-01 challenge is published with the DNS provider token the portal
+// manages (sec, shared with [reverseproxy]; see cmd/shepherd/secrets.go),
+// read fresh at every attempt. With no token set yet this still starts: the
+// attempt fails with a clear log line, and saving a token in the portal
+// kicks the loop to try again at once.
+func startTLS(ctx context.Context, cfg config.Config, sec *secrets.Store) (*tlscert.Manager, error) {
 	if !cfg.TLS.Enabled {
 		return nil, nil
 	}
@@ -60,7 +67,7 @@ func startTLS(ctx context.Context, cfg config.Config) (*tlscert.Manager, error) 
 		dir:       filepath.Join(cfg.DataDir, "tls"),
 		hostname:  cfg.TLS.Hostname,
 		email:     cfg.TLS.Email,
-		token:     func() (string, error) { return cloudflareAPIToken(cfg.TLS) },
+		secrets:   sec,
 		bootstrap: cfg.DNS.Bootstrap,
 		acme:      tlsACMEClient,
 		dns01:     tlsDNS01,
@@ -87,27 +94,32 @@ type certSpec struct {
 	// bare base domain, since a wildcard never covers that on its own.
 	extraHostnames []string
 	email          string
-	token          func() (string, error)
-	bootstrap      []string
-	acme           tlscert.ACMEClient
-	dns01          tlscert.DNS01Provider
-	propagate      func(ctx context.Context, fqdn, value string) error
-	every          time.Duration
+	// secrets holds the shared DNS provider token the real DNS-01
+	// provider reads at every attempt (unused when dns01 is a test fake).
+	secrets   *secrets.Store
+	bootstrap []string
+	acme      tlscert.ACMEClient
+	dns01     tlscert.DNS01Provider
+	propagate func(ctx context.Context, fqdn, value string) error
+	every     time.Duration
 }
 
 // startCertManager is the shared half of startTLS and startReverseProxy:
-// build the real Cloudflare DNS-01 provider and ACME client unless a test
-// supplied fakes, load any cached certificate from spec.dir (local disk
-// only), and start the renewal loop in the background so an unreachable
-// Cloudflare or Let's Encrypt never delays startup.
+// publish challenges through the portal-managed DNS provider token and use
+// the real ACME client unless a test supplied fakes, load any cached
+// certificate from spec.dir (local disk only), and start the renewal loop
+// in the background so an unreachable Cloudflare or Let's Encrypt, or a
+// token nobody has entered yet, never delays startup.
 func startCertManager(ctx context.Context, spec certSpec) (*tlscert.Manager, error) {
 	dns01 := spec.dns01
 	if dns01 == nil {
-		token, err := spec.token()
-		if err != nil {
-			return nil, err
+		if spec.secrets == nil {
+			return nil, errors.New("no secrets store to read the DNS provider token from")
 		}
-		dns01 = &tlscert.CloudflareProvider{APIToken: token}
+		dns01 = portalDNS01{store: spec.secrets}
+		if _, ok := spec.secrets.DNSProvider(); !ok {
+			log.Printf("%s: no DNS provider token is set yet; add one in the portal's Proxy tab and the certificate for %s is requested right away", spec.logPrefix, spec.hostname)
+		}
 	}
 
 	acmeClient := spec.acme
@@ -217,17 +229,10 @@ func realTXTExchange(ctx context.Context, server string, m *dns.Msg) (*dns.Msg, 
 	return resp, err
 }
 
-// cloudflareAPIToken resolves [tls]'s Cloudflare API token:
-// CloudflareAPITokenFile, when set, is read fresh (and trimmed) on every
-// startup; config.Validate already rejects setting both it and
-// CloudflareAPIToken, so there is never a "which one wins" question. Mirrors
-// cmd/shepherd/accountability.go's smtpPassword exactly.
-func cloudflareAPIToken(t config.TLS) (string, error) {
-	return tokenFrom(t.CloudflareAPIToken, t.CloudflareAPITokenFile, "tls.cloudflare_api_token_file")
-}
-
 // tokenFrom returns direct, or the trimmed contents of file when one is
-// named; setting names the file's config key for the error message.
+// named; setting names the file's config key for the error message. It
+// only ever runs to import shepherd.toml's read-once seeds (openSecrets);
+// certificates themselves read the portal-managed token.
 func tokenFrom(direct, file, setting string) (string, error) {
 	if file == "" {
 		return direct, nil

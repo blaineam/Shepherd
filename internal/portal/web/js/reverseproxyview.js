@@ -6,9 +6,11 @@ import { el } from './dom.js';
 import { button, iconButton, toggle, emptyState, unavailableCard, confirmDialog } from './ui.js';
 import { unavailable } from './mgmt.js';
 import { parseTarget, formatTarget, hostWarnings, sortHosts, filterHosts, certSummary, hostBody, publicURL } from './reverseproxy.js';
+import { dnsProviderSummary, usedByText, sourceText, tokenBody } from './secrets.js';
 
 export function createReverseProxy({ root, mgmt, notify }) {
   let status = null;
+  let dnsProvider = null; // null: a server that predates the shared token
   let hosts = [];
   let loadError = null;
   let query = '';
@@ -23,6 +25,7 @@ export function createReverseProxy({ root, mgmt, notify }) {
   root.append(head, body);
 
   const statusCard = el('section', 'card');
+  const dnsCard = el('section', 'card');
   const addCard = el('section', 'card');
   const listCard = el('section', 'card');
 
@@ -39,8 +42,71 @@ export function createReverseProxy({ root, mgmt, notify }) {
     if (status.enabled) row('Certificate', cert.text, 'rp-tone-' + cert.tone);
     statusCard.append(kv);
     if (!status.enabled) {
-      statusCard.append(el('p', 'muted small rp-note', 'The listener is off. Hosts added here are saved now and start answering once [reverseproxy] is enabled in shepherd.toml (with a domain and a Cloudflare token) and Shepherd restarts. Read docs/REVERSEPROXY.md before moving real traffic over.'));
+      statusCard.append(el('p', 'muted small rp-note', 'The listener is off. Hosts added here are saved now and start answering once [reverseproxy] is enabled in shepherd.toml (with a domain) and Shepherd restarts; the certificate also needs the DNS provider token below. Read docs/REVERSEPROXY.md before moving real traffic over.'));
     }
+  }
+
+  // The one DNS provider token every certificate Shepherd requests shares
+  // ([tls] and [reverseproxy]). Write-only: the field is always empty, and
+  // only "set or not", where it came from and when ever come back.
+  function paintDNSProvider() {
+    dnsCard.replaceChildren(cardHead('DNS provider'));
+    const d = dnsProvider;
+    const sum = dnsProviderSummary(d);
+    const kv = el('dl', 'nh-kv');
+    const row = (k, v, cls = '') => { kv.append(el('dt', '', k)); kv.append(el('dd', cls, v)); };
+    row('Provider', 'Cloudflare');
+    row('API token', sum.text, 'rp-tone-' + sum.tone);
+    dnsCard.append(kv);
+    const src = sourceText(d);
+    dnsCard.append(el('p', 'muted small rp-note', usedByText(d.used_by) + (src ? ' ' + src + '.' : '')));
+
+    const f = el('form', 'rp-form');
+    f.autocomplete = 'off';
+    const token = el('input', 'mono');
+    token.type = 'password';
+    token.autocomplete = 'new-password';
+    token.spellcheck = false;
+    token.placeholder = d.configured ? 'Paste a new token to replace the saved one' : 'Paste a Cloudflare API token';
+    token.setAttribute('aria-label', 'Cloudflare API token');
+    const save = button(d.configured ? 'Replace' : 'Save', 'primary');
+    save.type = 'submit';
+    const line = el('div', 'rp-form-row');
+    line.append(token, save);
+    if (d.configured) line.append(button('Remove', 'ghost', removeToken));
+    const err = el('p', 'err small');
+    err.setAttribute('role', 'status');
+    f.append(line, err, el('p', 'muted small rp-note', 'Create it in Cloudflare scoped to Zone → DNS → Edit on the one zone your names live in, nothing broader. It is checked with Cloudflare (a read-only lookup, nothing is changed) before it is saved, and used from the next certificate request on: no restart.'));
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const r = tokenBody(token.value);
+      err.textContent = r.ok ? '' : r.error;
+      if (!r.ok) { token.focus(); return; }
+      save.disabled = true;
+      save.textContent = 'Checking…';
+      try {
+        dnsProvider = await mgmt.setDNSProvider(r.body);
+        token.value = '';
+        paintDNSProvider();
+        notify('DNS provider token saved');
+      } catch (er) {
+        err.textContent = er.message;
+        save.disabled = false;
+        save.textContent = d.configured ? 'Replace' : 'Save';
+      }
+    });
+    dnsCard.append(f);
+  }
+
+  async function removeToken() {
+    const used = (dnsProvider.used_by || []).length;
+    const ok = await confirmDialog({ title: 'Remove the DNS provider token?', body: used ? 'Certificates already issued keep working until they expire, but none can be renewed or newly issued until a token is set again.' : 'Nothing uses it right now.', confirm: 'Remove token', danger: true });
+    if (!ok) return;
+    try {
+      dnsProvider = await mgmt.clearDNSProvider();
+      paintDNSProvider();
+      notify('DNS provider token removed');
+    } catch (e) { notify(e.message); }
   }
 
   // A domain field, a backend field and the verify switch, shared by the
@@ -210,7 +276,9 @@ export function createReverseProxy({ root, mgmt, notify }) {
       return;
     }
     if (!status) return;
-    body.append(statusCard, addCard, listCard);
+    body.append(statusCard);
+    if (dnsProvider) { body.append(dnsCard); paintDNSProvider(); }
+    body.append(addCard, listCard);
     paintStatus();
     paintAdd();
     paintList();
@@ -218,8 +286,13 @@ export function createReverseProxy({ root, mgmt, notify }) {
 
   async function load() {
     try {
-      const [st, list] = await Promise.all([mgmt.reverseProxy(), mgmt.proxyHosts()]);
+      const [st, list, dp] = await Promise.all([
+        mgmt.reverseProxy(), mgmt.proxyHosts(),
+        // An older server has no shared token endpoint: just hide the card.
+        mgmt.dnsProvider().catch((e) => { if (unavailable(e)) return null; throw e; }),
+      ]);
       status = st;
+      dnsProvider = dp;
       hosts = sortHosts(list.hosts);
       loadError = null;
     } catch (e) { loadError = e; }

@@ -48,7 +48,7 @@ listen = ":8443"                # binding 443 is your call, not a default
 redirect_listen = ""            # e.g. ":80" once your deployment can bind it; 302s to https:// when set
 domain = ""                     # e.g. "example.com" -> certificate for *.example.com
 email = ""                      # optional; Let's Encrypt expiry-notice contact
-cloudflare_api_token = ""
+cloudflare_api_token = ""       # read-once seed: the token lives in the portal (below)
 cloudflare_api_token_file = ""  # e.g. "/etc/shepherd/cloudflare-api-token"
 ```
 
@@ -59,9 +59,9 @@ cloudflare_api_token_file = ""  # e.g. "/etc/shepherd/cloudflare-api-token"
   half-starting. It must differ from `tls.listen` when both are on.
 - **`domain`** is the zone the certificate covers: `example.com` (or `*.example.com`, the same thing)
   gets a certificate for `*.example.com`. Required when enabled.
-- **The Cloudflare token** follows `[tls]`'s rules exactly: set it directly or point
-  `cloudflare_api_token_file` at a 0600 file, never both. Both sections may use the same token, scoped to
-  **Zone → DNS → Edit** on the one zone, nothing broader (see [TLS.md](TLS.md)).
+- **The Cloudflare token is not configured here any more**: it is the shared DNS provider token set in the
+  Proxy tab ([below](#the-dns-provider-token)). `cloudflare_api_token`/`cloudflare_api_token_file` are
+  read-once seeds for it, exactly as in `[tls]`.
 
 **The hosts are not in this file.** They are added, edited, switched off and removed in the portal's
 **Proxy** tab (or over the API below) and persisted to `<data_dir>/reverseproxy.json` (mode 0600). This
@@ -74,6 +74,37 @@ listener is on, so every host can be lined up before `enabled` is flipped.
 A `reverseproxy.json` that cannot be read or validated stops startup instead of being replaced with an
 empty list, so a later edit can never silently overwrite the hosts that were there.
 
+### The DNS provider token
+
+Every certificate Shepherd requests — this wildcard and `[tls]`'s own — publishes its DNS-01 challenge with
+**one** DNS provider credential: the API token for the zone. It used to be two config fields (one in each
+section) for what is one credential on one zone; it is now a single entry set from the Proxy tab's **DNS
+provider** card, kept in `<data_dir>/secrets.json` (mode 0600; `internal/secrets`, the same persistence
+shape as `reverseproxy.json`, and the same honest limit: file permissions are the whole protection, no
+encryption at rest).
+
+- **Write-only.** The card and the API only ever say whether a token is set, where it came from
+  (`portal` or `shepherd.toml`) and when it changed. The field is always empty; pasting a new token replaces
+  the old one.
+- **Checked before it is saved.** The token is tried against Cloudflare with the same read-only zone lookup
+  issuance makes (`tlscert.CloudflareProvider.Verify`; nothing is created or deleted): for each name an
+  enabled feature will issue for (`*.<domain>` here, `tls.hostname` for `[tls]`), it must authenticate and
+  see the zone that name lives in; with neither feature on yet, it must authenticate and see at least one
+  zone. A token that fails is refused with Cloudflare's own reason (HTTP 422) and the working one stays.
+- **No restart.** Issuance reads the token at every attempt, and a save makes each certificate manager
+  check at once, so a wildcard that was waiting on a token is requested within seconds. Turning
+  `[reverseproxy]` on or off is still config and still needs a restart.
+- **Room for other providers, but only Cloudflare today.** The stored record has a `provider` field
+  (`"cloudflare"`) so another provider can be added without changing the file or the API; nothing else
+  is implemented.
+- **Upgrading.** `[tls]`/`[reverseproxy]`'s `cloudflare_api_token` and `cloudflare_api_token_file` are
+  read-once seeds, the `[[lists]]` precedent applied per secret: the first start without a portal-managed
+  token imports whichever is set (`[tls]`'s if both are set and differ, with a log line naming the
+  conflict); after that they are ignored, with a startup line when they differ from the portal's value. A
+  token file that cannot be read at that moment is retried at the next start. Clearing the token in the
+  portal is remembered, so `shepherd.toml` never brings it back. With no token at all, `[reverseproxy]`
+  still starts: the listener is up, handshakes fail, and the log and the Proxy tab say a token is needed.
+
 ### Portal API
 
 All behind the portal token, every change needs `X-Shepherd: 1`:
@@ -85,6 +116,9 @@ All behind the portal token, every change needs `X-Shepherd: 1`:
 | `POST /api/reverseproxy/hosts` | add `{domain, target_scheme, target_host, target_port, skip_tls_verify, enabled}`; `enabled` defaults to true, the id is assigned |
 | `PUT /api/reverseproxy/hosts/{id}` | replace a host's fields; leaving `enabled` out keeps its current value |
 | `DELETE /api/reverseproxy/hosts/{id}` | remove it; its name answers 404 from the next request on |
+| `GET /api/dns-provider` | `{provider, configured, source, updated_at, used_by, providers}` — never the token |
+| `PUT /api/dns-provider` | `{provider, api_token}` (provider defaults to `cloudflare`): checked, then saved and applied; 400 for a malformed token, 422 when Cloudflare refuses it (nothing saved) |
+| `DELETE /api/dns-provider` | clear the token (remembered: `shepherd.toml` will not re-import it) |
 
 400 for an invalid definition, 409 for a domain another host already uses, 404 for an unknown id, 500
 when the file could not be saved (and nothing changed).
@@ -187,8 +221,8 @@ proxies a name to one backend, and that is all. Not built:
   carry tokens); successful requests are not logged.
 - **No import from an existing proxy manager.** Hosts are entered by hand in the Proxy tab (the backend
   field accepts the `http://127.0.0.1:8096` form such managers display).
-- **Enabling still means editing `shepherd.toml`**: `enabled`, `domain`, `listen` and the token are config,
-  as for `[tls]`. Only the hosts are portal-managed today.
+- **Enabling still means editing `shepherd.toml`**: `enabled`, `domain` and `listen` are config, as for
+  `[tls]`. The hosts and the DNS provider token are portal-managed.
 - **No upstream proxy trust.** `X-Forwarded-For` is the direct client. If something is ever put in front
   of this listener (a tunnel, another proxy), backends will see that hop's address, not the real client.
 - **Shutdown does not wait for WebSockets.** A Shepherd restart drops every open socket (clients
@@ -207,24 +241,27 @@ Read this before moving DNS or port 443 over. It is the honest list.
 3. **Add the hosts in the Proxy tab** while the listener is off or still on `:8443`, and turn on "Accept any
    backend certificate" for `https` backends that use a self-signed certificate (the old proxy almost
    certainly never verified them; with verification on they will answer 502).
-4. **Enable `[reverseproxy]` on a spare port first** (`:8443`), restart, and confirm the certificate
+4. **Check the DNS provider token in the Proxy tab** reads "Token set" (a deployment that had
+   `cloudflare_api_token_file` set before this version imported it on its first start, labelled "Imported
+   from shepherd.toml").
+5. **Enable `[reverseproxy]` on a spare port first** (`:8443`), restart, and confirm the certificate
    arrives: the log says `reverseproxy: certificate for *.<domain> is valid until ...` and the Proxy tab's
    listener card turns green. This is the first time a **wildcard** is requested from the real Let's
    Encrypt and Cloudflare; see [What is verified](#what-is-verified-and-what-is-not).
-5. **Test every service on the spare port** without touching DNS, for example
+6. **Test every service on the spare port** without touching DNS, for example
    `curl --resolve jellyfin.example.com:8443:<shepherd-address> https://jellyfin.example.com:8443/`, or a
    hosts-file entry and a browser. For each one: sign in, use the live-updating parts (WebSockets), upload
    something large, seek in a video, and watch for 502s in the Shepherd log.
-6. **Update backends that trust their proxy by address.** Apps that read `X-Forwarded-For` only from known
+7. **Update backends that trust their proxy by address.** Apps that read `X-Forwarded-For` only from known
    proxies (Home Assistant's `trusted_proxies`, Jellyfin's known proxies, and similar) must list the
    address Shepherd connects to them from. If the old proxy ran on the same host and connected over
    loopback, that may already match; check, do not assume.
-7. **Set `redirect_listen = ":80"` if you want port 80 to redirect** (off by default; needs the same
+8. **Set `redirect_listen = ":80"` if you want port 80 to redirect** (off by default; needs the same
    bind capability `listen` itself needs for `:443`).
-8. **Cut over with a rollback ready.** Stop the old proxy (freeing 443), set `listen = ":443"` (with the
+9. **Cut over with a rollback ready.** Stop the old proxy (freeing 443), set `listen = ":443"` (with the
    privilege to bind it), restart Shepherd. Leave the old proxy's configuration and certificates in place:
    rolling back is setting `listen` back, restarting Shepherd and starting the old proxy again.
-9. **Remember what changes operationally.** Shepherd becomes the single point of failure for every proxied
+10. **Remember what changes operationally.** Shepherd becomes the single point of failure for every proxied
    service, and every Shepherd restart or upgrade interrupts all of them for a moment. Watch the
    certificate's renewal (it starts 30 days before expiry; the Proxy tab warns when fewer days remain).
 
@@ -238,7 +275,13 @@ loop detection; unbuffered streaming; WebSockets end to end as described above; 
 challenge naming against a fake ACME client; `cmd/shepherd` starting the listener with a fake ACME client
 and DNS-01 provider, failing fast on a taken port, never blocking on an unreachable CA, and carrying a
 WebSocket through `run()` with the host added over the portal API; the portal API's CRUD and error
-mapping; the Proxy tab's pure logic. The Proxy tab was also exercised by hand in a browser against a
+mapping; the Proxy tab's pure logic. The shared DNS provider token: the store's atomic 0600 saves and
+seed-once rules; the API's write-only answers, its refusal of a token the (fake) Cloudflare rejects, and that
+a refused token leaves the working one in place; `[tls]` and `[reverseproxy]` both publishing challenges with
+the portal's token (the fake Cloudflare checks the bearer); a token saved after startup being used at once;
+and the upgrade path through `run()` — an existing data directory whose `shepherd.toml` names a
+`cloudflare_api_token_file` gets its wildcard issued with that token, and a second run with the file changed
+still uses the imported one. The Proxy tab was also exercised by hand in a browser against a
 loopback-only development instance, at phone and desktop widths.
 
 **Verified live, against a real deployment, following the checklist above:** a real wildcard certificate
@@ -249,7 +292,8 @@ checked one by one on a spare port before cutover; a real browser-equivalent Web
 port 443 away from that manager, with several of the real services confirmed working on the actual
 hostnames afterward.
 
-**Still not verified:** throughput or latency under real sustained load compared to the proxy it
+**Still not verified:** the portal's token check against the real Cloudflare API (its read-only zone lookup
+is the same call live issuance already makes, but the check itself has only met a fake); throughput or latency under real sustained load compared to the proxy it
 replaced; a real backend's self-signed certificate with `skip_tls_verify`; the handful of services that
 were already stopped at cutover time (their routes are configured and should work the same way once
 they are running again, but that is a claim, not yet a check); and `redirect_listen`'s 302 against a
