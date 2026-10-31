@@ -20,8 +20,10 @@ type RealPlatform struct{}
 func (RealPlatform) DefaultRoute() (string, netip.Addr, error) {
 	return "", netip.Addr{}, ErrUnsupported
 }
-func (RealPlatform) DefaultRoute6() (Route6, error) { return Route6{}, ErrUnsupported }
-func (RealPlatform) Link(string) (Link, error)      { return Link{}, ErrUnsupported }
+func (RealPlatform) DefaultRoute6() (Route6, error)        { return Route6{}, ErrUnsupported }
+func (RealPlatform) Link(string) (Link, error)             { return Link{}, ErrUnsupported }
+func (RealPlatform) Driver(string) (string, error)         { return "", ErrUnsupported }
+func (RealPlatform) CarrierChanges(string) (uint64, error) { return 0, ErrUnsupported }
 func (RealPlatform) LocalAddrs() ([]arp.MAC, []netip.Addr, error) {
 	return nil, nil, ErrUnsupported
 }

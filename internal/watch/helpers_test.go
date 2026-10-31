@@ -62,6 +62,15 @@ func mustMAC(s string) arp.MAC {
 // wants to turn is a field; the relays block until their context ends
 // unless told to fail.
 type fakePlatform struct {
+	// driver/carrier stand in for sysfs: the NIC's driver name and the
+	// kernel's link-transition counter.
+	driver string
+	// xdpRequested is the mode the engine last asked for, so a test can
+	// assert that it chose generic rather than letting auto find native.
+	xdpRequested intercept.XDPMode
+	driverErr    error
+	carrier      uint64
+	carrierErr   error
 	// extraMACs/extraIPs are further interfaces this host has, for the
 	// multi-homed case; localAddrsErr makes the enumeration fail.
 	extraMACs     []arp.MAC
@@ -149,6 +158,31 @@ func (p *fakePlatform) LocalAddrs() ([]arp.MAC, []netip.Addr, error) {
 	return macs, ips, nil
 }
 
+// Driver and CarrierChanges let a test stand in for a NIC whose driver
+// drops the link when a native XDP attach rebuilds its rings.
+func (p *fakePlatform) Driver(string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.driver, p.driverErr
+}
+
+func (p *fakePlatform) CarrierChanges(string) (uint64, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.carrierErr != nil {
+		return 0, p.carrierErr
+	}
+	return p.carrier, nil
+}
+
+// flapOnNativeAttach makes the next native attach look like it took the
+// link down and up, the way the atlantic driver really does.
+func (p *fakePlatform) flapOnNativeAttach() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.carrier++
+}
+
 func (p *fakePlatform) GatewayMAC(ctx context.Context, iface string, gw netip.Addr) (arp.MAC, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -181,7 +215,13 @@ func (p *fakePlatform) AttachXDP(ctx context.Context, c *intercept.Controller, i
 		return err
 	}
 	p.xdpAttached++
+	p.xdpRequested = opts.Mode
 	mode, die := p.xdpMode, p.xdpDie
+	// Asking for generic gets generic; asking for auto or native gets
+	// whatever this fake NIC is set up to support.
+	if opts.Mode == intercept.XDPGeneric {
+		mode = intercept.XDPGeneric
+	}
 	p.mu.Unlock()
 	if opts.OnAttached != nil {
 		opts.OnAttached(mode)
@@ -409,3 +449,10 @@ func (te *testEngine) status(t *testing.T, id string) DeviceStatus {
 }
 
 var errBoom = errors.New("boom")
+
+// requestedXDP is the XDP mode the engine last asked AttachXDP for.
+func (p *fakePlatform) requestedXDP() intercept.XDPMode {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.xdpRequested
+}

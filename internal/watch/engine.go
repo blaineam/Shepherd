@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/netip"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -114,7 +115,21 @@ type Config struct {
 
 // Sentinel errors.
 var (
-	ErrNoRegistry     = errors.New("watch: Registry is required")
+	ErrNoRegistry = errors.New("watch: Registry is required")
+	// driversThatFlapOnNativeAttach are drivers known to drop the link
+	// when a native XDP attach rebuilds their receive rings, so Shepherd
+	// never tries native on them. Generic XDP is used instead: still in
+	// the kernel, still no userspace copy, and it does not reinitialise
+	// the interface.
+	//
+	// atlantic is the Aquantia/Marvell AQC107 10G part common in NAS
+	// boxes. On the maintainer's own machine a native attach took eth0
+	// down, which cost the network its wired DNS listener and twice left
+	// the interface needing to be brought up by hand. Shepherd learns
+	// this for any other driver by watching the carrier counter, but a
+	// seed list means a known-bad driver costs nothing to discover.
+	driversThatFlapOnNativeAttach = []string{"atlantic"}
+
 	errGatewayChanged = errors.New("watch: the gateway's MAC address changed")
 	errRelayStopped   = errors.New("watch: the relay stopped")
 )
@@ -144,6 +159,11 @@ const (
 	// before it is read again. Short, because an interface that appears
 	// mid-session must be excluded from steering promptly.
 	localAddrsTTL = 15 * time.Second
+	// nativeSettle is how long to wait after a native XDP attach before
+	// reading the kernel's carrier counter. The attach rebuilds the
+	// driver's rings; on a driver that drops the link doing it, the
+	// transition shows up within this window.
+	nativeSettle = 3 * time.Second
 	// observeEvery bounds how often a steered device's relayed traffic is
 	// reported to the registry as a sighting.
 	observeEvery = time.Minute
@@ -310,6 +330,10 @@ type Engine struct {
 	since       time.Time
 	ctrl        *intercept.Controller
 	killed      bool
+	// state is everything persisted in StatePath. The engine keeps all of
+	// it so saving one field cannot drop another: Kill used to write a
+	// fresh persisted{} and would have erased the learned driver list.
+	state persisted
 	// Per-MAC bookkeeping.
 	retry       map[arp.MAC]*retryState
 	refused     map[arp.MAC]string // last Steer refusal, for the pending state's reason
@@ -375,6 +399,7 @@ func New(cfg Config) (*Engine, error) {
 		cfg: cfg, plat: cfg.Platform, clock: cfg.Clock, logf: cfg.Logf, reg: cfg.Registry,
 		phase:  PhaseDisabled,
 		killed: st.Killed,
+		state:  st,
 		retry:  map[arp.MAC]*retryState{}, refused: map[arp.MAC]string{}, v6Refused: map[arp.MAC]string{},
 		selfUnsteer: map[arp.MAC]bool{},
 		believed:    map[arp.MAC]bool{},
@@ -639,13 +664,76 @@ func (e *Engine) startRelay(ctx context.Context, ctrl *intercept.Controller, lin
 	return e.startUserspace(ctx, ctrl, link)
 }
 
+// xdpModeFor decides how to attach on this interface. A driver known to
+// drop the link when its receive rings are rebuilt gets generic XDP
+// outright; anything else gets auto, which prefers native. Either way the
+// relay runs in the kernel and no frame is copied to userspace.
+func (e *Engine) xdpModeFor(iface string) (intercept.XDPMode, string) {
+	driver, err := e.plat.Driver(iface)
+	if err != nil || driver == "" {
+		return intercept.XDPAuto, driver
+	}
+	if slices.Contains(driversThatFlapOnNativeAttach, driver) {
+		e.logOnce("watch: %s uses the %s driver, which drops the link when a native XDP attach rebuilds its rings; attaching generic XDP instead, which does not (docs/WATCH.md)", iface, driver)
+		return intercept.XDPGeneric, driver
+	}
+	e.mu.Lock()
+	known := e.state.hasDriver(driver)
+	e.mu.Unlock()
+	if known {
+		e.logOnce("watch: a native XDP attach dropped the link on the %s driver here before, so attaching generic XDP on %s", driver, iface)
+		return intercept.XDPGeneric, driver
+	}
+	return intercept.XDPAuto, driver
+}
+
+// learnIfNativeFlapped reads the kernel's carrier counter once a native
+// attach has settled. If the link went down and back up, this driver is
+// added to the persisted list, so the next start uses generic and the cost
+// is paid once ever instead of once per restart. This is what covers
+// drivers that are not in the seed list.
+func (e *Engine) learnIfNativeFlapped(ctx context.Context, iface, driver string, before uint64) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-e.clock.After(nativeSettle):
+	}
+	after, err := e.plat.CarrierChanges(iface)
+	if err != nil || after <= before {
+		return
+	}
+	e.mu.Lock()
+	first := !e.state.hasDriver(driver)
+	var saveErr error
+	if first {
+		e.state.FlappyDrivers = append(e.state.FlappyDrivers, driver)
+		saveErr = saveState(e.cfg.StatePath, e.state)
+	}
+	e.mu.Unlock()
+	if !first {
+		return
+	}
+	e.logf("watch: the native XDP attach on %s took the link down and up (%s driver, carrier changes %d to %d); remembering that, and attaching generic XDP from the next start", iface, driver, before, after)
+	if saveErr != nil {
+		e.logf("watch: WARNING: could not remember that the %s driver flaps (%v), so this will be rediscovered next start", driver, saveErr)
+	}
+}
+
 func (e *Engine) startXDP(ctx context.Context, ctrl *intercept.Controller, link Link) (string, <-chan error, func(), error) {
+	mode, driver := e.xdpModeFor(link.Name)
+	var before uint64
+	haveCarrier := false
+	if mode != intercept.XDPGeneric {
+		if n, err := e.plat.CarrierChanges(link.Name); err == nil {
+			before, haveCarrier = n, true
+		}
+	}
 	rctx, cancel := context.WithCancel(ctx)
 	attached := make(chan intercept.XDPMode, 1)
 	done := make(chan error, 1)
 	go func() {
 		done <- e.plat.AttachXDP(rctx, ctrl, link.Name, intercept.XDPOptions{
-			Mode:       intercept.XDPAuto,
+			Mode:       mode,
 			LocalIPs:   link.IPv4s,
 			OnAttached: func(m intercept.XDPMode) { attached <- m },
 		})
@@ -655,6 +743,9 @@ func (e *Engine) startXDP(ctx context.Context, ctrl *intercept.Controller, link 
 		name := RelayXDPGeneric
 		if m == intercept.XDPNative {
 			name = RelayXDPNative
+			if haveCarrier && driver != "" {
+				go e.learnIfNativeFlapped(rctx, link.Name, driver, before)
+			}
 		}
 		return name, done, cancel, nil
 	case err := <-done:
@@ -1114,7 +1205,8 @@ func (e *Engine) Kill() error {
 	e.mu.Lock()
 	e.killed = true
 	ctrl := e.ctrl
-	err := saveState(e.cfg.StatePath, persisted{Killed: true})
+	e.state.Killed = true
+	err := saveState(e.cfg.StatePath, e.state)
 	e.mu.Unlock()
 	if ctrl != nil {
 		ctrl.PanicStop()
@@ -1129,7 +1221,8 @@ func (e *Engine) Rearm() error {
 	e.mu.Lock()
 	e.killed = false
 	ctrl := e.ctrl
-	err := saveState(e.cfg.StatePath, persisted{Killed: false})
+	e.state.Killed = false
+	err := saveState(e.cfg.StatePath, e.state)
 	e.mu.Unlock()
 	if ctrl != nil {
 		ctrl.Rearm()

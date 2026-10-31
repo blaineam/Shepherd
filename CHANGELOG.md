@@ -472,6 +472,26 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- **Watch mode no longer attaches native XDP on a driver that drops the link doing it, and learns
+  the ones it is not told about.** A native attach makes the driver tear down and rebuild its
+  receive rings; on the maintainer's 10G Aquantia card (`atlantic`) that takes the interface down
+  and up. It cost the network its wired DNS listener, because the address vanished in the seconds
+  between the attach and the bind, and twice left the interface needing to be brought up by hand.
+  Shepherd now reads the interface's driver from sysfs and attaches **generic** XDP instead for any
+  driver on a known-bad list, which `atlantic` seeds: still in the kernel, still no frame copied to
+  userspace, and it does not reinitialise the interface. For every other driver it samples the
+  kernel's own `carrier_changes` either side of the attach, and if the link went down and up it
+  says so plainly, records the driver in `<data_dir>/watch.json` and uses generic from the next
+  start — so an unlisted bad driver costs one flap ever rather than one per restart. `mode = "xdp"`
+  still means XDP only; it just means generic XDP where native would break the link. Also fixed in
+  passing: `Kill` and `Rearm` wrote a fresh state struct, which would have erased that learned list,
+  so the engine now keeps the whole persisted state and saves it whole.
+- **`mode = "userspace"` turned out not to be the safe fallback on that card either**, which is
+  worth recording because the previous note recommended it. The software relay has to turn GRO off,
+  and with GRO off every frame reaches the stack separately instead of coalesced; at a few hundred
+  megabits the `atlantic` driver reset repeatedly, taking `carrier_changes` from 1 to 9 in about
+  twelve minutes with no XDP program attached at any point. docs/WATCH.md now says so, and says
+  that generic XDP is the one path on this hardware that avoids both failure modes.
 - **`make check` did not run the portal front-end tests, so a broken JavaScript file passed it.**
   The target's comment said "Everything CI runs, locally" and it ran gofmt, vet, the Go suite with
   the coverage floor and both leak guards — but not `node --test internal/portal/web/test/`, which

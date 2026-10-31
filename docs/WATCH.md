@@ -129,16 +129,32 @@ that. This matters: a native XDP attach makes the driver tear down and rebuild i
 which took about eight seconds on the NAS — so attaching per device would stall traffic every
 time a phone woke up.
 
-> **A native XDP attach resets the network interface, and on some drivers that means the link.**
-> On the maintainer's NAS — a 10G Aquantia/Marvell card on the `atlantic` driver — a sequence of
-> container restarts, each attaching and detaching the program, left the interface with
-> `NO-CARRIER` and took it off the network until it was brought down and up again by hand. The
-> kernel's own counters recorded five up/down transitions across those restarts. One attach is
-> fine and is what normal operation does; **repeatedly restarting Shepherd in quick succession on
-> such a driver is not.** If you are iterating on the configuration, or if a crash loop is
-> restarting Shepherd over and over, set `mode = "userspace"` (or `enabled = false`) first, and
-> check `ip link` afterwards. `mode = "userspace"` never touches the interface this way; generic
-> XDP does not reinitialise the driver either.
+> **A native XDP attach resets the network interface, and on some drivers that means the link.
+> Shepherd now handles this for you; you should not have to.**
+> On the maintainer's NAS — a 10G Aquantia/Marvell card on the `atlantic` driver — a native attach
+> took the interface down and up. A sequence of container restarts, each attaching and detaching,
+> left it with `NO-CARRIER` and off the network until it was brought up again by hand. It also cost
+> the network its wired DNS listener, because the address vanished in the seconds between the
+> attach and the DNS bind.
+>
+> Shepherd therefore **never attaches native XDP on a driver known to drop the link**, and attaches
+> **generic** XDP instead: still in the kernel, still no frame copied to userspace, and it does not
+> reinitialise the interface. `atlantic` ships in that list. For any other driver, Shepherd reads
+> the kernel's own `carrier_changes` counter either side of the attach; if the link went down and
+> up, it says so in the log, records the driver in `<data_dir>/watch.json`, and uses generic from
+> the next start. So an unlisted bad driver costs **one** flap ever, not one per restart, and a
+> listed one costs none.
+>
+> This is not a reason to restart Shepherd in a tight loop on such hardware anyway. If you are
+> iterating on the configuration, `enabled = false` never touches the interface at all.
+>
+> **`mode = "userspace"` is not the safe alternative on this card, either.** It has to turn GRO
+> off, and with GRO off every frame reaches the stack on its own instead of coalesced. Run at a
+> few hundred megabits through the software relay and the `atlantic` driver reset repeatedly:
+> measured on the maintainer's NAS, `carrier_changes` went from 1 to 9 in about twelve minutes,
+> with no XDP program attached at any point. So on this hardware the two flap for two different
+> reasons — native XDP at attach time, userspace under load — and **generic XDP is the one path
+> that avoids both**, because it neither reinitialises the driver nor needs GRO touched.
 
 The userspace relay needs **GRO** (generic receive offload) off on the interface, because it
 retransmits what it captures and a GRO-coalesced super-frame is bigger than Ethernet allows.

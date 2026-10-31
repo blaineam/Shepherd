@@ -11,6 +11,9 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"shepherd/internal/arp"
@@ -227,4 +230,48 @@ func (RealPlatform) LocalAddrs() ([]arp.MAC, []netip.Addr, error) {
 		}
 	}
 	return macs, ips, nil
+}
+
+// Driver reads the driver bound to iface from sysfs. The symlink at
+// device/driver points at the module's directory, so its base name is the
+// driver. An interface with no device/driver at all -- a veth, a bridge --
+// reports an empty name and no error: there is no driver whose behaviour
+// needs allowing for.
+func (RealPlatform) Driver(iface string) (string, error) {
+	if err := validIfaceName(iface); err != nil {
+		return "", err
+	}
+	dst, err := os.Readlink(filepath.Join("/sys/class/net", iface, "device", "driver"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("watch: driver of %s: %w", iface, err)
+	}
+	return filepath.Base(dst), nil
+}
+
+// CarrierChanges reads the kernel's link-transition counter for iface.
+func (RealPlatform) CarrierChanges(iface string) (uint64, error) {
+	if err := validIfaceName(iface); err != nil {
+		return 0, err
+	}
+	b, err := os.ReadFile(filepath.Join("/sys/class/net", iface, "carrier_changes"))
+	if err != nil {
+		return 0, fmt.Errorf("watch: carrier changes of %s: %w", iface, err)
+	}
+	n, err := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("watch: carrier changes of %s: %w", iface, err)
+	}
+	return n, nil
+}
+
+// validIfaceName refuses anything that could escape /sys/class/net, since
+// the interface name reaches here from the configuration.
+func validIfaceName(iface string) error {
+	if iface == "" || iface == "." || iface == ".." || strings.ContainsAny(iface, "/\\\x00") {
+		return fmt.Errorf("watch: invalid interface name %q", iface)
+	}
+	return nil
 }

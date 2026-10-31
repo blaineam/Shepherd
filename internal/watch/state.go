@@ -15,6 +15,23 @@ import (
 // back on after a reboot; it stays off until they re-arm it.
 type persisted struct {
 	Killed bool `json:"killed"`
+	// FlappyDrivers names kernel drivers that were seen to drop the link
+	// when a native XDP attach rebuilt their receive rings. Learned by
+	// watching the kernel's carrier counter either side of an attach, and
+	// remembered so the cost is paid once ever rather than once per
+	// start. A driver listed here gets generic XDP instead, which runs in
+	// the kernel just the same and never reinitialises the interface.
+	FlappyDrivers []string `json:"flappy_drivers,omitempty"`
+}
+
+// hasDriver reports whether d is already known to flap.
+func (p persisted) hasDriver(d string) bool {
+	for _, x := range p.FlappyDrivers {
+		if x == d {
+			return true
+		}
+	}
+	return false
 }
 
 func loadState(path string) (persisted, error) {

@@ -1106,3 +1106,148 @@ func TestSteersNothingWhenThisHostsAddressesCannotBeRead(t *testing.T) {
 		t.Fatalf("expected a log line saying why nothing is steered; got %v", te.logs.all())
 	}
 }
+
+// The atlantic driver drops the link when a native XDP attach rebuilds its
+// receive rings. That took the maintainer's wired interface off the network
+// twice and cost it its DNS listener, so Shepherd must not try native there
+// at all. Generic XDP runs in the kernel just the same and does not
+// reinitialise the interface.
+func TestADriverKnownToFlapGetsGenericXDPNotNative(t *testing.T) {
+	plat := newFakePlatform()
+	plat.driver = "atlantic"
+	plat.xdpMode = intercept.XDPNative // native would succeed; we must not ask
+	te := newTestEngine(t, plat, nil)
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+
+	if got := te.Snapshot().Relay; got != RelayXDPGeneric {
+		t.Fatalf("relay = %q, want %q", got, RelayXDPGeneric)
+	}
+	if got := plat.requestedXDP(); got != intercept.XDPGeneric {
+		t.Fatalf("asked for XDP mode %v, want generic: native must never be attempted on this driver", got)
+	}
+	var said bool
+	for _, l := range te.logs.all() {
+		if strings.Contains(l, "atlantic") && strings.Contains(l, "generic") {
+			said = true
+			break
+		}
+	}
+	if !said {
+		t.Fatalf("the reason should be in the log; got %v", te.logs.all())
+	}
+}
+
+// Any other driver still gets the fast path.
+func TestAnUnknownDriverStillGetsNativeXDP(t *testing.T) {
+	plat := newFakePlatform()
+	plat.driver = "igc"
+	plat.xdpMode = intercept.XDPNative
+	te := newTestEngine(t, plat, nil)
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+
+	if got := te.Snapshot().Relay; got != RelayXDPNative {
+		t.Fatalf("relay = %q, want %q", got, RelayXDPNative)
+	}
+	if got := plat.requestedXDP(); got != intercept.XDPAuto {
+		t.Fatalf("asked for XDP mode %v, want auto", got)
+	}
+}
+
+// A driver not in the seed list that turns out to flap is learned from the
+// kernel's own carrier counter and remembered, so the cost is paid once
+// ever rather than once per restart.
+func TestANativeAttachThatDropsTheLinkIsLearnedAndRemembered(t *testing.T) {
+	dir := t.TempDir()
+	statePath := dir + "/watch.json"
+	plat := newFakePlatform()
+	plat.driver = "mystery"
+	plat.xdpMode = intercept.XDPNative
+	te := newTestEngine(t, plat, func(c *Config) { c.StatePath = statePath })
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	if got := te.Snapshot().Relay; got != RelayXDPNative {
+		t.Fatalf("first run relay = %q, want native", got)
+	}
+
+	// The attach took the link down and up, the way atlantic does.
+	plat.flapOnNativeAttach()
+	te.clock.Advance(nativeSettle + time.Second)
+	waitFor(t, "the flap to be remembered", func() bool {
+		st, err := loadState(statePath)
+		return err == nil && st.hasDriver("mystery")
+	})
+	var said bool
+	for _, l := range te.logs.all() {
+		if strings.Contains(l, "took the link down and up") {
+			said = true
+			break
+		}
+	}
+	if !said {
+		t.Fatalf("the flap should be logged plainly; got %v", te.logs.all())
+	}
+
+	// A fresh engine on the same state file does not try native again.
+	plat2 := newFakePlatform()
+	plat2.driver = "mystery"
+	plat2.xdpMode = intercept.XDPNative
+	te2 := newTestEngine(t, plat2, func(c *Config) { c.StatePath = statePath })
+	te2.addPhone(t)
+	te2.start(t)
+	te2.waitRunning(t)
+	if got := te2.Snapshot().Relay; got != RelayXDPGeneric {
+		t.Fatalf("second run relay = %q, want %q", got, RelayXDPGeneric)
+	}
+	if got := plat2.requestedXDP(); got != intercept.XDPGeneric {
+		t.Fatalf("second run asked for %v, want generic", got)
+	}
+}
+
+// Kill used to write a fresh persisted{}, which would have erased the
+// learned driver list. Both facts have to survive each other.
+func TestTheKillSwitchDoesNotEraseTheLearnedDriverList(t *testing.T) {
+	statePath := t.TempDir() + "/watch.json"
+	plat := newFakePlatform()
+	plat.driver = "mystery"
+	plat.xdpMode = intercept.XDPNative
+	te := newTestEngine(t, plat, func(c *Config) { c.StatePath = statePath })
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	plat.flapOnNativeAttach()
+	te.clock.Advance(nativeSettle + time.Second)
+	waitFor(t, "the flap to be remembered", func() bool {
+		st, err := loadState(statePath)
+		return err == nil && st.hasDriver("mystery")
+	})
+
+	if err := te.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	st, err := loadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Killed {
+		t.Fatal("the kill switch should be persisted")
+	}
+	if !st.hasDriver("mystery") {
+		t.Fatalf("the kill switch erased the learned driver list: %+v", st)
+	}
+	// And the other way round.
+	if err := te.Rearm(); err != nil {
+		t.Fatal(err)
+	}
+	st, err = loadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Killed || !st.hasDriver("mystery") {
+		t.Fatalf("re-arming lost something: %+v", st)
+	}
+}
