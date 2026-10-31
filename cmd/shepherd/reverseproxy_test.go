@@ -89,7 +89,7 @@ func waitForCert(t *testing.T, rp *reverseProxyServer) {
 func TestStartReverseProxyDisabledStartsNothing(t *testing.T) {
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
-	rp, err := startReverseProxy(context.Background(), cfg, openTestStore(t, cfg), nil)
+	rp, err := startReverseProxy(context.Background(), cfg, openTestStore(t, cfg), nil, nil)
 	if err != nil || rp != nil {
 		t.Fatalf("startReverseProxy(disabled) = %v, %v; want nil, nil", rp, err)
 	}
@@ -123,7 +123,7 @@ func TestStartReverseProxyServesAWildcardAndProxies(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rp, err := startReverseProxy(ctx, cfg, store, nil)
+	rp, err := startReverseProxy(ctx, cfg, store, nil, nil)
 	if err != nil {
 		t.Fatalf("startReverseProxy: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestStartReverseProxyCarriesWebSockets(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rp, err := startReverseProxy(ctx, cfg, store, nil)
+	rp, err := startReverseProxy(ctx, cfg, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestStartReverseProxyCertificateAlsoCoversTheBareBaseDomain(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rp, err := startReverseProxy(ctx, cfg, store, nil)
+	rp, err := startReverseProxy(ctx, cfg, store, nil, nil)
 	if err != nil {
 		t.Fatalf("startReverseProxy: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestStartReverseProxyRedirectsPlainHTTPToHTTPS(t *testing.T) {
 	cfg.ReverseProxy.RedirectListen = "127.0.0.1:0"
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rp, err := startReverseProxy(ctx, cfg, openTestStore(t, cfg), nil)
+	rp, err := startReverseProxy(ctx, cfg, openTestStore(t, cfg), nil, nil)
 	if err != nil {
 		t.Fatalf("startReverseProxy: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestStartReverseProxyRedirectsPlainHTTPToHTTPS(t *testing.T) {
 func TestStartReverseProxyRedirectListenEmptyLeavesItOff(t *testing.T) {
 	fakeWildcardIssuance(t)
 	cfg := reverseProxyConfig(t) // RedirectListen left at its zero value
-	rp, err := startReverseProxy(context.Background(), cfg, openTestStore(t, cfg), nil)
+	rp, err := startReverseProxy(context.Background(), cfg, openTestStore(t, cfg), nil, nil)
 	if err != nil {
 		t.Fatalf("startReverseProxy: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestStartReverseProxyRedirectFailsFastOnABusyPort(t *testing.T) {
 	defer busy.Close()
 	cfg := reverseProxyConfig(t)
 	cfg.ReverseProxy.RedirectListen = busy.Addr().String()
-	if rp, err := startReverseProxy(context.Background(), cfg, openTestStore(t, cfg), nil); err == nil {
+	if rp, err := startReverseProxy(context.Background(), cfg, openTestStore(t, cfg), nil, nil); err == nil {
 		rp.Close()
 		t.Fatal("expected an error for a redirect_listen address already in use")
 	}
@@ -325,7 +325,7 @@ func TestStartReverseProxyFailsFastOnABusyPort(t *testing.T) {
 	cfg.ReverseProxy.Listen = busy.Addr().String()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if rp, err := startReverseProxy(ctx, cfg, openTestStore(t, cfg), nil); err == nil {
+	if rp, err := startReverseProxy(ctx, cfg, openTestStore(t, cfg), nil, nil); err == nil {
 		rp.Close()
 		t.Fatal("expected an error for a listen address already in use")
 	}
@@ -341,7 +341,7 @@ func TestStartReverseProxyNeverBlocksOnAnUnreachableCA(t *testing.T) {
 	defer cancel()
 	done := make(chan *reverseProxyServer, 1)
 	go func() {
-		rp, err := startReverseProxy(ctx, cfg, openTestStore(t, cfg), nil)
+		rp, err := startReverseProxy(ctx, cfg, openTestStore(t, cfg), nil, nil)
 		if err != nil {
 			t.Errorf("startReverseProxy: %v", err)
 		}
@@ -364,26 +364,13 @@ func TestStartReverseProxyNeverBlocksOnAnUnreachableCA(t *testing.T) {
 	}
 }
 
-func TestStartReverseProxyBadTokenFileFailsFast(t *testing.T) {
-	resetReverseProxySeams(t) // rproxyDNS01 nil: the token is really resolved
-	cfg := reverseProxyConfig(t)
-	cfg.ReverseProxy.CloudflareAPIToken = ""
-	cfg.ReverseProxy.CloudflareAPITokenFile = filepath.Join(t.TempDir(), "missing")
-	if rp, err := startReverseProxy(context.Background(), cfg, openTestStore(t, cfg), nil); err == nil {
-		rp.Close()
-		t.Fatal("expected an error for a missing Cloudflare token file")
-	} else if !strings.Contains(err.Error(), "reverseproxy.cloudflare_api_token_file") {
-		t.Errorf("error %q should name the setting", err)
-	}
-}
-
 func TestStartReverseProxyReportsAServeFailure(t *testing.T) {
 	fakeWildcardIssuance(t)
 	cfg := reverseProxyConfig(t)
 	failed := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rp, err := startReverseProxy(ctx, cfg, openTestStore(t, cfg), func(err error) { failed <- err })
+	rp, err := startReverseProxy(ctx, cfg, openTestStore(t, cfg), nil, func(err error) { failed <- err })
 	if err != nil {
 		t.Fatal(err)
 	}

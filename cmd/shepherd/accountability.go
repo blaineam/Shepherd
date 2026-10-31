@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"shepherd/internal/config"
 	"shepherd/internal/devices"
 	"shepherd/internal/dnsengine"
+	"shepherd/internal/secrets"
 )
 
 // accessQueueSize bounds how many access events can be queued for the
@@ -22,37 +24,31 @@ const accessQueueSize = 256
 
 // startAccountability wires the DNS engine's OnAccess hook to an
 // accountability.Engine (docs/ACCOUNTABILITY.md), resolving each access's
-// device and groups from the device registry. It is gated by
-// cfg.Accountability.Enabled and by an SMTP relay actually being configured:
-// the feature defaults on, but the library itself starts with zero contacts
-// and zero subscriptions, and there is no default mail relay, so until both
-// a subscription exists (set up in the portal) and an SMTP host is
-// configured here, this returns (nil, nil) — not wired, not an error.
-func startAccountability(ctx context.Context, cfg config.Config, engine *dnsengine.Engine, reg *devices.Registry) (*accountability.Engine, error) {
-	ac := cfg.Accountability
-	if !ac.Enabled || ac.SMTP.Host == "" {
-		return nil, nil
+// device and groups from the device registry. Gated only by
+// cfg.Accountability.Enabled (on by default): the engine is built whether or
+// not a mail relay is set up, so contacts and subscriptions can always be
+// managed in the portal, and the relay itself comes from the portal-managed
+// secrets store through a RelaySender that a relay saved later is swapped
+// into live (cmd/shepherd/secrets.go's secretsChanged) — no restart.
+//
+// Being enabled still costs nothing until a relay exists: the OnAccess hook
+// is installed for the life of the process, but OnAccessWanted keeps the DNS
+// engine from even looking up a query's items while no relay is set, and no
+// access is ever queued, recorded or persisted without one. Returns nil
+// values when the feature is disabled in shepherd.toml.
+func startAccountability(ctx context.Context, cfg config.Config, engine *dnsengine.Engine, reg *devices.Registry, sec *secrets.Store) (*accountability.Engine, *accountability.RelaySender, error) {
+	if !cfg.Accountability.Enabled {
+		return nil, nil, nil
 	}
-	password, err := smtpPassword(ac.SMTP)
-	if err != nil {
-		return nil, fmt.Errorf("accountability: %w", err)
-	}
-	tlsMode := accountability.TLSMode(ac.SMTP.TLS)
-	if tlsMode == "" {
-		tlsMode = accountability.TLSStartTLS
-	}
-	sender, err := accountability.NewSMTPSender(accountability.SMTPConfig{
-		Host: ac.SMTP.Host, Port: ac.SMTP.Port, Username: ac.SMTP.Username,
-		Password: password, From: ac.SMTP.From, TLS: tlsMode,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("accountability: %w", err)
+	relay := &accountability.RelaySender{}
+	if err := applySMTP(relay, sec); err != nil {
+		log.Print(err) // the engine still starts; a fixed relay saved in the portal takes over
 	}
 	eng, err := accountability.New(accountability.Options{
-		Dir: filepath.Join(cfg.DataDir, "accountability"), Sender: sender, From: ac.SMTP.From,
+		Dir: filepath.Join(cfg.DataDir, "accountability"), Sender: relay,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("accountability: %w", err)
+		return nil, nil, fmt.Errorf("accountability: %w", err)
 	}
 
 	// Engine.Record can write its pending digest to disk (fsync and rename)
@@ -73,7 +69,11 @@ func startAccountability(ctx context.Context, cfg config.Config, engine *dnsengi
 			}
 		}
 	}()
+	engine.OnAccessWanted = relay.Configured
 	engine.OnAccess = func(info dnsengine.AccessInfo) {
+		if !relay.Configured() {
+			return // never accumulate what could not be sent (OnAccessWanted already skips this in ServeDNS)
+		}
 		deviceID, groupIDs := reg.ScopesFor(info.ClientIP)
 		for _, item := range info.Items {
 			ev := accountability.AccessEvent{
@@ -86,13 +86,13 @@ func startAccountability(ctx context.Context, cfg config.Config, engine *dnsengi
 			}
 		}
 	}
-	return eng, nil
+	return eng, relay, nil
 }
 
-// smtpPassword resolves the SMTP password: PasswordFile, when set, is read
-// fresh (and trimmed) on every startup; config.Validate already rejects
-// setting both it and Password, so there is never a "which one wins"
-// question. See docs/ACCOUNTABILITY.md's "SMTP secret handling" section.
+// smtpPassword resolves the SMTP password in [accountability.smtp], only
+// ever to import it once into the portal-managed relay (openSecrets):
+// PasswordFile, when set, wins; config.Validate already rejects setting
+// both it and Password. See docs/ACCOUNTABILITY.md.
 func smtpPassword(smtp config.AccountabilitySMTP) (string, error) {
 	if smtp.PasswordFile == "" {
 		return smtp.Password, nil

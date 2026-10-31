@@ -15,6 +15,7 @@ import (
 
 	"shepherd/internal/config"
 	"shepherd/internal/reverseproxy"
+	"shepherd/internal/secrets"
 	"shepherd/internal/tlscert"
 )
 
@@ -49,9 +50,10 @@ type reverseProxyServer struct {
 // a port that is already taken (say, by the reverse proxy this is meant to
 // replace) stops startup with a clear error instead of failing later in a
 // goroutine; obtaining the certificate never blocks, exactly as for [tls].
-// onFail hears about the listener dying after startup. Returns (nil, nil)
-// when [reverseproxy] is off, which is the default.
-func startReverseProxy(ctx context.Context, cfg config.Config, store *reverseproxy.Store, onFail func(error)) (*reverseProxyServer, error) {
+// onFail hears about the listener dying after startup. The DNS-01 challenge
+// uses the DNS provider token the portal manages (sec), the same one [tls]
+// uses. Returns (nil, nil) when [reverseproxy] is off, which is the default.
+func startReverseProxy(ctx context.Context, cfg config.Config, store *reverseproxy.Store, sec *secrets.Store, onFail func(error)) (*reverseProxyServer, error) {
 	rp := cfg.ReverseProxy
 	if !rp.Enabled {
 		return nil, nil
@@ -80,14 +82,12 @@ func startReverseProxy(ctx context.Context, cfg config.Config, store *reversepro
 		// moving a bare-apex host onto this certificate would otherwise hit.
 		extraHostnames: []string{rp.BaseDomain()},
 		email:          rp.Email,
-		token: func() (string, error) {
-			return tokenFrom(rp.CloudflareAPIToken, rp.CloudflareAPITokenFile, "reverseproxy.cloudflare_api_token_file")
-		},
-		bootstrap: cfg.DNS.Bootstrap,
-		acme:      rproxyACMEClient,
-		dns01:     rproxyDNS01,
-		propagate: rproxyPropagationCheck,
-		every:     rproxyEvery,
+		secrets:        sec,
+		bootstrap:      cfg.DNS.Bootstrap,
+		acme:           rproxyACMEClient,
+		dns01:          rproxyDNS01,
+		propagate:      rproxyPropagationCheck,
+		every:          rproxyEvery,
 	})
 	if err != nil {
 		ln.Close()
