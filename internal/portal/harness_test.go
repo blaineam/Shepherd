@@ -61,7 +61,11 @@ type harness struct {
 	listSrv  *httptest.Server
 }
 
-func newHarness(t *testing.T) *harness {
+func newHarness(t *testing.T) *harness { t.Helper(); return newHarnessWith(t, nil) }
+
+// newHarnessWith is newHarness with a chance to adjust the Deps (say, the
+// [tls] hostname passkeys need) before the server is built.
+func newHarnessWith(t *testing.T, adjust func(*Deps)) *harness {
 	t.Helper()
 	dir := t.TempDir()
 	listSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +100,11 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := New(Deps{Engine: engine, Lists: lists, Policy: policy, Devices: reg, Upstreams: ups, Alarms: alarmEngine, GeoBlock: geoBlock, Token: strings.Repeat("t", 64), Version: "test"})
+	deps := Deps{Engine: engine, Lists: lists, Policy: policy, Devices: reg, Upstreams: ups, Alarms: alarmEngine, GeoBlock: geoBlock, Token: strings.Repeat("t", 64), Version: "test"}
+	if adjust != nil {
+		adjust(&deps)
+	}
+	srv := New(deps)
 	engine.Clients = reg
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

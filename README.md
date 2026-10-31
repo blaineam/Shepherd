@@ -86,8 +86,9 @@ Shepherd is early and built in public. This is real, tested and running on a rea
 
 Also built: a **passive ARP monitor** that learns real MAC addresses and raises spoofing alerts
 ([ARP.md](docs/ARP.md)), whose gateway-changed event Watch mode listens to; an **alarm engine** with Web Push
-and ntfy delivery, mute rules and batch actions ([ALARMS.md](docs/ALARMS.md)); and **router importers** for eero
-and CSV ([IMPORT.md](docs/IMPORT.md)). Coming next: inbound protection, the mesh, signed self-updates, the local
+and ntfy delivery, mute rules and batch actions ([ALARMS.md](docs/ALARMS.md)); **router importers** for eero
+and CSV ([IMPORT.md](docs/IMPORT.md)); and **passkey unlock** for the portal
+([PASSKEYS.md](docs/PASSKEYS.md)). Coming next: inbound protection, the mesh, signed self-updates, the local
 AI and one-click installers. A dual-NIC router profile is a stated future direction, not yet scheduled. See the
 [roadmap](docs/ROADMAP.md).
 

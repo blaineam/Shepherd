@@ -196,6 +196,20 @@ test('locking endpoints', async () => {
   assert.deepEqual([calls[6][0], calls[6][1].method], ['/api/lock', 'POST']);
 });
 
+test('passkey endpoints', async () => {
+  const { calls, m } = rig();
+  await m.passkeys();
+  assert.equal(calls[0][0], '/api/passkeys');
+  await m.beginPasskeyRegistration('My phone');
+  assert.deepEqual([calls[1][0], calls[1][1].method, calls[1][1].body], ['/api/passkeys/register/begin', 'POST', '{"name":"My phone"}']);
+  await m.finishPasskeyRegistration({ id: 'AQID' });
+  assert.deepEqual([calls[2][0], calls[2][1].method, calls[2][1].body], ['/api/passkeys/register/finish', 'POST', '{"id":"AQID"}']);
+  await m.renamePasskey('a b', 'Laptop');
+  assert.deepEqual([calls[3][0], calls[3][1].method, calls[3][1].body], ['/api/passkeys/a%20b', 'PATCH', '{"name":"Laptop"}']);
+  await m.revokePasskey('a b');
+  assert.deepEqual([calls[4][0], calls[4][1].method], ['/api/passkeys/a%20b', 'DELETE']);
+});
+
 test('vulnscan endpoints', async () => {
   const { calls, m } = rig();
   await m.vulnscanStatus();

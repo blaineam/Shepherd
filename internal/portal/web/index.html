@@ -263,6 +263,13 @@
       <img src="icon.png" alt="" class="logo big">
       <h2>Locked</h2>
       <p class="muted small">Shepherd is showing synthetic demo data, made up in your browser. Unlock to see your real network.</p>
+      <!-- Shown only on the portal's own HTTPS address once a passkey is
+           registered (GET /api/login/passkey); see docs/PASSKEYS.md. -->
+      <div id="passkey-unlock" class="passkey-unlock" hidden>
+        <button type="button" id="btn-passkey">Sign in with a passkey</button>
+        <p class="err" id="passkey-err"></p>
+        <hr>
+      </div>
       <form id="pin-form">
         <input id="pin" type="password" inputmode="numeric" placeholder="PIN" autocomplete="off">
         <button>Unlock with PIN</button>

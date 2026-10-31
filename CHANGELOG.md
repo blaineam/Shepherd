@@ -127,6 +127,46 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   `GET/PUT/DELETE /api/dns-provider` and `GET/PUT/DELETE /api/accountability/smtp`. Not done: encryption at
   rest, other DNS providers, a "send a test email" button, and turning `[accountability]`, `[tls]` or
   `[reverseproxy]` themselves on or off from the portal (those switches, and hostnames, are still config).
+- **Passkey unlock (`internal/passkeys`):** the portal can now be unlocked with a passkey — Face ID, Touch
+  ID, Windows Hello, a phone, or a hardware security key — alongside the token and the PIN, never instead
+  of them. The step docs/LOCKING.md had designed and deliberately deferred until the portal had a real
+  HTTPS name, which `[tls]` now gives it. **The WebAuthn protocol is `github.com/go-webauthn/webauthn`
+  v0.18.2, not hand-rolled** — the one deliberate new dependency of tonight's work, because challenge,
+  origin and RP ID binding, attestation and COSE key parsing and signature checks are exactly what a
+  well-vetted library is for; it brings in CBOR, TPM-attestation, JWT and msgpack modules
+  (docs/THIRD-PARTY.md). The relying party is `[tls].hostname`, its origin `https://<hostname>:<port of
+  tls.listen>` (plus the same name on 443, for a container publishing 443 onto the listener); a passkey
+  registered there works only there, never at the LAN IP, another name, or plain HTTP; each passkey records
+  the hostname it was made for, so after a `[tls].hostname` change the old ones stay listed (flagged, to be
+  removed) but are never offered at sign-in. **Every ceremony is
+  refused before it starts when it could not work**: with `[tls]` off the Locking screen says passkeys need
+  it, and from any page that is not the HTTPS listener at that name (the plain-HTTP LAN address, or the
+  HTTPS listener reached by IP) it names both where you are and where to go, instead of a WebAuthn error in
+  the console. Passkeys can only be *added* from an already-unlocked session (token or PIN), never used to
+  gain first access; registration and login require user verification (a biometric or device PIN, since a
+  passkey stands in for a PIN plus a trusted browser), ask for no attestation, prefer but do not require
+  discoverable credentials so hardware keys without resident-key storage still work, and refuse a
+  signature counter that goes backwards (a possible clone) without saving it (and never lower the stored counter
+  when two sign-ins race). Ceremonies are single use
+  (a finish attempt consumes one, right or wrong), expire after 5 minutes, are tied to the browser that
+  began them by an `HttpOnly`/`Secure`/`SameSite=Strict` cookie holding only a random id (the challenge
+  stays on the server), and are capped at 32 pending. A successful passkey login opens exactly the session
+  a token or PIN login does — the same `shepherd_session`, idle lock and 30-day cap — and revoking that
+  passkey ends the sessions it opened. Up to 20 passkeys, each named, renamable and revocable from a new
+  **Passkeys** card on the Locking screen; the lock screen gains **Sign in with a passkey**, shown only on
+  the HTTPS listener and only once one is registered (the unauthenticated check reveals neither the
+  hostname nor how many exist). Stored in `<data_dir>/passkeys.json` (0600, atomic; public keys only — a
+  passkey's private key never leaves its authenticator), wiped when the portal token rotates like the PIN
+  and trusted browsers; a file that cannot be read disables passkeys alone (503, file untouched) while the
+  token and PIN keep working. New API: `GET /api/login/passkey`, `POST /api/login/passkey/begin|finish`,
+  `GET /api/passkeys`, `POST /api/passkeys/register/begin|finish`, `PATCH`/`DELETE /api/passkeys/{id}`.
+  **Tested against a software authenticator, not a real one:** `internal/passkeys/passkeystest` builds and
+  signs real ES256 WebAuthn payloads the way the library tests itself, and every tampered response (wrong
+  origin, localhost, wrong RP ID, wrong challenge or ceremony type, no user verification, someone else's
+  user handle, a wrong key, a replay, a revoked or unknown credential, a backwards counter) is checked to
+  fail the specific check it targets, through the real HTTP API over a real TLS listener. No real browser,
+  platform authenticator or security key has been tried yet; see docs/PASSKEYS.md, including its "Before
+  you rely on this" checklist.
 - **2D map fallback for the HUD:** browsers without WebGL, notably Safari in Lockdown Mode, now get a
   flat canvas map (`js/flatmap.js`) with the same arcs, comets, pulses, picking, Set home and panning and
   zooming, plus day/night shading, instead of a "needs WebGL" notice. `?nogl=1` forces it.
@@ -432,6 +472,28 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- **The globe's per-frame comet-arrival check scanned all 600 comet slots every frame**, regardless of
+  how many were actually animating — cheap enough with a JIT to go unnoticed, real cost without one
+  (Safari Lockdown Mode disables it entirely, and the portal felt sluggish there as a direct result).
+  `GlobeRenderer` now tracks which comet slots have anything left to do (`liveComets`) and only ever
+  iterates those, so the per-frame cost scales with what is actually on screen instead of a fixed cap
+  that is almost always mostly inert between spawns.
+- **The Devices screen's "Needs attention" panel had no way to collapse it.** With enough flagged devices
+  (new installs especially — quarantine, wandering, excluded all surface here) the full chip grid alone
+  could run many screens long on a phone, pushing the actual device table below the fold with no way
+  back up to it short of scrolling past all of it first. It now starts collapsed behind a "Show" toggle
+  next to its header; the header and count stay visible either way, so nothing needing a look is hidden,
+  just not forced open.
+- Passkeys' `Serves`/`RequestOrigin` checked `r.TLS != nil` to decide whether a request reached the
+  portal over HTTPS, which is only ever true when `[tls]`'s own listener terminated the connection
+  directly. Reaching the portal through `[reverseproxy]` on the same hostname instead — a real cutover
+  hit this directly, right after setting both features up the same night — terminates TLS at the proxy
+  and forwards as plain HTTP, so `r.TLS` is nil even though the browser's own connection genuinely was
+  HTTPS, and passkeys refused with "this page is http://..." on a page that was, from the browser's own
+  address bar, unmistakably `https://`. Fixed by also trusting `X-Forwarded-Proto: https`, which
+  `internal/reverseproxy.Proxy` always sets and always overwrites (never passes through from a client) —
+  this gate is an availability check, not the actual WebAuthn trust boundary, which the library enforces
+  independently against the browser-signed origin regardless of this header. See docs/PASSKEYS.md.
 - **Watch mode relayed frames with the steered device's own source MAC**, which taught every switch
   and Wi-Fi/LAN bridge in between that the device lived on Shepherd's port and misdelivered the
   device's *inbound* traffic there until its next frame flipped the entry back. This is the first

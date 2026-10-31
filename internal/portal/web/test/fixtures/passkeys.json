@@ -1,0 +1,117 @@
+{
+  "creation": {
+    "publicKey": {
+      "rp": {
+        "name": "Shepherd",
+        "id": "shepherd.example.com"
+      },
+      "user": {
+        "name": "Shepherd portal",
+        "displayName": "Shepherd portal",
+        "id": "ltNmg9TfL-HwddRGPfVdw5LjjpEhgXfZmUVBAeI73H0MKlV2V2ckM_gpYNxlOVqzNinT2aOIJzE2XyfH8zfimQ"
+      },
+      "challenge": "YF1Jg4hwX5vVQRf2vdRrszM4KoreVGENs-1d6oXe0d8",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -35
+        },
+        {
+          "type": "public-key",
+          "alg": -36
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        },
+        {
+          "type": "public-key",
+          "alg": -258
+        },
+        {
+          "type": "public-key",
+          "alg": -259
+        },
+        {
+          "type": "public-key",
+          "alg": -37
+        },
+        {
+          "type": "public-key",
+          "alg": -38
+        },
+        {
+          "type": "public-key",
+          "alg": -39
+        },
+        {
+          "type": "public-key",
+          "alg": -8
+        }
+      ],
+      "timeout": 300000,
+      "authenticatorSelection": {
+        "residentKey": "preferred",
+        "userVerification": "required"
+      },
+      "attestation": "none",
+      "extensions": {
+        "credProps": true
+      }
+    }
+  },
+  "registration": {
+    "authenticatorAttachment": "platform",
+    "clientExtensionResults": {
+      "credProps": {
+        "rk": true
+      }
+    },
+    "id": "A_BHzhkAqgbrUx_h_Z3tGZADDg-NmGGnqXN4W_Dee6w",
+    "rawId": "A_BHzhkAqgbrUx_h_Z3tGZADDg-NmGGnqXN4W_Dee6w",
+    "response": {
+      "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViklxdjITvOdz2d9QnY3e7Q3MqOKfc-bcNFJUQMMFWLDjBFAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAPwR84ZAKoG61Mf4f2d7RmQAw4PjZhhp6lzeFvw3nuspQECAyYgASFYIF1898r9_ojQmLQIu2QQ2fy0dT-GsgLLk8H8qWrtPPjcIlggjaHTy4h030HRRVPKMXW6Gb-UpGQKinGtm7PMAOkZL6U",
+      "clientDataJSON": "eyJjaGFsbGVuZ2UiOiJZRjFKZzRod1g1dlZRUmYydmRScnN6TTRLb3JlVkdFTnMtMWQ2b1hlMGQ4IiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL3NoZXBoZXJkLmV4YW1wbGUuY29tOjg0NDMiLCJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIn0",
+      "transports": [
+        "internal",
+        "hybrid"
+      ]
+    },
+    "type": "public-key"
+  },
+  "request": {
+    "publicKey": {
+      "challenge": "FvbSkXTPw7S8J8NFd_if1Zqg7m2sZYMuzPnH0yVxDUg",
+      "timeout": 300000,
+      "rpId": "shepherd.example.com",
+      "allowCredentials": [
+        {
+          "type": "public-key",
+          "id": "A_BHzhkAqgbrUx_h_Z3tGZADDg-NmGGnqXN4W_Dee6w",
+          "transports": [
+            "internal",
+            "hybrid"
+          ]
+        }
+      ],
+      "userVerification": "required"
+    }
+  },
+  "assertion": {
+    "authenticatorAttachment": "platform",
+    "clientExtensionResults": {},
+    "id": "A_BHzhkAqgbrUx_h_Z3tGZADDg-NmGGnqXN4W_Dee6w",
+    "rawId": "A_BHzhkAqgbrUx_h_Z3tGZADDg-NmGGnqXN4W_Dee6w",
+    "response": {
+      "authenticatorData": "lxdjITvOdz2d9QnY3e7Q3MqOKfc-bcNFJUQMMFWLDjAFAAAAAA",
+      "clientDataJSON": "eyJjaGFsbGVuZ2UiOiJGdmJTa1hUUHc3UzhKOE5GZF9pZjFacWc3bTJzWllNdXpQbkgweVZ4RFVnIiwiY3Jvc3NPcmlnaW4iOmZhbHNlLCJvcmlnaW4iOiJodHRwczovL3NoZXBoZXJkLmV4YW1wbGUuY29tOjg0NDMiLCJ0eXBlIjoid2ViYXV0aG4uZ2V0In0",
+      "signature": "MEQCIAt6zXws9R3jV7zCdk3pbdenc0qMsZcty7Jv62UQDxcjAiBbjesLJ3zNJc0lnNe-F6q-td6FZBJhn81MEeyKYTrZ1g",
+      "userHandle": "ltNmg9TfL-HwddRGPfVdw5LjjpEhgXfZmUVBAeI73H0MKlV2V2ckM_gpYNxlOVqzNinT2aOIJzE2XyfH8zfimQ"
+    },
+    "type": "public-key"
+  }
+}

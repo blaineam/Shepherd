@@ -305,6 +305,13 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		log.Printf("shepherd %s: reverse proxy on https://%s (%s)", version, proxySrv.addr, cfg.ReverseProxy.Wildcard())
 	}
 
+	// Passkeys (docs/PASSKEYS.md) are bound to [tls]'s hostname: it is the
+	// one HTTPS name the portal answers at, and WebAuthn needs exactly that.
+	// With [tls] off they stay unavailable and the portal says why.
+	if cfg.TLS.Enabled {
+		deps.TLSHostname, deps.TLSListen = cfg.TLS.Hostname, cfg.TLS.Listen
+	}
+
 	srv := portal.New(deps)
 	httpSrv := &http.Server{Addr: cfg.Portal.Listen, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {

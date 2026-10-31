@@ -227,6 +227,8 @@ tr:hover td { background: #ffffff06; }
 .modal { background: var(--panel2); border: 1px solid var(--line); padding: 28px; width: min(420px, 92vw); display: flex; flex-direction: column; gap: 10px; align-items: stretch; text-align: center; }
 .modal .logo { align-self: center; }
 .modal h2 { color: var(--text); font-size: 20px; margin: 0; }
+.passkey-unlock { display: flex; flex-direction: column; gap: 10px; }
+.passkey-unlock[hidden] { display: none; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
@@ -470,6 +472,8 @@ body.on-page .toasts { bottom: 20px; }
 .dv-attn { padding: 12px 14px; margin-bottom: 12px; flex: none; }
 .dv-attn-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 9px; }
 .dv-attn-head .ph { margin: 0; }
+.dv-attn-toggle { margin-left: auto; background: none; border: 1px solid var(--line2); color: var(--muted); border-radius: 4px; padding: 3px 10px; font: 500 11px var(--mono); letter-spacing: .04em; cursor: pointer; }
+.dv-attn-toggle:hover, .dv-attn-toggle:focus-visible { border-color: var(--muted); color: var(--text); }
 .dv-attn-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .dv-attn-chip { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; background: #ffffff05; color: var(--text); border: 1px solid var(--line2); border-radius: 4px; padding: 6px 10px; min-width: 128px; max-width: 220px; text-align: left; font-weight: 400; }
 .dv-attn-chip:hover, .dv-attn-chip:focus-visible { border-color: var(--muted); background: #ffffff0a; }
