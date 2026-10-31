@@ -788,3 +788,68 @@ func TestWatchIPv6IsOffByDefaultAndSettable(t *testing.T) {
 		t.Fatalf("watch.ipv6 = %v err = %v", cfg.Watch.IPv6, err)
 	}
 }
+
+func TestDNSListenAddrsAddsLoopbackByDefault(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// On by default: when Shepherd is its own host's resolver, loopback is
+	// the one address that cannot vanish with an interface.
+	if !cfg.DNS.LoopbackEnabled() {
+		t.Fatal("dns.listen_loopback must default to on")
+	}
+	cfg.DNS.Listen = []string{"10.0.0.20:53"}
+	got := cfg.DNS.ListenAddrs()
+	want := []string{"10.0.0.20:53", "127.0.0.1:53", "[::1]:53"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("addrs = %v, want %v", got, want)
+	}
+}
+
+func TestDNSListenAddrsPortAndDeduplication(t *testing.T) {
+	cases := []struct {
+		name   string
+		listen []string
+		want   []string
+	}{
+		{"the loopback port follows the first address",
+			[]string{"10.0.0.20:5353"}, []string{"10.0.0.20:5353", "127.0.0.1:5353", "[::1]:5353"}},
+		{"a loopback address already configured is not added twice",
+			[]string{"127.0.0.1:53"}, []string{"127.0.0.1:53", "[::1]:53"}},
+		{"both already configured",
+			[]string{"127.0.0.1:53", "[::1]:53"}, []string{"127.0.0.1:53", "[::1]:53"}},
+		{"a wildcard listener already answers on loopback",
+			[]string{"0.0.0.0:53"}, []string{"0.0.0.0:53"}},
+		{"so does an IPv6 wildcard",
+			[]string{"[::]:53"}, []string{"[::]:53"}},
+		{"several addresses keep their order",
+			[]string{"10.0.0.20:53", "10.0.0.102:53"}, []string{"10.0.0.20:53", "10.0.0.102:53", "127.0.0.1:53", "[::1]:53"}},
+		{"nothing configured stays nothing", nil, nil},
+		{"an unparsable address is left alone rather than guessed at",
+			[]string{"not-an-address"}, []string{"not-an-address"}},
+	}
+	for _, c := range cases {
+		d := DNS{Listen: c.listen}
+		if got := d.ListenAddrs(); !slices.Equal(got, c.want) {
+			t.Errorf("%s: addrs = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestDNSListenLoopbackCanBeTurnedOff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "shepherd.toml")
+	if err := os.WriteFile(path, []byte("[dns]\nlisten = [\"10.0.0.20:53\"]\nlisten_loopback = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DNS.LoopbackEnabled() {
+		t.Fatal("an explicit false must win over the default")
+	}
+	if got := cfg.DNS.ListenAddrs(); !slices.Equal(got, []string{"10.0.0.20:53"}) {
+		t.Fatalf("addrs = %v", got)
+	}
+}

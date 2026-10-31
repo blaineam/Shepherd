@@ -424,6 +424,19 @@ type DNS struct {
 	// Bootstrap are plain resolvers (IP addresses) used only to look up the
 	// hostnames of tls:// and https:// upstreams.
 	Bootstrap []string `toml:"bootstrap"`
+	// ListenLoopback also serves on 127.0.0.1 and [::1], on the same port
+	// as the first address in Listen. On by default, and worth leaving on:
+	// when Shepherd is the resolver its own host uses, a loopback listener
+	// is the one address that cannot disappear with an interface. Without
+	// it, a host pointed at Shepherd's LAN address loses name resolution
+	// the moment that interface goes down — which on a real install took
+	// sshd with it (it blocks on reverse lookups), so the machine could
+	// not be reached to fix the interface. Pair it with 127.0.0.1 first in
+	// the host's own resolver; a loopback listener nothing asks is no help.
+	// A loopback address already in Listen is not added twice, and one that
+	// cannot be bound (a system resolver often holds 127.0.0.1:53) is a
+	// logged warning, not a startup failure.
+	ListenLoopback *bool `toml:"listen_loopback"`
 	// BlockMode is "null" (answer 0.0.0.0 / ::) or "nxdomain".
 	BlockMode            string   `toml:"block_mode"`
 	ProbeIntervalSeconds int      `toml:"probe_interval_seconds"`
@@ -667,4 +680,41 @@ func (c Config) validateWatch() error {
 		return errors.New("watch.health_interval_seconds, watch.idle_grace_seconds and watch.startup_grace_seconds must not be negative")
 	}
 	return nil
+}
+
+// LoopbackEnabled reports whether dns.listen_loopback is on. It defaults to
+// true, which is why the field is a pointer: an explicit "false" in the file
+// has to be distinguishable from an absent key.
+func (d DNS) LoopbackEnabled() bool { return d.ListenLoopback == nil || *d.ListenLoopback }
+
+// ListenAddrs is the set of addresses to serve DNS on: everything in
+// dns.listen, plus the loopback addresses when dns.listen_loopback is on
+// (see ListenLoopback). The loopback port follows the first configured
+// address, so the host reaches Shepherd the same way the network does.
+// Addresses already covered by the configuration are never added twice.
+func (d DNS) ListenAddrs() []string {
+	out := append([]string(nil), d.Listen...)
+	if !d.LoopbackEnabled() || len(d.Listen) == 0 {
+		return out
+	}
+	_, port, err := net.SplitHostPort(d.Listen[0])
+	if err != nil || port == "" {
+		return out
+	}
+	have := map[string]bool{}
+	for _, a := range out {
+		if host, p, err := net.SplitHostPort(a); err == nil {
+			have[net.JoinHostPort(strings.ToLower(host), p)] = true
+			// A wildcard listener already answers on loopback.
+			if host == "" || host == "0.0.0.0" || host == "::" {
+				return out
+			}
+		}
+	}
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		if a := net.JoinHostPort(host, port); !have[a] {
+			out = append(out, a)
+		}
+	}
+	return out
 }

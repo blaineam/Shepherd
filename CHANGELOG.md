@@ -13,6 +13,26 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **DNS keeps serving when one listen address goes away, and can always be reached over loopback.**
+  Both halves of a real outage. Shepherd was configured to listen on three addresses; the wired
+  interface holding one of them lost carrier, and because `dnsengine.Serve` required every bind to
+  succeed, Shepherd refused to start — so a network whose resolver was fine on two other addresses
+  had none at all, in a restart loop. `Serve` now takes `TolerateMissingAddresses`, which
+  `cmd/shepherd` passes: an address **this host does not have** is a loud warning naming it, startup
+  carries on with the rest, and binding nothing at all is still fatal. The tolerance is deliberately
+  narrow — an address **another process already holds** stays a hard failure, because then something
+  else *is* answering on it and starting anyway would leave the owner believing Shepherd was handling
+  their DNS when a different resolver was; `TestRunFailsFastOnBusyPorts` holds that line, and it
+  caught exactly this when a first, broader version of the change made it hang. An address is never
+  half-served (if its TCP half fails the UDP half is closed too), and without the option the strict
+  behaviour is unchanged. Second half: new
+  `dns.listen_loopback` (**on by default**) also serves 127.0.0.1 and `[::1]` on the port of the
+  first configured address, because when Shepherd is its own host's resolver, loopback is the one
+  address that cannot vanish with an interface — in the outage the host lost name resolution
+  entirely, which wedged `sshd` (it blocks on reverse lookups) and left the machine unreachable to
+  fix the very interface that had failed. Addresses already covered are not duplicated, a wildcard
+  listener is left alone, and a loopback port a system resolver already holds is just a warning.
+  It only helps if the host's own resolver lists 127.0.0.1, which the example config now says.
 - **Watch mode is wired in and on by default (`[watch]`, `internal/watch`, docs/WATCH.md)** — [ROADMAP.md](docs/ROADMAP.md)
   step 11, after the throughput ceiling that held it back for months was root-caused and fixed and the relay was
   measured at full gigabit on real hardware, with the maintainer's explicit go-ahead. Until now

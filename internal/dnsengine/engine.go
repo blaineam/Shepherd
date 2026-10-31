@@ -4,8 +4,10 @@ package dnsengine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"syscall"
 	"time"
 
 	"github.com/miekg/dns"
@@ -341,9 +343,51 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	e.finishAllowed(w, r, q, entry, resp, start)
 }
 
-// Serve listens on every address over UDP and TCP until ctx ends. All binds
-// must succeed, so a misconfigured address fails at startup, not silently.
-func Serve(ctx context.Context, addrs []string, h dns.Handler) error {
+// ServeOption configures Serve.
+type ServeOption func(*serveConfig)
+
+type serveConfig struct {
+	onBindError func(addr string, err error)
+}
+
+// TolerateMissingAddresses makes Serve carry on when an address does not
+// exist on this host, reporting each one through onMissing and failing only
+// if that leaves nothing bound at all.
+//
+// It exists because the strict behaviour turned a missing address into a
+// total outage. Shepherd was listening on three addresses, one of them on a
+// wired interface; that interface lost carrier, the address went with it,
+// and Shepherd then refused to start — so a network whose resolver was fine
+// on two other addresses had none at all, in a restart loop. An address that
+// was correct yesterday can be gone today, and on a home network that is
+// ordinary rather than a misconfiguration.
+//
+// It is deliberately narrow. Only "cannot assign requested address" is
+// tolerated — the address is not on this host, so nothing is answering for
+// it and serving the rest is strictly better. An address another process
+// already holds stays fatal: then something *is* answering on it, and
+// starting anyway would leave the operator believing Shepherd was handling
+// their DNS while a different resolver did. That distinction is the whole
+// point, and TestRunFailsFastOnBusyPorts holds the line on it.
+//
+// Each address is a unit: if its UDP or TCP half cannot be bound the other
+// half is closed too, so an address is never half-served.
+func TolerateMissingAddresses(onMissing func(addr string, err error)) ServeOption {
+	return func(c *serveConfig) { c.onBindError = onMissing }
+}
+
+// addressMissing reports whether err means "this host does not have that
+// address" rather than "something else is using it" or anything else.
+func addressMissing(err error) bool { return errors.Is(err, syscall.EADDRNOTAVAIL) }
+
+// Serve listens on every address over UDP and TCP until ctx ends. By
+// default all binds must succeed, so a misconfigured address fails at
+// startup rather than silently; TolerateUnbindable relaxes that.
+func Serve(ctx context.Context, addrs []string, h dns.Handler, opts ...ServeOption) error {
+	var cfg serveConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	var servers []*dns.Server
 	shutdown := func() {
 		for _, s := range servers {
@@ -351,24 +395,37 @@ func Serve(ctx context.Context, addrs []string, h dns.Handler) error {
 		}
 	}
 	var closers []func()
+	closeAll := func() {
+		for _, c := range closers {
+			c()
+		}
+	}
 	for _, a := range addrs {
 		pc, err := net.ListenPacket("udp", a)
 		if err != nil {
-			for _, c := range closers {
-				c()
+			if cfg.onBindError == nil || !addressMissing(err) {
+				closeAll()
+				return fmt.Errorf("listening udp %s: %w", a, err)
 			}
-			return fmt.Errorf("listening udp %s: %w", a, err)
+			cfg.onBindError(a, fmt.Errorf("udp: %w", err))
+			continue
 		}
-		closers = append(closers, func() { pc.Close() })
 		ln, err := net.Listen("tcp", a)
 		if err != nil {
-			for _, c := range closers {
-				c()
+			pc.Close() // never leave an address served over UDP only
+			if cfg.onBindError == nil || !addressMissing(err) {
+				closeAll()
+				return fmt.Errorf("listening tcp %s: %w", a, err)
 			}
-			return fmt.Errorf("listening tcp %s: %w", a, err)
+			cfg.onBindError(a, fmt.Errorf("tcp: %w", err))
+			continue
 		}
-		closers = append(closers, func() { ln.Close() })
+		closers = append(closers, func() { pc.Close() }, func() { ln.Close() })
 		servers = append(servers, &dns.Server{PacketConn: pc, Handler: h}, &dns.Server{Listener: ln, Handler: h})
+	}
+	if len(servers) == 0 {
+		closeAll()
+		return fmt.Errorf("dnsengine: not listening on any of %d configured addresses", len(addrs))
 	}
 	errc := make(chan error, len(servers))
 	for _, s := range servers {

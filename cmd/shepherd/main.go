@@ -320,9 +320,17 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		log.Printf("shepherd %s: portal also on https://%s (%s)", version, cfg.TLS.Listen, cfg.TLS.Hostname)
 	}
 
-	log.Printf("shepherd %s: dns on %v, portal on http://%s", version, cfg.DNS.Listen, cfg.Portal.Listen)
+	log.Printf("shepherd %s: dns on %v, portal on http://%s", version, cfg.DNS.ListenAddrs(), cfg.Portal.Listen)
 	log.Printf("portal token is in %s (or run with -print-token)", filepath.Join(cfg.DataDir, "portal-token"))
-	if err := dnsengine.Serve(ctx, cfg.DNS.Listen, engine); err != nil {
+	// An address this host no longer has is a warning, not a reason to
+	// refuse to start: a cable pulled or an interface down should not cost
+	// the network a resolver that works on its other addresses. A port
+	// another process holds is still fatal (see TolerateMissingAddresses),
+	// and so is binding nothing at all.
+	if err := dnsengine.Serve(ctx, cfg.DNS.ListenAddrs(), engine,
+		dnsengine.TolerateMissingAddresses(func(addr string, err error) {
+			log.Printf("dns: WARNING: not listening on %s: %v (this host does not have that address)", addr, err)
+		})); err != nil {
 		return err
 	}
 	select {

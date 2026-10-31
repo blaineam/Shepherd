@@ -19,6 +19,19 @@ no_default_lists = false
 # host:port addresses, each served over UDP and TCP. Use your LAN address
 # (not 0.0.0.0) on hosts where system DNS already holds 127.0.0.1:53.
 listen = ["127.0.0.1:5353"]
+# Also serve on 127.0.0.1 and [::1], on the port of the first address above.
+# On by default, and worth leaving on if this host uses Shepherd as its own
+# resolver: loopback is the one address that cannot disappear with an
+# interface. On a real install a wired interface lost carrier, its LAN
+# address went with it, and the host could no longer resolve anything --
+# which also wedged sshd, since it blocks on reverse lookups, so the machine
+# could not be reached to fix the interface. For this to help, put 127.0.0.1
+# first in the host's own resolver (/etc/resolv.conf): a listener nothing
+# asks is no use. An address already covered above is not added twice, and
+# one that cannot be bound (system DNS often holds 127.0.0.1:53) is a logged
+# warning, not a startup failure -- as is any address in the list, so losing
+# one interface no longer stops Shepherd answering on the others.
+listen_loopback = true
 # Upstream resolvers: "9.9.9.10", "9.9.9.10:5353", "tcp://ip", "tls://host[:853]" (DoT),
 # "https://host/dns-query" (DoH). See docs/UPSTREAMS.md. This only seeds the list: once
 # you change it in the portal, <data_dir>/upstreams.json wins.
