@@ -756,6 +756,45 @@ func (e *Engine) learnIfNativeFlapped(ctx context.Context, iface, driver string,
 	}
 }
 
+// localRelayIPs is every address of this host, for the relay's "not for
+// Shepherd itself" rule (xdp_relay.c rule 4, Relay.HandleFrame's local
+// check). The relay interface's own addresses are not enough: a host with
+// a second interface on the same segment, or with container bridges, has
+// addresses a steered device can legitimately talk to, and a frame for one
+// of those must be passed up to the stack rather than relayed to the
+// gateway. The maintainer's NAS answers DNS on a second address on the
+// very segment it steers, so this is the normal case, not a corner.
+//
+// The gateway is deliberately not in this set, even though own() includes
+// it for policy: traffic to the gateway's own address belongs to the
+// gateway, not to this host, and passing it up would strand it.
+func (e *Engine) localRelayIPs(link Link) (v4, v6 []netip.Addr) {
+	seen := map[netip.Addr]bool{}
+	add := func(ip netip.Addr) {
+		if !ip.IsValid() || seen[ip] {
+			return
+		}
+		seen[ip] = true
+		if ip.Is4() {
+			v4 = append(v4, ip)
+			return
+		}
+		v6 = append(v6, ip)
+	}
+	for _, ip := range link.IPv4s {
+		add(ip)
+	}
+	for _, ip := range link.IPv6s {
+		add(ip)
+	}
+	if _, ips, err := e.plat.LocalAddrs(); err == nil {
+		for _, ip := range ips {
+			add(ip)
+		}
+	}
+	return v4, v6
+}
+
 func (e *Engine) startXDP(ctx context.Context, ctrl *intercept.Controller, link Link) (string, <-chan error, func(), error) {
 	mode, driver := e.xdpModeFor(link.Name)
 	var before uint64
@@ -768,10 +807,12 @@ func (e *Engine) startXDP(ctx context.Context, ctrl *intercept.Controller, link 
 	rctx, cancel := context.WithCancel(ctx)
 	attached := make(chan intercept.XDPMode, 1)
 	done := make(chan error, 1)
+	v4, v6 := e.localRelayIPs(link)
 	go func() {
 		done <- e.plat.AttachXDP(rctx, ctrl, link.Name, intercept.XDPOptions{
 			Mode:       mode,
-			LocalIPs:   link.IPv4s,
+			LocalIPs:   v4,
+			LocalIPs6:  v6,
 			OnAttached: func(m intercept.XDPMode) { attached <- m },
 		})
 	}()
@@ -1615,23 +1656,60 @@ func familyNames(f intercept.Family) []string {
 var _ intercept.Excluder = v6Excluder{}
 
 // routingOwnSegment reports whether this host is routing the very subnet
-// the relay runs on, which Watch mode cannot safely steer.
+// the relay runs on, which Watch mode will not steer into: IPv4
+// forwarding is on and a second interface sits in the relay interface's
+// own prefix.
 //
-// One-sided ARP steering assumes Shepherd is a passive Layer 2 relay on a
-// segment: a steered device hands it a frame, it rewrites both MAC
-// addresses and puts it back on the wire. A host that also *routes* that
-// subnet breaks the assumption, because the kernel has its own opinion
-// about where the frame should go and, with two link routes for one
-// subnet, that can be straight back out onto the same segment.
+// The mechanism is not fully established, but the correlation is as strong
+// as a single host can make it, and it is the only shape that has ever
+// looped. Measured on the maintainer's NAS (forwarding on, eth0 and wlan0
+// both on one /24), steering a *single ordinary device* -- one phone, by
+// explicit MAC, nothing to do with the registry or the gateway -- took the
+// interface to about 465,000 packets a second in and 517,000 out, mirrored,
+// in roughly ten seconds. The telling number is that the relay itself
+// accounted for only 41,000 packets a second of that, under a tenth: most
+// of the storm was not the relay's own output at all, which is what the
+// kernel forwarding the steered device's return traffic looks like. One
+// -sided steering teaches the router the client's address at Shepherd's
+// MAC, because that is the source address on every relayed frame, so the
+// router starts sending that client's downloads here; with forwarding on,
+// the kernel then routes them back onto the same segment.
 //
-// This is a precaution, not a proven mechanism. The maintainer's NAS has
-// exactly this shape -- IPv4 forwarding on, a wired and a wireless
-// interface both on the same /24, and Tailscale advertising that subnet
-// while acting as an exit node -- and it is the host on which the relay
-// twice ended up
-// carrying its own output back to itself at line rate. The second of those
-// was not explained by anything else, so Shepherd refuses the combination
-// rather than relay into it. The loop brake stays as the backstop.
+// An earlier version of this comment blamed a polluted registry record
+// that had merged the gateway in, and a commit went out saying so. The
+// single-device trial above disproved it: no registry, no gateway, same
+// loop. That record is a real problem and Decide() refuses it by address
+// now, but it is not this.
+//
+// So the refusal stands until the mechanism is measured and closed, even
+// though the condition is broad -- every Docker host forwards IPv4, and a
+// NAS with wired and wireless on one LAN is ordinary. Being unavailable on
+// such a host is much better than melting its network. The loop brake
+// (checkForLoop) remains the mechanism-independent backstop for everything
+// else.
+//
+// Two measurements from that host, taken with Watch mode off and nothing
+// steered, bound what a narrower test may assume.
+//
+// Its forwarding is bursty, not steady: over a minute, ForwDatagrams in
+// /proc/net/snmp had a median of 34 a second, a p90 of 5,759 and a peak of
+// 8,607, totalling 80,521, and a half-second bucket during a trial hit the
+// equivalent of 24,842 a second. Every burst is the relay interface's
+// inbound traffic routed to a container bridge, for a service its owner
+// runs on purpose. So turning forwarding off is not a remedy anyone can
+// offer. (Two five-second samples taken earlier both landed in bursts and
+// were written up here as a steady ~4,000 a second. They also explain the
+// first trial's odd pre-steering baseline of 12,000 packets a second on an
+// interface whose median is 65.)
+//
+// And a rule counting hairpin forwarding -- in this interface, out this
+// same interface -- dropped zero packets over 25 seconds that included
+// those bursts. None of the routed traffic goes back onto the relay's own
+// segment. The hazard is therefore narrower than what this function tests:
+// a frame arriving for a *steered* device's address and being routed back
+// out the interface it arrived on. Keying the refusal on that, rather than
+// on the host merely having forwarding plus a second address on the
+// prefix, is what would let Watch mode run on hardware like this.
 func (e *Engine) routingOwnSegment(link Link, own Own) (bool, string) {
 	fwd, err := e.plat.IPForwarding()
 	if err != nil || !fwd {

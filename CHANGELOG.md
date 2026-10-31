@@ -13,11 +13,11 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
-- **A loop brake for Watch mode, and a refusal to relay on a host that routes its own segment.**
+- **A loop brake for Watch mode.**
   Twice on real hardware the relay ended up carrying its own output back to itself at line rate --
   about 10 Gbit/s and over a million packets a second on a 10 GbE card -- and both times it ran for
   minutes because a person had to notice. The first had a cause and it is fixed (it steered one of
-  the host's own interfaces); the second does not, which is what these two guards are for.
+  the host's own interfaces); the second is still not explained, which is what the brake is for.
   The brake compares the relay's own throughput against the interface's kernel counters every
   second and looks for the signature that identified both incidents by hand: the interface receives
   and transmits the same amount, the relay accounts for almost all of it, and the rate is one a home
@@ -28,13 +28,51 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   alone has innocent explanations, hence all three: the healthy live run had the interface receiving
   600 Mbit/s against 800 to 1000 transmitted, 25 to 40% apart, with the relay under half its
   packets; the loop had them within 0.03% of each other.
-  Separately, Shepherd now **refuses to relay at all** when IPv4 forwarding is on and another of
-  this host's interfaces has an address inside the relay interface's own prefix. One-sided ARP
-  steering assumes a passive Layer 2 relay; a host routing the same subnet has the kernel's own
-  opinion about where frames go, and with two link routes for one subnet that can be back onto the
-  same segment. The maintainer's NAS is exactly that shape -- forwarding on, two interfaces on one
-  `/24`, Tailscale advertising that subnet as a subnet router and exit node -- and it is the only
-  host that has ever looped. This is a precaution, not a proven mechanism, and docs/WATCH.md says so.
+### Fixed
+- **Shepherd will not steer a device record that carries one of this host's addresses, or the
+  gateway's.** The registry on the live host had merged the gateway, both LAN interfaces and all
+  nine container bridge addresses into a single device record -- the ARP monitor learning
+  Shepherd's own steering frames as though they were a device's -- and that record was eligible to
+  steer. The policy now refuses any record carrying a host or gateway address by MAC **and** by
+  address, across every address on the record rather than its primary one, so a merged record, a
+  randomised MAC or an address learned from Shepherd's own frames is caught even when the MAC looks
+  like an ordinary device's.
+- **Traffic from a steered device to any of this host's other addresses reached the gateway instead
+  of this host.** The relay's "not for Shepherd itself" rule was given only the relay interface's
+  own addresses, so on a host with a second interface on the same segment, or with container
+  bridges, a frame addressed to one of those was relayed out to the router rather than passed up to
+  the stack. The maintainer's NAS answers DNS on such an address, so this is the ordinary case. The
+  rule now covers every address of the host, for IPv4 and IPv6; the gateway's own address stays out
+  of it, because that traffic belongs to the gateway and passing it up would strand it.
+
+### Changed
+- **The refusal to relay on a host that routes the relay's own segment now has evidence behind it,
+  and stays.** It was introduced as a precaution against an unproven mechanism. A single-device
+  trial on the live host has since measured it: steering **one ordinary phone**, named by explicit
+  MAC with the registry and the gateway out of the picture, took the interface to about **465,000
+  packets a second in and 517,000 out, mirrored, within ten seconds**, with the relay itself
+  accounting for under a tenth of it. Most of the storm was therefore not the relay's own output,
+  which is the shape of the *kernel* forwarding the steered device's return traffic: one-sided
+  steering teaches the router the client's address at Shepherd's MAC, so the router sends that
+  client's downloads to this host, and with forwarding on the kernel routes them back onto the same
+  segment. The condition is broad -- every Docker host forwards IPv4 -- so Watch mode is unavailable
+  on common hardware until this is measured and closed. That is the right trade.
+  An interim commit on this branch claimed the loops were caused by steering the gateway via the
+  merged registry record, and relaxed this refusal to a warning on the strength of it. The trial
+  above disproved that: no registry, no gateway, same loop. The refusal is restored.
+  Further measurement on that host, with Watch mode **off** and nothing steered, sets a bound on
+  what the eventual fix may do. Its IPv4 forwarding is **bursty**: over a minute, a median of 34
+  datagrams a second, a p90 of 5,759, a peak of 8,607 and 80,521 in all, with a half-second bucket
+  during a trial reaching the equivalent of 24,842 a second. Every burst is the relay interface's
+  inbound traffic routed to a container bridge, for a service its owner runs on purpose, so clearing
+  `net.ipv4.ip_forward` is not available as a remedy. Separately, a rule counting hairpin forwarding
+  — in the relay interface, out that same interface — dropped **zero** packets across 25 seconds
+  that included those bursts, so nothing is routed back onto the relay's own segment. The hazard is
+  therefore narrower than the condition being tested, and is specifically a frame arriving for a
+  *steered* device's address and being routed back out the interface it came in on.
+  Two earlier five-second samples both landed inside bursts and were written up as a steady 3,900 to
+  4,900 a second; the distribution above supersedes that. The same burstiness also explains the
+  first trial's unexplained pre-steering baseline of 12,000 packets a second inbound.
 - **Watch mode no longer tries to steer devices that are not on the relay interface's subnet.** The
   host's own Docker containers arrive in the registry looking like ordinary LAN devices: a `172.x`
   address learned from the host's neighbour table and several MACs each. An ARP reply on the relay's

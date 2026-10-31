@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1412,10 +1413,11 @@ func TestAnUnknownSegmentRefusesNothing(t *testing.T) {
 }
 
 // A host that both forwards IPv4 and has a second interface on the relay's
-// own subnet is routing the segment Watch mode would steer. That is the
-// shape of the maintainer's NAS, which is the only host on which the relay
-// has ever ended up carrying its own output back to itself, so Shepherd
-// refuses rather than relay into it.
+// own subnet is routing the segment Watch mode would steer. On the one host
+// with that shape, steering a single ordinary device took the interface to
+// ~465k packets/s in and ~517k out, mirrored, in about ten seconds -- with
+// the relay accounting for under a tenth of it. So Shepherd refuses rather
+// than relay into it. See routingOwnSegment.
 func TestRefusesToRelayOnAHostRoutingItsOwnSegment(t *testing.T) {
 	plat := newFakePlatform()
 	plat.ipForward = true
@@ -1436,6 +1438,35 @@ func TestRefusesToRelayOnAHostRoutingItsOwnSegment(t *testing.T) {
 	}
 	if x, _ := plat.counts(); x != 0 {
 		t.Fatalf("the relay should never have been attached; attaches = %d", x)
+	}
+}
+
+// Rule 4 of the relay ("not for Shepherd itself") is driven by the
+// local_ips map, and the relay interface's own addresses are not the whole
+// of this host. A second interface on the same segment -- the maintainer's
+// NAS answers DNS on one -- is an address steered devices legitimately
+// talk to, and those frames must reach the stack, not the gateway. The
+// gateway's own address must stay out: it is not this host's.
+func TestLocalIPsCoverEveryHostAddressButNotTheGateway(t *testing.T) {
+	plat := newFakePlatform()
+	second := netip.MustParseAddr("192.0.2.77")
+	plat.extraIPs = []netip.Addr{second}
+	te := newTestEngine(t, plat, nil)
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+
+	plat.mu.Lock()
+	got := append([]netip.Addr(nil), plat.xdpLocalIPs...)
+	plat.mu.Unlock()
+	if !slices.Contains(got, second) {
+		t.Errorf("local_ips = %v, want it to include this host's other address %v", got, second)
+	}
+	if !slices.Contains(got, shepherdIP) {
+		t.Errorf("local_ips = %v, want it to include the relay interface's own %v", got, shepherdIP)
+	}
+	if slices.Contains(got, gwIP) {
+		t.Errorf("local_ips = %v, must not include the gateway %v", got, gwIP)
 	}
 }
 

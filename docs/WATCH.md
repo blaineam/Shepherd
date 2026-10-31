@@ -244,21 +244,60 @@ that means `interface = "eth0"`.
 
 ## Two things that stop it by themselves
 
-**Shepherd refuses to relay on a host that routes the relay's own segment.**
-One-sided ARP steering assumes Shepherd is a passive Layer 2 relay: a device hands it a frame, it
-rewrites both MAC addresses and puts it back on the wire. A host that also *routes* that subnet
-breaks the assumption, because the kernel has its own view of where the frame should go, and with
-two link routes for one subnet that can be straight back onto the same segment. So if IPv4
-forwarding is on **and** another of this host's interfaces has an address inside the relay
-interface's own prefix, Watch mode reports itself unavailable with that reason and attaches
-nothing.
+**Shepherd refuses to relay on a host that routes the relay's own segment.** If IPv4 forwarding is
+on **and** another of this host's interfaces has an address inside the relay interface's own prefix,
+Watch mode reports itself unavailable with that reason and attaches nothing.
 
-This is a precaution rather than a proven mechanism, and it is worth being plain about why it
-exists. The maintainer's NAS has exactly that shape: forwarding on, `eth0` and `wlan0` both on the
-same `/24`, and Tailscale advertising that subnet while acting as an exit node. It is the only host
-on which the relay has ever ended up carrying its own output back to itself, and the second time it
-did so nothing else explained it. Shepherd therefore declines the combination instead of relaying
-into it.
+The mechanism is still not fully established, but the evidence is now much stronger than a
+precaution. Measured on the maintainer's NAS — forwarding on, `eth0` and `wlan0` both on one `/24` —
+steering a **single ordinary device**, one phone named by explicit MAC with the registry and the
+gateway out of the picture entirely, took the interface to about **465,000 packets a second in and
+517,000 out, mirrored, within ten seconds**. The telling number is that the relay itself accounted
+for only **41,000 packets a second** of that, under a tenth: most of the storm was not the relay's
+own output. That is the shape of the *kernel* forwarding the steered device's return traffic.
+One-sided steering teaches the router the client's address at Shepherd's MAC, because that is the
+source address on every relayed frame, so the router begins sending that client's downloads to this
+host; with forwarding on, the kernel routes them straight back onto the same segment.
+
+The condition is admittedly broad — every machine running Docker has IPv4 forwarding on, and a NAS
+with wired and wireless on one LAN is ordinary — so this does disable Watch mode on common hardware.
+That is the right trade until the mechanism is measured and closed: unavailable is much better than
+melting the network.
+
+Forwarding on such a host is also not idle plumbing left on by a package manager. Measured over a
+minute on the same NAS with Watch mode **off** and nothing steered, `ForwDatagrams` in
+`/proc/net/snmp` is **bursty**: a median of 34 datagrams a second, a 90th percentile of 5,759, a
+peak of 8,607, and 80,521 forwarded over the minute in all, with about a fifth of its seconds above
+a thousand. A single half-second bucket during a later trial reached the equivalent of 24,842 a
+second. Every burst is the relay interface's inbound traffic being routed to a container bridge, for
+a service the owner runs deliberately. So "sort out the routing" cannot mean clearing
+`net.ipv4.ip_forward` — that would cut off a container that bursts to twenty thousand packets a
+second. Whatever closes this has to be narrower than the host-wide switch.
+
+> Two five-second samples taken before that minute both happened to land inside bursts, and were
+> read here as a steady four thousand a second. The distribution above is the honest shape. The same
+> burstiness explains the first trial's odd pre-steering baseline, which showed 12,000 packets a
+> second inbound on an interface whose median is 65.
+
+It is worth being precise about which direction is dangerous, because at rest it is not happening at
+all. A rule counting hairpin forwarding — in the relay interface, out that same interface — dropped
+**zero** packets across a 25-second window that included those bursts. So none of the routed traffic
+goes back out onto the relay's own segment; it all leaves via the bridge. The hazard is specific:
+frames that arrive for a *steered* device's address and get routed back out the interface they came
+in on. A refusal keyed on that, rather than on the host having forwarding plus a second address on
+the prefix, is the shape the fix should take.
+
+> An earlier revision of this document blamed a polluted registry record that had merged the gateway
+> into a steerable device, and said the cause was settled. The single-device trial above disproved
+> it: no registry involvement, no gateway, same loop. That record is a real problem and is refused
+> now, but it was not the cause.
+
+**Shepherd never steers the gateway, or itself.** The policy refuses any record carrying a host or
+gateway address, **by MAC and by address**, checking every address on the record rather than its
+primary one. A merged record, a randomised MAC, or an address the ARP monitor learned from
+Shepherd's own steering frames is caught by the address even when the MAC looks like an ordinary
+device's. Devices off the relay interface's subnet are refused too, which is what the host's own
+containers look like.
 
 **The loop brake.** Whatever the cause, a relay carrying its own output is caught in three seconds
 rather than by a person noticing. Every second the engine compares the relay's own throughput
