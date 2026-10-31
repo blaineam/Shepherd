@@ -121,6 +121,26 @@ func isInfrastructure(d *devices.Device) (bool, string) {
 type Own struct {
 	MACs []arp.MAC
 	IPs  []netip.Addr
+	// Nets are the IPv4 prefixes on the interface the relay runs on: the
+	// L2 segment Shepherd can actually reach with an ARP reply. A device
+	// whose address falls outside every one of them is not on this
+	// segment, so steering it cannot work. Empty means "unknown", and
+	// nothing is refused on that basis.
+	Nets []netip.Prefix
+}
+
+// OnSegment reports whether ip could be on the segment the relay runs on.
+// Unknown prefixes mean yes, so this never refuses on missing information.
+func (o Own) OnSegment(ip netip.Addr) bool {
+	if len(o.Nets) == 0 {
+		return true
+	}
+	for _, n := range o.Nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // Has reports whether mac belongs to this host.
@@ -174,6 +194,15 @@ func Decide(d *devices.Device, cfg PolicyConfig, own Own, now time.Time) Decisio
 		if own.HasIP(a) {
 			return skip("an address belonging to this host or the gateway")
 		}
+	}
+	// A device whose address is not on the relay interface's own segment
+	// cannot be reached by an ARP reply there, so steering it is
+	// meaningless. On the maintainer's NAS this is what the host's own
+	// Docker containers look like: 172.x addresses, several MACs each,
+	// arriving in the registry from the host's neighbour table and
+	// otherwise indistinguishable from LAN devices.
+	if v4 := primaryIPv4(d); v4.IsValid() && !own.OnSegment(v4) {
+		return skip("not on " + segmentName(own) + ", so an ARP reply here cannot reach it")
 	}
 	if d.Excluded {
 		return skip("excluded from protection")
@@ -369,4 +398,13 @@ func targets(d *devices.Device, neighbors map[netip.Addr]arp.MAC) (out []target,
 		return nil, "this device has several MACs and the neighbour table does not say which address belongs to which"
 	}
 	return out, ""
+}
+
+// segmentName describes the relay interface's segment for a refusal
+// reason, without leaking more than the prefix the owner already knows.
+func segmentName(own Own) string {
+	if len(own.Nets) == 1 {
+		return own.Nets[0].String()
+	}
+	return "this network"
 }

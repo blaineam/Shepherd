@@ -13,6 +13,33 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **A loop brake for Watch mode, and a refusal to relay on a host that routes its own segment.**
+  Twice on real hardware the relay ended up carrying its own output back to itself at line rate --
+  about 10 Gbit/s and over a million packets a second on a 10 GbE card -- and both times it ran for
+  minutes because a person had to notice. The first had a cause and it is fixed (it steered one of
+  the host's own interfaces); the second does not, which is what these two guards are for.
+  The brake compares the relay's own throughput against the interface's kernel counters every
+  second and looks for the signature that identified both incidents by hand: the interface receives
+  and transmits the same amount, the relay accounts for almost all of it, and the rate is one a home
+  network does not reach legitimately. All three for three consecutive seconds and it panic-stops,
+  unsteering everything with its corrective reply, and latches like the kill switch so a restart
+  cannot resume the loop. It logs what it measured and **the devices that were relaying most**,
+  because that per-device list is exactly the evidence the second incident lacked. Each condition
+  alone has innocent explanations, hence all three: the healthy live run had the interface receiving
+  600 Mbit/s against 800 to 1000 transmitted, 25 to 40% apart, with the relay under half its
+  packets; the loop had them within 0.03% of each other.
+  Separately, Shepherd now **refuses to relay at all** when IPv4 forwarding is on and another of
+  this host's interfaces has an address inside the relay interface's own prefix. One-sided ARP
+  steering assumes a passive Layer 2 relay; a host routing the same subnet has the kernel's own
+  opinion about where frames go, and with two link routes for one subnet that can be back onto the
+  same segment. The maintainer's NAS is exactly that shape -- forwarding on, two interfaces on one
+  `/24`, Tailscale advertising that subnet as a subnet router and exit node -- and it is the only
+  host that has ever looped. This is a precaution, not a proven mechanism, and docs/WATCH.md says so.
+- **Watch mode no longer tries to steer devices that are not on the relay interface's subnet.** The
+  host's own Docker containers arrive in the registry looking like ordinary LAN devices: a `172.x`
+  address learned from the host's neighbour table and several MACs each. An ARP reply on the relay's
+  interface cannot reach them, so steering them was meaningless; five of them were in the steerable
+  set on the live host.
 - **DNS keeps serving when one listen address goes away, and can always be reached over loopback.**
   Both halves of a real outage. Shepherd was configured to listen on three addresses; the wired
   interface holding one of them lost carrier, and because `dnsengine.Serve` required every bind to

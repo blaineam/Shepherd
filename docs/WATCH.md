@@ -53,6 +53,7 @@ and again inside the interception library at the moment steering is requested:
 | **Network infrastructure**: routers, mesh nodes, access points, switches, hubs and bridges | The network itself depends on them. Includes anything typed `router/infrastructure` or `smart-home hub`, and anything from a vendor that only makes network equipment |
 | **Thread border routers and Matter devices** (anything advertising `_meshcop`, `_matter`, `_thread` over mDNS) | A whole smart home hangs off these, and the failure would be silent. See [IPV6.md](IPV6.md) |
 | Devices not seen recently (15 minutes by default) | Nothing to steer; it starts again on its own when the device comes back |
+| Any device **not on the relay interface's own subnet** | An ARP reply there cannot reach it, so steering it is meaningless. This is what the host's own Docker containers look like in the registry: a `172.x` address from the host's neighbour table, several MACs each, otherwise indistinguishable from a LAN device |
 
 **Wandering and quarantined devices are steered like any other.** Wandering means "do not filter
 this device, but still watch it", so watching it is exactly the point; quarantine is a group with
@@ -240,6 +241,40 @@ that means `interface = "eth0"`.
 > address as well as by MAC. If that list cannot be read at all, it steers nothing
 > and says so in the log: refusing costs visibility, steering the host costs the
 > network.
+
+## Two things that stop it by themselves
+
+**Shepherd refuses to relay on a host that routes the relay's own segment.**
+One-sided ARP steering assumes Shepherd is a passive Layer 2 relay: a device hands it a frame, it
+rewrites both MAC addresses and puts it back on the wire. A host that also *routes* that subnet
+breaks the assumption, because the kernel has its own view of where the frame should go, and with
+two link routes for one subnet that can be straight back onto the same segment. So if IPv4
+forwarding is on **and** another of this host's interfaces has an address inside the relay
+interface's own prefix, Watch mode reports itself unavailable with that reason and attaches
+nothing.
+
+This is a precaution rather than a proven mechanism, and it is worth being plain about why it
+exists. The maintainer's NAS has exactly that shape: forwarding on, `eth0` and `wlan0` both on the
+same `/24`, and Tailscale advertising that subnet while acting as an exit node. It is the only host
+on which the relay has ever ended up carrying its own output back to itself, and the second time it
+did so nothing else explained it. Shepherd therefore declines the combination instead of relaying
+into it.
+
+**The loop brake.** Whatever the cause, a relay carrying its own output is caught in three seconds
+rather than by a person noticing. Every second the engine compares the relay's own throughput
+against the interface's kernel counters and looks for the signature that identified both incidents
+by hand: the interface **receives and transmits the same amount**, and the relay accounts for
+**almost all of it**, at a rate a home network does not reach legitimately. Three consecutive
+seconds of that and it panic-stops, unsteering every device with its corrective reply, and latches
+like the kill switch so a restart does not resume the loop. It logs what it measured and the
+devices that were relaying most, because that per-device list is the evidence the second incident
+lacked.
+
+Each condition alone has innocent explanations, which is why all three are required. Genuinely busy
+is lopsided: measured on the live host while healthy, the interface received 600 Mbit/s while
+transmitting 800 to 1000, with the relay well under half its packets. Looping, the same interface
+received and transmitted within 0.03% of each other at about 10 Gbit/s and over a million packets a
+second, with the relay reporting essentially all of it.
 
 ## What it needs
 

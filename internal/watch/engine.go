@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/netip"
 	"slices"
 	"sort"
@@ -164,6 +165,25 @@ const (
 	// driver's rings; on a driver that drops the link doing it, the
 	// transition shows up within this window.
 	nativeSettle = 3 * time.Second
+	// The loop brake. A relay that is carrying almost everything the
+	// interface receives, while the interface transmits the same amount it
+	// receives, is relaying its own output back to itself. Each condition
+	// alone has innocent explanations; together, at this rate, they do
+	// not.
+	//
+	// Thresholds come from the two live incidents and from the healthy run
+	// in between. Looping: interface receive and transmit within 0.03% of
+	// each other at about 10 Gbit/s and 1.0 to 1.3 million packets a
+	// second, with the relay reporting essentially all of it. Healthy, and
+	// genuinely busy: receive 600 Mbit/s against transmit 800 to 1000, so
+	// 25 to 40% apart, with the relay reporting well under half the
+	// interface's packets.
+	loopSymmetry = 0.10   // |tx-rx| / max(tx,rx) at or below this is mirrored
+	loopShare    = 0.80   // relayed packets as a share of received packets
+	loopFloorPPS = 50_000 // below this, a home network is not looping
+	// loopHits is how many consecutive one-second samples must agree
+	// before the brake trips, so a burst cannot cause one.
+	loopHits = 3
 	// observeEvery bounds how often a steered device's relayed traffic is
 	// reported to the registry as a sighting.
 	observeEvery = time.Minute
@@ -364,16 +384,25 @@ type Engine struct {
 	// time it was read; see own().
 	localAddrs   Own
 	localAddrsAt time.Time
-	global       rateSample
-	history      []HistoryRecord
-	lastLog      string
+	// ifaceCounters is the previous reading of the interface's own
+	// counters, and loopStreak how many consecutive samples have looked
+	// like a relay loop. See the loop brake constants.
+	ifaceCounters Counters
+	haveIfaceCnt  bool
+	loopStreak    int
+	global        rateSample
+	history       []HistoryRecord
+	lastLog       string
 
 	kick    chan struct{} // reconcile now
 	gwCheck chan struct{} // re-read the gateway MAC now
 
-	// Test seams: how long to wait for a relay to come up.
+	// Test seams: how long to wait for a relay to come up, and the loop
+	// brake's packets-per-second floor (loopFloorPPS in production; a test
+	// cannot push a million packets a second through a fake).
 	attachTimeout time.Duration
 	relayGrace    time.Duration
+	loopFloor     float64
 }
 
 // New builds an Engine. It loads the persisted kill switch but starts
@@ -406,7 +435,7 @@ func New(cfg Config) (*Engine, error) {
 		rates:       map[arp.MAC]*rateSample{}, observed: map[arp.MAC]time.Time{},
 		relayed: map[arp.MAC]bool{},
 		kick:    make(chan struct{}, 1), gwCheck: make(chan struct{}, 1),
-		attachTimeout: 30 * time.Second, relayGrace: time.Second,
+		attachTimeout: 30 * time.Second, relayGrace: time.Second, loopFloor: loopFloorPPS,
 	}
 	if cfg.Enabled && cfg.Mode != ModeOff {
 		e.phase, e.reason = PhaseStarting, "starting"
@@ -559,6 +588,14 @@ func (e *Engine) session(ctx context.Context) error {
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	e.setPhase(PhaseStarting, "attaching the relay to "+iface)
+	// Refuse before anything is attached or steered if this host is
+	// routing the very segment the relay would work on.
+	if ownNow, ok := e.own(e.clock.Now()); ok {
+		if routing, why := e.routingOwnSegment(link, ownNow); routing {
+			return errors.New(why)
+		}
+	}
+
 	relay, relayDone, stopRelay, err := e.startRelay(sctx, ctrl, link)
 	if err != nil {
 		return err
@@ -877,6 +914,7 @@ func (e *Engine) own(now time.Time) (Own, bool) {
 	for _, ip := range link.IPv6s {
 		o.IPs = append(o.IPs, ip)
 	}
+	o.Nets = append(o.Nets, link.IPv4Nets...)
 	e.mu.Lock()
 	if e.gateway.IsValid() {
 		o.IPs = append(o.IPs, e.gateway)
@@ -965,6 +1003,7 @@ func (e *Engine) sample(now time.Time) {
 		e.global.pps = float64(st.FramesRelayed-e.global.packets) / elapsed
 		e.global.bps = float64(st.BytesRelayed-e.global.bytes) / elapsed
 	}
+	relayedPPS := e.global.pps
 	e.global.packets, e.global.bytes, e.global.at = st.FramesRelayed, st.BytesRelayed, now
 	live := map[arp.MAC]bool{}
 	for _, d := range status {
@@ -1005,6 +1044,108 @@ func (e *Engine) sample(now time.Time) {
 	for _, d := range observe {
 		e.reg.Observe(devices.Observation{Source: devices.SourceARP, MAC: d.MAC.String(), IP: d.IP.String(), Time: now})
 	}
+	e.checkForLoop(now, relayedPPS, status)
+}
+
+// checkForLoop is the loop brake. Twice on real hardware the relay ended up
+// carrying its own output back to itself at line rate -- once because it
+// steered one of this host's own interfaces, once for a cause not yet
+// established -- and both times it ran for minutes because a person had to
+// notice. This notices in three seconds.
+//
+// The signature it looks for is the one that identified both incidents by
+// hand: the interface receives and transmits the same amount, and the relay
+// accounts for almost all of it. Legitimate heavy traffic fails the first
+// test, because downloads and the host's own traffic make receive and
+// transmit diverge, and a quiet network fails the floor.
+//
+// When it trips it panic-stops, which unsteers every device with its
+// corrective reply, and latches like the kill switch so a restart does not
+// resume the loop. It also records what was relaying, because that is the
+// evidence the cause is still missing.
+func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []intercept.SteeredDevice) {
+	cur, err := e.plat.InterfaceCounters(e.ifaceName())
+	if err != nil {
+		return
+	}
+	e.mu.Lock()
+	prev, had := e.ifaceCounters, e.haveIfaceCnt
+	e.ifaceCounters, e.haveIfaceCnt = cur, true
+	if !had || cur.RxPackets < prev.RxPackets || cur.TxPackets < prev.TxPackets {
+		e.loopStreak = 0 // first reading, or the counters wrapped
+		e.mu.Unlock()
+		return
+	}
+	rx := float64(cur.RxPackets - prev.RxPackets)
+	tx := float64(cur.TxPackets - prev.TxPackets)
+	hi := math.Max(rx, tx)
+	mirrored := hi > 0 && math.Abs(tx-rx)/hi <= loopSymmetry
+	dominant := rx > 0 && relayedPPS >= loopShare*rx
+	looping := mirrored && dominant && relayedPPS >= e.loopFloor && hi >= e.loopFloor
+	if !looping {
+		e.loopStreak = 0
+		e.mu.Unlock()
+		return
+	}
+	e.loopStreak++
+	hits, ctrl := e.loopStreak, e.ctrl
+	if hits < loopHits || ctrl == nil || e.killed {
+		e.mu.Unlock()
+		return
+	}
+	e.killed = true
+	e.state.Killed = true
+	e.reason = "stopped automatically: the relay was carrying its own output back to itself"
+	saveErr := saveState(e.cfg.StatePath, e.state)
+	e.loopStreak = 0
+	e.mu.Unlock()
+
+	ctrl.PanicStop()
+	e.logf("watch: LOOP BRAKE: the relay was carrying its own output back to itself, so all steering has been stopped and will stay stopped until it is re-armed")
+	e.logf("watch: loop brake evidence: interface received %.0f and transmitted %.0f packets in the last second (%.2f%% apart), of which the relay reported %.0f (%.0f%%)",
+		rx, tx, math.Abs(tx-rx)/hi*100, relayedPPS, relayedPPS/rx*100)
+	e.logLoopSuspects(status)
+	if saveErr != nil {
+		e.logf("watch: WARNING: could not persist the loop stop (%v), so a restart may resume it", saveErr)
+	}
+}
+
+// logLoopSuspects names the devices that were relaying most when the brake
+// tripped. The cause of the second incident was never established because
+// nobody had this list at the moment it mattered.
+func (e *Engine) logLoopSuspects(status []intercept.SteeredDevice) {
+	if len(status) == 0 {
+		e.logf("watch: loop brake: no device was steered at the time, so the relay was not carrying a steered device's traffic")
+		return
+	}
+	byBytes := append([]intercept.SteeredDevice(nil), status...)
+	slices.SortFunc(byBytes, func(a, b intercept.SteeredDevice) int {
+		switch {
+		case a.BytesRelayed > b.BytesRelayed:
+			return -1
+		case a.BytesRelayed < b.BytesRelayed:
+			return 1
+		}
+		return 0
+	})
+	for i, d := range byBytes {
+		if i == 3 {
+			break
+		}
+		name := d.MAC.String()
+		if dev, ok := e.reg.FindByMAC(d.MAC.String()); ok {
+			name = dev.DisplayName() + " (" + d.MAC.String() + ")"
+		}
+		e.logf("watch: loop brake: %s had relayed %d frames and %d bytes, address %s",
+			name, d.PacketsRelayed, d.BytesRelayed, d.IP)
+	}
+}
+
+// ifaceName is the interface the relay is attached to, or "".
+func (e *Engine) ifaceName() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.link.Name
 }
 
 // reconcile makes the Controller's steered set match the policy: steer
@@ -1472,3 +1613,41 @@ func familyNames(f intercept.Family) []string {
 }
 
 var _ intercept.Excluder = v6Excluder{}
+
+// routingOwnSegment reports whether this host is routing the very subnet
+// the relay runs on, which Watch mode cannot safely steer.
+//
+// One-sided ARP steering assumes Shepherd is a passive Layer 2 relay on a
+// segment: a steered device hands it a frame, it rewrites both MAC
+// addresses and puts it back on the wire. A host that also *routes* that
+// subnet breaks the assumption, because the kernel has its own opinion
+// about where the frame should go and, with two link routes for one
+// subnet, that can be straight back out onto the same segment.
+//
+// This is a precaution, not a proven mechanism. The maintainer's NAS has
+// exactly this shape -- IPv4 forwarding on, a wired and a wireless
+// interface both on the same /24, and Tailscale advertising that subnet
+// while acting as an exit node -- and it is the host on which the relay
+// twice ended up
+// carrying its own output back to itself at line rate. The second of those
+// was not explained by anything else, so Shepherd refuses the combination
+// rather than relay into it. The loop brake stays as the backstop.
+func (e *Engine) routingOwnSegment(link Link, own Own) (bool, string) {
+	fwd, err := e.plat.IPForwarding()
+	if err != nil || !fwd {
+		return false, ""
+	}
+	// A second address of this host inside the relay interface's own
+	// prefix means another interface is on the same segment.
+	for _, ip := range own.IPs {
+		if !ip.Is4() || slices.Contains(link.IPv4s, ip) {
+			continue
+		}
+		for _, n := range link.IPv4Nets {
+			if n.Contains(ip) {
+				return true, fmt.Sprintf("this host forwards IPv4 and has another interface on %s as well as %s, so it is routing the segment Watch mode would steer; one-sided ARP steering and routing the same subnet do not mix (docs/WATCH.md)", n, link.Name)
+			}
+		}
+	}
+	return false, ""
+}

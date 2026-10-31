@@ -869,8 +869,19 @@ func (te *testEngine) relayFor(t *testing.T, id string, frames int) {
 	// Wait on the rate, not the total: the total comes straight from the
 	// Controller and is there before sample() has run, and it is sample()
 	// that records steering as having demonstrably worked.
-	te.clock.Advance(time.Second) // one tick: sample() runs
-	waitFor(t, "relayed traffic credited", func() bool { return te.status(t, id).PacketsPerSecond > 0 })
+	//
+	// Advance repeatedly rather than once. A single fake-clock tick is not
+	// enough to guarantee sample() ran: the engine may be in reconcile
+	// when the timer fires, and under the race detector that reordering is
+	// easy to hit. Advancing until the rate appears is idempotent, because
+	// a device that has already been credited stays credited.
+	waitFor(t, "relayed traffic credited", func() bool {
+		if te.status(t, id).PacketsPerSecond > 0 {
+			return true
+		}
+		te.clock.Advance(time.Second)
+		return te.status(t, id).PacketsPerSecond > 0
+	})
 }
 
 // A device that relayed and then went quiet is idle, not failing. Steering
@@ -891,13 +902,15 @@ func TestADeviceThatGoesQuietAfterRelayingIsIdleNotFailing(t *testing.T) {
 
 	// Now it goes quiet for longer than IdleGrace.
 	te.clock.Advance(11 * time.Second)
-	te.waitSteered(t, phoneMAC, false)
-	ds := te.status(t, id)
-	if ds.Failures != 0 {
-		t.Fatalf("idleness must not count as a failure: %+v", ds)
+	rs := te.waitFailOpen(t, phoneMAC)
+	if rs.failures != 0 {
+		t.Fatalf("idleness must not count as a failure: %+v", rs)
 	}
-	if ds.NextRetry.IsZero() || ds.NextRetry.Sub(te.clock.Now()) > idleRecheck {
-		t.Fatalf("want a flat recheck no longer than %s: %+v now=%s", idleRecheck, ds, te.clock.Now())
+	if !rs.idle {
+		t.Fatalf("the fail-open should be recorded as idleness: %+v", rs)
+	}
+	if d := rs.until.Sub(te.clock.Now()); d > idleRecheck {
+		t.Fatalf("want a flat recheck no longer than %s, got %s: %+v", idleRecheck, d, rs)
 	}
 
 	// Past the recheck it is still left alone: nothing has seen it, so it
@@ -989,12 +1002,11 @@ func TestRepeatedIdlenessDoesNotWidenThePause(t *testing.T) {
 		te.waitSteered(t, phoneMAC, true)
 		te.relayFor(t, id, 5)
 		te.clock.Advance(11 * time.Second)
-		te.waitSteered(t, phoneMAC, false)
-		ds := te.status(t, id)
-		if ds.Failures != 0 {
-			t.Fatalf("round %d: failures = %d, want 0", round, ds.Failures)
+		rs := te.waitFailOpen(t, phoneMAC)
+		if rs.failures != 0 {
+			t.Fatalf("round %d: failures = %d, want 0", round, rs.failures)
 		}
-		if d := ds.NextRetry.Sub(te.clock.Now()); d > idleRecheck {
+		if d := rs.until.Sub(te.clock.Now()); d > idleRecheck {
 			t.Fatalf("round %d: pause %s grew past the flat %s", round, d, idleRecheck)
 		}
 		te.clock.Advance(idleRecheck + time.Second)
@@ -1250,4 +1262,193 @@ func TestTheKillSwitchDoesNotEraseTheLearnedDriverList(t *testing.T) {
 	if st.Killed || !st.hasDriver("mystery") {
 		t.Fatalf("re-arming lost something: %+v", st)
 	}
+}
+
+// loopTick advances one second and feeds the relay n frames, then makes the
+// interface counters show exactly that traffic mirrored: received and
+// transmitted the same, with the relay accounting for all of it. That is
+// the shape both live incidents had.
+func (te *testEngine) loopTick(t *testing.T, plat *fakePlatform, n uint64, mirrored bool) {
+	t.Helper()
+	te.mu.Lock()
+	c := te.ctrl
+	te.mu.Unlock()
+	for i := uint64(0); i < n; i++ {
+		if _, err := c.HandleFrame(relayFrame()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx := n
+	if !mirrored {
+		tx = n * 3 // transmit far more than received: ordinary busy host
+	}
+	plat.addCounters(n*42, n, tx*42, tx)
+	te.clock.Advance(time.Second)
+}
+
+// The brake stops a relay that is carrying its own output back to itself,
+// and latches so a restart does not resume it.
+func TestTheLoopBrakeStopsARelayCarryingItsOwnOutput(t *testing.T) {
+	statePath := t.TempDir() + "/watch.json"
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, func(c *Config) { c.StatePath = statePath })
+	te.loopFloor = 100
+	id := te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	for i := 0; i < loopHits+2; i++ {
+		te.loopTick(t, plat, 200, true)
+	}
+	waitFor(t, "the loop brake to trip", func() bool { return !te.Snapshot().Armed })
+
+	snap := te.Snapshot()
+	if snap.Armed {
+		t.Fatal("the brake should have disarmed steering")
+	}
+	if !strings.Contains(snap.Reason, "its own output") {
+		t.Fatalf("reason = %q, want it to say what happened", snap.Reason)
+	}
+	if te.isSteered(phoneMAC) {
+		t.Fatalf("nothing should still be steered; phone %+v", te.status(t, id))
+	}
+	st, err := loadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Killed {
+		t.Fatal("the stop must persist, or a restart resumes the loop")
+	}
+	var saidWhy, namedSuspect bool
+	for _, l := range te.logs.all() {
+		if strings.Contains(l, "LOOP BRAKE") {
+			saidWhy = true
+		}
+		if strings.Contains(l, "loop brake:") && strings.Contains(l, "had relayed") {
+			namedSuspect = true
+		}
+	}
+	if !saidWhy || !namedSuspect {
+		t.Fatalf("the brake must log what it saw and what was relaying; got %v", te.logs.all())
+	}
+}
+
+// Genuinely busy is not looping. The healthy live run had the interface
+// transmitting far more than it received, with the relay a fraction of it.
+func TestTheLoopBrakeLeavesHeavyLopsidedTrafficAlone(t *testing.T) {
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, nil)
+	te.loopFloor = 100
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	for i := 0; i < loopHits+4; i++ {
+		te.loopTick(t, plat, 400, false)
+	}
+	if !te.Snapshot().Armed {
+		t.Fatal("the brake tripped on ordinary busy traffic")
+	}
+	if !te.isSteered(phoneMAC) {
+		t.Fatal("steering should be untouched")
+	}
+}
+
+// A quiet network never trips it, however mirrored the counters look.
+func TestTheLoopBrakeHasAFloor(t *testing.T) {
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, nil)
+	te.loopFloor = 100_000 // production-like floor, tiny traffic
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	for i := 0; i < loopHits+4; i++ {
+		te.loopTick(t, plat, 50, true)
+	}
+	if !te.Snapshot().Armed {
+		t.Fatal("the brake tripped below its floor")
+	}
+}
+
+// This host's own Docker containers arrive in the registry looking like
+// ordinary LAN devices: a 172.x address from the host's neighbour table and
+// several MACs each. They are not on the relay interface's segment, so an
+// ARP reply there cannot reach them and steering them is meaningless.
+func TestNeverSteersADeviceThatIsNotOnTheRelaysOwnSegment(t *testing.T) {
+	plat := newFakePlatform()
+	plat.link.IPv4Nets = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+	te := newTestEngine(t, plat, nil)
+	te.addPhone(t) // 192.0.2.10, on the segment
+	container := te.reg.Observe(devices.Observation{
+		Source: devices.SourceNeighbor, MAC: "02:00:5e:00:00:40", IP: "172.18.0.2",
+	})
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	if te.isSteered(mustMAC("02:00:5e:00:00:40")) {
+		t.Fatal("steered a device that is not on the relay interface's segment")
+	}
+	ds := te.status(t, container)
+	if ds.State != StateSkipped || !strings.Contains(ds.Reason, "cannot reach it") {
+		t.Fatalf("decision = %+v, want skipped with a reason that explains it", ds)
+	}
+}
+
+// With no prefixes known, nothing is refused on that basis: the check must
+// never turn missing information into a refusal.
+func TestAnUnknownSegmentRefusesNothing(t *testing.T) {
+	plat := newFakePlatform()
+	plat.link.IPv4Nets = nil
+	te := newTestEngine(t, plat, nil)
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+}
+
+// A host that both forwards IPv4 and has a second interface on the relay's
+// own subnet is routing the segment Watch mode would steer. That is the
+// shape of the maintainer's NAS, which is the only host on which the relay
+// has ever ended up carrying its own output back to itself, so Shepherd
+// refuses rather than relay into it.
+func TestRefusesToRelayOnAHostRoutingItsOwnSegment(t *testing.T) {
+	plat := newFakePlatform()
+	plat.ipForward = true
+	plat.link.IPv4Nets = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+	// A second interface of this host, on the same subnet as the relay's.
+	plat.extraIPs = []netip.Addr{netip.MustParseAddr("192.0.2.77")}
+	te := newTestEngine(t, plat, nil)
+	te.addPhone(t)
+	te.start(t)
+
+	waitFor(t, "the refusal", func() bool { return te.Snapshot().Phase == PhaseUnavailable })
+	snap := te.Snapshot()
+	if !strings.Contains(snap.Reason, "routing the segment") {
+		t.Fatalf("reason = %q, want it to explain the refusal", snap.Reason)
+	}
+	if te.isSteered(phoneMAC) {
+		t.Fatal("nothing should be steered on such a host")
+	}
+	if x, _ := plat.counts(); x != 0 {
+		t.Fatalf("the relay should never have been attached; attaches = %d", x)
+	}
+}
+
+// Forwarding alone is fine. Plenty of hosts forward; what matters is
+// forwarding plus a second interface on the relay's own segment.
+func TestForwardingAloneDoesNotRefuse(t *testing.T) {
+	plat := newFakePlatform()
+	plat.ipForward = true
+	plat.link.IPv4Nets = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+	plat.extraIPs = []netip.Addr{netip.MustParseAddr("10.9.9.9")} // elsewhere
+	te := newTestEngine(t, plat, nil)
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
 }

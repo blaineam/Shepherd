@@ -25,7 +25,11 @@ func (p refusingPlatform) DefaultRoute() (string, netip.Addr, error) { return ""
 func (p refusingPlatform) DefaultRoute6() (watch.Route6, error)      { return watch.Route6{}, p.err }
 func (p refusingPlatform) Link(string) (watch.Link, error)           { return watch.Link{}, p.err }
 func (p refusingPlatform) Driver(string) (string, error)             { return "", p.err }
-func (p refusingPlatform) CarrierChanges(string) (uint64, error)     { return 0, p.err }
+func (p refusingPlatform) IPForwarding() (bool, error)               { return false, p.err }
+func (p refusingPlatform) InterfaceCounters(string) (watch.Counters, error) {
+	return watch.Counters{}, p.err
+}
+func (p refusingPlatform) CarrierChanges(string) (uint64, error) { return 0, p.err }
 func (p refusingPlatform) LocalAddrs() ([]arp.MAC, []netip.Addr, error) {
 	return nil, nil, p.err
 }
