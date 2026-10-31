@@ -333,6 +333,8 @@ test('secrets: the demo keeps only "set or not", checks input, and never echoes 
   assert.equal(JSON.stringify(r).includes('demo-pw'), false);
   const off = await call('DELETE', '/api/accountability/smtp');
   assert.deepEqual([off.configured, off.active, off.password_set], [false, false, false]);
+});
+
 test('demo mode answers the Watch endpoints with plausible, policy-consistent data', async () => {
   const { call } = rig();
   const st = await call('GET', '/api/watch');

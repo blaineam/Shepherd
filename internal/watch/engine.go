@@ -140,6 +140,10 @@ const (
 	// traffic, LastSeen reflects the passive ARP monitor and DNS alone,
 	// which is exactly the independent evidence this needs.
 	awakeWithin = time.Minute
+	// localAddrsTTL is how long the host's own MAC and IP list is reused
+	// before it is read again. Short, because an interface that appears
+	// mid-session must be excluded from steering promptly.
+	localAddrsTTL = 15 * time.Second
 	// observeEvery bounds how often a steered device's relayed traffic is
 	// reported to the registry as a sighting.
 	observeEvery = time.Minute
@@ -332,9 +336,13 @@ type Engine struct {
 	// sample landing in that window would erase the evidence just as
 	// onUnsteer is about to need it.
 	relayed map[arp.MAC]bool
-	global  rateSample
-	history []HistoryRecord
-	lastLog string
+	// localAddrs is the memoised answer from Platform.LocalAddrs, with the
+	// time it was read; see own().
+	localAddrs   Own
+	localAddrsAt time.Time
+	global       rateSample
+	history      []HistoryRecord
+	lastLog      string
 
 	kick    chan struct{} // reconcile now
 	gwCheck chan struct{} // re-read the gateway MAC now
@@ -721,21 +729,69 @@ func (e *Engine) Excluded(mac arp.MAC) bool {
 	if !ok {
 		return true
 	}
-	dec := Decide(&d, e.cfg.Policy, e.ownMACs(), e.clock.Now())
+	ownNow, _ := e.own(e.clock.Now())
+	dec := Decide(&d, e.cfg.Policy, ownNow, e.clock.Now())
 	return dec.Policy
 }
 
-func (e *Engine) ownMACs() []arp.MAC {
+// own is everything Watch mode must never steer: every MAC and IP on this
+// host, plus the gateway. The host's other interfaces are the dangerous
+// part -- see watch.Own for why -- so this asks the platform for all of
+// them rather than assuming the relay's own interface is the only one.
+//
+// The platform call is memoised for localAddrsTTL, because reconcile runs
+// every second and enumerating interfaces every pass is pointless; the TTL
+// is short because an interface appearing mid-session must be excluded
+// quickly, not at the next restart.
+//
+// If the platform cannot be read, the last good answer is reused, and if
+// there has never been one, ok is false and the caller must steer nothing
+// new. Refusing to steer costs visibility; steering the host costs the
+// network.
+func (e *Engine) own(now time.Time) (Own, bool) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	var out []arp.MAC
-	if !e.link.MAC.IsZero() {
-		out = append(out, e.link.MAC)
+	link, gw := e.link, e.gwMAC
+	cached, at := e.localAddrs, e.localAddrsAt
+	e.mu.Unlock()
+
+	o := Own{}
+	fresh := !at.IsZero() && now.Sub(at) < localAddrsTTL
+	if !fresh {
+		macs, ips, err := e.plat.LocalAddrs()
+		if err == nil {
+			cached = Own{MACs: macs, IPs: ips}
+			e.mu.Lock()
+			e.localAddrs, e.localAddrsAt = cached, now
+			e.mu.Unlock()
+		} else if at.IsZero() {
+			// logOnce: reconcile runs every second, and a host that
+			// cannot answer this will not answer it next second either.
+			e.logOnce("watch: cannot read this host's own addresses (%v); steering nothing until it can be read", err)
+			return o, false
+		}
 	}
-	if !e.gwMAC.IsZero() {
-		out = append(out, e.gwMAC)
+	o.MACs = append(o.MACs, cached.MACs...)
+	o.IPs = append(o.IPs, cached.IPs...)
+	// The relay's own interface and the gateway, in case the enumeration
+	// missed either.
+	if !link.MAC.IsZero() {
+		o.MACs = append(o.MACs, link.MAC)
 	}
-	return out
+	if !gw.IsZero() {
+		o.MACs = append(o.MACs, gw)
+	}
+	for _, ip := range link.IPv4s {
+		o.IPs = append(o.IPs, ip)
+	}
+	for _, ip := range link.IPv6s {
+		o.IPs = append(o.IPs, ip)
+	}
+	e.mu.Lock()
+	if e.gateway.IsValid() {
+		o.IPs = append(o.IPs, e.gateway)
+	}
+	e.mu.Unlock()
+	return o, true
 }
 
 // onUnsteer is the Controller's OnUnsteer hook. It records history with the
@@ -875,7 +931,12 @@ func (e *Engine) reconcile(now time.Time) {
 	for _, d := range ctrl.Status() {
 		steered[d.MAC] = d
 	}
-	own := e.ownMACs()
+	own, ok := e.own(now)
+	if !ok {
+		// Without knowing which addresses are this host's, steering
+		// anything risks steering Shepherd itself.
+		return
+	}
 	e.mu.Lock()
 	v6 := e.v6
 	e.mu.Unlock()
@@ -1143,7 +1204,7 @@ func (e *Engine) DeviceStatuses() map[string]DeviceStatus {
 }
 
 func (e *Engine) deviceStatuses(now time.Time, steered map[arp.MAC]intercept.SteeredDevice, running bool) []DeviceStatus {
-	own := e.ownMACs()
+	own, _ := e.own(now)
 	e.mu.Lock()
 	retry := make(map[arp.MAC]retryState, len(e.retry))
 	for mac, rs := range e.retry {
@@ -1297,7 +1358,8 @@ func (x v6Excluder) Excluded(mac arp.MAC) bool {
 		return true
 	}
 	now := x.e.clock.Now()
-	if dec := Decide(&d, x.e.cfg.Policy, x.e.ownMACs(), now); dec.Policy {
+	ownNow, _ := x.e.own(now)
+	if dec := Decide(&d, x.e.cfg.Policy, ownNow, now); dec.Policy {
 		return true
 	}
 	return DecideV6(&d, x.e.cfg.Policy, now).Policy

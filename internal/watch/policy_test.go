@@ -24,14 +24,14 @@ func phone(now time.Time) *devices.Device {
 }
 
 func TestDecideSteersAnOrdinaryRecentDevice(t *testing.T) {
-	dec := Decide(phone(t0), PolicyConfig{}, []arp.MAC{gwMAC, shepherdMAC}, t0)
+	dec := Decide(phone(t0), PolicyConfig{}, Own{MACs: []arp.MAC{gwMAC, shepherdMAC}}, t0)
 	if !dec.Eligible || dec.State != StatePending || dec.Reason != "" {
 		t.Fatalf("decision = %+v", dec)
 	}
 }
 
 func TestDecideStandingRefusals(t *testing.T) {
-	own := []arp.MAC{gwMAC, shepherdMAC}
+	own := Own{MACs: []arp.MAC{gwMAC, shepherdMAC}}
 	cases := map[string]func(d *devices.Device){
 		"excluded":        func(d *devices.Device) { d.Excluded = true },
 		"watch off":       func(d *devices.Device) { d.Watch = devices.WatchOff },
@@ -58,11 +58,11 @@ func TestDecideWatchOnOverridesInfrastructureButNotExclusion(t *testing.T) {
 	d := phone(t0)
 	d.Type = devices.TypeRouter
 	d.Watch = devices.WatchOn
-	if dec := Decide(d, PolicyConfig{}, nil, t0); !dec.Eligible {
+	if dec := Decide(d, PolicyConfig{}, Own{}, t0); !dec.Eligible {
 		t.Fatalf("watch=on should steer a router: %+v", dec)
 	}
 	d.Watch = devices.WatchAuto
-	if dec := Decide(d, PolicyConfig{SteerInfrastructure: true}, nil, t0); !dec.Eligible {
+	if dec := Decide(d, PolicyConfig{SteerInfrastructure: true}, Own{}, t0); !dec.Eligible {
 		t.Fatalf("steer_infrastructure should steer a router: %+v", dec)
 	}
 }
@@ -70,24 +70,24 @@ func TestDecideWatchOnOverridesInfrastructureButNotExclusion(t *testing.T) {
 func TestDecideTransientRefusals(t *testing.T) {
 	d := phone(t0)
 	d.MACs = nil
-	if dec := Decide(d, PolicyConfig{}, nil, t0); dec.Eligible || dec.State != StateIdle || dec.Policy {
+	if dec := Decide(d, PolicyConfig{}, Own{}, t0); dec.Eligible || dec.State != StateIdle || dec.Policy {
 		t.Errorf("no MAC: %+v", dec)
 	}
 	d = phone(t0)
 	d.IPs = []string{"2001:db8::10"}
-	if dec := Decide(d, PolicyConfig{}, nil, t0); dec.Eligible || dec.State != StateIdle || !strings.Contains(dec.Reason, "IPv4") {
+	if dec := Decide(d, PolicyConfig{}, Own{}, t0); dec.Eligible || dec.State != StateIdle || !strings.Contains(dec.Reason, "IPv4") {
 		t.Errorf("v6 only: %+v", dec)
 	}
 	d = phone(t0)
 	later := t0.Add(16 * time.Minute)
-	if dec := Decide(d, PolicyConfig{}, nil, later); dec.Eligible || dec.State != StateIdle || !strings.Contains(dec.Reason, "not seen for 16 min") {
+	if dec := Decide(d, PolicyConfig{}, Own{}, later); dec.Eligible || dec.State != StateIdle || !strings.Contains(dec.Reason, "not seen for 16 min") {
 		t.Errorf("stale: %+v", dec)
 	}
-	if dec := Decide(d, PolicyConfig{ActiveWindow: time.Hour}, nil, later); !dec.Eligible {
+	if dec := Decide(d, PolicyConfig{ActiveWindow: time.Hour}, Own{}, later); !dec.Eligible {
 		t.Errorf("a longer window should keep it: %+v", dec)
 	}
 	d.LastSeen = time.Time{}
-	if dec := Decide(d, PolicyConfig{}, nil, t0); dec.Eligible || !strings.Contains(dec.Reason, "ever") {
+	if dec := Decide(d, PolicyConfig{}, Own{}, t0); dec.Eligible || !strings.Contains(dec.Reason, "ever") {
 		t.Errorf("never seen: %+v", dec)
 	}
 }
@@ -191,7 +191,7 @@ func TestDecideV6NeverForcedForInfrastructure(t *testing.T) {
 			t.Errorf("decision = %+v", dec)
 		}
 		// The same device is still allowed for IPv4 when forced on.
-		if dec := Decide(d, PolicyConfig{}, nil, t0); !dec.Eligible {
+		if dec := Decide(d, PolicyConfig{}, Own{}, t0); !dec.Eligible {
 			t.Errorf("IPv4 should still be allowed when forced: %+v", dec)
 		}
 	}

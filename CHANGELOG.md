@@ -472,6 +472,35 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- **`make check` did not run the portal front-end tests, so a broken JavaScript file passed it.**
+  The target's comment said "Everything CI runs, locally" and it ran gofmt, vet, the Go suite with
+  the coverage floor and both leak guards — but not `node --test internal/portal/web/test/`, which
+  CI runs as its own step. A merge resolution had left `demomgmt.test.js` one `});` short, so the
+  whole file failed to parse and every test in it was silently not running, on this branch and on
+  main. `make check` reported green twice over it. The missing brace is back, the file's 18 test
+  blocks balance, all 298 front-end tests run and pass, and `check` now runs them in the same
+  place CI does so the local command means what its comment claims.
+- **Watch mode steered the host's own other interfaces, which made the relay carry Shepherd's
+  traffic back to itself at line rate.** `watch.Engine.ownMACs` treated "this host" as the MAC of
+  the interface the relay was pinned to, plus the gateway's. It never asked the operating system
+  what else belonged to the machine. On a host whose interfaces share a subnet — a NAS with wired
+  and wireless both on the LAN, the ordinary case — the other interface looks exactly like a LAN
+  device: its own MAC, its own address, seen by the passive ARP monitor, typed by the classifier.
+  Steering it closed a loop, and because the relay runs in the kernel at the driver it closed it at
+  line rate. **Measured on the maintainer's NAS: 9 Gbit/s and about 1.05 million packets per second
+  in each direction on a 10 GbE link, sustained, with load average above 20.** Two things hid it:
+  Shepherd's own CPU stayed under 4%, since the work was in the kernel, so every resource reading
+  looked excellent; and the portal showed no meaningful traffic, which was correct and was the real
+  clue, because the traffic was not the network's. New `Platform.LocalAddrs` enumerates every MAC
+  and every address on the host, memoised for 15 seconds so an interface appearing mid-session is
+  excluded promptly rather than at the next restart, and the policy's `own` argument became a
+  `watch.Own` holding both. A device is now refused if any of its MACs **or any of its addresses**
+  belongs to the host or the gateway — the address check catches the same machine arriving under a
+  MAC the registry has not tied to it, which is what the live registry actually held, since the ARP
+  monitor had learned Shepherd's own steering frames and merged the wireless MAC with the gateway's
+  address into one "smart-home hub" record. If the host's addresses cannot be read at all, nothing
+  is steered and the log says why: refusing costs visibility, steering the host costs the network.
+  `internal/intercept` is untouched. Two of the four new tests fail without the fix.
 - **Watch mode treated an idle device as a failing one, which on a real network meant constant ARP
   churn and a ten-minute blind spot.** The interception library's health loop cannot tell a device
   with nothing to relay from one whose steering never took, so it fails both open — correct, since

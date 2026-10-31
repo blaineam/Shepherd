@@ -106,11 +106,48 @@ func isInfrastructure(d *devices.Device) (bool, string) {
 	return false, ""
 }
 
+// Own is everything that belongs to this host: every MAC and every IP
+// address across all of its interfaces, plus the gateway's MAC. A device
+// matching any of it is never steered.
+//
+// All of its interfaces, not just the one the relay runs on. A host whose
+// interfaces share a subnet -- a NAS with wired and wireless both on the
+// LAN is the ordinary case -- has other interfaces that look exactly like
+// LAN devices: own MAC, own IP, seen by the ARP monitor, typed by the
+// classifier. Steering one makes Shepherd relay its own traffic to itself,
+// and because the relay is in the kernel at the driver it does so at line
+// rate for almost no CPU. On a 10 GbE link that is 9 Gbit/s and a million
+// packets a second in each direction, with Shepherd showing 3% CPU.
+type Own struct {
+	MACs []arp.MAC
+	IPs  []netip.Addr
+}
+
+// Has reports whether mac belongs to this host.
+func (o Own) Has(mac arp.MAC) bool {
+	for _, m := range o.MACs {
+		if m == mac {
+			return true
+		}
+	}
+	return false
+}
+
+// HasIP reports whether ip belongs to this host.
+func (o Own) HasIP(ip netip.Addr) bool {
+	for _, a := range o.IPs {
+		if a == ip {
+			return true
+		}
+	}
+	return false
+}
+
 // Decide applies the policy to one device as of now. own lists the MACs
 // that are never steered whatever the registry says: the gateway's and
 // Shepherd's own. It never consults the Controller; it only says what the
 // engine should ask of it.
-func Decide(d *devices.Device, cfg PolicyConfig, own []arp.MAC, now time.Time) Decision {
+func Decide(d *devices.Device, cfg PolicyConfig, own Own, now time.Time) Decision {
 	skip := func(reason string) Decision { return Decision{State: StateSkipped, Reason: reason, Policy: true} }
 	idle := func(reason string) Decision { return Decision{State: StateIdle, Reason: reason} }
 
@@ -122,10 +159,20 @@ func Decide(d *devices.Device, cfg PolicyConfig, own []arp.MAC, now time.Time) D
 		if err != nil {
 			continue
 		}
-		for _, o := range own {
-			if mac == o {
-				return skip("the gateway or Shepherd's own interface")
-			}
+		if own.Has(mac) {
+			return skip("the gateway or Shepherd's own interface")
+		}
+	}
+	// And by address, which catches the same host arriving under a MAC the
+	// registry has not tied to it -- a merged record, a randomised MAC, or
+	// one the ARP monitor learned from Shepherd's own steering frames.
+	for _, ip := range d.IPs {
+		a, err := netip.ParseAddr(ip)
+		if err != nil {
+			continue
+		}
+		if own.HasIP(a) {
+			return skip("an address belonging to this host or the gateway")
 		}
 	}
 	if d.Excluded {

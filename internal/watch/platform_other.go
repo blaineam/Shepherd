@@ -22,6 +22,9 @@ func (RealPlatform) DefaultRoute() (string, netip.Addr, error) {
 }
 func (RealPlatform) DefaultRoute6() (Route6, error) { return Route6{}, ErrUnsupported }
 func (RealPlatform) Link(string) (Link, error)      { return Link{}, ErrUnsupported }
+func (RealPlatform) LocalAddrs() ([]arp.MAC, []netip.Addr, error) {
+	return nil, nil, ErrUnsupported
+}
 func (RealPlatform) GatewayMAC(context.Context, string, netip.Addr) (arp.MAC, error) {
 	return arp.MAC{}, ErrUnsupported
 }

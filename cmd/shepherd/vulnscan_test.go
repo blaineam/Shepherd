@@ -96,12 +96,23 @@ func syncVulnDial(s *syncOpenSet) vulnscan.DialFunc {
 func TestStartVulnscanProbesPortscanResultsAndRaisesAlarm(t *testing.T) {
 	oldPSEvery, oldPSDial := portscanEvery, portscanDial
 	oldVSEvery, oldVSDial := vulnscanEvery, vulnscanDial
+	oldExposure := portscanExposure
 	portscanEvery, vulnscanEvery = 15*time.Millisecond, 15*time.Millisecond
 	portscanDial = fakeScanDial(map[string]bool{net.JoinHostPort("203.0.113.60", "23"): true})
 	vulnscanDial = fakeVulnDial(map[string]bool{net.JoinHostPort("203.0.113.60", "23"): true})
+	// Without this the WAN-exposure checker is real, because
+	// config.Default() enables it, and startPortscan builds a live
+	// upnpigd client that does SSDP multicast discovery. Nothing answers
+	// on CI or inside Docker, so the discovery sits there until it times
+	// out and eats the scan budget this test then waits three seconds
+	// for. The sibling test in portscan_test.go already uses this seam
+	// for the same reason; this one did not, and that is the whole of why
+	// it failed there and passed on a developer machine with a router.
+	portscanExposure = fakeExposure{}
 	t.Cleanup(func() {
 		portscanEvery, portscanDial = oldPSEvery, oldPSDial
 		vulnscanEvery, vulnscanDial = oldVSEvery, oldVSDial
+		portscanExposure = oldExposure
 	})
 
 	reg := devices.New(devices.Options{NodeID: "t", AllowLoopback: true})
