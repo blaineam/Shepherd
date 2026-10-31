@@ -13,6 +13,43 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Passkey unlock (`internal/passkeys`):** the portal can now be unlocked with a passkey — Face ID, Touch
+  ID, Windows Hello, a phone, or a hardware security key — alongside the token and the PIN, never instead
+  of them. The step docs/LOCKING.md had designed and deliberately deferred until the portal had a real
+  HTTPS name, which `[tls]` now gives it. **The WebAuthn protocol is `github.com/go-webauthn/webauthn`
+  v0.18.2, not hand-rolled** — the one deliberate new dependency of tonight's work, because challenge,
+  origin and RP ID binding, attestation and COSE key parsing and signature checks are exactly what a
+  well-vetted library is for; it brings in CBOR, TPM-attestation, JWT and msgpack modules
+  (docs/THIRD-PARTY.md). The relying party is `[tls].hostname`, its origin `https://<hostname>:<port of
+  tls.listen>` (plus the same name on 443, for a container publishing 443 onto the listener); a passkey
+  registered there works only there, never at the LAN IP, another name, or plain HTTP. **Every ceremony is
+  refused before it starts when it could not work**: with `[tls]` off the Locking screen says passkeys need
+  it, and from any page that is not the HTTPS listener at that name (the plain-HTTP LAN address, or the
+  HTTPS listener reached by IP) it names both where you are and where to go, instead of a WebAuthn error in
+  the console. Passkeys can only be *added* from an already-unlocked session (token or PIN), never used to
+  gain first access; registration and login require user verification (a biometric or device PIN, since a
+  passkey stands in for a PIN plus a trusted browser), ask for no attestation, prefer but do not require
+  discoverable credentials so hardware keys without resident-key storage still work, and refuse a
+  signature counter that goes backwards (a possible clone) without saving it. Ceremonies are single use
+  (a finish attempt consumes one, right or wrong), expire after 5 minutes, are tied to the browser that
+  began them by an `HttpOnly`/`Secure`/`SameSite=Strict` cookie holding only a random id (the challenge
+  stays on the server), and are capped at 32 pending. A successful passkey login opens exactly the session
+  a token or PIN login does — the same `shepherd_session`, idle lock and 30-day cap — and revoking that
+  passkey ends the sessions it opened. Up to 20 passkeys, each named, renamable and revocable from a new
+  **Passkeys** card on the Locking screen; the lock screen gains **Sign in with a passkey**, shown only on
+  the HTTPS listener and only once one is registered (the unauthenticated check reveals neither the
+  hostname nor how many exist). Stored in `<data_dir>/passkeys.json` (0600, atomic; public keys only — a
+  passkey's private key never leaves its authenticator), wiped when the portal token rotates like the PIN
+  and trusted browsers; a file that cannot be read disables passkeys alone (503, file untouched) while the
+  token and PIN keep working. New API: `GET /api/login/passkey`, `POST /api/login/passkey/begin|finish`,
+  `GET /api/passkeys`, `POST /api/passkeys/register/begin|finish`, `PATCH`/`DELETE /api/passkeys/{id}`.
+  **Tested against a software authenticator, not a real one:** `internal/passkeys/passkeystest` builds and
+  signs real ES256 WebAuthn payloads the way the library tests itself, and every tampered response (wrong
+  origin, localhost, wrong RP ID, wrong challenge or ceremony type, no user verification, someone else's
+  user handle, a wrong key, a replay, a revoked or unknown credential, a backwards counter) is checked to
+  fail the specific check it targets, through the real HTTP API over a real TLS listener. No real browser,
+  platform authenticator or security key has been tried yet; see docs/PASSKEYS.md, including its "Before
+  you rely on this" checklist.
 - **2D map fallback for the HUD:** browsers without WebGL, notably Safari in Lockdown Mode, now get a
   flat canvas map (`js/flatmap.js`) with the same arcs, comets, pulses, picking, Set home and panning and
   zooming, plus day/night shading, instead of a "needs WebGL" notice. `?nogl=1` forces it.

@@ -30,6 +30,7 @@ import (
 	"shepherd/internal/geo"
 	"shepherd/internal/importers"
 	"shepherd/internal/nethealth"
+	"shepherd/internal/passkeys"
 	"shepherd/internal/portscan"
 	"shepherd/internal/reverseproxy"
 	"shepherd/internal/settings"
@@ -154,6 +155,13 @@ type Deps struct {
 	ReverseProxy *reverseproxy.Store
 	// ReverseProxyStatus describes that listener; the zero value is "off".
 	ReverseProxyStatus ReverseProxyStatus
+
+	// TLSHostname and TLSListen are [tls]'s hostname and listen address
+	// when [tls] is enabled, empty otherwise. Passkeys use them as the
+	// WebAuthn relying party ID and origin (docs/PASSKEYS.md); without a
+	// hostname, passkeys are unavailable and the portal says why.
+	TLSHostname string
+	TLSListen   string
 }
 
 type Server struct {
@@ -173,6 +181,14 @@ type Server struct {
 	// pinArgonTime/pinArgonMem override the PIN's Argon2id cost; zero (the
 	// production default) uses pinParams' strong default. Tests lower this.
 	pinArgonTime, pinArgonMem uint32
+
+	// Passkeys (api_passkeys.go). passkeyStore is nil only when
+	// passkeys.json could not be read (passkeyBroken says why);
+	// passkeySvc is nil whenever ceremonies cannot run (passkeyProblem).
+	passkeyStore   *passkeys.Store
+	passkeySvc     *passkeys.Service
+	passkeyProblem string
+	passkeyBroken  string
 }
 
 // LoadOrCreateToken returns the portal access token stored in dir, creating a
@@ -234,6 +250,7 @@ func New(d Deps) *Server {
 		lockPath = filepath.Join(d.DataDir, "locking.json")
 	}
 	s.lockStore = openLockStore(lockPath, tokenHash(d.Token))
+	s.initPasskeys(d)
 	sub, _ := fs.Sub(webFS, "web")
 	s.mux.Handle("GET /", http.FileServerFS(sub))
 	s.mux.HandleFunc("POST /api/login", s.login)
@@ -244,6 +261,16 @@ func New(d Deps) *Server {
 	s.mux.Handle("POST /api/pin/trust", s.auth(s.trustPIN))
 	s.mux.Handle("GET /api/trusted-devices", s.auth(s.listTrustedDevices))
 	s.mux.Handle("DELETE /api/trusted-devices/{id}", s.auth(s.revokeTrustedDevice))
+	// Passkeys: the lock screen's sign-in is unauthenticated like the other
+	// logins; registering and managing passkeys needs an unlocked session.
+	s.mux.HandleFunc("GET /api/login/passkey", s.passkeyAvailable)
+	s.mux.HandleFunc("POST /api/login/passkey/begin", s.beginPasskeyLogin)
+	s.mux.HandleFunc("POST /api/login/passkey/finish", s.finishPasskeyLogin)
+	s.mux.Handle("GET /api/passkeys", s.auth(s.listPasskeys))
+	s.mux.Handle("POST /api/passkeys/register/begin", s.auth(s.beginPasskeyRegistration))
+	s.mux.Handle("POST /api/passkeys/register/finish", s.auth(s.finishPasskeyRegistration))
+	s.mux.Handle("PATCH /api/passkeys/{id}", s.auth(s.renamePasskey))
+	s.mux.Handle("DELETE /api/passkeys/{id}", s.auth(s.revokePasskey))
 	// status, queries and stream are polled automatically; they must not
 	// themselves count as activity or idle locking would never trigger while
 	// a tab merely sits open (see sessionStore.valid).
