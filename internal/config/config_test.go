@@ -803,9 +803,9 @@ func TestDNSListenAddrsAddsLoopbackByDefault(t *testing.T) {
 	if !cfg.DNS.LoopbackEnabled() {
 		t.Fatal("dns.listen_loopback must default to on")
 	}
-	cfg.DNS.Listen = []string{"10.0.0.20:53"}
+	cfg.DNS.Listen = []string{"192.0.2.20:53"}
 	got := cfg.DNS.ListenAddrs()
-	want := []string{"10.0.0.20:53", "127.0.0.1:53", "[::1]:53"}
+	want := []string{"192.0.2.20:53", "127.0.0.1:53", "[::1]:53"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("addrs = %v, want %v", got, want)
 	}
@@ -818,7 +818,7 @@ func TestDNSListenAddrsPortAndDeduplication(t *testing.T) {
 		want   []string
 	}{
 		{"the loopback port follows the first address",
-			[]string{"10.0.0.20:5353"}, []string{"10.0.0.20:5353", "127.0.0.1:5353", "[::1]:5353"}},
+			[]string{"192.0.2.20:5353"}, []string{"192.0.2.20:5353", "127.0.0.1:5353", "[::1]:5353"}},
 		{"a loopback address already configured is not added twice",
 			[]string{"127.0.0.1:53"}, []string{"127.0.0.1:53", "[::1]:53"}},
 		{"both already configured",
@@ -828,7 +828,7 @@ func TestDNSListenAddrsPortAndDeduplication(t *testing.T) {
 		{"so does an IPv6 wildcard",
 			[]string{"[::]:53"}, []string{"[::]:53"}},
 		{"several addresses keep their order",
-			[]string{"10.0.0.20:53", "10.0.0.102:53"}, []string{"10.0.0.20:53", "10.0.0.102:53", "127.0.0.1:53", "[::1]:53"}},
+			[]string{"192.0.2.20:53", "192.0.2.102:53"}, []string{"192.0.2.20:53", "192.0.2.102:53", "127.0.0.1:53", "[::1]:53"}},
 		{"nothing configured stays nothing", nil, nil},
 		{"an unparsable address is left alone rather than guessed at",
 			[]string{"not-an-address"}, []string{"not-an-address"}},
@@ -843,7 +843,7 @@ func TestDNSListenAddrsPortAndDeduplication(t *testing.T) {
 
 func TestDNSListenLoopbackCanBeTurnedOff(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "shepherd.toml")
-	if err := os.WriteFile(path, []byte("[dns]\nlisten = [\"10.0.0.20:53\"]\nlisten_loopback = false\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("[dns]\nlisten = [\"192.0.2.20:53\"]\nlisten_loopback = false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := Load(path)
@@ -853,7 +853,7 @@ func TestDNSListenLoopbackCanBeTurnedOff(t *testing.T) {
 	if cfg.DNS.LoopbackEnabled() {
 		t.Fatal("an explicit false must win over the default")
 	}
-	if got := cfg.DNS.ListenAddrs(); !slices.Equal(got, []string{"10.0.0.20:53"}) {
+	if got := cfg.DNS.ListenAddrs(); !slices.Equal(got, []string{"192.0.2.20:53"}) {
 		t.Fatalf("addrs = %v", got)
 	}
 }
