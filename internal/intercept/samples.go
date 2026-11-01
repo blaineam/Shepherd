@@ -30,6 +30,7 @@ type frameSampler interface {
 	frameSamples() []FrameSample
 	returnPathCounts() (oursReturning, toGateway uint64)
 	duplicatesSuppressed() uint64
+	duplicatesByDevice() map[arp.MAC]uint64
 }
 
 // FrameSamples returns the relayed-frame samples recorded since the
@@ -80,6 +81,24 @@ func (c *Controller) DuplicatesSuppressed() uint64 {
 		return 0
 	}
 	return s.duplicatesSuppressed()
+}
+
+// DuplicatesByDevice is each steered device's share of the frames the
+// relay refused as duplicates, keyed by MAC and omitting devices with
+// none. The global DuplicatesSuppressed count cannot say whether a loop
+// belongs to one device or to all of them, and that is the question still
+// open about what re-delivers the frames (docs/WATCH.md). Empty where the
+// data plane in use does not count them.
+func (c *Controller) DuplicatesByDevice() map[arp.MAC]uint64 {
+	o := c.observer.Load()
+	if o == nil {
+		return nil
+	}
+	s, ok := (*o).(frameSampler)
+	if !ok {
+		return nil
+	}
+	return s.duplicatesByDevice()
 }
 
 // sampleFlow is what SummarizeSamples groups by: who sent it, where it was

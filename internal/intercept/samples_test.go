@@ -86,3 +86,48 @@ func TestSummarizeSamplesTellsALoopFromTraffic(t *testing.T) {
 		t.Error("nil samples must summarize to nothing")
 	}
 }
+
+// With no in-kernel relay attached -- the userspace relay, or nothing
+// attached yet -- the sampling accessors report nothing rather than
+// guessing. The engine logs these only when they are non-zero, so this is
+// the path a userspace relay takes every second.
+func TestSamplingAccessorsReportNothingWithoutAnInKernelRelay(t *testing.T) {
+	c, _, _ := newTestController(t, nil)
+
+	if got := c.FrameSamples(); got != nil {
+		t.Errorf("FrameSamples() = %v, want nil with no relay attached", got)
+	}
+	if ours, gw := c.ReturnPathCounts(); ours != 0 || gw != 0 {
+		t.Errorf("ReturnPathCounts() = (%d, %d), want (0, 0)", ours, gw)
+	}
+	if got := c.DuplicatesSuppressed(); got != 0 {
+		t.Errorf("DuplicatesSuppressed() = %d, want 0", got)
+	}
+	if got := c.DuplicatesByDevice(); len(got) != 0 {
+		t.Errorf("DuplicatesByDevice() = %v, want empty", got)
+	}
+
+	// A data plane that is not a frameSampler is also handled: the
+	// interface is optional on purpose, so a future data plane need not
+	// implement it to be usable.
+	c.setObserver(notASampler{})
+	defer c.setObserver(nil)
+	if got := c.FrameSamples(); got != nil {
+		t.Errorf("FrameSamples() = %v, want nil for a data plane that does not sample", got)
+	}
+	if got := c.DuplicatesSuppressed(); got != 0 {
+		t.Errorf("DuplicatesSuppressed() = %d, want 0 for a data plane that does not sample", got)
+	}
+	if got := c.DuplicatesByDevice(); len(got) != 0 {
+		t.Errorf("DuplicatesByDevice() = %v, want empty for a data plane that does not sample", got)
+	}
+	if ours, gw := c.ReturnPathCounts(); ours != 0 || gw != 0 {
+		t.Errorf("ReturnPathCounts() = (%d, %d), want (0, 0) for a data plane that does not sample", ours, gw)
+	}
+}
+
+// notASampler is a steered-set observer with no sampling, which is what a
+// data plane other than the XDP one looks like.
+type notASampler struct{}
+
+func (notASampler) steeredSetChanged([]steeredEntry) {}

@@ -270,7 +270,10 @@ same sixteen bytes of transport header. IPv6 steering is off by default and ever
 IPv4, but a loop there would be just as severe, and a safety stop covering one family is worse
 than no claim at all.
 
-`GET /api/watch` reports the count as `duplicates_suppressed`. A healthy relay reports zero for as
+`GET /api/watch` reports the count as `duplicates_suppressed`, overall and per device, and the
+diagnostics digest names the devices whose frames came back. Per device matters: the overall
+figure cannot say whether the frames belong to one device or to all of them, which is exactly what
+is still unknown about the cause. A healthy relay reports zero for as
 long as it runs. On the maintainer's NAS it runs at about 80% of relayed frames, which says
 plainly that whatever re-delivers those frames is still doing it and is now contained rather than
 catastrophic.

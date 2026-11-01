@@ -21,6 +21,7 @@ type xdpDevCounters struct {
 	Packets6    uint64
 	Bytes6      uint64
 	LastSeenNs6 uint64
+	Duplicates  uint64
 	Families    uint8
 	Pad         [7]uint8
 }

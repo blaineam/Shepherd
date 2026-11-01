@@ -133,6 +133,12 @@ struct dev_counters {
 	__u64 packets6;     // IPv6
 	__u64 bytes6;       // IPv6
 	__u64 last_seen_ns6;
+	// duplicates is this device's share of the frames the duplicate brake
+	// refused. Per device, not just globally, because the global figure
+	// cannot say whether a loop belongs to one device or to all of them --
+	// and that is exactly the question left open about what re-delivers
+	// them (docs/WATCH.md).
+	__u64 duplicates;
 	__u8 families;      // FAM_V4 | FAM_V6
 	__u8 pad[7];
 };
@@ -484,6 +490,7 @@ int xdp_relay(struct xdp_md *ctx)
 		if (is_duplicate(fp6, bpf_ktime_get_ns())) {
 			if (st)
 				st->duplicates++;
+			__sync_fetch_and_add(&dev->duplicates, 1);
 			return XDP_DROP;
 		}
 		return do_relay(eth, data_end, cfg, dev, st, len, 1);
@@ -507,6 +514,7 @@ int xdp_relay(struct xdp_md *ctx)
 	if (is_duplicate(fp, now_ns)) {
 		if (st)
 			st->duplicates++;
+		__sync_fetch_and_add(&dev->duplicates, 1);
 		return XDP_DROP;
 	}
 	return do_relay(eth, data_end, cfg, dev, st, len, 0);

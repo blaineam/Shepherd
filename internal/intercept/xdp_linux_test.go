@@ -509,3 +509,46 @@ func TestXDPRelayDropsARepeatedIPv6Frame(t *testing.T) {
 		t.Fatalf("the device was credited %d relayed IPv6 frames, want 2", v.Packets6)
 	}
 }
+
+// The per-device duplicate count is what tells a loop belonging to one
+// device from one belonging to all of them, which the global figure cannot.
+func TestXDPRelayCountsDuplicatesPerDevice(t *testing.T) {
+	objs := loadXDPForTest(t)
+	dp := &xdpDataPlane{objs: objs}
+	if err := dp.configure(shepherdMAC, gwMAC, []netip.Addr{ip(2)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	other := rndMAC(77)
+	dp.resync([]steeredEntry{{devMAC, SteerV4}, {other, SteerV4}})
+	remote := netip.AddrFrom4([4]byte{203, 0, 113, 7})
+
+	// One device's frame comes back three times; the other's never does.
+	loopy := ipv4Frame(shepherdMAC, devMAC, devIP, remote, []byte("the frame that keeps coming back"))
+	if v, _ := runXDP(t, objs, loopy); v != xdpTX {
+		t.Fatal("the first copy must be relayed")
+	}
+	for i := 0; i < 3; i++ {
+		if v, _ := runXDP(t, objs, loopy); v != xdpDrop {
+			t.Fatalf("copy %d must be dropped", i+2)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		clean := ipv4Frame(shepherdMAC, other, ip(9), remote, []byte{byte(i), 1, 2, 3, 4, 5, 6, 7, 8})
+		if v, _ := runXDP(t, objs, clean); v != xdpTX {
+			t.Fatalf("the other device's distinct frame %d must be relayed", i)
+		}
+	}
+
+	byDev := dp.duplicatesByDevice()
+	if got := byDev[devMAC]; got != 3 {
+		t.Fatalf("duplicates for the looping device = %d, want 3", got)
+	}
+	if _, ok := byDev[other]; ok {
+		t.Fatalf("a device with no duplicates must be absent, got %v", byDev)
+	}
+	c, _, _ := newTestController(t, nil)
+	dp.harvest(c)
+	if got := dp.duplicatesSuppressed(); got != 3 {
+		t.Fatalf("global duplicates = %d, want 3", got)
+	}
+}

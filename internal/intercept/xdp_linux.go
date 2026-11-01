@@ -260,6 +260,27 @@ func (dp *xdpDataPlane) returnPathCounts() (oursReturning, toGateway uint64) {
 	return dp.lastStats.OursReturning, dp.lastStats.ToGateway
 }
 
+// duplicatesByDevice implements frameSampler: each steered device's share
+// of the frames the duplicate brake refused, read straight from the
+// program's per-device counters.
+func (dp *xdpDataPlane) duplicatesByDevice() map[arp.MAC]uint64 {
+	dp.mu.Lock()
+	defer dp.mu.Unlock()
+	out := map[arp.MAC]uint64{}
+	var k xdpMacKey
+	var v xdpDevCounters
+	it := dp.objs.Steered.Iterate()
+	for it.Next(&k, &v) {
+		if v.Duplicates == 0 {
+			continue
+		}
+		var mac arp.MAC
+		copy(mac[:], k.Mac[:])
+		out[mac] = v.Duplicates
+	}
+	return out
+}
+
 // duplicatesSuppressed implements frameSampler: frames the program refused
 // to relay because it had already relayed the same frame moments earlier.
 func (dp *xdpDataPlane) duplicatesSuppressed() uint64 {

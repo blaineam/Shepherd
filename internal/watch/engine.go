@@ -275,6 +275,11 @@ type DeviceStatus struct {
 	// NextRetry is when a device on a health-failure backoff is tried
 	// again; zero otherwise.
 	NextRetry time.Time `json:"next_retry,omitempty"`
+	// DuplicatesSuppressed is this device's share of the frames the relay
+	// refused because it had already relayed the same frame moments
+	// earlier. Zero on a healthy network; a figure here names the device
+	// whose frames are coming back.
+	DuplicatesSuppressed uint64 `json:"duplicates_suppressed"`
 	// Failures is how many times in a row the health loop failed it open.
 	Failures int `json:"failures,omitempty"`
 }
@@ -430,8 +435,11 @@ type Engine struct {
 	// time it was read; see own().
 	localAddrs   Own
 	localAddrsAt time.Time
-	// lastDiag is when the Diagnostics digest was last logged.
-	lastDiag time.Time
+	// lastDiag is when the Diagnostics digest was last logged, and
+	// lastDupSeen the duplicate count as of then, so the digest can fire on
+	// duplicates appearing rather than only on a high relayed rate.
+	lastDiag    time.Time
+	lastDupSeen uint64
 	// ifaceCounters is the previous reading of the interface's own
 	// counters, and loopStreak how many consecutive samples have looked
 	// like a relay loop. See the loop brake constants.
@@ -1192,9 +1200,23 @@ func (e *Engine) sample(now time.Time) {
 	for _, d := range observe {
 		e.reg.Observe(devices.Observation{Source: devices.SourceARP, MAC: d.MAC.String(), IP: d.IP.String(), Time: now})
 	}
-	if e.cfg.Diagnostics && relayedPPS >= diagnosticsMinPPS && now.Sub(e.lastDiag) >= diagnosticsEvery {
-		e.lastDiag = now
-		e.logSamples(ctrl, fmt.Sprintf("diagnostics at %.0f relayed pkt/s", relayedPPS))
+	// The digest fires on either of two signals, and the second matters
+	// more: a high relayed rate, or the duplicate brake actually dropping
+	// frames. Gating on rate alone was a mistake -- on the live host the
+	// brake suppresses frames steadily at 30 to 60 relayed packets a
+	// second, far below any sensible rate threshold, so the evidence for
+	// what is coming back was never logged at all.
+	if e.cfg.Diagnostics && now.Sub(e.lastDiag) >= diagnosticsEvery {
+		dup := ctrl.DuplicatesSuppressed()
+		switch {
+		case dup > e.lastDupSeen:
+			e.lastDiag = now
+			e.logSamples(ctrl, fmt.Sprintf("diagnostics: %d frames suppressed as duplicates since the last digest", dup-e.lastDupSeen))
+		case relayedPPS >= diagnosticsMinPPS:
+			e.lastDiag = now
+			e.logSamples(ctrl, fmt.Sprintf("diagnostics at %.0f relayed pkt/s", relayedPPS))
+		}
+		e.lastDupSeen = dup
 	}
 	e.checkForLoop(now, relayedPPS, status)
 }
@@ -1210,6 +1232,35 @@ func (e *Engine) logSamples(ctrl *intercept.Controller, why string) {
 	if ours, gw := ctrl.ReturnPathCounts(); ours > 0 || gw > 0 {
 		e.logf("watch: %s: %d frames arrived with Shepherd's own source MAC and %d addressed to the gateway's -- Shepherd's relayed output coming back to %s",
 			why, ours, gw, e.ifaceName())
+	}
+	if byDev := ctrl.DuplicatesByDevice(); len(byDev) > 0 {
+		type pair struct {
+			mac arp.MAC
+			n   uint64
+		}
+		var ds []pair
+		for mac, n := range byDev {
+			ds = append(ds, pair{mac, n})
+		}
+		slices.SortFunc(ds, func(a, b pair) int {
+			switch {
+			case a.n > b.n:
+				return -1
+			case a.n < b.n:
+				return 1
+			}
+			return 0
+		})
+		for i, d := range ds {
+			if i == 3 {
+				break
+			}
+			name := d.mac.String()
+			if dev, ok := e.reg.FindByMAC(d.mac.String()); ok {
+				name = dev.DisplayName() + " (" + d.mac.String() + ")"
+			}
+			e.logf("watch: %s: %d of %s's frames came back and were dropped", why, d.n, name)
+		}
 	}
 	samples := ctrl.FrameSamples()
 	if len(samples) == 0 {
@@ -1671,6 +1722,13 @@ func (e *Engine) DeviceStatuses() map[string]DeviceStatus {
 func (e *Engine) deviceStatuses(now time.Time, steered map[arp.MAC]intercept.SteeredDevice, running bool) []DeviceStatus {
 	own, _ := e.own(now)
 	e.mu.Lock()
+	ctrl := e.ctrl
+	e.mu.Unlock()
+	var dupByMAC map[arp.MAC]uint64
+	if ctrl != nil {
+		dupByMAC = ctrl.DuplicatesByDevice()
+	}
+	e.mu.Lock()
 	retry := make(map[arp.MAC]retryState, len(e.retry))
 	for mac, rs := range e.retry {
 		retry[mac] = *rs
@@ -1711,6 +1769,7 @@ func (e *Engine) deviceStatuses(now time.Time, steered map[arp.MAC]intercept.Ste
 			ds.Healthy = ds.Healthy && sd.Healthy
 			ds.BytesRelayed += sd.BytesRelayed
 			ds.PacketsRelayed += sd.PacketsRelayed
+			ds.DuplicatesSuppressed += dupByMAC[mac]
 			if rs, ok := rates[mac]; ok {
 				ds.BytesPerSecond += rs.bps
 				ds.PacketsPerSecond += rs.pps
