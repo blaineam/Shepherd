@@ -18,30 +18,31 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   about 10 Gbit/s and over a million packets a second on a 10 GbE card -- and both times it ran for
   minutes because a person had to notice. The first had a cause and it is fixed (it steered one of
   the host's own interfaces); the second is still not explained, which is what the brake is for.
-  The brake compares the relay's own throughput against the interface's kernel counters every
-  second and looks for the signature that identified both incidents by hand: the interface receives
-  and transmits the same amount, the relay accounts for almost all of it, and the rate is one a home
-  network does not reach legitimately. All three for three consecutive seconds and it panic-stops,
-  unsteering everything with its corrective reply, and latches like the kill switch so a restart
-  cannot resume the loop. It logs what it measured and **the devices that were relaying most**,
-  because that per-device list is exactly the evidence the second incident lacked. Each condition
-  alone has innocent explanations, hence all three: the healthy live run had the interface receiving
-  600 Mbit/s against 800 to 1000 transmitted, 25 to 40% apart, with the relay under half its
-  packets; the loop had them within 0.03% of each other.
-  **Known gap, measured and not yet fixed.** The second condition -- the relay accounting for almost
-  all of it -- does not hold for either loop reproduced since, so the brake would not have fired on
-  them. The instrumented single-device run received 54,000 packets a second against 49,000
-  transmitted, mirrored within 9.3% and far above the floor, while the relay reported **8 packets a
-  second**; the earlier single-device run was 41,116 relayed against 465,000 received, 8.8% of
-  receive. Both fail the share test and the relay's own packet floor, so two of the four conditions
-  veto the stop. Those two were calibrated on the original incidents, where the relay really did
-  report nearly all of the traffic -- a shape the loops seen since do not have, and one a brake
-  keyed on the relay's own counter cannot see. Tripping instead on mirrored traffic above the packet
-  floor for three consecutive seconds would have caught all four, at the cost of firing on any
-  genuinely symmetric load above 50,000 packets a second sustained for three seconds. That is a
-  deliberate loosening of a safety stop and is left as a decision rather than made quietly; until it
-  is taken, the forwarding refusal is the only thing standing between a dual-homed host and the
-  storm.
+  The brake reads the interface's kernel counters every second and looks for two things: it receives
+  and transmits the same amount, within 15%, at 50,000 packets a second or more. Three consecutive
+  seconds of that and it panic-stops, unsteering everything with its corrective reply, and latches
+  like the kill switch so a restart cannot resume the loop. It logs what it measured, the relay's
+  own share of it, and **the devices that were relaying most**, because that per-device list is
+  exactly the evidence the second incident lacked.
+  Symmetry is what separates looping from busy, and the thresholds come from measurement: the
+  healthy live host ran 25 to 40% apart at roughly 83,000 packets a second, while the loops measured
+  0.03% apart at 1.0 to 1.3M, 9.3% apart at 54,000 and 10.1% apart at 465,000. 15% sits between the
+  worst loop and the best healthy reading. The floor is not what separates them -- the healthy run
+  was above it and was excluded by symmetry alone -- it only keeps a quiet network from tripping it,
+  and being 8% below the smallest loop measured it would miss a slower one.
+  **The relay's own share is deliberately not part of the test, and an earlier version of this brake
+  required it.** That version asked the relay to report at least 80% of the interface's receive rate
+  and at least the packet floor itself, on the evidence of the two original incidents, where it
+  genuinely did carry the loop. Measurement then showed that neither loop reproduced since has that
+  shape: the instrumented single-device run had the relay reporting **8 packets a second against
+  54,000 received**, and the earlier one 41,116 against 465,000, 8.8% of receive. Both would have
+  been vetoed by the share test and by the relay's own floor, so the brake would have watched the
+  whole thing happen. A brake keyed on the relay's counter cannot see a loop the relay is not
+  carrying. The share is still logged, as evidence that the storm is *not* the relay's output -- a
+  low figure there is now expected rather than reassuring. The symmetry threshold moved from 10% to
+  15% in the same change, because the 10.1%-apart loop was excluded by six hundredths of a percent,
+  and a threshold that only just misses a real incident is the wrong threshold. Accepted cost: any
+  genuinely symmetric load above the floor sustained for three seconds now stops steering.
 ### Fixed
 - **Shepherd will not steer a device record that carries one of this host's addresses, or the
   gateway's.** The registry on the live host had merged the gateway, both LAN interfaces and all

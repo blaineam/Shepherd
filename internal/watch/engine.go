@@ -178,9 +178,24 @@ const (
 	// genuinely busy: receive 600 Mbit/s against transmit 800 to 1000, so
 	// 25 to 40% apart, with the relay reporting well under half the
 	// interface's packets.
-	loopSymmetry = 0.10   // |tx-rx| / max(tx,rx) at or below this is mirrored
-	loopShare    = 0.80   // relayed packets as a share of received packets
-	loopFloorPPS = 50_000 // below this, a home network is not looping
+	// loopSymmetry is the whole test now, so it is placed from measurement
+	// rather than taste. Loops observed: 0.03% apart (the two original
+	// incidents), 9.3% (the instrumented single-device run, 53,988 received
+	// against 48,984 transmitted) and 10.1% (the earlier single-device run,
+	// about 465,000 against 517,000). Healthy but genuinely busy, measured
+	// on the same host: 25 to 40% apart. 0.15 sits between the worst loop
+	// and the best healthy reading with margin on both sides; the old 0.10
+	// would have excluded the 10.1% run, which is exactly the kind of
+	// threshold that only just misses a real incident.
+	loopSymmetry = 0.15
+	// loopFloorPPS keeps a quiet network from tripping it. It does *not*
+	// separate looping from busy -- the healthy run reached roughly 83,000
+	// packets a second on transmit, above this floor, and was excluded by
+	// symmetry alone. Note it is only 8% below the smallest loop observed
+	// (53,988), so a slower loop would slip through; that is a known limit,
+	// kept because lowering the floor trades it for false stops on any
+	// moderate symmetric load.
+	loopFloorPPS = 50_000
 	// loopHits is how many consecutive one-second samples must agree
 	// before the brake trips, so a burst cannot cause one.
 	loopHits = 3
@@ -1094,32 +1109,36 @@ func (e *Engine) sample(now time.Time) {
 // established -- and both times it ran for minutes because a person had to
 // notice. This notices in three seconds.
 //
-// The signature it looks for is the one that identified both incidents by
-// hand: the interface receives and transmits the same amount, and the relay
-// accounts for almost all of it. Legitimate heavy traffic fails the first
-// test, because downloads and the host's own traffic make receive and
-// transmit diverge, and a quiet network fails the floor.
+// The signature is mirrored traffic -- the interface receiving and
+// transmitting the same amount -- above a rate a home network does not
+// reach, for loopHits consecutive seconds. Legitimate heavy traffic fails
+// the symmetry test, because downloads and the host's own traffic make
+// receive and transmit diverge by 25 to 40%, and a quiet network fails the
+// floor.
 //
-// KNOWN GAP, measured and not yet fixed: that second condition does not
-// hold for either loop reproduced since, so this brake would not have
-// fired on them. An instrumented single-device run reached 54,000 packets
-// a second received against 49,000 transmitted -- mirrored within 9.3%,
-// well over loopFloorPPS -- while the relay reported **8 pkt/s**. The
-// earlier single-device run was 41,116 relayed against 465,000 received,
-// 8.8% of rx. Both fail `dominant` (relayedPPS >= loopShare*rx) and fail
-// `relayedPPS >= e.loopFloor`, so two of the four conditions veto the stop.
+// It deliberately does **not** test the relay's own share of the traffic,
+// and an earlier version of this brake did. That version required the
+// relay to report at least 80% of the interface's receive rate and at
+// least loopFloorPPS itself, on the evidence of the two original
+// incidents, where it genuinely did report nearly all of it. Measurement
+// then showed that neither loop reproduced since has that shape: an
+// instrumented single-device run received 54,000 packets a second against
+// 49,000 transmitted while the relay reported 8 pkt/s, and the earlier
+// single-device run reported 41,116 against 465,000 received, 8.8% of rx.
+// Both would have been vetoed by the share test and by the relay's own
+// floor, so the brake would have watched all of it happen. A brake keyed
+// on the relay's counter cannot see a loop the relay is not carrying, and
+// most of what reaches that interface during these loops is accounted for
+// by neither the relay nor the kernel's IP stack.
 //
-// The share and the relayed floor were calibrated on the two original
-// incidents, where the relay genuinely did report nearly all of the
-// traffic. The loops seen since put almost nothing through the relay's own
-// counter, so a brake keyed on that counter cannot see them. Dropping
-// `dominant` and the relayed floor -- tripping on mirrored traffic above
-// loopFloorPPS for loopHits consecutive seconds -- would have caught all
-// four, at the cost of firing on any genuinely symmetric load above 50,000
-// packets a second for three seconds running. That is a deliberate
-// loosening of a safety stop, so it is the maintainer's call and not a
-// quiet edit; routingOwnSegment's comment records that it is currently
-// carrying this gap alone.
+// So the share is logged as evidence and ignored as a trigger. The cost,
+// accepted knowingly: genuinely symmetric traffic above loopFloorPPS
+// sustained for loopHits seconds now stops steering. On the measured host
+// nothing legitimate came close -- its busiest symmetric load was an order
+// of magnitude below the floor, and its heavy traffic was lopsided -- but
+// this is a safety stop that now fires on less evidence than before, which
+// is the right trade only because the thing it guards against is a 10 GbE
+// card melting a home network in three and a half seconds.
 //
 // When it trips it panic-stops, which unsteers every device with its
 // corrective reply, and latches like the kill switch so a restart does not
@@ -1142,8 +1161,7 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 	tx := float64(cur.TxPackets - prev.TxPackets)
 	hi := math.Max(rx, tx)
 	mirrored := hi > 0 && math.Abs(tx-rx)/hi <= loopSymmetry
-	dominant := rx > 0 && relayedPPS >= loopShare*rx
-	looping := mirrored && dominant && relayedPPS >= e.loopFloor && hi >= e.loopFloor
+	looping := mirrored && hi >= e.loopFloor
 	if !looping {
 		e.loopStreak = 0
 		e.mu.Unlock()
@@ -1157,15 +1175,22 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 	}
 	e.killed = true
 	e.state.Killed = true
-	e.reason = "stopped automatically: the relay was carrying its own output back to itself"
+	e.reason = "stopped automatically: the relay interface was mirroring traffic at a rate a home network does not reach"
 	saveErr := saveState(e.cfg.StatePath, e.state)
 	e.loopStreak = 0
 	e.mu.Unlock()
 
 	ctrl.PanicStop()
-	e.logf("watch: LOOP BRAKE: the relay was carrying its own output back to itself, so all steering has been stopped and will stay stopped until it is re-armed")
-	e.logf("watch: loop brake evidence: interface received %.0f and transmitted %.0f packets in the last second (%.2f%% apart), of which the relay reported %.0f (%.0f%%)",
-		rx, tx, math.Abs(tx-rx)/hi*100, relayedPPS, relayedPPS/rx*100)
+	e.logf("watch: LOOP BRAKE: the relay interface is mirroring traffic at a rate a home network does not reach, so all steering has been stopped and will stay stopped until it is re-armed")
+	share := 0.0
+	if rx > 0 {
+		share = relayedPPS / rx * 100
+	}
+	e.logf("watch: loop brake evidence: interface received %.0f and transmitted %.0f packets in the last second (%.2f%% apart), of which the relay reported %.0f (%.1f%%)",
+		rx, tx, math.Abs(tx-rx)/hi*100, relayedPPS, share)
+	// The share is evidence, not a trigger. A loop the relay reports almost
+	// none of is the shape measured on real hardware (8 pkt/s against
+	// 54,000 received), so a low figure here is expected, not reassuring.
 	e.logLoopSuspects(status)
 	if saveErr != nil {
 		e.logf("watch: WARNING: could not persist the loop stop (%v), so a restart may resume it", saveErr)
@@ -1732,18 +1757,13 @@ var _ intercept.Excluder = v6Excluder{}
 // unavailable on a dual-homed host is much better than melting its
 // network.
 //
-// It also has to carry more weight than intended, because **the loop brake
-// below would not have caught this one**. checkForLoop requires relayedPPS
-// >= loopShare*rx and relayedPPS >= loopFloor; the measured loop had the
-// relay reporting 8 pkt/s against 54,000 received, so both conditions veto
-// it and only `mirrored` and `hi >= loopFloor` hold. The same is true of
-// the first single-device trial: 41,116 relayed against 465,000 received is
-// 8.8% of rx, not the 80% the brake asks for. Those conditions were
-// calibrated on the two original incidents, where the relay really did
-// report essentially all of the traffic -- a loop shape that the loops
-// reproduced since do not have. Until that is reconciled, this refusal is
-// not a belt beside a brace; it is the only thing standing between a
-// dual-homed host and the storm.
+// For a while it was also carrying more weight than intended, because the
+// loop brake as first written would not have caught this loop: it required
+// the relay to report at least 80% of the interface's receive rate, and the
+// measured loop had it reporting 8 pkt/s against 54,000 received. That has
+// since been fixed -- checkForLoop now trips on mirrored traffic above its
+// floor and ignores the relay's share -- so the two guards are independent
+// again, which is how this refusal was always meant to be backed.
 //
 // One thing clearing net.ipv4.ip_forward would not do is help, and anyone
 // reading this should not try it. That host's forwarding is bursty and

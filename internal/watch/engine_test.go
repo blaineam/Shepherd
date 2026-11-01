@@ -1269,6 +1269,17 @@ func TestTheKillSwitchDoesNotEraseTheLearnedDriverList(t *testing.T) {
 // interface counters show exactly that traffic mirrored: received and
 // transmitted the same, with the relay accounting for all of it. That is
 // the shape both live incidents had.
+// loopTickUnrelayed moves the interface counters without feeding the relay,
+// which is the shape measured on real hardware: 54,000 packets a second
+// received against 49,000 transmitted while the relay reported 8 pkt/s. The
+// brake must trip on this, and the version keyed on the relay's share could
+// not see it at all.
+func (te *testEngine) loopTickUnrelayed(t *testing.T, plat *fakePlatform, rx, tx uint64) {
+	t.Helper()
+	plat.addCounters(rx*42, rx, tx*42, tx)
+	te.clock.Advance(time.Second)
+}
+
 func (te *testEngine) loopTick(t *testing.T, plat *fakePlatform, n uint64, mirrored bool) {
 	t.Helper()
 	te.mu.Lock()
@@ -1308,7 +1319,7 @@ func TestTheLoopBrakeStopsARelayCarryingItsOwnOutput(t *testing.T) {
 	if snap.Armed {
 		t.Fatal("the brake should have disarmed steering")
 	}
-	if !strings.Contains(snap.Reason, "its own output") {
+	if !strings.Contains(snap.Reason, "mirroring traffic") {
 		t.Fatalf("reason = %q, want it to say what happened", snap.Reason)
 	}
 	if te.isSteered(phoneMAC) {
@@ -1372,6 +1383,99 @@ func TestTheLoopBrakeHasAFloor(t *testing.T) {
 	}
 	if !te.Snapshot().Armed {
 		t.Fatal("the brake tripped below its floor")
+	}
+}
+
+// The loop measured on real hardware put almost nothing through the relay's
+// own counter -- 8 pkt/s against 54,000 received -- so a brake that asked
+// the relay how much it was carrying watched the whole thing happen. This
+// is that shape, to the ratio: mirrored within 9.3%, over the floor, relay
+// silent.
+func TestTheLoopBrakeStopsALoopTheRelayIsNotCarrying(t *testing.T) {
+	statePath := t.TempDir() + "/watch.json"
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, func(c *Config) { c.StatePath = statePath })
+	te.loopFloor = 1000
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	// 53,988 received against 48,984 transmitted, scaled to the test floor:
+	// 9.27% apart, and the relay reports nothing at all. One tick per poll,
+	// because FakeClock drops a tick fired before the engine has registered
+	// its next waiter, and a dropped tick is silent.
+	waitFor(t, "the loop brake to trip with the relay silent", func() bool {
+		te.loopTickUnrelayed(t, plat, 5399, 4898)
+		return !te.Snapshot().Armed
+	})
+
+	if te.isSteered(phoneMAC) {
+		t.Fatal("nothing should still be steered")
+	}
+	st, err := loadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Killed {
+		t.Fatal("the stop must persist")
+	}
+	// The share is still reported, because it is the evidence that the loop
+	// is not the relay's own output.
+	var saidShare bool
+	for _, l := range te.logs.all() {
+		if strings.Contains(l, "loop brake evidence:") && strings.Contains(l, "the relay reported 0") {
+			saidShare = true
+		}
+	}
+	if !saidShare {
+		t.Fatalf("the brake must report the relay's share as evidence; got %v", te.logs.all())
+	}
+}
+
+// The earlier single-device run was about 465,000 packets a second received
+// against 517,000 transmitted: 10.06% apart, which the original 0.10
+// symmetry threshold excluded by six hundredths of a percent. A threshold
+// that only just misses a real incident is the wrong threshold.
+func TestTheLoopBrakeCatchesATenPercentAsymmetricLoop(t *testing.T) {
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, nil)
+	te.loopFloor = 1000
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	waitFor(t, "the loop brake to trip on a 10.06% asymmetric loop", func() bool {
+		te.loopTickUnrelayed(t, plat, 4650, 5170)
+		return !te.Snapshot().Armed
+	})
+}
+
+// Healthy but genuinely busy stays untouched even above the floor: the live
+// host transmitted 800 to 1000 Mbit/s against 600 received, 25 to 40% apart,
+// which is well outside loopSymmetry. The floor alone would not have saved
+// it -- that run reached roughly 83,000 packets a second.
+func TestTheLoopBrakeLeavesBusyLopsidedTrafficAloneAboveTheFloor(t *testing.T) {
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, nil)
+	te.loopFloor = 1000
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	// 60,000 received against 90,000 transmitted: 33% apart, both over the
+	// floor. Spaced like the tests above so the samples actually land.
+	for i := 0; i < (loopHits+4)*4; i++ {
+		te.loopTickUnrelayed(t, plat, 6000, 9000)
+		time.Sleep(2 * time.Millisecond)
+	}
+	if !te.Snapshot().Armed {
+		t.Fatal("the brake tripped on heavy lopsided traffic above the floor")
+	}
+	if !te.isSteered(phoneMAC) {
+		t.Fatal("steering should be untouched")
 	}
 }
 
