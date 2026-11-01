@@ -101,8 +101,10 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   examined, still rising when stopped. The 8 pkt/s was the first instant of a ramp. So the relay is
   the leading candidate, not an excluded one, and the same run says why: with the XDP program off
   the device was steered for the same duration with `examined` holding at 16,000 to 28,000 pkt/s and
-  no storm at all. The kernel fast path appears necessary for it. Two mechanisms are excluded, not
-  three. One apparent clue is not one: examined 102,516 against 73,704 relayed leaves ~29,000 frames
+  no storm at all -- but that is weaker than it looked, because `-xdp off` does not mean "no relay":
+  the trial then relays in userspace across four workers and managed only 88 pkt/s and 107 kB/s, so
+  "no storm without XDP" may mean only "a userspace relay is too slow to make one". The fast path is
+  a suspect, not a conclusion. Two mechanisms are excluded, not three. One apparent clue is not one: examined 102,516 against 73,704 relayed leaves ~29,000 frames
   a second seen and not relayed with both rule-4 counters at zero, but the program bumps `examined`
   for every frame it sees and bumps nothing on the `XDP_PASS` paths for "not Shepherd's MAC" and
   "not from a steered device", so that gap is the rest of the segment's traffic -- and ~29,000/s is

@@ -277,10 +277,12 @@ t+8s   examined 102,516/s   relayed 73,704/s   (90 MB/s)
 
 72% of what the program examined, and still rising when it was stopped. The 8 pkt/s figure was the
 first instant of that ramp, not a steady state. So the relay is **not** excluded — it is the leading
-candidate, and the same run says why: with the XDP program off (`-xdp off`) the device was steered
-for the same duration with `examined` holding at 16,000–28,000 packets a second and **no storm at
-all**. The kernel fast path appears to be necessary for it. Two mechanisms are excluded here, not
-three.
+candidate. A comparison run with the XDP program off (`-xdp off`) produced no storm, `examined`
+holding at 16,000–28,000 packets a second — but that is weaker evidence than it first appeared,
+because `-xdp off` does **not** mean "no relay". The trial then relays in userspace across four
+workers, and in one run it managed only 88 packets a second and 107 kB/s. So "no storm without XDP"
+may mean no more than "a userspace relay is too slow to make one". The fast path is a suspect, not a
+conclusion. Two mechanisms are excluded here, not three.
 
 What survives is the *other* half of the condition, and it is the one structural feature present in
 every incident: this host has **two interfaces on one segment**, and the steered device is reachable
@@ -312,8 +314,7 @@ runs deliberately. Clearing the flag would cut that off and leave the loop exact
 > burstiness explains the first trial's odd pre-steering baseline, which showed 12,000 packets a
 > second inbound on an interface whose median is 65.
 
-That `-xdp off` result is the most useful thing measured so far, and it narrows the search to the
-relay's own kernel fast path.
+So the search points at the relay's own kernel fast path, with that caveat attached.
 
 The `examined` figure is not a second clue, though it looks like one. 102,516 examined against
 73,704 relayed leaves about 29,000 frames a second seen and not relayed, with both rule-4 counters
@@ -392,6 +393,39 @@ sits between this host's transmit background (about 3,000) and the smallest loop
 > Telling "working hard" from "looping" robustly needs something these counters do not expose:
 > duplicate detection, a TTL check, or relayed bytes measured against what the device could actually
 > receive. Worth knowing before Watch mode is ever enabled on a multi-gigabit client.
+
+Putting every run measured so far side by side does suggest a discriminator, and it is worth writing
+down because it is not one the brake has ever used. `relayed` is the relay's own count; *share* is
+that measured against the interface's transmit.
+
+| run | rx/s | tx/s | apart | relayed/s | share of tx | plausible as one client's traffic? |
+| --- | --- | --- | --- | --- | --- | --- |
+| the two original incidents | ~1.2M | ~1.2M | 0.03% | ~all of it | ~100% | **no** — 10 Gbit/s to a phone |
+| first single-device run | 465,000 | 517,000 | 10.1% | 41,116 | **8%** | **no** — ~4.5 Gbit/s |
+| instrumented run | 26,994 | 24,492 | 9.3% | **20 frames in total** | **~0%** | rate yes, share impossible |
+| later generic-XDP run | 60,683 | 60,716 | 0.05% | 37,164 | 61%+ | **yes** — 34 MB/s, ~273 Mbit/s |
+
+The last row is almost certainly the relay working correctly, and its `IP-IN` of 288 against 60,683
+received says so from an independent direction: `XDP_TX` frames never reach the stack, so a relay
+genuinely carrying the traffic should show almost nothing in the IP counters, and it showed 288. Its
+61% share is understated too — that is a two-second average of a quantity that went from 4 to 37,164
+inside the same window.
+
+Two prongs would separate all four, and neither is what the brake tests today:
+
+1. **Mirrored above a rate no single client can consume** (say 300,000 packets a second) — catches
+   the original incidents and the first single-device run regardless of share.
+2. **Mirrored above the ordinary floor *and* the relay accounting for only a small fraction of
+   transmit** — catches the instrumented run, where twenty relayed frames sat against ~24,000
+   packets a second leaving the interface, and leaves a busy, honest relay alone.
+
+Prong 2 is the inverse of the share test this branch removed, which asked the relay to account for
+*most* of the traffic. The comparison wants cumulative counts over the window rather than
+instantaneous rates, because the relay's rate ramps steeply and a rate reading understates it, while
+`packets_relayed` as a running total is unambiguous.
+
+This is recorded as a proposal and is **not implemented**: it would be the third change to a safety
+stop in one sitting, and the first two each rested on a reading that later turned out to be wrong.
 
 ## What it needs
 

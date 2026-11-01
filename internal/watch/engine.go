@@ -1765,10 +1765,13 @@ var _ intercept.Excluder = v6Excluder{}
 // then 73,704 pkt/s at 90 MB/s by eight seconds in -- 72% of what the
 // program examined. The 8 pkt/s reading was the first instant of a ramp,
 // not a steady state. So the relay is not excluded; it is the leading
-// candidate, and the same run says why: with the XDP program off
-// (-xdp off) the device was steered for the same duration with examined
-// holding at 16,000 to 28,000 pkt/s and no storm at all. The kernel fast
-// path appears to be necessary for it.
+// candidate. A comparison run with the XDP program off (-xdp off)
+// produced no storm, examined holding at 16,000 to 28,000 pkt/s -- but
+// that is weaker evidence than it first looked, because -xdp off does not
+// mean "no relay". The trial then relays in userspace across four workers,
+// and in one run it managed only 88 pkt/s and 107 kB/s. So "no storm
+// without XDP" may mean no more than "a userspace relay is too slow to
+// make one". The fast path is a suspect, not a conclusion.
 //
 // Only two mechanisms are therefore excluded here, not three: kernel IPv4
 // forwarding and same-segment routing.
