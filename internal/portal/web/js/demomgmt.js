@@ -216,6 +216,51 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
     devices = devices.map((d) => (d.wandering && d.wandering_until && Date.parse(d.wandering_until) <= t ? (({ wandering_until, ...rest }) => ({ ...rest, wandering: false }))(d) : d));
   }
 
+
+  // ---- network health (synthetic, deterministic in time so reloads agree)
+  // A plausible home uplink: ~12ms baseline, a gentle evening bump, a
+  // little noise, one visible spike every ~9 hours and one short outage
+  // window about two days ago so the charts and the pill have something
+  // to show. Values are a pure function of the timestamp.
+  const nhTargets = ['dns1.example.net', 'dns2.example.org', '1.1.1.1', '8.8.8.8'];
+  const nhWave = (t, period, phase = 0) => Math.sin((t / period + phase) * 2 * Math.PI);
+  function nhSample(t) {
+    const hour = new Date(t).getHours();
+    const evening = hour >= 19 && hour <= 23 ? 3 : 0;
+    const noise = ((strHashDemo(Math.floor(t / 120000)) % 1000) / 1000 - 0.5) * 2.4;
+    const spike = ((t / 3600000) % 9) < 0.08 ? 25 + (strHashDemo(Math.floor(t / 3600000)) % 40) : 0;
+    const outageAt = now() - 2 * 86400000 - 5 * 3600000;
+    const outage = t >= outageAt && t < outageAt + 9 * 60000;
+    const latency = outage ? 0 : 12 + evening + noise + spike + nhWave(t, 86400000 * 7) * 1.5;
+    const jitter = outage ? 0 : 0.6 + Math.abs(noise) * 0.5 + spike / 6;
+    const loss = outage ? 100 : spike ? 2 + (strHashDemo(Math.floor(t / 60000)) % 4) : 0;
+    const reachable = outage ? 0 : nhTargets.length;
+    return { latency, jitter, loss, reachable };
+  }
+  function nhPoint(t, bucketMs) {
+    if (bucketMs <= 120000) {
+      const v = nhSample(t);
+      return { time: new Date(t).toISOString(), avg_latency_ms: v.latency, min_latency_ms: v.latency, max_latency_ms: v.latency, avg_jitter_ms: v.jitter, avg_loss_pct: v.loss, reachable_targets: v.reachable };
+    }
+    // roll up a bucket from a handful of samples inside it
+    const n = 12, acc = { latency: 0, jitter: 0, loss: 0, reachable: 0, lo: Infinity, hi: 0, k: 0 };
+    for (let i = 0; i < n; i++) {
+      const v = nhSample(t + (i * bucketMs) / n);
+      acc.latency += v.latency; acc.jitter += v.jitter; acc.loss += v.loss; acc.reachable += v.reachable; acc.k++;
+      if (v.latency > 0) { acc.lo = Math.min(acc.lo, v.latency); acc.hi = Math.max(acc.hi, v.latency); }
+    }
+    return { time: new Date(t).toISOString(), avg_latency_ms: acc.latency / acc.k, min_latency_ms: acc.lo === Infinity ? 0 : acc.lo, max_latency_ms: acc.hi, avg_jitter_ms: acc.jitter / acc.k, avg_loss_pct: acc.loss / acc.k, reachable_targets: acc.reachable / acc.k };
+  }
+  function nhCurrent(t) {
+    const v = nhSample(t);
+    return { time: new Date(t).toISOString(), latency_ms: v.latency, jitter_ms: v.jitter, loss_pct: v.loss, reachable_targets: v.reachable, total_targets: nhTargets.length };
+  }
+  let nhLastProbe = Math.floor(now() / 120000) * 120000;
+  let bufferbloatHist = [4, 3, 2, 1].map((d, i) => {
+    const inc = [9, 14, 41, 11][i];
+    return { time: new Date(now() - d * 86400000 - (i * 7 + 3) * 3600000).toISOString(), idle_ms: 12, loaded_ms: 12 + inc, increase_ms: inc, grade: inc < 30 ? 'A' : inc < 60 ? 'B' : 'C' };
+  });
+
   async function handle(method, path, url, body) {
     expire();
     const q = url.searchParams;
@@ -491,6 +536,36 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       if (!pass || pass === 'wrong') throw err(401, 'wrong passphrase');
       hist.locked = false;
       return { ok: true, locked: false };
+    }
+    // ---- network health
+    if (path === '/api/nethealth' && method === 'GET') {
+      return { enabled: true, bufferbloat_enabled: false, degraded: false, current: nhCurrent(nhLastProbe), targets: [...nhTargets] };
+    }
+    if (path === '/api/nethealth/series' && method === 'GET') {
+      const to = Date.parse(q.get('to')) || now();
+      const from = Date.parse(q.get('from')) || to - 86400000;
+      const span = to - from;
+      const bucket = q.get('bucket') || (span <= 3 * 86400000 ? 'raw' : span <= 60 * 86400000 ? 'hour' : 'day');
+      const step = bucket === 'raw' ? 120000 : bucket === 'hour' ? 3600000 : 86400000;
+      const points = [];
+      for (let t = Math.ceil(from / step) * step; t <= to && points.length < 5000; t += step) points.push(nhPoint(t, step));
+      return { bucket, points };
+    }
+    if (path === '/api/nethealth/bufferbloat' && method === 'GET') {
+      const from = Date.parse(q.get('from')) || 0, to = Date.parse(q.get('to')) || Infinity;
+      return { points: bufferbloatHist.filter((b) => { const t = Date.parse(b.time); return t >= from && t <= to; }) };
+    }
+    if (path === '/api/nethealth/probe' && method === 'POST') {
+      await delay(400);
+      nhLastProbe = now();
+      return nhCurrent(nhLastProbe);
+    }
+    if (path === '/api/nethealth/bufferbloat/run' && method === 'POST') {
+      await delay(900);
+      const inc = 8 + (strHashDemo(String(now())) % 18);
+      const rec = { time: new Date(now()).toISOString(), idle_ms: 12, loaded_ms: 12 + inc, increase_ms: inc, grade: inc < 30 ? 'A' : 'B' };
+      bufferbloatHist = [...bufferbloatHist, rec];
+      return rec;
     }
     if (path === '/api/demo/history-lock' && method === 'POST') { hist.locked = !!body.locked; return { ...hist }; }
     return undefined;
