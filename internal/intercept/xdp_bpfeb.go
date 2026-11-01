@@ -21,10 +21,17 @@ type xdpDevCounters struct {
 	Packets6    uint64
 	Bytes6      uint64
 	LastSeenNs6 uint64
+	Duplicates  uint64
 	RxEst       uint64
 	RxEst6      uint64
 	Families    uint8
 	Pad         [7]uint8
+}
+
+type xdpDupEntry struct {
+	_           structs.HostLayout
+	Fingerprint uint64
+	Ts          uint64
 }
 
 type xdpFlowKey struct {
@@ -40,6 +47,16 @@ type xdpFlowState struct {
 	_   structs.HostLayout
 	Ack uint32
 	Pad uint32
+}
+
+type xdpFrameSample struct {
+	_     structs.HostLayout
+	Seq   uint64
+	Ts    uint64
+	Len   uint32
+	Pad   uint32
+	Bytes [60]uint8
+	Pad2  [4]uint8
 }
 
 type xdpIn6Key struct {
@@ -60,24 +77,35 @@ type xdpRelayConfig struct {
 }
 
 type xdpRelayStats struct {
-	_             structs.HostLayout
-	Examined      uint64
-	PassedLocal   uint64
-	RelayedFrames uint64
-	RelayedBytes  uint64
+	_              structs.HostLayout
+	Examined       uint64
+	PassedLocal    uint64
+	RelayedFrames  uint64
+	RelayedBytes   uint64
+	OursReturning  uint64
+	ToGateway      uint64
+	Duplicates     uint64
+	EchoUnder10us  uint64
+	EchoUnder100us uint64
+	EchoUnder1ms   uint64
+	EchoUnder10ms  uint64
+	EchoOver10ms   uint64
 }
 
 // Names of all BPF objects in the ELF.
 //
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
-	xdpMapConfig    = "config"
-	xdpMapFlows     = "flows"
-	xdpMapLocalIps  = "local_ips"
-	xdpMapLocalIps6 = "local_ips6"
-	xdpMapStats     = "stats"
-	xdpMapSteered   = "steered"
-	xdpProgXdpRelay = "xdp_relay"
+	xdpMapConfig       = "config"
+	xdpMapFlows        = "flows"
+	xdpMapLocalIps     = "local_ips"
+	xdpMapLocalIps6    = "local_ips6"
+	xdpMapRecent       = "recent"
+	xdpMapSampleCursor = "sample_cursor"
+	xdpMapSamples      = "samples"
+	xdpMapStats        = "stats"
+	xdpMapSteered      = "steered"
+	xdpProgXdpRelay    = "xdp_relay"
 )
 
 // loadXdp returns the embedded CollectionSpec for xdp.
@@ -129,12 +157,15 @@ type xdpProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type xdpMapSpecs struct {
-	Config    *ebpf.MapSpec `ebpf:"config"`
-	Flows     *ebpf.MapSpec `ebpf:"flows"`
-	LocalIps  *ebpf.MapSpec `ebpf:"local_ips"`
-	LocalIps6 *ebpf.MapSpec `ebpf:"local_ips6"`
-	Stats     *ebpf.MapSpec `ebpf:"stats"`
-	Steered   *ebpf.MapSpec `ebpf:"steered"`
+	Config       *ebpf.MapSpec `ebpf:"config"`
+	Flows        *ebpf.MapSpec `ebpf:"flows"`
+	LocalIps     *ebpf.MapSpec `ebpf:"local_ips"`
+	LocalIps6    *ebpf.MapSpec `ebpf:"local_ips6"`
+	Recent       *ebpf.MapSpec `ebpf:"recent"`
+	SampleCursor *ebpf.MapSpec `ebpf:"sample_cursor"`
+	Samples      *ebpf.MapSpec `ebpf:"samples"`
+	Stats        *ebpf.MapSpec `ebpf:"stats"`
+	Steered      *ebpf.MapSpec `ebpf:"steered"`
 }
 
 // xdpVariableSpecs contains global variables before they are loaded into the kernel.
@@ -163,12 +194,15 @@ func (o *xdpObjects) Close() error {
 //
 // It can be passed to loadXdpObjects or ebpf.CollectionSpec.LoadAndAssign.
 type xdpMaps struct {
-	Config    *ebpf.Map `ebpf:"config"`
-	Flows     *ebpf.Map `ebpf:"flows"`
-	LocalIps  *ebpf.Map `ebpf:"local_ips"`
-	LocalIps6 *ebpf.Map `ebpf:"local_ips6"`
-	Stats     *ebpf.Map `ebpf:"stats"`
-	Steered   *ebpf.Map `ebpf:"steered"`
+	Config       *ebpf.Map `ebpf:"config"`
+	Flows        *ebpf.Map `ebpf:"flows"`
+	LocalIps     *ebpf.Map `ebpf:"local_ips"`
+	LocalIps6    *ebpf.Map `ebpf:"local_ips6"`
+	Recent       *ebpf.Map `ebpf:"recent"`
+	SampleCursor *ebpf.Map `ebpf:"sample_cursor"`
+	Samples      *ebpf.Map `ebpf:"samples"`
+	Stats        *ebpf.Map `ebpf:"stats"`
+	Steered      *ebpf.Map `ebpf:"steered"`
 }
 
 func (m *xdpMaps) Close() error {
@@ -177,6 +211,9 @@ func (m *xdpMaps) Close() error {
 		m.Flows,
 		m.LocalIps,
 		m.LocalIps6,
+		m.Recent,
+		m.SampleCursor,
+		m.Samples,
 		m.Stats,
 		m.Steered,
 	)

@@ -81,6 +81,51 @@ export function chartPath(points, { width = 600, height = 120, pad = 6, min, max
   return { d, min: lo, max: hi };
 }
 
+// areaPath is chartPath plus the closed "fill under the line" path an area
+// chart needs: the same line, continued down to the bottom edge at both
+// ends. Same inputs and the same min/max widening rules as chartPath, so
+// the two always agree on scale; an empty series gives two empty paths.
+export function areaPath(points, opts = {}) {
+  const { d, min, max } = chartPath(points, opts);
+  if (!d) return { line: '', area: '', min, max };
+  const { width = 600, height = 120, pad = 6 } = opts;
+  const xs = [...d.matchAll(/[ML]([0-9.]+),/g)].map((m) => m[1]);
+  const bottom = (height - pad).toFixed(1);
+  const area = d + ' L' + xs[xs.length - 1] + ',' + bottom + ' L' + xs[0] + ',' + bottom + ' Z';
+  return { line: d, area, min, max };
+}
+
+// axisMax picks the top of a chart's scale for a metric that should be read
+// against a floor rather than its own maximum: packet loss is the case —
+// a 0–100% axis hides a 1% blip entirely, while a pure auto-scale makes a
+// 0.1% blip look like an outage. The data's own max wins once it is above
+// the floor (with a little headroom so the peak is not drawn on the edge).
+export function axisMax(points, floor) {
+  const hi = Math.max(0, ...(points || []).map((p) => Number(p.v) || 0));
+  return hi > floor ? hi * 1.15 : floor;
+}
+
+// statusKind classifies the current sample for the header pill: 'none'
+// (no probe yet), 'bad' (total outage), 'warn' (degraded), 'good'.
+export function statusKind(sample, degraded) {
+  if (!sample) return 'none';
+  if (sample.reachable_targets === 0) return 'bad';
+  if (degraded) return 'warn';
+  return 'good';
+}
+
+export function statusPillLabel(kind) {
+  return { none: 'No probe yet', bad: 'Outage', warn: 'Degraded', good: 'Healthy' }[kind] || 'Unknown';
+}
+
+// seriesSpan returns the first and last timestamps (ms) of a point series,
+// or null when there are fewer than two points to span.
+export function seriesSpan(points) {
+  if (!points || points.length < 2) return null;
+  const a = Date.parse(points[0].time), b = Date.parse(points[points.length - 1].time);
+  return Number.isFinite(a) && Number.isFinite(b) ? { from: a, to: b } : null;
+}
+
 // seriesToPoints maps the server's /api/nethealth/series points (each with
 // an ISO time string and the metric fields) into {time, v} pairs for
 // chartPath, picking one metric by key ('avg_latency_ms', 'avg_jitter_ms',

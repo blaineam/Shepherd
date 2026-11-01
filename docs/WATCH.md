@@ -1,11 +1,38 @@
 # Watch mode
 
+> **Status, 2026-11-01 (evening): reinstated as opt-in, with the loop brake rewritten.** Earlier
+> the same day Watch mode was retired on three measurements. Two of them stand and one does not:
+>
+> - **Outbound-only by construction.** Still true. Downloads are now *estimated* from each
+>   device's own TCP acknowledgements ([TRAFFIC.md](TRAFFIC.md)), which never over-counts and is
+>   blind to QUIC, other UDP and tunnels.
+> - **"Steered and healthy" could mean almost nothing was steered.** Still true, and the likely
+>   reason is below: a macOS host keeps the gateway MAC it already has for connections that are
+>   already open, so steering catches new connections and misses old ones.
+> - **"It loops on real hardware."** The storms the loop brake stopped were **uploads, not loops.**
+>   The evidence for a loop was sampled frames sharing one IP identification field and one TTL.
+>   macOS, iOS and Linux (for an unconnected socket) send every don't-fragment packet with
+>   identification **0**, so a Mac uploading to iCloud over QUIC reads as "one frame going round" to
+>   a verdict that counts identification fields. Reread by the whole frame -- identification, length
+>   and the transport header -- those same samples are thousands of distinct packets, and the live
+>   digest on the maintainer's NAS now prints exactly that for that Mac: `id 0 on every one: a
+>   don't-fragment sender, not a loop`. The 05:00 trip that day was a 270 Mbit/s QUIC flow to Apple
+>   at 1,392 bytes a packet from a MacBook, overnight. The duplicate brake "catching 3% of a
+>   runaway" was the brake correctly finding almost nothing to catch.
+>
+> What *is* real is a slow echo: the segment hands a steered device's frame back to Shepherd a
+> second time, tens of microseconds to a millisecond later, and both relays now drop that copy. The
+> loop brake no longer stops steering on mirrored counters alone; it needs frames actually coming
+> round. The default stays **off**; the maintainer's NAS runs it, and [GATEWAY.md](GATEWAY.md)
+> remains the path to bandwidth in both directions.
+
+
 Watch mode is the second of Shepherd's three profiles (see [DESIGN.md](DESIGN.md)). Guard mode
 filters DNS: it catches the overwhelming majority of what devices do, costs the network nothing,
 and is always on. Watch mode adds the thing DNS filtering can never do by definition — seeing
 what a device actually connects to, even when it never asks Shepherd to look up a name.
 
-**It is on by default**, on any host that can run it, and it steers every eligible device. This
+**It is off by default** and, when enabled, steers every eligible device. This
 page is the operator's view: what it does, what it never touches, how to stop it, and what it
 costs. [INTERCEPT.md](INTERCEPT.md) is the engineering document underneath it, and
 [IPV6-WATCH.md](IPV6-WATCH.md) is the IPv6 design.
@@ -117,6 +144,15 @@ that, steering capped a device at roughly 300 Mbps; the cause was found and fixe
 the evidence points at"). The numbers above are what the fix produced, on the first try, on real
 hardware.
 
+## Which interface is used
+
+`watch.interface` names it outright. Left empty, the engine starts from the default route's
+interface and then **prefers Ethernet**: if the default route is through a wireless interface and a
+wired one is up on the gateway's network, the wired one is used and the log says so. Wi-Fi is only
+ever a fallback, because a relay on Wi-Fi shares the air with the devices whose frames it carries
+and every relayed frame costs airtime twice. Once chosen, the interface is kept for the life of the
+session even if the default route moves (see below).
+
 ## Which relay is used
 
 `watch.mode` picks it, and `auto` (the default) tries them in this order:
@@ -208,6 +244,8 @@ mode = "auto"            # auto | xdp | userspace | off
 workers = 0              # userspace relay workers; 0 = automatic
 ipv6 = false             # IPv6 steering; see above
 steer_infrastructure = false
+allow_routing_host = true     # run on a dual-homed forwarding host too; see below
+diagnostics = false           # log what the relay is carrying; see below
 active_window_seconds = 900
 health_interval_seconds = 0   # 0 keeps the engine's defaults (3 / 15 / 30 s)
 idle_grace_seconds = 0
@@ -247,39 +285,299 @@ that means `interface = "eth0"`.
 > and says so in the log: refusing costs visibility, steering the host costs the
 > network.
 
-## Two things that stop it by themselves
+## Three things that stop it by themselves
 
-**Shepherd refuses to relay on a host that routes the relay's own segment.**
-One-sided ARP steering assumes Shepherd is a passive Layer 2 relay: a device hands it a frame, it
-rewrites both MAC addresses and puts it back on the wire. A host that also *routes* that subnet
-breaks the assumption, because the kernel has its own view of where the frame should go, and with
-two link routes for one subnet that can be straight back onto the same segment. So if IPv4
-forwarding is on **and** another of this host's interfaces has an address inside the relay
-interface's own prefix, Watch mode reports itself unavailable with that reason and attaches
-nothing.
+**The duplicate brake, which is what actually stops a loop.** A relay loop is one frame arriving
+and being relayed over and over. Every storm on real hardware looked the same once there was a way
+to look at all: a handful of frames, one IP identification field each, a TTL that never
+decremented, the device's own source MAC and Shepherd's destination MAC, going round thousands of
+times a second.
 
-This is a precaution rather than a proven mechanism, and it is worth being plain about why it
-exists. The maintainer's NAS has exactly that shape: forwarding on, `eth0` and `wlan0` both on the
-same `/24`, and Tailscale advertising that subnet while acting as an exit node. It is the only host
-on which the relay has ever ended up carrying its own output back to itself, and the second time it
-did so nothing else explained it. Shepherd therefore declines the combination instead of relaying
-into it.
+So the relay fingerprints every frame it relays -- the identification field, the lengths, both
+addresses, the protocol and the first sixteen bytes of the transport header -- and **drops** a
+frame it has already relayed inside 100 ms. Dropped rather than passed up: IPv4 forwarding is on
+on many hosts, and passing it would hand the kernel a frame it would route straight back out of
+the interface it came from.
 
-**The loop brake.** Whatever the cause, a relay carrying its own output is caught in three seconds
-rather than by a person noticing. Every second the engine compares the relay's own throughput
-against the interface's kernel counters and looks for the signature that identified both incidents
-by hand: the interface **receives and transmits the same amount**, and the relay accounts for
-**almost all of it**, at a rate a home network does not reach legitimately. Three consecutive
-seconds of that and it panic-stops, unsteering every device with its corrective reply, and latches
-like the kill switch so a restart does not resume the loop. It logs what it measured and the
-devices that were relaying most, because that per-device list is the evidence the second incident
-lacked.
+The window is placed between two real numbers. A loop's round trip is microseconds. The shortest
+TCP retransmission timeout Linux will use is 200 ms. So a frame going round is caught the second
+time it is seen, and a genuine retransmission is never suppressed. A frame that really is a
+network-level duplicate is dropped, which is what should happen to it, because the first copy
+already reached the gateway.
 
-Each condition alone has innocent explanations, which is why all three are required. Genuinely busy
-is lopsided: measured on the live host while healthy, the interface received 600 Mbit/s while
-transmitting 800 to 1000, with the relay well under half its packets. Looping, the same interface
-received and transmitted within 0.03% of each other at about 10 Gbit/s and over a million packets a
-second, with the relay reporting essentially all of it.
+It covers IPv4 and IPv6 alike. IPv6 has no identification field, so its fingerprint leans on the
+traffic class and flow label, the payload length, the next header, both 16-byte addresses and the
+same sixteen bytes of transport header. IPv6 steering is off by default and every loop seen was
+IPv4, but a loop there would be just as severe, and a safety stop covering one family is worse
+than no claim at all.
+
+**The brake also runs in the userspace relay** (`intercept.Dedup`), with the same fingerprint and
+window, so the duplicate counts mean the same thing under either relay and a loop is contained
+whichever is in effect.
+
+**"It does not contain a runaway" was a misreading, and it is worth keeping the record straight.**
+Two loop-brake trips recorded the brake suppressing 2 to 3% of what the relay carried while the
+sampled frames showed "one flow, one IP identification field, one TTL". That was read as a single
+frame going round that the brake somehow could not see. It was not. The identification field was
+**0** on every packet, which is how macOS and iOS send every don't-fragment packet and how Linux
+sends an unconnected socket's, and the transport headers -- which the sampler kept but the verdict
+did not read -- were all different. Those were distinct packets of one upload: 87,516 and 347,963
+frames of a Mac talking to Apple at 1,200 to 1,400 bytes each. The brake caught the 2 to 3% that
+were genuine copies, which is what it should have done, and the rest were never duplicates. The
+verdict now compares the whole frame, says so when a flow's identification is 0 throughout, and the
+loop brake no longer trips on counters alone (below).
+
+`GET /api/watch` reports the count as `duplicates_suppressed`, overall and per device, and the
+diagnostics digest names the devices whose frames came back. Per device matters: the overall
+figure cannot say whether the frames belong to one device or to all of them, which is exactly what
+is still unknown about the cause. A healthy relay reports zero for as
+long as it runs. On the maintainer's NAS it runs at about 80% of relayed frames, which says
+plainly that whatever re-delivers those frames is still doing it and is now contained rather than
+catastrophic.
+
+**The relay self-test, before a single device is steered.** On attach Shepherd relays one frame of
+its own and checks what happens to it: a 60-byte UDP datagram inside 198.51.100.0/24 (TEST-NET-2,
+which nothing answers) to the discard port, from a locally administered MAC no real device can
+hold.
+
+The program only ever sees frames the interface *receives*, and a frame this host transmits is not
+one of them. So a healthy relay relays the probe **zero** times: it goes out, the switch declines
+to send it back out the port it arrived on, and that is the end of it. That much was measured here
+before it was relied on. A probe the program *does* see is a frame that came back and was relayed
+again, which is a loop, and the relay is then refused with nothing steered. A relay found to loop
+is recorded per interface in `watch.json` (`looping_relays`) and never attached there again, the
+way a flapping driver already is: running the test costs a short burst of looping frames and the
+answer does not change.
+
+**The loop brake**, the backstop for anything the first two do not catch. Every second the engine
+compares the interface's kernel counters and looks for mirrored traffic -- the interface receiving
+and transmitting the same amount -- at a rate a home network does not reach. Three consecutive
+seconds of that used to be the whole test, and it is why an overnight iCloud upload was stopped:
+**a relay carrying a device's upload is mirrored by definition**, one frame received for one frame
+transmitted, and no counter can tell that from a loop.
+
+So a trip now also needs evidence that frames are coming round, judged over the mirrored seconds:
+
+| Signal | Reading that trips it |
+|---|---|
+| The duplicate brake | refused at least 25% of what the relay saw. A loop with the brake working gives about half; the measured uploads gave 2 to 3% |
+| The return-path counters | any of Shepherd's own relayed frames arriving back (its source MAC, or addressed to the gateway's) |
+| The sampled frames | the same frame -- identification, length and transport header -- making up at least half of a flow's samples |
+| An absolute ceiling | mirrored at 300,000 packets a second or more, which no home device sends and the first line-rate incident exceeded three times over |
+
+Mirrored counters with none of those is a device sending through the relay, and the engine says so
+in the log, at most once an hour, with the sampled-frame digest, and carries on. A trip panic-stops,
+unsteering every device with its corrective reply, latches like the kill switch so a restart does
+not resume it, logs what it measured, and writes the same thing to `watch.json` as `last_loop_stop`,
+reported on `GET /api/watch`: the interface counts, the relay's share, how many frames the duplicate
+brake refused during the mirrored seconds and whether any of Shepherd's own came back, the busiest
+relaying devices and the sampled flows.
+
+Persisting it is not tidiness. Those lines *are* the evidence the first unexplained loop lacked, and
+twice a container rebuild discarded them. The kill switch survived a restart; its reason should too.
+
+## Seeing what the relay is carrying
+
+A frame the in-kernel relay bounces back out with `XDP_TX` never reaches an `AF_PACKET` socket, so
+no packet capture on the host can show it. That is why three line-rate storms were diagnosed by
+argument rather than measurement, and why two of those arguments were wrong.
+
+The relay now samples every 256th frame it relays -- the first 60 bytes, as the frame arrived and
+before either MAC was rewritten -- into a small ring the engine drains once a second. Set
+`watch.diagnostics` and it logs a digest every few seconds while traffic is moving; the loop brake
+logs one whenever it trips, whatever the setting. Addresses, ports, TTL and identification fields
+only, never payload:
+
+```
+watch: diagnostics at 69878 relayed pkt/s: 128 sampled frames in 4 flows (0 not IPv4)
+watch: ...   78  02:00:5e:00:00:37 -> 02:00:5e:00:00:20  udp 192.0.2.37->203.0.113.9 :59418->:443
+             ttl 64  1 ids, distinct packets (id 0 on every one: a don't-fragment sender, not a loop)  avg 1196 B
+```
+
+The verdict on each line is the point of it, and it is judged by the **whole frame** -- the
+identification field, the total length and the first sixteen bytes of the transport header -- never
+by the identification field alone, because macOS, iOS and Linux's unconnected sockets put 0 there
+on every don't-fragment packet. The same frame over and over with a falling TTL is circulating
+through a router; the same frame with one TTL is a Layer 2 loop; distinct frames are traffic, and a
+flow whose identification is 0 throughout is named as such so nobody rereads it as a loop. The engine also reports two counters for Shepherd's own
+output coming back to it -- frames with its source MAC, and frames addressed to the gateway's.
+
+## What was ruled out, and how
+
+Worth keeping, because the same wrong answers are easy to reach twice. Each of these was excluded
+by counting it, not by reasoning about it.
+
+| Candidate | Reading | Verdict |
+|---|---|---|
+| Steering one of this host's own interfaces | `wlan0` steered, relay fed itself | **confirmed and fixed** (incident 1) |
+| A polluted registry record that had merged the gateway in | steering one phone by explicit MAC loops too | excluded |
+| Kernel IPv4 forwarding | `ForwDatagrams` moved by **1** during a 24,500 packet/s storm | excluded |
+| Same-segment hairpin routing | a rule counting `in eth0, out eth0` dropped **0** | excluded |
+| The relay's own output returning | both return-path counters read **0** throughout | excluded |
+| Shepherd's transmitted frames coming back | a probe frame addressed to `eth0`'s own MAC never returned | excluded |
+| Local duplication before the hook | `examined` was **0.972** of the interface's `rx_packets` over 30 s | excluded |
+
+What is left, and is measured rather than inferred: the duplicate frames **genuinely arrive over
+the wire**, bearing the device's original source MAC, Shepherd's destination MAC, one
+identification field and an undecremented TTL, and they only arrive while the relay is running.
+Something on the segment re-delivers a steered device's frames once the relay starts rewriting and
+retransmitting them. Which part of the network does that has not been identified, and identifying
+it needs a capture on the router rather than on this host.
+
+Per-device duplicate counts say more than that, and the first thing they did was refute the next
+guess. The device behind the worst storms *is* itself dual-homed on this segment -- a wired and a
+wireless interface, each with its own address on the same `/24`, each with its own default route to
+the same router, the steered one holding the gateway at Shepherd's MAC while the other holds the
+router's own:
+
+```
+eth0  192.0.2.86   gateway 192.0.2.1 at Shepherd's MAC    (steered)
+wlan0 192.0.2.122  gateway 192.0.2.1 at the router's MAC  (not steered)
+```
+
+That looked like the answer, and it is not. Measured with per-device counts on the live host:
+
+| Device | Relayed | Duplicates | Ratio |
+|---|---|---|---|
+| the dual-homed machine, steered on its wired interface | 18,361 | 16,196 | 0.88 |
+| a phone, single-homed, wireless | 692 | 419 | 0.61 |
+| a barely-active wired device | 7 | 0 | 0.00 |
+
+So the echo is not peculiar to the dual-homed machine, nor to wired or to wireless: a single-homed
+phone shows it too. What it does track is how much the device relays -- a device with a handful of
+frames shows none at all, and the ratio climbs with traffic. That makes it look like a property of
+the relay and the segment under load rather than of any device, which is the opposite of what the
+dual-homing suggested.
+
+That is the third explanation offered here and refuted by measurement, after the polluted registry
+record and kernel forwarding.
+
+## Where the echo comes from, measured
+
+The duplicate table already records when each frame first arrived, so the delay before its copy
+comes back costs nothing to measure -- and it is the discriminator every earlier attempt lacked.
+A frame duplicated inside this host, in the kernel or the driver or on the way to the hook, returns
+in **under ten microseconds**. One that reaches a wired switch and is sent back takes **tens to
+hundreds**. One carried back over a wireless hop or a mesh backhaul takes **milliseconds**.
+
+Measured on the live host over seven minutes of ordinary traffic:
+
+```
+<10us: 9    <100us: 17,093    <1ms: 4,229    <10ms: 6    >10ms: 0
+```
+
+21,331 echoed frames. **Nine of them -- 0.04% -- returned fast enough to have stayed inside the
+machine.** Eighty per cent came back in tens of microseconds and the rest within a millisecond,
+which is a wired round trip and nothing else. Local duplication is not merely unsupported here, it
+is excluded at four hundredths of a per cent.
+
+The frames leave the interface and come back off the wire, which is what `examined`
+being 0.972 of `rx_packets` already implied and what both return-path counters reading zero
+confirms from the other side: the copy that returns is the device's **original** frame, not
+Shepherd's rewritten one. The segment is handing a steered device's frames to Shepherd twice.
+
+This is a property of the router, not of Shepherd, and it is the risk
+[DESIGN.md](DESIGN.md#watch-interception-methods) wrote down before any of this was built:
+
+> Firewalla documents ARP compatibility problems with some mesh routers and does not list eero 7,
+> so this must be tested per router before relying on it.
+
+That test has now been run, on an eero, and the answer is that one-sided ARP steering can be
+**contained** here -- the duplicate brake does that, and the relay carries real traffic at full
+speed -- but it cannot be made clean. Anyone bringing Watch mode to a new router should read the
+echo histogram before trusting it, and anyone who wants both directions of a device's traffic
+wants Gateway mode instead (DESIGN.md), where a router sees both by construction.
+
+That is why the refusal below is kept as the default, and why it is only a default.
+
+## "Steered and healthy" can mean almost none of a device's traffic
+
+**The likely reason, added 2026-11-01 evening:** macOS caches the gateway's link-layer address per
+route and per connection when a connection is set up, and does not revisit it for that connection
+when the neighbour entry later changes. A steered Mac therefore sends every connection it opened
+*before* steering to the real router's MAC for as long as that connection lives, and only new
+connections to Shepherd. A 100 MB transfer on a long-lived connection is exactly the traffic that
+bypasses the relay, and the background chatter that was relayed is the new, short connections. It
+also means a device's relayed share grows the longer it has been steered, which matches the live
+host's readings. Unverified by capture on the device; stated as the explanation that fits.
+
+
+The sharpest thing measured on this network, and it limits what Watch mode's numbers are worth.
+
+A device the portal reported as **steered, healthy, with tens of thousands of relayed frames** was
+given a 100 MB download over the very interface being steered. Per-interface counters on the device
+confirm the traffic went that way: 115 MB in and 26 MB out on the steered interface, under 12 KB on
+the other. Measured on Shepherd's side over the same download:
+
+| | |
+|---|---|
+| frames the relay program examined | +20,010 |
+| frames it relayed | **+0** |
+| the interface's own `rx_packets` | +18,454 |
+
+The relay saw none of it. The interface received only its ordinary background, which `examined`
+matches almost exactly, so those hundreds of thousands of frames **never reached this host**: the
+device sent them to the real router despite its own neighbour table showing the gateway at
+Shepherd's MAC on that interface.
+
+Two consequences, and the second is the one to be careful about.
+
+**A device's relayed byte count can be an arbitrary fraction of its traffic.** Not merely
+outbound-only and understated, which is documented elsewhere here, but unrepresentative: the tens
+of thousands of frames this device had relayed were background chatter, while its bulk traffic went
+straight past. A number like that is worse than no number, because it looks like a measurement.
+
+**"Healthy" means "frames were relayed for this device", which is not the same as "this device is
+steered".** The health loop exists to catch steering that never took, and it answers correctly by
+its own definition: traffic did move. It cannot distinguish a device whose traffic flows through the
+relay from one whose trickle does while the rest bypasses it. Anyone building on these counters
+should know that, and anyone wanting a device's real traffic volume wants Gateway mode, where a
+router sees every packet by construction.
+
+## One-sided steering can reach an interface it is not steering
+
+Observed on the maintainer's network, and worth knowing before trusting a per-device Watch switch
+on a multi-homed host.
+
+Shepherd's claim is a **unicast** ARP reply, sent only to the steered device's own MAC, which is
+what makes one-sided steering one-sided. On a machine with two interfaces on the same segment, the
+operating system may still apply the answer to both. Measured on a Mac with a steered wired
+interface and an unsteered wireless one, both on one `/24`:
+
+```
+before   192.0.2.1 at Shepherd's MAC    on the wired interface    (steered)
+         192.0.2.1 at the router's MAC  on the wireless interface (not steered)
+
+later    192.0.2.1 at Shepherd's MAC    on the wired interface
+         192.0.2.1 at Shepherd's MAC    on the wireless interface (never steered)
+```
+
+Shepherd never addressed the wireless interface. The host applied the mapping to it anyway, so an
+interface the owner did not choose to steer began sending its traffic to Shepherd's MAC. The relay
+passes those frames through untouched, because rule 3 only relays frames from a MAC that is
+actually steered -- so nothing is relayed that should not be -- but the frames do arrive, and on a
+host with IPv4 forwarding on they then meet the kernel's routing table rather than the relay.
+
+The practical consequence: **a per-device Watch switch is not a guarantee about a multi-homed
+device.** Turning Watch off for one of its interfaces does not stop the other from being told the
+same thing by its own operating system. That is not something Shepherd can prevent with a unicast
+reply, since it never sent anything to the second interface in the first place.
+
+## A dual-homed forwarding host runs by default
+
+Shepherd used to refuse to relay when IPv4 forwarding was on **and** another of this host's
+interfaces had an address inside the relay interface's own prefix: the maintainer's NAS, with
+forwarding on for Tailscale and `eth0` and `wlan0` both on one `/24`. The refusal rested on
+correlation alone, and the measurements above took the correlation apart: the kernel forwarded one
+datagram during a 24,500-packet-a-second storm, a single-homed phone echoed just as the dual-homed
+Mac did, and the storms themselves turned out to be uploads. What the shape actually risks -- the
+segment handing a frame back -- is what the duplicate brake drops, in both relays.
+
+So since 2026-11-01 `watch.allow_routing_host` defaults to **true**: the engine notes the shape in
+the log and steers. Set it to `false` to refuse as before. Clearing `net.ipv4.ip_forward` would not
+help either, and would break things: on that host forwarding is bursty and load-bearing, a median of
+34 datagrams a second with a peak of 8,607, and every burst is the relay interface's inbound traffic
+routed to a container bridge for a service its owner runs on purpose.
 
 ## What it needs
 

@@ -13,7 +13,7 @@ much traffic reaches it:
 | Profile | How | Capabilities | Risk if Shepherd is down |
 |---|---|---|---|
 | **Guard** (default) | Router hands out Shepherd as DNS | DNS filtering, categories, allow/block lists, Tailscale-wide protection, remote access, uptime and speed tests | DNS fallback only; no path risk |
-| **Watch** (on by default once enabled, opt out per device) | Shepherd steers chosen devices' IPv4 traffic through itself (see methods below) | Flows, per-device bandwidth, geo-blocking, real pause, IDS on selected devices | Selected devices lose IPv4 internet until they recover |
+| **Watch** (opt-in, off by default — [WATCH.md](WATCH.md)) | Shepherd steers chosen devices' IPv4 traffic through itself by one-sided ARP | Outbound destinations, upload measured exactly, download estimated from TCP acknowledgements ([TRAFFIC.md](TRAFFIC.md)); one-sided steering cannot see the return path itself | Selected devices lose IPv4 internet until they recover |
 | **Gateway** (future, optional) | Shepherd as router | Everything | Total outage |
 
 Watch mode is IPv4 only. See [IPV6.md](IPV6.md).
@@ -23,8 +23,13 @@ Watch mode is IPv4 only. See [IPV6.md](IPV6.md).
 The maintainer has expressed interest in eventually running Shepherd as the actual router, on hardware
 with two 10 Gb NICs (one WAN-facing, one LAN-facing), with the current Wi-Fi router demoted to a
 bridge/access-point-only role for radios. This is a real target, not idle speculation, and is recorded
-here so it shapes decisions made along the way (for example, Watch mode's relay and health-check code
-should stay reusable by a future full-forwarding path rather than being Watch-mode-specific).
+here so it shapes decisions made along the way.
+
+That last point used to say Watch mode's relay and health-check code should stay reusable by a
+future full-forwarding path. **It should not, and the design in [GATEWAY.md](GATEWAY.md) deliberately
+does not inherit it**: Gateway mode puts no Shepherd code on the per-packet path at all, because the
+kernel already forwards, translates and accounts at line rate. The relay was a Watch-mode mechanism
+and retires with it.
 
 What it would need beyond everything above:
 - **Full L3 forwarding and NAT** for every device, not just steered ones — a different order of
@@ -41,6 +46,13 @@ What it would need beyond everything above:
 This is explicitly **not scheduled**: it is a large undertaking that only makes sense once Watch mode
 has been proven reliable on real hardware, and it changes Shepherd's risk profile fundamentally (a
 router outage is a full outage, not "one device loses protection"). See the roadmap's research items.
+
+**There is now a design and a staged migration for it: [GATEWAY.md](GATEWAY.md).** The condition
+above has also been partly answered, in the negative: on the maintainer's own network one-sided ARP
+steering loops (the router returns relayed frames off the wire) and a device reported as steered and
+healthy had none of a 100 MB transfer relayed. So the argument for Gateway is no longer "everything,
+eventually" but that per-device bidirectional accounting cannot be had any other way, which
+GATEWAY.md shows by eliminating the cheaper placements one at a time.
 
 ### Watch interception methods
 

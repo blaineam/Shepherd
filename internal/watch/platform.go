@@ -37,6 +37,11 @@ type Link struct {
 	// counterpart of IPv4s for IPv6 steering
 	// (intercept.ControllerConfig.ShepherdIPs6).
 	IPv6s []netip.Addr
+	// Wireless is true for a Wi-Fi interface. Watch mode prefers a wired
+	// interface and uses Wi-Fi only when nothing wired reaches the
+	// gateway: a relay on Wi-Fi shares the air with the devices it
+	// relays and halves their throughput.
+	Wireless bool
 }
 
 // Neighbor is one (IPv4, MAC) entry of the host's neighbour table on the
@@ -60,6 +65,10 @@ type Platform interface {
 	DefaultRoute6() (Route6, error)
 	// Link describes the named interface.
 	Link(name string) (Link, error)
+	// Interfaces describes every interface that is up and has a MAC
+	// address, so the engine can prefer a wired one over the wireless
+	// one the default route may point at.
+	Interfaces() ([]Link, error)
 	// Driver names the kernel driver bound to iface ("atlantic", "igc",
 	// "e1000e"), which is what decides whether a native XDP attach is
 	// safe: see driversThatFlapOnNativeAttach. An empty name with no

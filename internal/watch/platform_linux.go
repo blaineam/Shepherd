@@ -62,7 +62,7 @@ func (RealPlatform) Link(name string) (Link, error) {
 	if err != nil {
 		return Link{}, fmt.Errorf("watch: interface %q: %w", name, err)
 	}
-	l := Link{Name: ifc.Name, Index: ifc.Index}
+	l := Link{Name: ifc.Name, Index: ifc.Index, Wireless: isWireless(ifc.Name)}
 	copy(l.MAC[:], ifc.HardwareAddr)
 	if l.MAC.IsZero() {
 		return Link{}, fmt.Errorf("watch: interface %q has no usable MAC address", name)
@@ -308,6 +308,41 @@ func (RealPlatform) InterfaceCounters(iface string) (Counters, error) {
 		*f.dst = v
 	}
 	return c, nil
+}
+
+// isWireless reports whether the kernel exposes iface as an 802.11 device:
+// either sysfs directory exists only for one.
+func isWireless(iface string) bool {
+	if validIfaceName(iface) != nil {
+		return false
+	}
+	for _, sub := range []string{"wireless", "phy80211"} {
+		if _, err := os.Stat(filepath.Join("/sys/class/net", iface, sub)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// Interfaces describes every interface that is up, not loopback and has a
+// MAC address.
+func (p RealPlatform) Interfaces() ([]Link, error) {
+	ifcs, err := net.Interfaces()
+	if err != nil {
+		return nil, fmt.Errorf("watch: list interfaces: %w", err)
+	}
+	var out []Link
+	for _, ifc := range ifcs {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 || len(ifc.HardwareAddr) == 0 {
+			continue
+		}
+		l, err := p.Link(ifc.Name)
+		if err != nil {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out, nil
 }
 
 // IPForwarding reads net.ipv4.ip_forward.

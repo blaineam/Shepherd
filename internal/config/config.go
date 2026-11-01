@@ -45,7 +45,12 @@ type Config struct {
 	Watch          Watch          `toml:"watch"`
 }
 
-// Watch controls Watch mode (docs/WATCH.md): one-sided ARP steering of each
+// Watch controls Watch mode (docs/WATCH.md), which is opt-in and off by
+// default: outbound-only by construction, with downloads estimated from TCP
+// acknowledgements (docs/TRAFFIC.md), and bandwidth in both directions
+// still needs Gateway mode (docs/GATEWAY.md).
+//
+// Watch mode: one-sided ARP steering of each
 // eligible device's outbound IPv4 traffic through Shepherd, relayed to the
 // real gateway in the kernel (XDP) or by a parallel userspace relay
 // (internal/intercept). Enabled defaults true, per the protect-by-default
@@ -95,6 +100,17 @@ type Watch struct {
 	HealthIntervalSeconds int `toml:"health_interval_seconds"`
 	IdleGraceSeconds      int `toml:"idle_grace_seconds"`
 	StartupGraceSeconds   int `toml:"startup_grace_seconds"`
+	// AllowRoutingHost lets Watch mode run on a host that forwards IPv4
+	// and has a second interface on the relay's own segment. On by
+	// default since 2026-11-01: that shape was measured not to be the
+	// loop's mechanism (a single-homed phone echoed too), the duplicate
+	// brake in both relays drops any copy the segment hands back, and the
+	// loop brake stays armed. Set false to refuse instead (docs/WATCH.md).
+	AllowRoutingHost bool `toml:"allow_routing_host"`
+	// Diagnostics logs a digest of what the in-kernel relay is carrying
+	// (addresses, ports, TTL and IP ID of sampled frames, never payload)
+	// every few seconds while traffic moves. Off by default.
+	Diagnostics bool `toml:"diagnostics"`
 }
 
 // ARP controls the passive ARP monitor (docs/ARP.md): a read-only listener
@@ -503,8 +519,13 @@ func Default() Config {
 		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600},
 		Nethealth:      Nethealth{Enabled: false, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
 		ReverseProxy:   ReverseProxy{Listen: ":8443"},
-		Watch:          Watch{Enabled: true, Mode: "auto", ActiveWindowSeconds: 900},
-		DataDir:        "data",
+		// Watch mode is opt-in. It was on, under the protect-by-default
+		// decision in docs/DESIGN.md, until 2026-11-01; it is kept off by
+		// default because it is outbound-only and a device's already-open
+		// connections can bypass it (docs/WATCH.md), not because it loops:
+		// the loops that retired it that morning were uploads misread.
+		Watch:   Watch{Enabled: false, Mode: "auto", ActiveWindowSeconds: 900, AllowRoutingHost: true},
+		DataDir: "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
 			Upstreams:            []string{"9.9.9.10", "149.112.112.10", "1.1.1.1"},

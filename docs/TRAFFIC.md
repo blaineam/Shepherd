@@ -107,6 +107,12 @@ Under the portal token.
 | `GET /api/traffic/series?from=&to=&bucket=&scope=` | `points` of `{time, up, down}` bytes per bucket over `[from, to]` (RFC 3339; default the last 24 hours). `bucket` is `minute`, `hour` or `day` (default from the span: minutes up to a day, hours to 60 days, days beyond). `scope` is `network` (default), `device:<id>` or `group:<id>`; an unknown one is 404 |
 | `GET /api/traffic/top?from=&to=&limit=` | The `network` total, `devices` and `groups` ranked by bytes moved in the range. A device no longer in the registry still appears by ID so the total is never silently short |
 
+## What it cannot see at all
+
+History accrues only while Watch mode is running and steering (docs/WATCH.md): nothing is measured
+for a device that is not steered, and a device with connections opened before it was steered can
+keep sending those to the real router, so its numbers are partial until those connections end.
+
 ## Configuration
 
 None yet. The retention windows and the save interval are constants

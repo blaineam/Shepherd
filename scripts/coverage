@@ -33,6 +33,7 @@ floor_excludes='^shepherd/cmd/intercept-trial/
 ^shepherd/internal/intercept/open_linux\.go
 ^shepherd/internal/intercept/capture_linux\.go
 ^shepherd/internal/intercept/xdp_linux\.go
+^shepherd/internal/intercept/xdp_probe_linux\.go
 ^shepherd/internal/watch/platform_linux\.go
 ^shepherd/internal/watch/gro_linux\.go'
 grep -vE "$(printf '%s' "$floor_excludes" | paste -sd'|' -)" coverage.out > coverage.floor.out

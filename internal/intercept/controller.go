@@ -99,7 +99,11 @@ type SteeredDevice struct {
 	// An estimate that only ever under-counts: QUIC, UDP and tunnels are
 	// invisible to it.
 	BytesReceivedEst uint64
-	LastVerified     time.Time // zero if no traffic has been relayed yet
+	// DuplicatesSuppressed is frames of this device's the userspace relay
+	// refused as copies of one it had just relayed. The XDP relay's own
+	// per-device count is read separately (Controller.DuplicatesByDevice).
+	DuplicatesSuppressed uint64
+	LastVerified         time.Time // zero if no traffic has been relayed yet
 }
 
 // ControllerStats is a cumulative, global packet-rate snapshot: every
@@ -125,6 +129,9 @@ type ControllerStats struct {
 	// volume (SteeredDevice.BytesReceivedEst), including devices since
 	// unsteered.
 	BytesReceivedEst uint64
+	// DuplicatesSuppressed is the userspace relay's duplicate-brake count;
+	// Controller.DuplicatesSuppressed adds the XDP relay's.
+	DuplicatesSuppressed uint64
 }
 
 // UnsteerRecord is one entry in the Controller's unsteer history: what
@@ -265,6 +272,9 @@ type famState struct {
 	// bytesInferredRx is the download estimate from the AckMeter, the one
 	// counter here that is not about frames the relay carried.
 	bytesInferredRx atomic.Uint64
+	// duplicates is frames the userspace relay's Dedup refused for this
+	// family; the XDP relay keeps its own count in the kernel.
+	duplicates atomic.Uint64
 	// lastVerifiedNanos is the wall-clock UnixNano of the last relayed
 	// frame; everVerified says whether there has been one at all, so a
 	// clock that happens to sit at the Unix epoch is not mistaken for
@@ -369,6 +379,7 @@ type Controller struct {
 	framesRelayed           atomic.Uint64
 	bytesRelayedTotal       atomic.Uint64
 	bytesInferredRxTotal    atomic.Uint64
+	duplicatesTotal         atomic.Uint64
 
 	// afterHealthCheck is a test-only hook, called at the end of every
 	// health-check tick the background loop runs, after the next tick has
@@ -414,6 +425,8 @@ func NewController(cfg ControllerConfig) (*Controller, error) {
 		OnRelayed:                c.recordRelayed,
 		OnRelayError:             c.recordRelayError,
 		Meter:                    &AckMeter{},
+		Dedup:                    &Dedup{},
+		OnDuplicate:              c.recordDuplicate,
 		OnInferredRx:             c.recordInferredRx,
 		OnFrameExamined:          c.recordFrameExamined,
 		OnFrameNotForShepherd:    c.recordFrameNotForShepherd,
@@ -462,6 +475,8 @@ func (c *Controller) NewRelay(sender Sender) *Relay {
 		OnRelayed:                c.recordRelayed,
 		OnRelayError:             c.recordRelayError,
 		Meter:                    &AckMeter{},
+		Dedup:                    &Dedup{},
+		OnDuplicate:              c.recordDuplicate,
 		OnInferredRx:             c.recordInferredRx,
 		OnFrameExamined:          c.recordFrameExamined,
 		OnFrameNotForShepherd:    c.recordFrameNotForShepherd,
@@ -601,6 +616,21 @@ func (c *Controller) recordInferredRxBatch(mac arp.MAC, fam Family, n uint64) {
 	}
 	if ds, ok := (*m)[mac]; ok {
 		ds.fs(fam).bytesInferredRx.Add(n)
+	}
+}
+
+// recordDuplicate is Relay.OnDuplicate: the userspace relay's duplicate
+// brake dropped a frame. Counted globally and against the device, the
+// same two figures the XDP relay keeps in the kernel; DuplicatesSuppressed
+// and DuplicatesByDevice add the two data planes together.
+func (c *Controller) recordDuplicate(mac arp.MAC, fam Family) {
+	c.duplicatesTotal.Add(1)
+	m := c.steered.Load()
+	if m == nil {
+		return
+	}
+	if ds, ok := (*m)[mac]; ok {
+		ds.fs(fam).duplicates.Add(1)
 	}
 }
 
@@ -1060,7 +1090,7 @@ func (c *Controller) Status() []SteeredDevice {
 	out := make([]SteeredDevice, 0, len(c.devices))
 	for mac, ds := range c.devices {
 		fam := ds.family()
-		var bytes, packets, rx uint64
+		var bytes, packets, rx, dups uint64
 		var last time.Time
 		healthy := true
 		for _, f := range []Family{SteerV4, SteerV6} {
@@ -1071,6 +1101,7 @@ func (c *Controller) Status() []SteeredDevice {
 			bytes += fs.bytesRelayed.Load()
 			packets += fs.packetsRelayed.Load()
 			rx += fs.bytesInferredRx.Load()
+			dups += fs.duplicates.Load()
 			if lv := fs.lastVerified(); lv.After(last) {
 				last = lv
 			}
@@ -1080,7 +1111,7 @@ func (c *Controller) Status() []SteeredDevice {
 		}
 		out = append(out, SteeredDevice{
 			MAC: mac, IP: ds.ip, Family: fam, Since: ds.since, Healthy: healthy,
-			BytesRelayed: bytes, PacketsRelayed: packets, BytesReceivedEst: rx, LastVerified: last,
+			BytesRelayed: bytes, PacketsRelayed: packets, BytesReceivedEst: rx, DuplicatesSuppressed: dups, LastVerified: last,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].MAC.String() < out[j].MAC.String() })
@@ -1098,6 +1129,7 @@ func (c *Controller) Stats() ControllerStats {
 		FramesRelayed:           c.framesRelayed.Load(),
 		BytesRelayed:            c.bytesRelayedTotal.Load(),
 		BytesReceivedEst:        c.bytesInferredRxTotal.Load(),
+		DuplicatesSuppressed:    c.duplicatesTotal.Load(),
 	}
 }
 

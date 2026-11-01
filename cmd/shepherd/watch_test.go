@@ -27,6 +27,7 @@ type refusingPlatform struct{ err error }
 func (p refusingPlatform) DefaultRoute() (string, netip.Addr, error) { return "", netip.Addr{}, p.err }
 func (p refusingPlatform) DefaultRoute6() (watch.Route6, error)      { return watch.Route6{}, p.err }
 func (p refusingPlatform) Link(string) (watch.Link, error)           { return watch.Link{}, p.err }
+func (p refusingPlatform) Interfaces() ([]watch.Link, error)         { return nil, p.err }
 func (p refusingPlatform) Driver(string) (string, error)             { return "", p.err }
 func (p refusingPlatform) IPForwarding() (bool, error)               { return false, p.err }
 func (p refusingPlatform) InterfaceCounters(string) (watch.Counters, error) {

@@ -157,6 +157,13 @@ type Relay struct {
 	Meter        *AckMeter
 	OnInferredRx func(mac arp.MAC, fam Family, n uint64)
 
+	// Dedup, when set, is the duplicate brake (see Dedup): a frame this
+	// relay already relayed inside the window is dropped rather than
+	// relayed again, which is what stops a relay loop sustaining itself.
+	// OnDuplicate is called for each frame dropped that way. Optional.
+	Dedup       *Dedup
+	OnDuplicate func(mac arp.MAC, fam Family)
+
 	// OnFrameExamined, when set, is called once for every frame passed to
 	// HandleFrame, before any filtering, with its wire length. It exists
 	// purely for packet-rate diagnostics (bytes and frames per second,
@@ -261,6 +268,13 @@ func (r *Relay) HandleFrame(raw []byte) (bool, error) {
 	if r.destinedForShepherd(raw, etherType) {
 		if r.OnFrameForShepherdItself != nil {
 			r.OnFrameForShepherdItself(len(raw))
+		}
+		return false, nil
+	}
+
+	if r.Dedup != nil && r.Dedup.Seen(raw, r.now()) {
+		if r.OnDuplicate != nil {
+			r.OnDuplicate(src, family)
 		}
 		return false, nil
 	}
