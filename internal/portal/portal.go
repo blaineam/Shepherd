@@ -98,6 +98,9 @@ type Deps struct {
 	// in-memory engine that nothing raises alarms through, so the API still
 	// works (and returns no alarms).
 	Alarms *alarms.Engine
+	// Push is Web Push's key and subscription store (docs/ALARMS.md). Nil
+	// means Web Push is off; /api/alarms/push says so.
+	Push PushService
 
 	// Accountability manages accountability-partner contacts and
 	// subscriptions (docs/ACCOUNTABILITY.md). Nil means the feature is not
@@ -613,6 +616,11 @@ func (s *Server) routes() {
 	h("GET /api/alarms/rules", s.listAlarmRules)
 	h("POST /api/alarms/rules", s.createAlarmRule)
 	h("DELETE /api/alarms/rules/{id}", s.deleteAlarmRule)
+	h("GET /api/alarms/push", s.getPush)
+	h("POST /api/alarms/push/subscribe", s.subscribePush)
+	h("POST /api/alarms/push/test", s.testPush)
+	h("PATCH /api/alarms/push/{id}", s.renamePush)
+	h("DELETE /api/alarms/push/{id}", s.removePush)
 	h("POST /api/alarms/bulk", s.alarmsBulk)
 	h("POST /api/alarms/undo", s.undoAlarms)
 	h("GET /api/alarms/{id}", s.getAlarm)

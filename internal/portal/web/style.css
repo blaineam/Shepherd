@@ -776,6 +776,10 @@ tr.a-error .h-dom { color: var(--amber); }
 .al-archtoggle { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-2); white-space: nowrap; cursor: pointer; }
 .al-empty { padding: 48px 16px; text-align: center; }
 .al-rules { display: flex; flex-direction: column; gap: 10px; }
+.al-push-line { margin: 0 0 12px; font-size: 14px; }
+.al-push-line.good { color: var(--teal); } .al-push-line.warn { color: var(--amber); } .al-push-line.bad { color: var(--red); } .al-push-line.muted { color: var(--text-2); }
+.al-push-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.al-push-devs { display: flex; flex-direction: column; gap: 8px; }
 .al-rule { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--surface-2); }
 .al-rule-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .al-rule-name { font-weight: 600; font-size: 13.5px; }

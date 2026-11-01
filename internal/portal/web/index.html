@@ -12,6 +12,13 @@
   <meta name="color-scheme" content="dark">
   <title>Shepherd</title>
   <link rel="icon" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
+  <!-- The manifest and the two Apple metas are what let iOS add this portal
+       to the Home Screen as a web app, which is the only way Safari on iOS
+       delivers Web Push (docs/ALARMS.md, "Web Push in the browser"). -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Shepherd">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>

@@ -238,6 +238,20 @@ test('nethealth endpoints', async () => {
   assert.deepEqual([calls[4][0], calls[4][1].method, calls[4][1].body], ['/api/nethealth/bufferbloat/run', 'POST', '{}']);
 });
 
+test('push endpoints', async () => {
+  const { calls, m } = rig();
+  await m.pushStatus();
+  assert.equal(calls[0][0], '/api/alarms/push');
+  await m.pushSubscribe({ subscription: { endpoint: 'https://push.example/x', keys: {} }, name: 'Phone' });
+  assert.deepEqual([calls[1][0], calls[1][1].method], ['/api/alarms/push/subscribe', 'POST']);
+  await m.pushTest();
+  assert.deepEqual([calls[2][0], calls[2][1].method], ['/api/alarms/push/test', 'POST']);
+  await m.pushRename('ab12', 'Tablet');
+  assert.deepEqual([calls[3][0], calls[3][1].method, calls[3][1].body], ['/api/alarms/push/ab12', 'PATCH', '{"name":"Tablet"}']);
+  await m.pushRemove('ab12');
+  assert.deepEqual([calls[4][0], calls[4][1].method], ['/api/alarms/push/ab12', 'DELETE']);
+});
+
 test('traffic endpoints', async () => {
   const { calls, m } = rig();
   await m.traffic();

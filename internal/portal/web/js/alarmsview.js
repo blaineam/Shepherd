@@ -8,6 +8,7 @@ import { el } from './dom.js';
 import { icon, iconButton, button, segmented, emptyState, unavailableCard, confirmDialog, openMenu, relTime } from './ui.js';
 import { unavailable } from './mgmt.js';
 import { Selection } from './selection.js';
+import { pushSupport, permissionLine, urlBase64ToUint8Array, subscribeBody, defaultDeviceName, deviceLine, isThisBrowser } from './push.js';
 import {
   SEVERITIES, STATES, severityLabel, severityBadgeClass, stateLabel,
   MUTE_PRESETS, MUTE_SCOPES, bulkSummary, ruleMatchSummary,
@@ -45,11 +46,12 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
   const countEl = title.lastChild;
 
   const viewSeg = segmented(
-    [{ id: 'alarms', label: 'Alarms' }, { id: 'rules', label: 'Rules' }], view,
+    [{ id: 'alarms', label: 'Alarms' }, { id: 'rules', label: 'Rules' }, { id: 'push', label: 'Notifications' }], view,
     (id) => {
       view = id;
       paintAll();
       if (id === 'rules') loadRules();
+      else if (id === 'push') loadPush();
       else load(true);
     }, 'Alarms view',
   );
@@ -129,7 +131,9 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
 
   const rulesWrap = el('section', 'al-rules-wrap panel-lite');
   rulesWrap.hidden = true;
-  main.append(wrap, rulesWrap);
+  const pushWrap = el('section', 'al-rules-wrap panel-lite');
+  pushWrap.hidden = true;
+  main.append(wrap, rulesWrap, pushWrap);
   root.append(head, main);
 
   // ------------------------------------------------------------- loading
@@ -412,10 +416,157 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
     rulesWrap.append(list);
   }
 
+  // ------------------------------------------------------------- notifications
+  // Web Push for this browser. The server keeps the subscriptions; this
+  // browser's own is recognised by the id the server gave it at subscribe
+  // time, kept in localStorage so a reload still knows.
+  let push = null;
+  let pushError = null;
+  let pushBusy = false;
+  const THIS_KEY = 'shepherd.push.id';
+  const thisID = () => { try { return localStorage.getItem(THIS_KEY) || ''; } catch { return ''; } };
+  const setThisID = (v) => { try { if (v) localStorage.setItem(THIS_KEY, v); else localStorage.removeItem(THIS_KEY); } catch { /* ignore */ } };
+  const env = () => ({
+    secureContext: !!window.isSecureContext,
+    hasServiceWorker: 'serviceWorker' in navigator,
+    hasPushManager: typeof PushManager !== 'undefined',
+    hasNotification: typeof Notification !== 'undefined',
+    ios: /iPhone|iPad|iPod/.test(navigator.userAgent),
+    standalone: !!(window.navigator.standalone || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)),
+  });
+
+  async function loadPush() {
+    try {
+      push = await mgmt.pushStatus();
+      pushError = null;
+    } catch (e) { pushError = e; }
+    paintPush();
+  }
+
+  async function subscribeThisBrowser() {
+    pushBusy = true;
+    paintPush();
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') throw new Error('notifications were not allowed');
+      const reg = await navigator.serviceWorker.register('sw.js');
+      await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(push.public_key) });
+      const d = await mgmt.pushSubscribe(subscribeBody(sub.toJSON(), defaultDeviceName(navigator.userAgent)));
+      setThisID(d.id);
+      notify('This browser now receives Shepherd\'s notifications');
+    } catch (e) {
+      notify('Could not subscribe: ' + e.message);
+    }
+    pushBusy = false;
+    await loadPush();
+  }
+
+  async function unsubscribeThisBrowser() {
+    pushBusy = true;
+    paintPush();
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      const sub = reg ? await reg.pushManager.getSubscription() : null;
+      if (sub) await sub.unsubscribe();
+      const id = thisID();
+      if (id) await mgmt.pushRemove(id).catch(() => {});
+      setThisID('');
+      notify('This browser no longer receives notifications');
+    } catch (e) { notify('Could not unsubscribe: ' + e.message); }
+    pushBusy = false;
+    await loadPush();
+  }
+
+  async function sendTest() {
+    try {
+      await mgmt.pushTest();
+      notify('Test notification sent to every subscribed browser and to ntfy');
+    } catch (e) { notify('Could not send a test: ' + e.message); }
+  }
+
+  async function renameDevice(d) {
+    const name = window.prompt('Name for this browser', d.name || '');
+    if (name == null) return;
+    try {
+      await mgmt.pushRename(d.id, name.trim());
+      await loadPush();
+    } catch (e) { notify(e.message); }
+  }
+
+  async function removeDevice(d) {
+    const ok = await confirmDialog({ title: 'Stop notifying ' + (d.name || 'this browser') + '?', body: 'It can subscribe again from its own Alarms screen.', confirm: 'Remove', danger: true });
+    if (!ok) return;
+    try {
+      await mgmt.pushRemove(d.id);
+      if (isThisBrowser(d, thisID())) setThisID('');
+      await loadPush();
+    } catch (e) { notify(e.message); }
+  }
+
+  function paintPush() {
+    pushWrap.replaceChildren();
+    const h = el('div', 'card-h');
+    h.append(el('h3', 'card-t', 'Notifications'));
+    pushWrap.append(h);
+    if (pushError) {
+      pushWrap.append(unavailable(pushError) ? unavailableCard('Notifications') : emptyState('Could not load notification settings', pushError.message, button('Try again', 'ghost', loadPush)));
+      return;
+    }
+    if (!push) return;
+    if (!push.enabled) {
+      pushWrap.append(el('p', 'al-push-line muted', 'Web Push is turned off in shepherd.toml ([alarms.push]). ntfy, when configured, still delivers.'));
+      return;
+    }
+    const support = pushSupport(env());
+    const mine = (push.devices || []).find((d) => isThisBrowser(d, thisID()));
+    if (!support.ok) {
+      pushWrap.append(el('p', 'al-push-line warn', support.reason));
+    } else {
+      const perm = permissionLine(typeof Notification !== 'undefined' ? Notification.permission : 'default');
+      pushWrap.append(el('p', 'al-push-line ' + (mine ? 'good' : perm.tone), mine ? 'This browser receives Shepherd\'s notifications.' : perm.text));
+    }
+    const acts = el('div', 'al-push-acts');
+    if (support.ok && !mine) {
+      const b = button('Notify this browser', 'primary', subscribeThisBrowser);
+      b.disabled = pushBusy;
+      acts.append(b);
+    }
+    if (mine) {
+      const b = button('Stop notifying this browser', 'ghost', unsubscribeThisBrowser);
+      b.disabled = pushBusy;
+      acts.append(b);
+    }
+    acts.append(button('Send a test notification', 'ghost', sendTest));
+    pushWrap.append(acts);
+
+    const devs = push.devices || [];
+    if (!devs.length) {
+      pushWrap.append(emptyState('No browser is subscribed yet', 'Subscribe each phone or computer from its own copy of this screen, over the HTTPS portal.'));
+      return;
+    }
+    const list = el('div', 'al-push-devs list-rows');
+    for (const d of devs) {
+      const line = deviceLine(d);
+      const row = el('div', 'list-row');
+      const main = el('div', 'lr-main');
+      main.append(el('div', 'lr-name', line.name + (isThisBrowser(d, thisID()) ? ' (this browser)' : '')));
+      main.append(el('p', 'lr-desc ' + (line.tone === 'warn' ? 'warn' : 'muted'), line.text));
+      const actsRow = el('div', 'up-acts');
+      actsRow.append(iconButton('pencil', 'Rename ' + line.name, () => renameDevice(d)), iconButton('trash', 'Remove ' + line.name, () => removeDevice(d), 'danger-i'));
+      row.append(main, actsRow);
+      list.append(row);
+    }
+    pushWrap.append(list);
+    pushWrap.append(el('p', 'muted small', 'On an iPhone or iPad, Shepherd must be added to the Home Screen and opened from there. A phone in Lockdown Mode never shows Web Push; use ntfy there.'));
+  }
+
   // ------------------------------------------------------------- view switching
   function paintAll() {
     wrap.hidden = view !== 'alarms';
     rulesWrap.hidden = view !== 'rules';
+    pushWrap.hidden = view !== 'push';
     sevSel.hidden = stateSel.hidden = searchBox.hidden = archToggle.hidden = view !== 'alarms';
   }
 

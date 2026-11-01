@@ -166,12 +166,24 @@ type Classify struct {
 
 // Alarms controls Shepherd's alarm engine (docs/ALARMS.md): the engine itself
 // (dedupe, mute rules, quiet hours, learning mode) always records alarms when
-// enabled; Ntfy is the one delivery channel wired in so far. Web Push needs a
-// secure context (HTTPS) the portal does not have yet, so it stays
-// unconfigured; see docs/ALARMS.md.
+// enabled, and delivers them over Web Push (Push, on by default; a browser
+// can only subscribe from the HTTPS portal) and ntfy (Ntfy, off until a
+// server is named).
 type Alarms struct {
 	Enabled bool       `toml:"enabled"`
+	Push    AlarmsPush `toml:"push"`
 	Ntfy    AlarmsNtfy `toml:"ntfy"`
+}
+
+// AlarmsPush configures Web Push delivery (internal/webpush, docs/ALARMS.md).
+// The VAPID key pair is generated once under <data_dir>/alarms and kept:
+// browsers subscribe against its public half. Nothing here needs filling in.
+type AlarmsPush struct {
+	Enabled bool `toml:"enabled"`
+	// Contact is the RFC 8292 contact a push service may use to reach the
+	// operator: an email address or an https URL. Empty uses the portal's
+	// own HTTPS address when [tls] is on, else Shepherd's project page.
+	Contact string `toml:"contact"`
 }
 
 // AlarmsNtfy configures the ntfy delivery channel: a self-hosted or public
@@ -513,7 +525,7 @@ func Default() Config {
 		Devices:        Devices{Enabled: true, DNS: true, Neighbors: true, NeighborIntervalSeconds: 30, MDNS: true, ReverseDNS: true, SaveIntervalSeconds: 60, QuarantineNewDevices: true},
 		Classify:       Classify{Enabled: true, IntervalSeconds: 300},
 		ARP:            ARP{Enabled: true},
-		Alarms:         Alarms{Enabled: true, Ntfy: AlarmsNtfy{Topic: "shepherd-alarms"}},
+		Alarms:         Alarms{Enabled: true, Push: AlarmsPush{Enabled: true}, Ntfy: AlarmsNtfy{Topic: "shepherd-alarms"}},
 		Accountability: Accountability{Enabled: true, SMTP: AccountabilitySMTP{Port: 587, TLS: "starttls"}},
 		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600, WANExposure: WANExposure{Enabled: true, RefreshIntervalSeconds: 600}},
 		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600},

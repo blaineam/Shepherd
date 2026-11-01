@@ -113,9 +113,16 @@ interface = ""                   # empty auto-detects the default route's interf
 # list update rejected, and more. Always recorded in the portal when enabled.
 enabled = true
 
+[alarms.push]
+# Web Push to every browser that subscribed on the Alarms screen's
+# Notifications tab. A browser can only subscribe from the HTTPS portal
+# ([tls]); the VAPID key pair is generated once under the data directory.
+enabled = true
+contact = ""               # email or https URL a push service may contact; empty picks one
+
 [alarms.ntfy]
-# ntfy delivery is off until you point it at a server: Web Push needs HTTPS,
-# which the portal does not have yet, so ntfy is the one channel wired in.
+# ntfy delivery is off until you point it at a server. It is the fallback
+# when a push could not be delivered, or the second channel with "always".
 enabled = false
 server = ""                # e.g. "https://ntfy.example.com" (self-hosted or public)
 topic = "shepherd-alarms"

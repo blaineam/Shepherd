@@ -491,15 +491,36 @@ rather than blocking the engine, so re-fetch with `List` after a `bulk` change o
 # Wiring into `cmd/shepherd` and the portal
 
 `[alarms]` in `shepherd.toml` (see `shepherd.example.toml`) turns the engine on (`enabled`, default
-true) and configures the one delivery channel wired in, ntfy (`[alarms.ntfy]`: `enabled`, `server`,
-`topic`, and `token` or `username`/`password`). `cmd/shepherd/alarms.go`'s `startAlarms` builds the
-engine under `<data_dir>/alarms`, builds a `Router` with an `ntfy.Client` adapter when
-`alarms.ntfy.enabled` is set (`nil` otherwise, so the channel simply carries nothing), subscribes and
-runs it, and is wired into `main.go` the same way `startDevices` and `startClassify` are. Web Push is
-not wired in: it needs a secure context (HTTPS) the portal does not have yet (see "Web Push in the
-browser" below), so `RouterOptions.Pusher` stays `nil` and `[alarms]` has no VAPID or subscription
-settings. This is a deliberate scope decision, not an oversight — adding it later needs no engine or
-Router change, only a `webpush.NewSender`/`Store` plugged into the same `Router`.
+true) and configures the two delivery channels: Web Push (`[alarms.push]`: `enabled`, default true,
+and an optional `contact`) and ntfy (`[alarms.ntfy]`: `enabled`, `server`, `topic`, and `token` or
+`username`/`password`). `cmd/shepherd/alarms.go`'s `startAlarms` builds the engine under
+`<data_dir>/alarms`, builds a `Router` with both adapters (each `nil` when its channel is off, so it
+simply carries nothing), subscribes and runs it, and is wired into `main.go` the same way
+`startDevices` and `startClassify` are.
+
+**Web Push wiring** (`cmd/shepherd/push.go`, since 2026-11-01, once the portal had HTTPS through
+`[tls]`). `startPush` loads or generates the VAPID key pair at `<data_dir>/alarms/vapid.json` (keep
+the data directory: browsers subscribe against the public half, and a new pair invalidates every
+subscription), loads the subscription store from `<data_dir>/alarms/push.json` (an unreadable file
+is moved aside and logged rather than refusing to start), builds a `webpush.Sender` with the RFC 8292
+contact (`alarms.push.contact`, an email or https URL; empty uses the portal's `[tls]` hostname, else
+Shepherd's project page) and hands a `Broadcaster` to the Router as its `Pusher`. The same service
+backs the portal's subscription endpoints:
+
+| Endpoint | Does |
+|---|---|
+| `GET /api/alarms/push` | `enabled`, the VAPID `public_key`, and `devices`: every subscribed browser's id, name, user agent, push service host, last delivery and last error. Never an endpoint or a key |
+| `POST /api/alarms/push/subscribe` | `{"subscription": <PushSubscription.toJSON()>, "name": "..."}`; re-subscribing the same endpoint updates it |
+| `PATCH /api/alarms/push/{id}` | `{"name": "..."}` |
+| `DELETE /api/alarms/push/{id}` | forgets the browser |
+| `POST /api/alarms/push/test` | raises the bypassing `test` alarm, delivered over every channel |
+
+**In the portal**, the Alarms screen has a **Notifications** tab: whether this browser can subscribe
+(HTTPS, a home-screen web app on iOS, permission), a button that registers the service worker
+(`sw.js` at the web root, which shows every push as a notification and opens the Alarms screen on
+tap) and subscribes, the list of subscribed browsers with rename and remove, and "Send a test
+notification". `manifest.webmanifest` and the Apple metas in `index.html` are what let iOS add the
+portal to the Home Screen.
 
 **Upstream health events.** `TypeUpstreamDown` and `TypeUpstreamRecovered` are raised from a new,
 minimal hook on `dnsengine.Pool`: an `OnHealthChange func(addr string, healthy bool)` field, in the same
@@ -548,8 +569,8 @@ duration, reason) and remove existing ones.
 
 # Web Push in the browser
 
-Web Push is not something the server can do alone; the portal side is still to be built, and these are the
-constraints it must respect.
+Web Push is not something the server can do alone; the portal side is built (above), and these are the
+constraints it respects.
 
 - **HTTPS is required.** Browsers expose the Push API only in a secure context. The portal must be served
   over HTTPS with a valid certificate (the tailnet's automatic HTTPS, or the planned reverse proxy with
@@ -572,19 +593,12 @@ constraints it must respect.
 
 # Not built yet
 
-- **Web Push end to end: deferred on purpose, not forgotten.** The sender, VAPID keys and subscription
-  store (`internal/webpush`) are fully built and tested, but nothing in `cmd/shepherd` or the portal uses
-  them: no VAPID key generation/config, no `RouterOptions.Pusher`, no subscribe endpoint, no service
-  worker, no manifest, no home-screen install prompt. The reason is simple and will not change until the
-  portal is served over HTTPS: browsers only expose the Push API in a secure context (see "Web Push in the
-  browser" below), and the portal today is plain HTTP (loopback/LAN). Wiring it up before then would be
-  dead code that cannot work in production. ntfy is the one working delivery channel in the meantime.
-  Revisit once the portal has TLS (the tailnet's automatic HTTPS, or the planned reverse proxy).
+- **Web Push against a real push service.** The wiring is complete and tested against loopback
+  push services; it has not yet been exercised with a real browser on the HTTPS portal, which is the
+  next thing to do on the maintainer's NAS.
 - **Preferences API and UI.** `Engine.Preferences`/`SetPreferences` (channels, digest, quiet hours,
   learning mode, per-type switches, time zone, portal URL) have no `/api/alarms/preferences` endpoint or
   settings screen yet; they currently only take the engine's own defaults (`DefaultPreferences`).
-- **"Send a test notification."** `TypeTest` and `RaiseSync` are ready for it, but no endpoint or button
-  calls them yet.
 - **Delivery log and channel status in the portal.** `Router.Log` and `Router.Status` are not exposed over
   the API or shown anywhere in the UI yet, so a failing ntfy delivery is currently only visible in the
   server's own logs.

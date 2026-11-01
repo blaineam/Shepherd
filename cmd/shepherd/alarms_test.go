@@ -24,7 +24,7 @@ func TestStartAlarmsBuildsAWorkingEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng, stop, err := startAlarms(context.Background(), cfg, pool)
+	eng, _, stop, err := startAlarms(context.Background(), cfg, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestStartAlarmsFailsIfTheDirCannotBeCreated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := startAlarms(context.Background(), cfg, pool); err == nil {
+	if _, _, _, err := startAlarms(context.Background(), cfg, pool); err == nil {
 		t.Error("expected an error when the alarms directory cannot be created")
 	}
 }
@@ -81,7 +81,7 @@ func TestStartAlarmsFailsOnACorruptDeliveriesFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := startAlarms(context.Background(), cfg, pool); err == nil {
+	if _, _, _, err := startAlarms(context.Background(), cfg, pool); err == nil {
 		t.Error("expected an error when the router's saved delivery log is corrupt")
 	}
 }

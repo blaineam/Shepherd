@@ -527,11 +527,17 @@ func TestAlarmsDefaults(t *testing.T) {
 	if cfg.Alarms.Ntfy.Topic != "shepherd-alarms" {
 		t.Errorf("default ntfy topic = %q", cfg.Alarms.Ntfy.Topic)
 	}
+	if !cfg.Alarms.Push.Enabled || cfg.Alarms.Push.Contact != "" {
+		t.Errorf("Web Push should be on by default with no contact to fill in: %+v", cfg.Alarms.Push)
+	}
 }
 
 func TestAlarmsOverrides(t *testing.T) {
 	cfg := writeCfg(t, `[alarms]
 enabled = false
+[alarms.push]
+enabled = false
+contact = "admin@example.com"
 [alarms.ntfy]
 enabled = true
 server = "https://ntfy.example.com"
@@ -541,6 +547,9 @@ token = "secret"
 	a := cfg.Alarms
 	if a.Enabled || !a.Ntfy.Enabled || a.Ntfy.Server != "https://ntfy.example.com" || a.Ntfy.Topic != "my-shepherd" || a.Ntfy.Token != "secret" {
 		t.Errorf("alarms overrides = %+v", a)
+	}
+	if a.Push.Enabled || a.Push.Contact != "admin@example.com" {
+		t.Errorf("push overrides = %+v", a.Push)
 	}
 }
 

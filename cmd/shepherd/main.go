@@ -135,12 +135,15 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		DataDir: cfg.DataDir, IdleLockMinutes: cfg.Portal.IdleLockMinutes}
 
 	if cfg.Alarms.Enabled {
-		alarmEngine, stopAlarms, err := startAlarms(ctx, cfg, pool)
+		alarmEngine, push, stopAlarms, err := startAlarms(ctx, cfg, pool)
 		if err != nil {
 			return err
 		}
 		defer stopAlarms()
 		deps.Alarms = alarmEngine
+		if push != nil { // avoid a non-nil interface over a nil *pushService
+			deps.Push = push
+		}
 	}
 
 	var mapLocator *geo.Locator

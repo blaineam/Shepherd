@@ -13,6 +13,16 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Web Push delivery, end to end.** `internal/webpush` had the sender, VAPID keys and subscription
+  store for months, waiting on HTTPS; the portal has it now through `[tls]`, so `cmd/shepherd` wires
+  it in: a VAPID key pair generated once under the data directory, subscriptions saved beside it, and
+  a `Pusher` on the alarm Router next to ntfy. The Alarms screen gains a **Notifications** tab that
+  says whether this browser can subscribe (HTTPS, a home-screen web app on iOS, permission),
+  registers the service worker and subscribes with one button, lists every subscribed browser with
+  rename and remove, and sends a test notification through every channel. `[alarms.push]` is on by
+  default with an optional `contact`. New endpoints under `/api/alarms/push`. A `manifest.webmanifest`
+  lets iOS add the portal to the Home Screen, which Safari requires for push. Roadmap step 9 is done
+  apart from a real-browser trial.
 - **Reverse proxy: per-host access lists, a permanent HTTP-to-HTTPS redirect and HSTS.** Each
   proxied host can name who may reach it: addresses, prefixes like `192.0.2.0/24`, and `local`,
   which stands for every network this machine is on plus loopback and Tailscale's ranges. Anyone
