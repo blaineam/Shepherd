@@ -264,6 +264,12 @@ time it is seen, and a genuine retransmission is never suppressed. A frame that 
 network-level duplicate is dropped, which is what should happen to it, because the first copy
 already reached the gateway.
 
+It covers IPv4 and IPv6 alike. IPv6 has no identification field, so its fingerprint leans on the
+traffic class and flow label, the payload length, the next header, both 16-byte addresses and the
+same sixteen bytes of transport header. IPv6 steering is off by default and every loop seen was
+IPv4, but a loop there would be just as severe, and a safety stop covering one family is worse
+than no claim at all.
+
 `GET /api/watch` reports the count as `duplicates_suppressed`. A healthy relay reports zero for as
 long as it runs. On the maintainer's NAS it runs at about 80% of relayed frames, which says
 plainly that whatever re-delivers those frames is still doing it and is now contained rather than
