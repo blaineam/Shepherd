@@ -180,22 +180,30 @@ const (
 	// interface's packets.
 	// loopSymmetry is the whole test now, so it is placed from measurement
 	// rather than taste. Loops observed: 0.03% apart (the two original
-	// incidents), 9.3% (the instrumented single-device run, 53,988 received
-	// against 48,984 transmitted) and 10.1% (the earlier single-device run,
-	// about 465,000 against 517,000). Healthy but genuinely busy, measured
-	// on the same host: 25 to 40% apart. 0.15 sits between the worst loop
-	// and the best healthy reading with margin on both sides; the old 0.10
-	// would have excluded the 10.1% run, which is exactly the kind of
-	// threshold that only just misses a real incident.
+	// incidents), 9.3% (the instrumented single-device run, about 26,994
+	// received against 24,492 transmitted) and 10.1% (the earlier
+	// single-device run, about 465,000 against 517,000). Busy but healthy
+	// on the same host sits far outside that: six clean samples with
+	// nothing steered ran 89 to 92% apart. 0.15 leaves wide margin on both
+	// sides; the old 0.10 would have excluded the 10.1% run, which is
+	// exactly the kind of threshold that only just misses a real incident.
+	//
+	// The ratio is the one thing the sampling artefact described on
+	// checkForLoop does not disturb: the driver publishes rx and tx in the
+	// same lump, so a bucket's rx:tx is right even when its duration is not.
 	loopSymmetry = 0.15
-	// loopFloorPPS keeps a quiet network from tripping it. It does *not*
-	// separate looping from busy -- the healthy run reached roughly 83,000
-	// packets a second on transmit, above this floor, and was excluded by
-	// symmetry alone. Note it is only 8% below the smallest loop observed
-	// (53,988), so a slower loop would slip through; that is a known limit,
-	// kept because lowering the floor trades it for false stops on any
-	// moderate symmetric load.
-	loopFloorPPS = 50_000
+	// loopFloorPPS keeps a quiet network from tripping it, and that is all
+	// it does: symmetry is what separates looping from busy. Measured on
+	// the live host with nothing steered, six clean two-second samples ran
+	// rx 12,325 to 39,521 a second against tx 1,324 to 3,008 -- so max(rx,
+	// tx) routinely reaches 40,000 while sitting 89 to 92% apart. A floor
+	// alone could not tell that from a loop; the symmetry test can.
+	//
+	// 15,000 sits between this host's transmit background (about 3,000) and
+	// the smallest loop measured (max(rx, tx) about 27,000), with roughly
+	// 1.8x of margin either way. It was 50,000 until the measurement below
+	// was corrected, which would have missed that loop outright.
+	loopFloorPPS = 15_000
 	// loopHits is how many consecutive one-second samples must agree
 	// before the brake trips, so a burst cannot cause one.
 	loopHits = 3
@@ -1122,23 +1130,34 @@ func (e *Engine) sample(now time.Time) {
 // least loopFloorPPS itself, on the evidence of the two original
 // incidents, where it genuinely did report nearly all of it. Measurement
 // then showed that neither loop reproduced since has that shape: an
-// instrumented single-device run received 54,000 packets a second against
-// 49,000 transmitted while the relay reported 8 pkt/s, and the earlier
-// single-device run reported 41,116 against 465,000 received, 8.8% of rx.
-// Both would have been vetoed by the share test and by the relay's own
-// floor, so the brake would have watched all of it happen. A brake keyed
-// on the relay's counter cannot see a loop the relay is not carrying, and
-// most of what reaches that interface during these loops is accounted for
-// by neither the relay nor the kernel's IP stack.
+// instrumented single-device run received about 27,000 packets a second
+// against 24,500 transmitted while the relay reported 8 pkt/s, and the
+// earlier single-device run reported 41,116 against 465,000 received,
+// 8.8% of rx. Both would have been vetoed by the share test and by the
+// relay's own floor, so the brake would have watched all of it happen. A
+// brake keyed on the relay's counter cannot see a loop the relay is not
+// carrying, and most of what reaches that interface during these loops is
+// accounted for by neither the relay nor the kernel's IP stack.
 //
 // So the share is logged as evidence and ignored as a trigger. The cost,
 // accepted knowingly: genuinely symmetric traffic above loopFloorPPS
 // sustained for loopHits seconds now stops steering. On the measured host
-// nothing legitimate came close -- its busiest symmetric load was an order
-// of magnitude below the floor, and its heavy traffic was lopsided -- but
-// this is a safety stop that now fires on less evidence than before, which
-// is the right trade only because the thing it guards against is a 10 GbE
-// card melting a home network in three and a half seconds.
+// nothing legitimate came close to symmetric -- its heavy traffic runs 89
+// to 92% lopsided -- but this is a safety stop that now fires on less
+// evidence than before, which is the right trade only because the thing it
+// guards against melts a home network in a few seconds.
+//
+// MEASURING THIS CORRECTLY, because getting it wrong set the floor above
+// the very loop it was meant to catch. This brake samples once a second,
+// which is fine. Anything sampling /sys/class/net/<if>/statistics faster
+// is not: the atlantic driver publishes those counters in one lump roughly
+// once a second, so 100ms sampling reads "0 0 0 0 0 24073 0 0 0 0" and a
+// half-second bucket that catches a lump holds a whole second of packets.
+// Doubling such a bucket to get a rate overstates it twofold, which is how
+// the instrumented loop was first written up as 54,000 packets a second
+// instead of 27,000, and why loopFloorPPS was 50,000. Ip:InReceives in
+// /proc/net/snmp updates continuously and may be sampled as fast as you
+// like; the interface counters may not.
 //
 // When it trips it panic-stops, which unsteers every device with its
 // corrective reply, and latches like the kill switch so a restart does not
@@ -1190,7 +1209,7 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 		rx, tx, math.Abs(tx-rx)/hi*100, relayedPPS, share)
 	// The share is evidence, not a trigger. A loop the relay reports almost
 	// none of is the shape measured on real hardware (8 pkt/s against
-	// 54,000 received), so a low figure here is expected, not reassuring.
+	// 27,000 received), so a low figure here is expected, not reassuring.
 	e.logLoopSuspects(status)
 	if saveErr != nil {
 		e.logf("watch: WARNING: could not persist the loop stop (%v), so a restart may resume it", saveErr)
@@ -1713,21 +1732,26 @@ var _ intercept.Excluder = v6Excluder{}
 // Measured on the maintainer's NAS (forwarding on, eth0 and wlan0 both on
 // one /24), steering a *single ordinary device* -- one phone, by explicit
 // MAC, nothing to do with the registry or the gateway -- loops every time.
-// The instrumented run took the interface to roughly 54,000 packets a
-// second in and 49,000 out, mirrored, 3.5 seconds after steering began,
-// while counters sampled in the same half-second said:
+// The instrumented run took the interface to roughly 27,000 packets a
+// second in and 24,500 out, mirrored, 3.5 seconds after steering began,
+// while counters sampled in the same bucket said:
 //
 //	ForwDatagrams          1 datagram    -- not kernel IPv4 forwarding
 //	hairpin drops (in eth0, out eth0)
 //	                       0 packets     -- not same-segment routing
 //	relay's own relayed    8 pkt/s       -- not the relay relaying
 //
-// So whatever put ~24,500 frames per half-second onto that interface is
+// That is about 27,000 packets a second received against 24,500
+// transmitted. An earlier revision of this comment said 54,000 against
+// 49,000, having doubled a half-second bucket from a driver that publishes
+// its counters once a second; checkForLoop's comment has the detail.
+//
+// So whatever put ~24,500 frames a second onto that interface is
 // accounted for by neither Shepherd's relay nor the kernel's IP stack. It
 // is not this function's premise either, which is why the explanation that
 // used to sit here -- the router learning the client at Shepherd's MAC and
 // the kernel routing its downloads back onto the segment -- is gone. One
-// forwarded datagram during a 49,000-packet-a-second storm refutes it.
+// forwarded datagram during a 24,500-packet-a-second storm refutes it.
 //
 // What survives is the other half of the condition, and it is worth
 // stating because it is the one structural feature present in every
@@ -1760,7 +1784,7 @@ var _ intercept.Excluder = v6Excluder{}
 // For a while it was also carrying more weight than intended, because the
 // loop brake as first written would not have caught this loop: it required
 // the relay to report at least 80% of the interface's receive rate, and the
-// measured loop had it reporting 8 pkt/s against 54,000 received. That has
+// measured loop had it reporting 8 pkt/s against 27,000 received. That has
 // since been fixed -- checkForLoop now trips on mirrored traffic above its
 // floor and ignores the relay's share -- so the two guards are independent
 // again, which is how this refusal was always meant to be backed.

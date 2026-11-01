@@ -252,8 +252,8 @@ The condition correlates with every loop ever seen, but **the mechanism is not f
 three candidates are now excluded by direct measurement rather than by argument. Measured on the
 maintainer's NAS — forwarding on, `eth0` and `wlan0` both on one `/24` — steering a **single
 ordinary device**, one phone named by explicit MAC with the registry and the gateway out of the
-picture entirely, loops every time. The instrumented run reached roughly **54,000 packets a second
-in and 49,000 out, mirrored, 3.5 seconds after steering began**, and in the same half-second:
+picture entirely, loops every time. The instrumented run reached roughly **27,000 packets a second
+in and 24,500 out, mirrored, 3.5 seconds after steering began**, and in the same sample:
 
 | counter | reading | what it excludes |
 | --- | --- | --- |
@@ -261,8 +261,8 @@ in and 49,000 out, mirrored, 3.5 seconds after steering began**, and in the same
 | hairpin drops (in `eth0`, out `eth0`) | **0 packets** | same-segment routing |
 | the relay's own `relayed` | **8 pkt/s** | the relay relaying |
 
-So whatever put about 24,500 frames per half-second onto that interface is accounted for by neither
-Shepherd's relay nor the kernel's IP stack. One forwarded datagram during a 49,000-packet-a-second
+So whatever put about 24,500 frames a second onto that interface is accounted for by neither
+Shepherd's relay nor the kernel's IP stack. One forwarded datagram during a 24,500-packet-a-second
 storm is not a kernel routing problem, which is why the explanation that used to stand here — the
 router learning the client at Shepherd's MAC, and the kernel routing its downloads back onto the
 segment — has been removed rather than softened.
@@ -317,7 +317,7 @@ containers look like.
 **The loop brake.** Whatever the cause, a relay interface mirroring traffic at a rate no home
 network reaches is caught in three seconds rather than by a person noticing. Every second the engine
 reads the interface's kernel counters and looks for two things: it **receives and transmits the same
-amount**, within 15%, at or above **50,000 packets a second**. Three consecutive seconds of that and
+amount**, within 15%, at or above **15,000 packets a second**. Three consecutive seconds of that and
 it panic-stops, unsteering every device with its corrective reply, and latches like the kill switch
 so a restart does not resume the loop. It logs what it measured, the relay's own share of it, and
 the devices that were relaying most.
@@ -325,24 +325,33 @@ the devices that were relaying most.
 Symmetry is what separates looping from busy, and the thresholds are placed from measurement rather
 than taste:
 
-| situation | receive vs transmit | packets/s |
+| situation | receive vs transmit | max(rx,tx) packets/s |
 | --- | --- | --- |
-| healthy, genuinely busy (live host) | **25–40% apart** | ~83,000 |
+| live host's own background, nothing steered | **89–92% apart** | 12,000–40,000 |
 | the two original loops | 0.03% apart | 1.0–1.3M |
-| instrumented single-device loop | 9.3% apart | 54,000 |
-| earlier single-device loop | 10.1% apart | 465,000 |
+| instrumented single-device loop | 9.3% apart | ~27,000 |
+| earlier single-device loop | 10.1% apart | 517,000 |
 
-So 15% sits between the worst loop and the best healthy reading with room on both sides. The floor
-is **not** what separates them — the healthy run was above it, and was excluded by symmetry alone;
-the floor only keeps a quiet network from tripping it. Note the floor is just 8% below the smallest
-loop measured, so a slower loop would slip through. That is a known limit, kept because lowering it
-trades a missed slow loop for false stops on any moderate symmetric load.
+So 15% leaves wide margin on both sides. The floor is emphatically **not** what separates looping
+from busy: this host's ordinary background reaches 40,000 packets a second, *above* the floor, and
+is excluded by symmetry alone. The floor's only job is to stop a quiet network tripping it, so it
+sits between this host's transmit background (about 3,000) and the smallest loop measured (about
+27,000), with roughly 1.8× of margin either way.
+
+> **Measure this correctly.** The floor was 50,000 — above the very loop it was meant to catch —
+> because of a sampling mistake worth knowing about. The `atlantic` driver publishes
+> `/sys/class/net/<if>/statistics` counters in one lump roughly **once a second**, so sampling every
+> 100 ms reads `0 0 0 0 0 24073 0 0 0 0`, and a half-second bucket that catches a lump holds a whole
+> second of packets. Doubling such a bucket to get a rate overstates it twofold, which is how the
+> instrumented loop was first written up as 54,000 packets a second instead of 27,000. The brake
+> itself samples once a second and is unaffected. `Ip:InReceives` in `/proc/net/snmp` updates
+> continuously and can be sampled as fast as you like; the interface counters cannot.
 
 > **Why the relay's own share is no longer part of the test.** The brake used to require it: the
 > relay had to report at least 80% of the interface's receive rate, and at least the packet floor
 > itself. That came from the two original incidents, where the relay genuinely did carry the loop.
 > Measurement then showed that neither loop reproduced since has that shape — the instrumented run
-> had the relay reporting **8 packets a second against 54,000 received**, and the earlier one 41,116
+> had the relay reporting **8 packets a second against 27,000 received**, and the earlier one 41,116
 > against 465,000, 8.8% of receive. Both would have been vetoed, so the brake would have watched the
 > whole thing happen. A brake keyed on the relay's counter cannot see a loop the relay is not
 > carrying, and during these loops most of what reaches the interface is accounted for by neither

@@ -1395,18 +1395,22 @@ func TestTheLoopBrakeStopsALoopTheRelayIsNotCarrying(t *testing.T) {
 	statePath := t.TempDir() + "/watch.json"
 	plat := newFakePlatform()
 	te := newTestEngine(t, plat, func(c *Config) { c.StatePath = statePath })
-	te.loopFloor = 1000
+	// The *production* floor, not a test one: the point of this test is that
+	// loopFloorPPS is low enough for the loop actually measured on hardware.
+	// It was 50,000 once, which is above this loop, so the brake would have
+	// watched it happen.
+	te.loopFloor = loopFloorPPS
 	te.addPhone(t)
 	te.start(t)
 	te.waitRunning(t)
 	te.waitSteered(t, phoneMAC, true)
 
-	// 53,988 received against 48,984 transmitted, scaled to the test floor:
-	// 9.27% apart, and the relay reports nothing at all. One tick per poll,
-	// because FakeClock drops a tick fired before the engine has registered
-	// its next waiter, and a dropped tick is silent.
+	// The measured rates, verbatim: 26,994 received against 24,492
+	// transmitted in one second, 9.27% apart, relay reporting nothing. One
+	// tick per poll, because FakeClock drops a tick fired before the engine
+	// has registered its next waiter, and a dropped tick is silent.
 	waitFor(t, "the loop brake to trip with the relay silent", func() bool {
-		te.loopTickUnrelayed(t, plat, 5399, 4898)
+		te.loopTickUnrelayed(t, plat, 26994, 24492)
 		return !te.Snapshot().Armed
 	})
 
@@ -1440,14 +1444,14 @@ func TestTheLoopBrakeStopsALoopTheRelayIsNotCarrying(t *testing.T) {
 func TestTheLoopBrakeCatchesATenPercentAsymmetricLoop(t *testing.T) {
 	plat := newFakePlatform()
 	te := newTestEngine(t, plat, nil)
-	te.loopFloor = 1000
+	te.loopFloor = loopFloorPPS
 	te.addPhone(t)
 	te.start(t)
 	te.waitRunning(t)
 	te.waitSteered(t, phoneMAC, true)
 
 	waitFor(t, "the loop brake to trip on a 10.06% asymmetric loop", func() bool {
-		te.loopTickUnrelayed(t, plat, 4650, 5170)
+		te.loopTickUnrelayed(t, plat, 465000, 517000)
 		return !te.Snapshot().Armed
 	})
 }
@@ -1459,16 +1463,18 @@ func TestTheLoopBrakeCatchesATenPercentAsymmetricLoop(t *testing.T) {
 func TestTheLoopBrakeLeavesBusyLopsidedTrafficAloneAboveTheFloor(t *testing.T) {
 	plat := newFakePlatform()
 	te := newTestEngine(t, plat, nil)
-	te.loopFloor = 1000
+	te.loopFloor = loopFloorPPS
 	te.addPhone(t)
 	te.start(t)
 	te.waitRunning(t)
 	te.waitSteered(t, phoneMAC, true)
 
-	// 60,000 received against 90,000 transmitted: 33% apart, both over the
-	// floor. Spaced like the tests above so the samples actually land.
+	// The live host's own background with nothing steered, measured in clean
+	// two-second samples: receive far above the floor, transmit a tenth of
+	// it, 90% apart. The brake has to sit beside this every second of every
+	// day without firing, which is why the floor cannot be the test.
 	for i := 0; i < (loopHits+4)*4; i++ {
-		te.loopTickUnrelayed(t, plat, 6000, 9000)
+		te.loopTickUnrelayed(t, plat, 39521, 3008)
 		time.Sleep(2 * time.Millisecond)
 	}
 	if !te.Snapshot().Armed {

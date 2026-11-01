@@ -19,23 +19,24 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   minutes because a person had to notice. The first had a cause and it is fixed (it steered one of
   the host's own interfaces); the second is still not explained, which is what the brake is for.
   The brake reads the interface's kernel counters every second and looks for two things: it receives
-  and transmits the same amount, within 15%, at 50,000 packets a second or more. Three consecutive
+  and transmits the same amount, within 15%, at 15,000 packets a second or more. Three consecutive
   seconds of that and it panic-stops, unsteering everything with its corrective reply, and latches
   like the kill switch so a restart cannot resume the loop. It logs what it measured, the relay's
   own share of it, and **the devices that were relaying most**, because that per-device list is
   exactly the evidence the second incident lacked.
-  Symmetry is what separates looping from busy, and the thresholds come from measurement: the
-  healthy live host ran 25 to 40% apart at roughly 83,000 packets a second, while the loops measured
-  0.03% apart at 1.0 to 1.3M, 9.3% apart at 54,000 and 10.1% apart at 465,000. 15% sits between the
-  worst loop and the best healthy reading. The floor is not what separates them -- the healthy run
-  was above it and was excluded by symmetry alone -- it only keeps a quiet network from tripping it,
-  and being 8% below the smallest loop measured it would miss a slower one.
+  Symmetry is what separates looping from busy, and both thresholds come from measurement. The live
+  host's own background, nothing steered, runs 89 to 92% apart with max(rx, tx) between 12,000 and
+  40,000 a second; the loops measured 0.03% apart at 1.0 to 1.3M, 9.3% apart at about 27,000, and
+  10.1% apart at 517,000. So 15% leaves wide margin either way. The floor is emphatically not the
+  discriminator -- the host's ordinary background is *above* it and is excluded by symmetry alone --
+  its only job is to stop a quiet network tripping, so it sits between that host's transmit
+  background (about 3,000) and the smallest loop measured (about 27,000).
   **The relay's own share is deliberately not part of the test, and an earlier version of this brake
   required it.** That version asked the relay to report at least 80% of the interface's receive rate
   and at least the packet floor itself, on the evidence of the two original incidents, where it
   genuinely did carry the loop. Measurement then showed that neither loop reproduced since has that
   shape: the instrumented single-device run had the relay reporting **8 packets a second against
-  54,000 received**, and the earlier one 41,116 against 465,000, 8.8% of receive. Both would have
+  27,000 received**, and the earlier one 41,116 against 465,000, 8.8% of receive. Both would have
   been vetoed by the share test and by the relay's own floor, so the brake would have watched the
   whole thing happen. A brake keyed on the relay's counter cannot see a loop the relay is not
   carrying. The share is still logged, as evidence that the storm is *not* the relay's output -- a
@@ -43,6 +44,16 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   15% in the same change, because the 10.1%-apart loop was excluded by six hundredths of a percent,
   and a threshold that only just misses a real incident is the wrong threshold. Accepted cost: any
   genuinely symmetric load above the floor sustained for three seconds now stops steering.
+  **The floor came down from 50,000 to 15,000 in the same change, because 50,000 was above the loop
+  it was meant to catch.** That number came from a sampling mistake worth recording: the `atlantic`
+  driver publishes `/sys/class/net/<if>/statistics` counters in one lump roughly once a second, so
+  sampling every 100 ms reads `0 0 0 0 0 24073 0 0 0 0`, and a half-second bucket that catches a
+  lump holds a whole second of packets. Doubling such a bucket overstates the rate twofold, which is
+  how the instrumented loop was first written up as 54,000 packets a second instead of 27,000, and
+  how the floor ended up above it. The brake itself samples once a second and was never affected;
+  only the threshold chosen from the bad figure was. `Ip:InReceives` in `/proc/net/snmp` updates
+  continuously and can be sampled freely; the interface counters cannot. The regression test for
+  this uses the measured rates against the production floor and fails if the floor rises again.
 ### Fixed
 - **Shepherd will not steer a device record that carries one of this host's addresses, or the
   gateway's.** The registry on the live host had merged the gateway, both LAN interfaces and all
@@ -65,12 +76,12 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   only: forwarding has been excluded as the mechanism.** It went in as a precaution, was then
   explained twice, and both explanations have now been refuted by measurement on the live host.
   What is established: steering **one ordinary phone**, named by explicit MAC with the registry and
-  the gateway out of the picture, loops every time. An instrumented run reached about **54,000
-  packets a second in and 49,000 out, mirrored, 3.5 seconds after steering began**, and counters
-  sampled in that same half-second excluded three candidates outright — `ForwDatagrams` moved by
+  the gateway out of the picture, loops every time. An instrumented run reached about **27,000
+  packets a second in and 24,500 out, mirrored, 3.5 seconds after steering began**, and counters
+  sampled in that same second excluded three candidates outright — `ForwDatagrams` moved by
   **1 datagram** (not kernel IPv4 forwarding), a rule counting hairpin forwarding in and out the
   relay interface dropped **0 packets** (not same-segment routing), and the relay's own counter
-  reported **8 pkt/s** (not the relay relaying). So roughly 24,500 frames per half-second reached
+  reported **8 pkt/s** (not the relay relaying). So roughly 24,500 frames a second reached
   that interface accounted for by neither Shepherd nor the kernel's IP stack, and the explanation
   previously recorded here — the router learning the client at Shepherd's MAC and the kernel routing
   its downloads back onto the segment — is withdrawn rather than softened.
