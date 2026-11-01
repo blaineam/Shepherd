@@ -282,8 +282,11 @@ delegates a prefix at all.**
 3. ~~**What happens to traffic when Shepherd's process is not running?**~~ **Answered: fail closed**
    (2026-11-01), a considered departure from Guard mode's fail-open precedent. The mechanism it
    requires, and the one exception that keeps a bug remotely fixable, are above.
-4. **Is Watch mode retired, kept, or left off?** It is off on the NAS now. Its one capability that
-   Gateway mode does not subsume is nothing — a router sees everything it sees and more — so the
-   honest options are to keep it for installs that cannot be the router, or to retire it.
+4. ~~**Is Watch mode retired, kept, or left off?**~~ **Answered: retired** (2026-11-01). Off by
+   default, nothing new built on it, every claim that it worked corrected in the README, DESIGN.md
+   and the roadmap, and the reasons kept in [WATCH.md](WATCH.md) because they are the argument.
+   Removing the roughly 14,000 lines of `internal/watch`, `internal/intercept` and
+   `cmd/intercept-trial` is a separate piece of work, deliberately: it is large and mechanical, and
+   it should not ride along with a design decision.
 5. **Does the eero stay as an access point, or get replaced?** Bridge mode on the eero is the
    assumption throughout; it is also the rollback path, so it should not be given up.

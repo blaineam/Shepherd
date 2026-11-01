@@ -1,5 +1,23 @@
 # Watch mode
 
+> **Retired, 2026-11-01.** Watch mode is off by default and nothing new is built on it. It was
+> retired by measurement rather than by taste, and this document is kept because those measurements
+> are the argument:
+>
+> - **Outbound-only by construction.** One-sided ARP steering never touches the gateway's side, so
+>   every download is invisible and a device's real traffic volume is always understated.
+> - **It loops on real hardware.** The router returns relayed frames off the wire within tens of
+>   microseconds -- 0.04% of 21,331 echoed frames were fast enough to have stayed inside the host.
+>   The loop brake stops the storm in about three seconds; four attempts to prevent rather than
+>   contain it were each refuted by measurement.
+> - **"Steered and healthy" could mean almost nothing was steered.** A device the portal reported
+>   that way had **zero** of a 100 MB transfer relayed.
+>
+> What it was reaching for -- per-device, and ideally per-destination, bandwidth -- needs the return
+> path, and only a router has it. See [GATEWAY.md](GATEWAY.md). The configuration is kept so an
+> install that deliberately enables it keeps working.
+
+
 Watch mode is the second of Shepherd's three profiles (see [DESIGN.md](DESIGN.md)). Guard mode
 filters DNS: it catches the overwhelming majority of what devices do, costs the network nothing,
 and is always on. Watch mode adds the thing DNS filtering can never do by definition — seeing

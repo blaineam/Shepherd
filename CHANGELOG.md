@@ -12,6 +12,26 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Changed
+- **Watch mode is retired and off by default.** It was on, under the protect-by-default decision in
+  [DESIGN.md](docs/DESIGN.md); measurement retired it, not taste, and the evidence stays in
+  [WATCH.md](docs/WATCH.md) because it is the argument. Outbound-only by construction, so a device's
+  real traffic volume is always understated. It loops on real hardware, the router returning relayed
+  frames off the wire within tens of microseconds, with four attempted preventions each refuted by
+  measurement and only the loop brake reliably stopping it. And a device the portal reported as
+  steered and healthy had **zero** of a 100 MB transfer relayed, which makes its per-device numbers
+  unrepresentative rather than merely understated.
+
+  Every place that advertised it as working now says otherwise: the README's "what works today"
+  entry, the profile table in DESIGN.md, and roadmap item 11. DESIGN.md also no longer says Watch
+  mode's relay should stay reusable by a future forwarding path -- [GATEWAY.md](docs/GATEWAY.md)
+  deliberately does not inherit it, because Gateway puts no Shepherd code on the per-packet path at
+  all. The `[watch]` configuration is **kept** so an install that deliberately enables it is not
+  broken by an upgrade, and so the retirement can be read next to the thing it retired. Removing the
+  roughly 14,000 lines of `internal/watch`, `internal/intercept` and `cmd/intercept-trial` is a
+  separate piece of work on purpose: it is large and mechanical and should not ride along with a
+  design decision.
+
 ### Added
 - **A design and staged migration for Gateway mode: [GATEWAY.md](docs/GATEWAY.md).** Written
   because the night's Watch-mode measurements settled that per-device bandwidth, the thing actually
@@ -65,8 +85,8 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   exception is carved out, because failing closed otherwise takes out the means of repair along with
   everything else: the switch governs **forwarded** traffic only, so devices are cut off as intended
   while Shepherd's own outbound traffic, and therefore Tailscale and remote access, survives. The
-  remaining two decisions are whether Watch mode is retired and whether the eero stays as an access
-  point.
+  fourth is answered too: **Watch mode is retired.** The remaining decision is whether the
+  eero stays as an access point.
 - **The relay loop has a mechanism, a measurement and a fix, and Watch mode runs on the
   maintainer's NAS again.** Three times the relay carried traffic round in a circle at line rate
   and each time the cause was argued rather than measured, because the one thing nobody could see
