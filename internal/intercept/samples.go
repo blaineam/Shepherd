@@ -31,6 +31,57 @@ type frameSampler interface {
 	returnPathCounts() (oursReturning, toGateway uint64)
 	duplicatesSuppressed() uint64
 	duplicatesByDevice() map[arp.MAC]uint64
+	echoDelays() EchoDelays
+}
+
+// EchoDelays is how long echoed frames took to come back, bucketed. It is
+// the measurement that says *where* an echo comes from, which nothing else
+// in this package has settled.
+//
+// A frame that never left the machine comes back in microseconds. One that
+// reached a switch and was sent back takes hundreds of microseconds. One
+// that crossed a wireless hop or a mesh backhaul takes longer again. So the
+// shape of this histogram points at a culprit the host's own counters
+// cannot name: heavy in the first bucket is something local, heavy in the
+// middle is the switch, heavy at the end is the wireless side.
+type EchoDelays struct {
+	Under10us  uint64 `json:"under_10us"`
+	Under100us uint64 `json:"under_100us"`
+	Under1ms   uint64 `json:"under_1ms"`
+	Under10ms  uint64 `json:"under_10ms"`
+	Over10ms   uint64 `json:"over_10ms"`
+}
+
+// Total is every echoed frame the histogram counted.
+func (d EchoDelays) Total() uint64 {
+	return d.Under10us + d.Under100us + d.Under1ms + d.Under10ms + d.Over10ms
+}
+
+// String reads as the histogram it is, for a log line.
+func (d EchoDelays) String() string {
+	return fmt.Sprintf("<10us:%d <100us:%d <1ms:%d <10ms:%d >10ms:%d",
+		d.Under10us, d.Under100us, d.Under1ms, d.Under10ms, d.Over10ms)
+}
+
+// Verdict names what the shape points at, or "" when there is too little
+// to say. It is deliberately a pointer rather than a conclusion: it says
+// where to look, not what happened.
+func (d EchoDelays) Verdict() string {
+	total := d.Total()
+	if total < 50 {
+		return ""
+	}
+	switch {
+	case float64(d.Under10us) >= 0.8*float64(total):
+		return "the echo returns in under 10us, which is too fast to have left this machine: look at the host, not the network"
+	case float64(d.Under10us+d.Under100us) >= 0.8*float64(total):
+		return "the echo returns in tens of microseconds, consistent with a wired switch sending it straight back"
+	case float64(d.Under1ms) >= 0.5*float64(total):
+		return "the echo returns in hundreds of microseconds, consistent with a round trip through the router"
+	case float64(d.Under10ms+d.Over10ms) >= 0.5*float64(total):
+		return "the echo takes milliseconds, consistent with a wireless hop or a mesh backhaul carrying it back"
+	}
+	return "the echo's delay is spread across the buckets, so more than one path may be returning frames"
 }
 
 // FrameSamples returns the relayed-frame samples recorded since the
@@ -81,6 +132,20 @@ func (c *Controller) DuplicatesSuppressed() uint64 {
 		return 0
 	}
 	return s.duplicatesSuppressed()
+}
+
+// EchoDelays reports how long echoed frames took to come back. Zero values
+// where the data plane in use does not measure it.
+func (c *Controller) EchoDelays() EchoDelays {
+	o := c.observer.Load()
+	if o == nil {
+		return EchoDelays{}
+	}
+	s, ok := (*o).(frameSampler)
+	if !ok {
+		return EchoDelays{}
+	}
+	return s.echoDelays()
 }
 
 // DuplicatesByDevice is each steered device's share of the frames the

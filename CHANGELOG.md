@@ -68,6 +68,27 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   Shepherd's own output returning to it (a frame with its source MAC, a frame addressed to the
   gateway's); both read zero throughout every storm, so the relay's own transmitted frames are not
   what comes back.
+- **The echo is measured leaving the machine and coming back, which says it is the router.** The
+  duplicate table already held the moment each frame first arrived, so the delay before its copy
+  returns was free to compute, and it is the discriminator nothing else supplied. First reading on
+  the live host:
+
+  ```
+  <10us: 0    <100us: 13    <1ms: 4    <10ms: 0    >10ms: 0
+  ```
+
+  **Nothing in the first bucket.** A frame duplicated inside the host -- in the kernel, in the
+  driver, on the way to the XDP hook -- comes back in under ten microseconds. These come back in
+  tens to hundreds, which is a wired round trip. So the frames genuinely leave the interface and the
+  segment hands the device's frame back to Shepherd's port, which agrees with `examined` being 0.972
+  of the interface's `rx_packets` and with both return-path counters reading zero: what comes back is
+  the device's *original* frame, not Shepherd's rewritten one.
+  That is not something Shepherd can fix from this host, and
+  [DESIGN.md](docs/DESIGN.md) anticipated it: "Firewalla documents ARP compatibility problems with
+  some mesh routers and does not list eero 7, so this must be tested per router before relying on
+  it." This is that test, and the answer on this router is that one-sided ARP steering can be
+  contained here but not made clean. `EchoDelays.Verdict()` states which shape points where, and
+  stays silent below fifty samples rather than guessing from a handful.
 - **The dual-homed-device lead is refuted too, by the per-device counts.** The machine behind the
   worst storms is itself dual-homed on the segment, which looked like the answer; it is not.
   Measured live: that machine runs 16,196 duplicates against 18,361 relayed (0.88), a

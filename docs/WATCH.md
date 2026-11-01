@@ -387,8 +387,38 @@ the relay and the segment under load rather than of any device, which is the opp
 dual-homing suggested.
 
 That is the third explanation offered here and refuted by measurement, after the polluted registry
-record and kernel forwarding. Whoever looks next should start from a capture on the router, because
-nothing measurable on this host has separated the remaining possibilities.
+record and kernel forwarding.
+
+## Where the echo comes from, measured
+
+The duplicate table already records when each frame first arrived, so the delay before its copy
+comes back costs nothing to measure -- and it is the discriminator every earlier attempt lacked.
+A frame duplicated inside this host, in the kernel or the driver or on the way to the hook, returns
+in **under ten microseconds**. One that reaches a wired switch and is sent back takes **tens to
+hundreds**. One carried back over a wireless hop or a mesh backhaul takes **milliseconds**.
+
+First reading on the live host:
+
+```
+<10us: 0    <100us: 13    <1ms: 4    <10ms: 0    >10ms: 0
+```
+
+Nothing local. The frames leave the interface and come back off the wire, which is what `examined`
+being 0.972 of `rx_packets` already implied and what both return-path counters reading zero
+confirms from the other side: the copy that returns is the device's **original** frame, not
+Shepherd's rewritten one. The segment is handing a steered device's frames to Shepherd twice.
+
+This is a property of the router, not of Shepherd, and it is the risk
+[DESIGN.md](DESIGN.md#watch-interception-methods) wrote down before any of this was built:
+
+> Firewalla documents ARP compatibility problems with some mesh routers and does not list eero 7,
+> so this must be tested per router before relying on it.
+
+That test has now been run, on an eero, and the answer is that one-sided ARP steering can be
+**contained** here -- the duplicate brake does that, and the relay carries real traffic at full
+speed -- but it cannot be made clean. Anyone bringing Watch mode to a new router should read the
+echo histogram before trusting it, and anyone who wants both directions of a device's traffic
+wants Gateway mode instead (DESIGN.md), where a router sees both by construction.
 
 That is why the refusal below is kept as the default, and why it is only a default.
 

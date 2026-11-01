@@ -60,14 +60,19 @@ type xdpRelayConfig struct {
 }
 
 type xdpRelayStats struct {
-	_             structs.HostLayout
-	Examined      uint64
-	PassedLocal   uint64
-	RelayedFrames uint64
-	RelayedBytes  uint64
-	OursReturning uint64
-	ToGateway     uint64
-	Duplicates    uint64
+	_              structs.HostLayout
+	Examined       uint64
+	PassedLocal    uint64
+	RelayedFrames  uint64
+	RelayedBytes   uint64
+	OursReturning  uint64
+	ToGateway      uint64
+	Duplicates     uint64
+	EchoUnder10us  uint64
+	EchoUnder100us uint64
+	EchoUnder1ms   uint64
+	EchoUnder10ms  uint64
+	EchoOver10ms   uint64
 }
 
 // Names of all BPF objects in the ELF.

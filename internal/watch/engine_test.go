@@ -1644,3 +1644,35 @@ func TestTheLoopBrakeRecordsItsEvidenceWhereARestartCannotLoseIt(t *testing.T) {
 		t.Errorf("Snapshot()'s record disagrees with the one on disk: rx %.0f", snap.LastLoopStop.RxPackets)
 	}
 }
+
+// The echo warning's thresholds. It must stay silent about a stray
+// duplicate or a near-idle relay, and speak up when most of what the relay
+// relays is coming back -- which is what the live host does.
+func TestTheEchoWarningThresholds(t *testing.T) {
+	cases := []struct {
+		name          string
+		relayed, dups uint64
+		want          bool
+	}{
+		{"a healthy relay, nothing coming back", 100000, 0, false},
+		{"one stray duplicate in heavy traffic", 100000, 1, false},
+		{"just under the ratio", 10000, 2499, false},
+		{"exactly at the ratio", 10000, 2500, true},
+		{"the live host's measured 0.8", 18361, 16196, true},
+		{"a high ratio but far too few frames to conclude from", 100, 99, false},
+		{"just under the frame floor", echoWarnMinFrames - 1, echoWarnMinFrames - 1, false},
+		{"exactly at the frame floor, ratio met", echoWarnMinFrames, echoWarnMinFrames, true},
+		{"no traffic at all", 0, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := echoing(tc.relayed, tc.dups); got != tc.want {
+				t.Fatalf("echoing(%d relayed, %d duplicates) = %v, want %v", tc.relayed, tc.dups, got, tc.want)
+			}
+		})
+	}
+	// It must never divide by zero or treat silence as an echo.
+	if echoing(0, 5) {
+		t.Error("duplicates with no relayed frames must not warn")
+	}
+}

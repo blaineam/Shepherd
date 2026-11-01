@@ -281,6 +281,19 @@ func (dp *xdpDataPlane) duplicatesByDevice() map[arp.MAC]uint64 {
 	return out
 }
 
+// echoDelays implements frameSampler.
+func (dp *xdpDataPlane) echoDelays() EchoDelays {
+	dp.mu.Lock()
+	defer dp.mu.Unlock()
+	return EchoDelays{
+		Under10us:  dp.lastStats.EchoUnder10us,
+		Under100us: dp.lastStats.EchoUnder100us,
+		Under1ms:   dp.lastStats.EchoUnder1ms,
+		Under10ms:  dp.lastStats.EchoUnder10ms,
+		Over10ms:   dp.lastStats.EchoOver10ms,
+	}
+}
+
 // duplicatesSuppressed implements frameSampler: frames the program refused
 // to relay because it had already relayed the same frame moments earlier.
 func (dp *xdpDataPlane) duplicatesSuppressed() uint64 {
@@ -455,6 +468,11 @@ func (dp *xdpDataPlane) harvest(c *Controller) {
 			sum.OursReturning += s.OursReturning
 			sum.ToGateway += s.ToGateway
 			sum.Duplicates += s.Duplicates
+			sum.EchoUnder10us += s.EchoUnder10us
+			sum.EchoUnder100us += s.EchoUnder100us
+			sum.EchoUnder1ms += s.EchoUnder1ms
+			sum.EchoUnder10ms += s.EchoUnder10ms
+			sum.EchoOver10ms += s.EchoOver10ms
 		}
 		if sum.Examined > dp.lastStats.Examined {
 			c.recordExaminedBatch(sum.Examined-dp.lastStats.Examined, 0, sum.PassedLocal-dp.lastStats.PassedLocal)

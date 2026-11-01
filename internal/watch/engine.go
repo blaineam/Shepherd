@@ -219,6 +219,20 @@ const (
 	// loopHits is how many consecutive one-second samples must agree
 	// before the brake trips, so a burst cannot cause one.
 	loopHits = 3
+	// The echo warning. A relay whose frames keep coming back is working
+	// but wasting most of its effort, and the network is carrying nearly
+	// twice the relayed traffic. The duplicate brake contains that, so it
+	// is not an emergency and must not stop steering -- but it is not
+	// normal either, and an owner who never turns diagnostics on would
+	// otherwise never learn of it. So it is said out loud, rarely, with the
+	// numbers and the busiest device.
+	//
+	// The thresholds only keep it quiet about nothing: a ratio this high
+	// over this many frames is not a stray duplicate, and a healthy relay
+	// sits at zero for as long as it runs.
+	echoWarnRatio     = 0.25
+	echoWarnMinFrames = 2000
+	echoWarnEvery     = time.Hour
 	// diagnosticsEvery and diagnosticsMinPPS bound the Config.Diagnostics
 	// digest: at most one every few seconds, and only while the relay is
 	// carrying something worth looking at.
@@ -444,6 +458,10 @@ type Engine struct {
 	// duplicates appearing rather than only on a high relayed rate.
 	lastDiag    time.Time
 	lastDupSeen uint64
+	// echoWindow is the start of the interval the echo warning measures
+	// over, with the relayed and duplicate counts as they were then.
+	echoWindow               time.Time
+	echoRelayedAt, echoDupAt uint64
 	// ifaceCounters is the previous reading of the interface's own
 	// counters, and loopStreak how many consecutive samples have looked
 	// like a relay loop. See the loop brake constants.
@@ -1222,7 +1240,71 @@ func (e *Engine) sample(now time.Time) {
 		}
 		e.lastDupSeen = dup
 	}
+	e.warnIfEchoing(now, ctrl)
 	e.checkForLoop(now, relayedPPS, status)
+}
+
+// echoing reports whether, over one window, enough of what the relay
+// relayed came straight back to be worth saying out loud. Separated from
+// the logging so the thresholds -- the part a mistake would live in -- can
+// be tested without an in-kernel relay, which is the only data plane that
+// counts duplicates at all.
+func echoing(relayed, dups uint64) bool {
+	if relayed < echoWarnMinFrames {
+		return false // too little traffic to conclude anything
+	}
+	return float64(dups) >= echoWarnRatio*float64(relayed)
+}
+
+// warnIfEchoing says once an hour, at most, that most of what the relay
+// relays is coming straight back to it. The duplicate brake is dropping
+// those copies, so nothing is broken and steering continues; but a relay
+// doing twice the work for the same traffic is worth knowing about, and
+// without this it is visible only to someone who turned diagnostics on.
+func (e *Engine) warnIfEchoing(now time.Time, ctrl *intercept.Controller) {
+	st := ctrl.Stats()
+	dup := ctrl.DuplicatesSuppressed()
+
+	e.mu.Lock()
+	if e.echoWindow.IsZero() {
+		e.echoWindow, e.echoRelayedAt, e.echoDupAt = now, st.FramesRelayed, dup
+		e.mu.Unlock()
+		return
+	}
+	if now.Sub(e.echoWindow) < echoWarnEvery {
+		e.mu.Unlock()
+		return
+	}
+	relayed := st.FramesRelayed - e.echoRelayedAt
+	dups := dup - e.echoDupAt
+	e.echoWindow, e.echoRelayedAt, e.echoDupAt = now, st.FramesRelayed, dup
+	e.mu.Unlock()
+
+	if !echoing(relayed, dups) {
+		return
+	}
+	e.logf("watch: %d of the last %d relayed frames came straight back and were dropped (%.0f%%). Steering is working and nothing is broken -- the relay drops the copies -- but something on this network re-delivers the frames it relays, so the segment carries nearly twice the traffic it needs to. See docs/WATCH.md.",
+		dups, relayed, float64(dups)/float64(relayed)*100)
+	if ed := ctrl.EchoDelays(); ed.Total() > 0 {
+		e.logf("watch: how long they took to come back -- %s", ed)
+		if v := ed.Verdict(); v != "" {
+			e.logf("watch: %s", v)
+		}
+	}
+	if byDev := ctrl.DuplicatesByDevice(); len(byDev) > 0 {
+		var worst arp.MAC
+		var worstN uint64
+		for mac, n := range byDev {
+			if n > worstN {
+				worst, worstN = mac, n
+			}
+		}
+		name := worst.String()
+		if d, ok := e.reg.FindByMAC(worst.String()); ok {
+			name = d.DisplayName() + " (" + worst.String() + ")"
+		}
+		e.logf("watch: most of those were %s's, %d frames in all", name, worstN)
+	}
 }
 
 // logSamples drains the relay's frame samples and logs their digest: the
@@ -1230,6 +1312,12 @@ func (e *Engine) sample(now time.Time) {
 // tells a loop from traffic (intercept.SummarizeSamples). Only the
 // in-kernel relay samples; the userspace relay yields nothing here.
 func (e *Engine) logSamples(ctrl *intercept.Controller, why string) {
+	if ed := ctrl.EchoDelays(); ed.Total() > 0 {
+		e.logf("watch: %s: how long the echoed frames took to come back -- %s", why, ed)
+		if v := ed.Verdict(); v != "" {
+			e.logf("watch: %s: %s", why, v)
+		}
+	}
 	if dup := ctrl.DuplicatesSuppressed(); dup > 0 {
 		e.logf("watch: %s: %d frames were not relayed because the relay had already relayed the same frame moments earlier -- the same frame coming round, which is what a loop is made of", why, dup)
 	}

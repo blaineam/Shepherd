@@ -160,6 +160,19 @@ struct relay_stats {
 	// relayed the same frame inside DUP_WINDOW_NS: the substance of a
 	// relay loop, and on a healthy network a flat zero.
 	__u64 duplicates;
+	// How long each duplicate took to come back, bucketed. This is the
+	// measurement that says where the echo comes from, which nothing else
+	// has been able to settle: a frame that never left the machine returns
+	// in microseconds, one that went to the switch and back takes
+	// hundreds of microseconds, and one that crossed a wireless hop or a
+	// mesh backhaul takes longer still. The delay is free to compute --
+	// the duplicate table already holds the moment the frame first
+	// arrived.
+	__u64 echo_under_10us;
+	__u64 echo_under_100us;
+	__u64 echo_under_1ms;
+	__u64 echo_under_10ms;
+	__u64 echo_over_10ms;
 };
 
 // A sample of a relayed frame: its first SAMPLE_BYTES bytes (Ethernet,
@@ -369,15 +382,29 @@ static __attribute__((always_inline)) __u64 fingerprint6(struct ipv6hdr_min *ip6
 // fingerprint hash, overwritten freely: a collision costs one suppressed
 // frame, and an eviction costs one unsuppressed loop pass, neither of
 // which matters at the rates involved.
-static __attribute__((always_inline)) int is_duplicate(__u64 fp, __u64 now)
+static __attribute__((always_inline)) int is_duplicate(__u64 fp, __u64 now,
+						       struct relay_stats *st)
 {
 	__u32 slot = (__u32)((fp >> 16) % DUP_SLOTS);
 	struct dup_entry *e = bpf_map_lookup_elem(&recent, &slot);
 	if (!e)
 		return 0;
 	int dup = e->fingerprint == fp && now >= e->ts && (now - e->ts) < DUP_WINDOW_NS;
+	__u64 delay = now - e->ts;
 	e->fingerprint = fp;
 	e->ts = now;
+	if (dup && st) {
+		if (delay < 10000)
+			st->echo_under_10us++;
+		else if (delay < 100000)
+			st->echo_under_100us++;
+		else if (delay < 1000000)
+			st->echo_under_1ms++;
+		else if (delay < 10000000)
+			st->echo_under_10ms++;
+		else
+			st->echo_over_10ms++;
+	}
 	return dup;
 }
 
@@ -487,7 +514,7 @@ int xdp_relay(struct xdp_md *ctx)
 		// loop here would be exactly as severe, so the brake is not left
 		// to cover one family only.
 		__u64 fp6 = fingerprint6(ip6, (void *)(ip6 + 1), data_end, len);
-		if (is_duplicate(fp6, bpf_ktime_get_ns())) {
+		if (is_duplicate(fp6, bpf_ktime_get_ns(), st)) {
 			if (st)
 				st->duplicates++;
 			__sync_fetch_and_add(&dev->duplicates, 1);
@@ -511,7 +538,7 @@ int xdp_relay(struct xdp_md *ctx)
 	// route straight back out of this same interface.
 	__u64 now_ns = bpf_ktime_get_ns();
 	__u64 fp = fingerprint(ip, (void *)ip + ((ip->ver_ihl & 0x0f) * 4), data_end, len);
-	if (is_duplicate(fp, now_ns)) {
+	if (is_duplicate(fp, now_ns, st)) {
 		if (st)
 			st->duplicates++;
 		__sync_fetch_and_add(&dev->duplicates, 1);
