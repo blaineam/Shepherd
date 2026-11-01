@@ -90,6 +90,29 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   it." This is that test, and the answer on this router is that one-sided ARP steering can be
   contained here but not made clean. `EchoDelays.Verdict()` states which shape points where, and
   stays silent below fifty samples rather than guessing from a handful.
+- **The duplicate brake does not contain a runaway, and the live trip proves it.** The brake was
+  measured holding the steady echo at about 80% of relayed frames, and that reading did not
+  generalise. A loop brake trip on the live host, with the evidence now persisted rather than lost
+  to a rebuild, recorded this:
+
+  ```
+  rx 27,532   tx 27,148   (1.39% apart)   relay reported 26,251 pkt/s = 95.3% of received
+  duplicates suppressed during the burst: about 2,400 of 87,516 frames relayed -- 3%
+  127 of 128 sampled frames: one flow, one IP ID, one TTL, "circulating at layer 2"
+  ```
+
+  So it was a genuine single-frame runaway, and the duplicate brake caught 3% of it rather than the
+  80% it manages at rest. Its effectiveness **collapses as the rate rises**, which is the opposite
+  of what a safety mechanism should do. The likely reason is in the brake's own shape: `is_duplicate`
+  reads a slot, compares, and writes it back without atomicity, so at tens of thousands of frames a
+  second across twelve cores two frames routinely both read "not seen" and both get relayed. A
+  per-CPU table would remove the race, and that is the next thing to try -- stated as a hypothesis,
+  because the last three stated here as more than that were wrong.
+
+  What did work is the layer underneath: the loop brake stopped it in three seconds and, for the
+  first time, **the reason survived the redeploy** -- the interface counts, the relay's share, the
+  duplicate count at that moment, the devices and the sampled flows, all in `watch.json`. Also for
+  the first time the trip carried the echo histogram, which still said a wired round trip.
 - **The dual-homed-device lead is refuted too, by the per-device counts.** The machine behind the
   worst storms is itself dual-homed on the segment, which looked like the answer; it is not.
   Measured live: that machine runs 16,196 duplicates against 18,361 relayed (0.88), a

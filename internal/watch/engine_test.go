@@ -1676,3 +1676,98 @@ func TestTheEchoWarningThresholds(t *testing.T) {
 		t.Error("duplicates with no relayed frames must not warn")
 	}
 }
+
+// The relay's evidence lines: what gets reported, in what order, and what
+// is left out. Gathering the evidence needs an in-kernel relay, which no
+// test can attach, so the wording and the choices are tested here instead
+// of going unverified.
+func TestRelayEvidenceLines(t *testing.T) {
+	names := func(m arp.MAC) string { return "dev-" + m.String() }
+	a := arp.MAC{2, 0, 0, 0, 0, 1}
+	b := arp.MAC{2, 0, 0, 0, 0, 2}
+	c := arp.MAC{2, 0, 0, 0, 0, 3}
+	d := arp.MAC{2, 0, 0, 0, 0, 4}
+
+	t.Run("a healthy relay says only that there is nothing to show", func(t *testing.T) {
+		got := relayEvidence{}.lines(names)
+		if len(got) != 1 || got[0] != "no relayed-frame samples available" {
+			t.Fatalf("lines = %q, want just the no-samples line", got)
+		}
+	})
+
+	t.Run("zero counters are left out rather than printed as zeroes", func(t *testing.T) {
+		got := relayEvidence{Flows: []string{"a flow"}}.lines(names)
+		if len(got) != 1 || got[0] != "a flow" {
+			t.Fatalf("lines = %q, want only the flow", got)
+		}
+	})
+
+	t.Run("everything present, busiest device first", func(t *testing.T) {
+		got := relayEvidence{
+			Echo:          intercept.EchoDelays{Under100us: 900, Under1ms: 100},
+			Duplicates:    1000,
+			OursReturning: 2,
+			ToGateway:     3,
+			ByDevice:      map[arp.MAC]uint64{a: 10, b: 500, c: 100},
+			Flows:         []string{"flow one", "flow two"},
+			Interface:     "eth0",
+		}.lines(names)
+		joined := strings.Join(got, "\n")
+		for _, want := range []string{
+			"how long the echoed frames took to come back",
+			"consistent with a wired switch sending it straight back",
+			"1000 frames were not relayed",
+			"2 frames arrived with Shepherd's own source MAC and 3",
+			"eth0",
+			"flow one", "flow two",
+		} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("lines missing %q:\n%s", want, joined)
+			}
+		}
+		// Busiest device first, and only three named.
+		iB := strings.Index(joined, "500 of dev-"+b.String())
+		iC := strings.Index(joined, "100 of dev-"+c.String())
+		iA := strings.Index(joined, "10 of dev-"+a.String())
+		if iB < 0 || iC < 0 || iA < 0 || !(iB < iC && iC < iA) {
+			t.Errorf("devices not ordered busiest first (%d, %d, %d):\n%s", iB, iC, iA, joined)
+		}
+	})
+
+	t.Run("at most three devices are named", func(t *testing.T) {
+		got := relayEvidence{
+			ByDevice: map[arp.MAC]uint64{a: 4, b: 3, c: 2, d: 1},
+			Flows:    []string{"f"},
+		}.lines(names)
+		n := 0
+		for _, l := range got {
+			if strings.Contains(l, "frames came back and were dropped") {
+				n++
+			}
+		}
+		if n != 3 {
+			t.Fatalf("named %d devices, want at most 3: %q", n, got)
+		}
+	})
+
+	t.Run("devices with equal counts keep a stable order", func(t *testing.T) {
+		ev := relayEvidence{ByDevice: map[arp.MAC]uint64{a: 5, b: 5, c: 5}, Flows: []string{"f"}}
+		first := strings.Join(ev.lines(names), "\n")
+		for i := 0; i < 20; i++ {
+			if again := strings.Join(ev.lines(names), "\n"); again != first {
+				t.Fatalf("the order changed between digests:\n%s\n---\n%s", first, again)
+			}
+		}
+	})
+
+	t.Run("the echo verdict is omitted when there is too little to say", func(t *testing.T) {
+		got := relayEvidence{Echo: intercept.EchoDelays{Under10us: 3}, Flows: []string{"f"}}.lines(names)
+		joined := strings.Join(got, "\n")
+		if !strings.Contains(joined, "how long the echoed frames took") {
+			t.Error("the histogram itself should still be reported")
+		}
+		if strings.Contains(joined, "look at the host") || strings.Contains(joined, "consistent with") {
+			t.Errorf("a verdict was drawn from 3 samples:\n%s", joined)
+		}
+	})
+}

@@ -270,6 +270,19 @@ same sixteen bytes of transport header. IPv6 steering is off by default and ever
 IPv4, but a loop there would be just as severe, and a safety stop covering one family is worse
 than no claim at all.
 
+**It does not contain a runaway, and that is measured, not suspected.** At rest on the live host the
+brake holds the echo at about 80% of relayed frames. During an actual loop it caught **3%**: a trip
+recorded 87,516 frames relayed against roughly 2,400 suppressed, with 127 of 128 sampled frames
+being one flow with one IP identification field and one TTL -- a single frame going round. So the
+brake's effectiveness collapses as the rate rises, which is the opposite of what a safety mechanism
+should do, and the loop brake is still what stops a storm.
+
+The likely reason is in `is_duplicate`: it reads a slot, compares, and writes it back with no
+atomicity, so at tens of thousands of frames a second across a dozen cores two copies routinely
+both read "not seen" and both get relayed. A per-CPU table would remove the race. That is a
+hypothesis and is written as one, because the three explanations offered here before it were each
+refuted by measurement.
+
 `GET /api/watch` reports the count as `duplicates_suppressed`, overall and per device, and the
 diagnostics digest names the devices whose frames came back. Per device matters: the overall
 figure cannot say whether the frames belong to one device or to all of them, which is exactly what

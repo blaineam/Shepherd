@@ -131,3 +131,74 @@ func TestSamplingAccessorsReportNothingWithoutAnInKernelRelay(t *testing.T) {
 type notASampler struct{}
 
 func (notASampler) steeredSetChanged([]steeredEntry) {}
+
+// EchoDelays.Verdict is what points the next person at a culprit, so a
+// wrong threshold here misleads rather than merely underperforms. Each
+// shape is checked, and so is its refusal to speak from a handful.
+func TestEchoDelaysVerdictPointsAtTheRightPlace(t *testing.T) {
+	cases := []struct {
+		name string
+		d    EchoDelays
+		want string
+	}{
+		{"too few samples to say anything", EchoDelays{Under10us: 49}, ""},
+		{"nothing at all", EchoDelays{}, ""},
+		{
+			"almost all under 10us: it never left the machine",
+			EchoDelays{Under10us: 900, Under100us: 50, Under1ms: 50},
+			"look at the host, not the network",
+		},
+		{
+			"tens of microseconds: a wired switch sending it back",
+			EchoDelays{Under10us: 9, Under100us: 17093, Under1ms: 4229, Under10ms: 6},
+			"consistent with a wired switch sending it straight back",
+		},
+		{
+			"hundreds of microseconds: a round trip through the router",
+			EchoDelays{Under100us: 100, Under1ms: 900},
+			"consistent with a round trip through the router",
+		},
+		{
+			"milliseconds: a wireless hop or a mesh backhaul",
+			EchoDelays{Under100us: 100, Under10ms: 600, Over10ms: 300},
+			"wireless hop or a mesh backhaul",
+		},
+		{
+			"spread across the buckets, so more than one path",
+			EchoDelays{Under10us: 200, Under100us: 300, Under1ms: 300, Under10ms: 100, Over10ms: 100},
+			"more than one path may be returning frames",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.d.Verdict()
+			if tc.want == "" {
+				if got != "" {
+					t.Fatalf("Verdict() = %q, want silence from %d samples", got, tc.d.Total())
+				}
+				return
+			}
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("Verdict() = %q, want it to contain %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEchoDelaysTotalAndString(t *testing.T) {
+	d := EchoDelays{Under10us: 1, Under100us: 2, Under1ms: 3, Under10ms: 4, Over10ms: 5}
+	if got := d.Total(); got != 15 {
+		t.Errorf("Total() = %d, want 15", got)
+	}
+	if got := (EchoDelays{}).Total(); got != 0 {
+		t.Errorf("Total() of nothing = %d, want 0", got)
+	}
+	// Every bucket has to appear, since this line is read as the record of
+	// what was measured.
+	s := d.String()
+	for _, want := range []string{"<10us:1", "<100us:2", "<1ms:3", "<10ms:4", ">10ms:5"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("String() = %q, missing %q", s, want)
+		}
+	}
+}

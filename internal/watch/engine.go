@@ -1312,56 +1312,91 @@ func (e *Engine) warnIfEchoing(now time.Time, ctrl *intercept.Controller) {
 // tells a loop from traffic (intercept.SummarizeSamples). Only the
 // in-kernel relay samples; the userspace relay yields nothing here.
 func (e *Engine) logSamples(ctrl *intercept.Controller, why string) {
-	if ed := ctrl.EchoDelays(); ed.Total() > 0 {
-		e.logf("watch: %s: how long the echoed frames took to come back -- %s", why, ed)
-		if v := ed.Verdict(); v != "" {
-			e.logf("watch: %s: %s", why, v)
-		}
+	r := relayEvidence{
+		Echo:       ctrl.EchoDelays(),
+		Duplicates: ctrl.DuplicatesSuppressed(),
+		ByDevice:   ctrl.DuplicatesByDevice(),
+		Flows:      intercept.SummarizeSamples(ctrl.FrameSamples()),
+		Interface:  e.ifaceName(),
 	}
-	if dup := ctrl.DuplicatesSuppressed(); dup > 0 {
-		e.logf("watch: %s: %d frames were not relayed because the relay had already relayed the same frame moments earlier -- the same frame coming round, which is what a loop is made of", why, dup)
-	}
-	if ours, gw := ctrl.ReturnPathCounts(); ours > 0 || gw > 0 {
-		e.logf("watch: %s: %d frames arrived with Shepherd's own source MAC and %d addressed to the gateway's -- Shepherd's relayed output coming back to %s",
-			why, ours, gw, e.ifaceName())
-	}
-	if byDev := ctrl.DuplicatesByDevice(); len(byDev) > 0 {
-		type pair struct {
-			mac arp.MAC
-			n   uint64
-		}
-		var ds []pair
-		for mac, n := range byDev {
-			ds = append(ds, pair{mac, n})
-		}
-		slices.SortFunc(ds, func(a, b pair) int {
-			switch {
-			case a.n > b.n:
-				return -1
-			case a.n < b.n:
-				return 1
-			}
-			return 0
-		})
-		for i, d := range ds {
-			if i == 3 {
-				break
-			}
-			name := d.mac.String()
-			if dev, ok := e.reg.FindByMAC(d.mac.String()); ok {
-				name = dev.DisplayName() + " (" + d.mac.String() + ")"
-			}
-			e.logf("watch: %s: %d of %s's frames came back and were dropped", why, d.n, name)
-		}
-	}
-	samples := ctrl.FrameSamples()
-	if len(samples) == 0 {
-		e.logf("watch: %s: no relayed-frame samples available", why)
-		return
-	}
-	for _, line := range intercept.SummarizeSamples(samples) {
+	r.OursReturning, r.ToGateway = ctrl.ReturnPathCounts()
+	for _, line := range r.lines(e.deviceName) {
 		e.logf("watch: %s: %s", why, line)
 	}
+}
+
+// deviceName is a device's display name with its MAC, or just the MAC when
+// the registry does not know it.
+func (e *Engine) deviceName(mac arp.MAC) string {
+	if d, ok := e.reg.FindByMAC(mac.String()); ok {
+		return d.DisplayName() + " (" + mac.String() + ")"
+	}
+	return mac.String()
+}
+
+// relayEvidence is everything the in-kernel relay can say about frames
+// coming back to it. Gathering it needs that relay; turning it into lines
+// does not, which is why the two are separate: the wording and the choice
+// of what to report is the part worth testing, and no test can attach an
+// XDP program.
+type relayEvidence struct {
+	Echo          intercept.EchoDelays
+	Duplicates    uint64
+	OursReturning uint64
+	ToGateway     uint64
+	ByDevice      map[arp.MAC]uint64
+	Flows         []string
+	Interface     string
+}
+
+// lines renders the evidence, busiest devices first, naming each with the
+// given function. Everything that has nothing to say is left out, so a
+// healthy relay produces one line rather than a screen of zeroes.
+func (r relayEvidence) lines(name func(arp.MAC) string) []string {
+	var out []string
+	if r.Echo.Total() > 0 {
+		out = append(out, "how long the echoed frames took to come back -- "+r.Echo.String())
+		if v := r.Echo.Verdict(); v != "" {
+			out = append(out, v)
+		}
+	}
+	if r.Duplicates > 0 {
+		out = append(out, fmt.Sprintf("%d frames were not relayed because the relay had already relayed the same frame moments earlier -- the same frame coming round, which is what a loop is made of", r.Duplicates))
+	}
+	if r.OursReturning > 0 || r.ToGateway > 0 {
+		out = append(out, fmt.Sprintf("%d frames arrived with Shepherd's own source MAC and %d addressed to the gateway's -- Shepherd's relayed output coming back to %s",
+			r.OursReturning, r.ToGateway, r.Interface))
+	}
+	type pair struct {
+		mac arp.MAC
+		n   uint64
+	}
+	var ds []pair
+	for mac, n := range r.ByDevice {
+		ds = append(ds, pair{mac, n})
+	}
+	slices.SortFunc(ds, func(a, b pair) int {
+		switch {
+		case a.n > b.n:
+			return -1
+		case a.n < b.n:
+			return 1
+		}
+		// Equal counts sort by MAC, so the lines do not reorder between
+		// one digest and the next for no reason.
+		return strings.Compare(a.mac.String(), b.mac.String())
+	})
+	for i, d := range ds {
+		if i == 3 {
+			break
+		}
+		out = append(out, fmt.Sprintf("%d of %s's frames came back and were dropped", d.n, name(d.mac)))
+	}
+	if len(r.Flows) == 0 {
+		out = append(out, "no relayed-frame samples available")
+		return out
+	}
+	return append(out, r.Flows...)
 }
 
 // checkForLoop is the loop brake. Twice on real hardware the relay ended up
