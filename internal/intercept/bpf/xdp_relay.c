@@ -325,6 +325,39 @@ static __attribute__((always_inline)) __u64 fingerprint(struct iphdr_min *ip, vo
 	return h | 1;
 }
 
+// fingerprint6 is fingerprint for IPv6. There is no identification field
+// to use, so it leans on what IPv6 does have: the traffic class and flow
+// label, the payload length, the next header, both 16-byte addresses and
+// the first sixteen bytes of the transport header. A flow label is constant
+// for a flow, so the transport header is doing most of the work here, which
+// is the same thing that distinguishes two IPv4 packets of one flow.
+static __attribute__((always_inline)) __u64 fingerprint6(struct ipv6hdr_min *ip6, void *l4, void *data_end, __u64 wire_len)
+{
+	__u64 h = 1469598103934665603ULL; /* FNV-1a offset basis */
+	__u32 words[14];
+	words[0] = ((__u32)ip6->tc_fl << 16) | (__u32)ip6->fl;
+	words[1] = ((__u32)ip6->payload_len << 16) | ((__u32)ip6->next_hdr << 8);
+	words[2] = (__u32)wire_len;
+	for (int i = 0; i < 4; i++) {
+		words[3 + i] = *(__u32 *)(ip6->saddr + i * 4);
+		words[7 + i] = *(__u32 *)(ip6->daddr + i * 4);
+	}
+	words[11] = 0;
+	words[12] = 0;
+	words[13] = 0;
+	if (l4 + 8 <= data_end) {
+		words[11] = *(__u32 *)l4;
+		words[12] = *(__u32 *)(l4 + 4);
+	}
+	if (l4 + 16 <= data_end)
+		words[13] = *(__u32 *)(l4 + 8) ^ *(__u32 *)(l4 + 12);
+	for (int i = 0; i < 14; i++) {
+		h ^= (__u64)words[i];
+		h *= 1099511628211ULL; /* FNV-1a prime */
+	}
+	return h | 1;
+}
+
 // is_duplicate reports whether this program already relayed this exact
 // frame inside DUP_WINDOW_NS, and records it either way. One slot per
 // fingerprint hash, overwritten freely: a collision costs one suppressed
@@ -442,6 +475,16 @@ int xdp_relay(struct xdp_md *ctx)
 			if (st)
 				st->passed_local++;
 			return XDP_PASS;
+		}
+		// The duplicate brake, IPv6 side. The loop that made this
+		// necessary was IPv4 and IPv6 steering is off by default, but a
+		// loop here would be exactly as severe, so the brake is not left
+		// to cover one family only.
+		__u64 fp6 = fingerprint6(ip6, (void *)(ip6 + 1), data_end, len);
+		if (is_duplicate(fp6, bpf_ktime_get_ns())) {
+			if (st)
+				st->duplicates++;
+			return XDP_DROP;
 		}
 		return do_relay(eth, data_end, cfg, dev, st, len, 1);
 	}

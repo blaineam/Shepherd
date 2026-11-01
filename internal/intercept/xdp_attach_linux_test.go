@@ -167,7 +167,11 @@ func TestAttachXDPRelaysOnVeth(t *testing.T) {
 				t.Fatal("relayed frame's IP packet was altered")
 			}
 		case <-time.After(2 * time.Second):
-			t.Fatalf("got only %d of %d relayed frames back", i, n)
+			// Say whether the duplicate brake ate them, since that is the
+			// first thing to suspect and the counter answers it outright.
+			st := ctrl.Stats()
+			t.Fatalf("got only %d of %d relayed frames back (relayed=%d examined=%d duplicates_suppressed=%d)",
+				i, n, st.FramesRelayed, st.FramesExamined, dpDuplicates(ctrl))
 		}
 	}
 
@@ -211,3 +215,7 @@ func TestAttachXDPRelaysOnVeth(t *testing.T) {
 		t.Fatal("AttachXDP did not return after ctx cancel")
 	}
 }
+
+// dpDuplicates reads the attached data plane's duplicate count, or 0 when
+// no sampling data plane is attached.
+func dpDuplicates(c *Controller) uint64 { return c.DuplicatesSuppressed() }

@@ -470,3 +470,42 @@ func TestXDPRelayDropsTheSameFrameComingRoundAgain(t *testing.T) {
 		}
 	}
 }
+
+// The duplicate brake covers IPv6 too. The loop that made it necessary was
+// IPv4 and IPv6 steering is off by default, but a loop here would be just
+// as severe, so this holds the brake to both families.
+func TestXDPRelayDropsARepeatedIPv6Frame(t *testing.T) {
+	objs := loadXDPForTest(t)
+	dp := &xdpDataPlane{objs: objs}
+	if err := dp.configure(shepherdMAC, gwMAC, []netip.Addr{ip(2)}, []netip.Addr{shepIP6}); err != nil {
+		t.Fatal(err)
+	}
+	dp.resync([]steeredEntry{{devMAC, SteerV4 | SteerV6}})
+	c, _, _ := newTestController(t, nil)
+
+	frame := ipv6Frame(shepherdMAC, devMAC, devIP6, someV6, 64, []byte("a payload long enough to fingerprint"))
+	if verdict, _ := runXDP(t, objs, frame); verdict != xdpTX {
+		t.Fatal("the first copy of an IPv6 frame must be relayed")
+	}
+	for i := 0; i < 20; i++ {
+		if verdict, _ := runXDP(t, objs, frame); verdict != xdpDrop {
+			t.Fatalf("copy %d of the same IPv6 frame: verdict = %d, want XDP_DROP", i+2, verdict)
+		}
+	}
+	dp.harvest(c)
+	if got := dp.duplicatesSuppressed(); got != 20 {
+		t.Fatalf("IPv6 duplicates suppressed = %d, want 20", got)
+	}
+	// A different IPv6 frame of the same flow is still relayed.
+	next := ipv6Frame(shepherdMAC, devMAC, devIP6, someV6, 64, []byte("different payload, same flow entirely"))
+	if verdict, _ := runXDP(t, objs, next); verdict != xdpTX {
+		t.Fatal("a different IPv6 frame must still be relayed")
+	}
+	var v xdpDevCounters
+	if err := objs.Steered.Lookup(macKey(devMAC), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.Packets6 != 2 {
+		t.Fatalf("the device was credited %d relayed IPv6 frames, want 2", v.Packets6)
+	}
+}
