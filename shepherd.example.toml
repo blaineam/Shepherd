@@ -130,6 +130,14 @@ token = ""                 # bearer token, or leave empty and use username/passw
 username = ""
 password = ""
 
+[update]
+# Self-update (docs/UPDATE.md): one request a day to GitHub's releases, an
+# alarm when a newer Shepherd exists, and "Update now" on the Overview screen
+# when this install can be replaced in place (not from a read-only container).
+enabled = true
+channel = "stable"         # or "beta" to follow the rolling beta
+check_hours = 24
+
 [threats]
 # Threat feeds (docs/THREATS.md): four curated lists of malware hosts, botnet
 # controllers and hijacked networks (abuse.ch and Spamhaus), matched against

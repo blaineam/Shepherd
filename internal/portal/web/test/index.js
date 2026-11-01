@@ -35,3 +35,4 @@ import './passkeys.test.js';
 import './watch.test.js';
 import './traffic.test.js';
 import './push.test.js';
+import './update.test.js';

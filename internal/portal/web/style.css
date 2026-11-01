@@ -291,6 +291,10 @@ button.wide { width: 100%; margin-top: 8px; }
 .x:hover { background: #ffffff0d; color: var(--text); }
 
 /* stat tiles (Overview, Watch) */
+.sw-card { margin: 0 0 16px; }
+.sw-acts { display: flex; gap: 8px; }
+.sw-line { margin: 0 0 6px; font-weight: 600; }
+.sw-line.good { color: var(--teal); } .sw-line.warn { color: var(--amber); } .sw-line.muted { color: var(--text-2); }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 10px; }
 .tile { display: flex; flex-direction: column; }
 .tiles .tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 18px; gap: 2px; }

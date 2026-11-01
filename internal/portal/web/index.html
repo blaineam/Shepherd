@@ -230,6 +230,20 @@
          so there is genuinely nothing live to report either way. -->
     <p class="muted small watchmode-note">Counts above are DNS lookups. Watch mode adds what devices actually connect to and how much they send.</p>
 
+    <section class="card sw-card" id="sw-card">
+      <div class="card-h">
+        <h2>Software</h2>
+        <div class="sw-acts">
+          <button type="button" class="ghost" id="sw-check">Check now</button>
+          <button type="button" class="primary" id="sw-apply" hidden>Update now</button>
+        </div>
+      </div>
+      <p class="sw-line" id="sw-line"></p>
+      <p class="muted small" id="sw-reason" hidden></p>
+      <p class="muted small" id="sw-rollback" hidden></p>
+      <p class="muted small" id="sw-data" hidden></p>
+    </section>
+
     <section class="grid">
       <div class="card wide">
         <div class="card-h">

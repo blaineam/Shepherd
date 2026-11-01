@@ -5,6 +5,7 @@
 // textContent, never innerHTML.
 import { $, el } from './dom.js';
 import { fmtNum, fmtUptime } from './format.js';
+import { updateLine, rollbackLine, dataDirLine } from './update.js';
 
 export function createDetails({ api, getRows, notify, onRulesChanged = () => {}, names = null }) {
   let filter = '';
@@ -14,6 +15,47 @@ export function createDetails({ api, getRows, notify, onRulesChanged = () => {},
     ul.replaceChildren();
     if (!items || !items.length) { const li = el('li'); li.append(el('span', 'muted', 'Nothing yet')); ul.append(li); return; }
     items.forEach((it) => ul.append(build(it)));
+  }
+
+  // The Software card (docs/UPDATE.md): where this build stands against
+  // the latest release, and the one button that applies it.
+  let updateInfo = null;
+  function renderUpdate(u) {
+    updateInfo = u;
+    const line = updateLine(u);
+    const lineEl = $('#sw-line');
+    lineEl.textContent = line.text;
+    lineEl.className = 'sw-line ' + line.tone;
+    const s = (u && u.status) || {};
+    const reason = $('#sw-reason');
+    reason.textContent = s.available && !s.can_apply && s.reason ? 'Cannot update from here: ' + s.reason : '';
+    reason.hidden = !reason.textContent;
+    const rb = $('#sw-rollback');
+    rb.textContent = rollbackLine(u);
+    rb.hidden = !rb.textContent;
+    const dd = $('#sw-data');
+    dd.textContent = dataDirLine(u);
+    dd.hidden = !dd.textContent;
+    $('#sw-apply').hidden = !(s.available && s.can_apply && !s.applying && !s.applied);
+    $('#sw-check').hidden = !(u && u.enabled);
+  }
+  $('#sw-check').addEventListener('click', async () => {
+    $('#sw-check').disabled = true;
+    try { renderUpdate(await api('/api/update/check', { method: 'POST', body: '{}' })); } catch (e) { notify('Could not check: ' + e.message); }
+    $('#sw-check').disabled = false;
+  });
+  $('#sw-apply').addEventListener('click', async () => {
+    const s = (updateInfo && updateInfo.status) || {};
+    if (!window.confirm('Install ' + (s.latest_version || 'the update') + ' and restart Shepherd? The current binary is kept and comes back on its own if the new one does not stay up.')) return;
+    $('#sw-apply').disabled = true;
+    try {
+      await api('/api/update/apply', { method: 'POST', body: '{}' });
+      notify('Update installed; Shepherd is restarting');
+      renderUpdate({ enabled: true, status: { ...s, applied: s.latest_version } });
+    } catch (e) { notify('Could not update: ' + e.message); $('#sw-apply').disabled = false; }
+  });
+  async function loadUpdate() {
+    try { renderUpdate(await api('/api/update')); } catch { renderUpdate(null); }
   }
 
   function renderStatus(s) {
@@ -123,5 +165,6 @@ export function createDetails({ api, getRows, notify, onRulesChanged = () => {},
     catch (err) { notify(err.message); e.target.checked = !e.target.checked; }
   });
 
-  return { renderStatus, renderRules, renderRows, rule, refreshRules: () => api('/api/rules').then(renderRules).catch(() => {}) };
+  return {
+    loadUpdate, renderStatus, renderRules, renderRows, rule, refreshRules: () => api('/api/rules').then(renderRules).catch(() => {}) };
 }

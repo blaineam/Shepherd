@@ -553,6 +553,29 @@ func TestThreatsDefaultsAndValidation(t *testing.T) {
 	}
 }
 
+func TestUpdateDefaultsAndValidation(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Update.Enabled || cfg.Update.Channel != "stable" || cfg.Update.CheckHours != 24 {
+		t.Errorf("update defaults = %+v", cfg.Update)
+	}
+	cfg = writeCfg(t, "[update]\nenabled = false\nchannel = \"beta\"\ncheck_hours = 6\n")
+	if cfg.Update.Enabled || cfg.Update.Channel != "beta" || cfg.Update.CheckHours != 6 {
+		t.Errorf("update overrides = %+v", cfg.Update)
+	}
+	for body, want := range map[string]string{"[update]\nchannel = \"nightly\"\n": "update.channel", "[update]\ncheck_hours = 0\n": "update.check_hours"} {
+		path := filepath.Join(t.TempDir(), "c.toml")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: err = %v, want %s", body, err, want)
+		}
+	}
+}
+
 func TestAlarmsOverrides(t *testing.T) {
 	cfg := writeCfg(t, `[alarms]
 enabled = false

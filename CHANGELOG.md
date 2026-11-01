@@ -13,6 +13,18 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Self-update with rollback.** `[update]` (on by default) checks GitHub's releases once a day on
+  the stable or beta channel, raises a `self-update` alarm when a newer Shepherd exists, and the
+  Overview's new **Software** card offers "Update now" where the binary can be replaced in place.
+  Applying downloads the release for this platform, checks it against `SHA256SUMS`, verifies that
+  file's Ed25519 signature against the key built into the binary (refusing an unsigned release or
+  a build with no key), swaps the binary in with the previous one kept as `shepherd.prev`, and
+  restarts into it. An updated binary that does not stay up for two minutes across three starts is
+  put back automatically on the next start; `shepherd -rollback` does the same by hand. A read-only
+  container cannot be updated in place and the card says so. Both CI workflows sign the checksums
+  when the `SHEPHERD_SIGNING_KEY` secret exists (`scripts/sign-release`, `cmd/shepherd-sign`); the
+  public half is `update.ReleasePublicKeyB64`, empty until the maintainer generates the pair. The
+  card also shows the data directory's size by part. See docs/UPDATE.md.
 - **Threat feeds: which device reached for a known bad name or address.** Four curated feeds
   (URLhaus, ThreatFox and Feodo Tracker from abuse.ch, and Spamhaus DROP) are downloaded every six
   hours, cached under the data directory, and matched against every recorded DNS query's name and

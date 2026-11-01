@@ -521,7 +521,7 @@ function showView(name) {
   document.body.classList.toggle('on-details', name === 'details');
   document.body.classList.toggle('on-page', !hud);
   try { history.replaceState(null, '', location.pathname + location.search + (hud ? '' : '#' + name)); } catch { /* ignore */ }
-  if (name === 'details') details.renderRows();
+  if (name === 'details') { details.renderRows(); details.loadUpdate(); }
   if (name !== 'upstreams') upstreamsView.hide();
   if (name !== 'proxy') proxyView.hide();
   if (name !== 'alarms') alarmsView.hide();

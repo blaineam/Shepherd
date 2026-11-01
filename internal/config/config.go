@@ -40,6 +40,7 @@ type Config struct {
 	Portscan       Portscan       `toml:"portscan"`
 	Vulnscan       Vulnscan       `toml:"vulnscan"`
 	Threats        Threats        `toml:"threats"`
+	Update         Update         `toml:"update"`
 	TLS            TLS            `toml:"tls"`
 	Nethealth      Nethealth      `toml:"nethealth"`
 	ReverseProxy   ReverseProxy   `toml:"reverseproxy"`
@@ -309,6 +310,19 @@ type Vulnscan struct {
 	IntervalSeconds int `toml:"interval_seconds"`
 }
 
+// Update controls the self-update checker (internal/update, docs/UPDATE.md):
+// one request a day to GitHub's releases for a newer Shepherd, an alarm
+// when there is one, and an "update now" on the Overview screen that
+// downloads, verifies and swaps the binary in, keeping the previous one.
+type Update struct {
+	Enabled bool `toml:"enabled"`
+	// Channel is "stable" (releases marked latest) or "beta" (the rolling
+	// beta too).
+	Channel string `toml:"channel"`
+	// CheckHours is how often to look. Nothing is downloaded by a check.
+	CheckHours int `toml:"check_hours"`
+}
+
 // Threats controls the threat-intelligence feeds (internal/threats,
 // docs/THREATS.md): curated lists of malware hosts, botnet controllers and
 // hijacked networks, matched against every DNS query's name and answer and
@@ -543,6 +557,7 @@ func Default() Config {
 		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600, WANExposure: WANExposure{Enabled: true, RefreshIntervalSeconds: 600}},
 		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600},
 		Threats:        Threats{Enabled: true, IntervalHours: 6},
+		Update:         Update{Enabled: true, Channel: "stable", CheckHours: 24},
 		Nethealth:      Nethealth{Enabled: false, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
 		ReverseProxy:   ReverseProxy{Listen: ":8443"},
 		// Watch mode is opt-in. It was on, under the protect-by-default
@@ -648,6 +663,12 @@ func (c Config) Validate() error {
 	}
 	if c.Portal.IdleLockMinutes < 0 {
 		return errors.New("portal.idle_lock_minutes must not be negative")
+	}
+	if c.Update.Channel != "stable" && c.Update.Channel != "beta" {
+		return fmt.Errorf("update.channel must be \"stable\" or \"beta\", got %q", c.Update.Channel)
+	}
+	if c.Update.CheckHours < 1 {
+		return errors.New("update.check_hours must be at least 1")
 	}
 	if c.Threats.IntervalHours < 1 {
 		return errors.New("threats.interval_hours must be at least 1")

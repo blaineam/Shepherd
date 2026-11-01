@@ -29,6 +29,10 @@ jobs:
         run: echo "version=$(tr -d '[:space:]' < VERSION)-beta.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
       - name: Build
         run: scripts/build-release "${{ steps.v.outputs.version }}"
+      - name: Sign the checksums (docs/UPDATE.md)
+        env:
+          SHEPHERD_SIGNING_KEY: ${{ secrets.SHEPHERD_SIGNING_KEY }}
+        run: scripts/sign-release
       - name: Publish this beta and prune the older ones
         env:
           GH_TOKEN: ${{ github.token }}

@@ -106,6 +106,9 @@ type Deps struct {
 	// off, and ThreatsEnabled says so to the portal.
 	Threats        *threats.Engine
 	ThreatsEnabled bool
+	// Update is the self-update service (docs/UPDATE.md); nil means the
+	// checker is off.
+	Update Updater
 
 	// Accountability manages accountability-partner contacts and
 	// subscriptions (docs/ACCOUNTABILITY.md). Nil means the feature is not
@@ -621,6 +624,9 @@ func (s *Server) routes() {
 	h("GET /api/alarms/rules", s.listAlarmRules)
 	h("POST /api/alarms/rules", s.createAlarmRule)
 	h("DELETE /api/alarms/rules/{id}", s.deleteAlarmRule)
+	h("GET /api/update", s.getUpdate)
+	h("POST /api/update/check", s.checkUpdate)
+	h("POST /api/update/apply", s.applyUpdate)
 	h("GET /api/threats", s.getThreats)
 	h("POST /api/threats/refresh", s.refreshThreats)
 	h("GET /api/alarms/push", s.getPush)
