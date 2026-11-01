@@ -65,18 +65,59 @@ type signatureJSON struct {
 	Severity    vulnscan.Severity `json:"severity"`
 	Description string            `json:"description"`
 	Ports       []int             `json:"ports,omitempty"`
+	CVEs        []string          `json:"cves,omitempty"`
+	Source      string            `json:"source"`
 }
 
+// getVulnscan reports the scanner's state and the full signature set it
+// evaluates right now: the built-ins plus whatever the feed supplied, each
+// labelled with its source, and the feed's own status (null when the feed
+// is disabled).
 func (s *Server) getVulnscan(w http.ResponseWriter, r *http.Request) {
-	sigs := vulnscan.BuiltinSignatures()
+	sigs := s.Vulnscan.Signatures()
 	out := make([]signatureJSON, len(sigs))
+	builtin, feed := 0, 0
 	for i, sig := range sigs {
-		out[i] = signatureJSON{ID: sig.ID, Name: sig.Name, Severity: sig.Severity, Description: sig.Description, Ports: sig.Ports}
+		out[i] = signatureJSON{ID: sig.ID, Name: sig.Name, Severity: sig.Severity, Description: sig.Description, Ports: sig.Ports, CVEs: sig.CVEs, Source: sig.Source}
+		if sig.Source == vulnscan.SourceFeed {
+			feed++
+		} else {
+			builtin++
+		}
+	}
+	var feedStatus any
+	if s.VulnscanFeed != nil {
+		feedStatus = s.VulnscanFeed.Status()
 	}
 	writeJSON(w, map[string]any{
-		"enabled":    s.VulnscanEnabled,
-		"signatures": out,
+		"enabled":            s.VulnscanEnabled,
+		"signatures":         out,
+		"builtin_signatures": builtin,
+		"feed_signatures":    feed,
+		"feed":               feedStatus,
 	})
+}
+
+// vulnscanFeedRefreshTimeout bounds a manual "update feed now".
+const vulnscanFeedRefreshTimeout = 30 * time.Second
+
+// vulnscanFeedRefresh fetches the signature feed right now, outside its
+// schedule. It answers 200 with {changed, feed} whether or not the upstream
+// changed; a fetch that failed is a 502 whose body is the error, and the
+// feed status (also returned on the next GET) carries the same error text.
+func (s *Server) vulnscanFeedRefresh(w http.ResponseWriter, r *http.Request) {
+	if s.VulnscanFeed == nil {
+		bad(w, "the signature feed is disabled ([vulnscan].feed_url is empty)")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), vulnscanFeedRefreshTimeout)
+	defer cancel()
+	changed, err := s.VulnscanFeed.Refresh(ctx)
+	if err != nil {
+		http.Error(w, "feed refresh failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]any{"changed": changed, "feed": s.VulnscanFeed.Status()})
 }
 
 func (s *Server) listVulnscanDevices(w http.ResponseWriter, r *http.Request) {

@@ -123,6 +123,7 @@ func TestStartVulnscanProbesPortscanResultsAndRaisesAlarm(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
+	cfg.Vulnscan.FeedURL = "" // never fetch the published feed from a test
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -136,7 +137,7 @@ func TestStartVulnscanProbesPortscanResultsAndRaisesAlarm(t *testing.T) {
 	}
 	defer eng.Close()
 
-	vs, err := startVulnscan(ctx, cfg, reg, ps, eng)
+	vs, _, err := startVulnscan(ctx, cfg, reg, ps, eng)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,6 +218,7 @@ func TestStartVulnscanResolvesAlarmWhenFindingClears(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
+	cfg.Vulnscan.FeedURL = "" // never fetch the published feed from a test
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -224,7 +226,7 @@ func TestStartVulnscanResolvesAlarmWhenFindingClears(t *testing.T) {
 	vulnscanDial = syncVulnDial(open)
 	t.Cleanup(func() { vulnscanDial = oldVSDial })
 
-	vs, err := startVulnscan(ctx, cfg, reg, ps, eng)
+	vs, _, err := startVulnscan(ctx, cfg, reg, ps, eng)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,6 +264,7 @@ func TestStartVulnscanWorksWithoutAnAlarmEngine(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
+	cfg.Vulnscan.FeedURL = "" // never fetch the published feed from a test
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -269,7 +272,7 @@ func TestStartVulnscanWorksWithoutAnAlarmEngine(t *testing.T) {
 	vulnscanDial = fakeVulnDial(open)
 	t.Cleanup(func() { vulnscanDial = oldVSDial })
 
-	vs, err := startVulnscan(ctx, cfg, reg, ps, nil)
+	vs, _, err := startVulnscan(ctx, cfg, reg, ps, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,9 +295,10 @@ func TestStartVulnscanUsesTheConfiguredInterval(t *testing.T) {
 	ps := portscan.New(portscan.Options{Dial: fakeScanDial(nil)})
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
+	cfg.Vulnscan.FeedURL = "" // never fetch the published feed from a test
 	cfg.Vulnscan.IntervalSeconds = 86400
 	ctx, cancel := context.WithCancel(context.Background())
-	if _, err := startVulnscan(ctx, cfg, reg, ps, nil); err != nil {
+	if _, _, err := startVulnscan(ctx, cfg, reg, ps, nil); err != nil {
 		cancel()
 		t.Fatal(err)
 	}
@@ -317,11 +321,12 @@ func TestStartVulnscanIgnoresUnreadableHistory(t *testing.T) {
 	ps := portscan.New(portscan.Options{Dial: fakeScanDial(nil)})
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
+	cfg.Vulnscan.FeedURL = "" // never fetch the published feed from a test
 	if err := os.WriteFile(filepath.Join(cfg.DataDir, "vulnscan.json"), []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	if _, err := startVulnscan(ctx, cfg, reg, ps, nil); err != nil {
+	if _, _, err := startVulnscan(ctx, cfg, reg, ps, nil); err != nil {
 		cancel()
 		t.Fatalf("startVulnscan must tolerate a corrupt history file: %v", err)
 	}
@@ -337,5 +342,132 @@ func TestVulnscanDeviceNameFallsBackToID(t *testing.T) {
 	reg := devices.New(devices.Options{NodeID: "t", AllowLoopback: true})
 	if got := vulnscanDeviceName(reg, "missing-device"); got != "missing-device" {
 		t.Fatalf("vulnscanDeviceName(unknown id) = %q, want the raw ID", got)
+	}
+}
+
+// TestStartVulnscanAppliesTheFeedAndRescansOnChange pins a file:// feed and
+// checks both halves of the feed contract: its signatures join the
+// scanner's set at start, and a changed feed triggers a scan right away
+// (the scheduled interval here is an hour, so only the feed can explain a
+// second scan).
+func TestStartVulnscanAppliesTheFeedAndRescansOnChange(t *testing.T) {
+	oldPSEvery, oldPSDial := portscanEvery, portscanDial
+	oldVSEvery, oldVSDial, oldFeedEvery := vulnscanEvery, vulnscanDial, vulnscanFeedEvery
+	oldExposure := portscanExposure
+	addr := net.JoinHostPort("203.0.113.62", "23")
+	portscanEvery, vulnscanEvery, vulnscanFeedEvery = 15*time.Millisecond, time.Hour, 20*time.Millisecond
+	portscanDial = fakeScanDial(map[string]bool{addr: true})
+	vulnscanDial = fakeVulnDial(map[string]bool{addr: true})
+	portscanExposure = fakeExposure{}
+	t.Cleanup(func() {
+		portscanEvery, portscanDial = oldPSEvery, oldPSDial
+		vulnscanEvery, vulnscanDial, vulnscanFeedEvery = oldVSEvery, oldVSDial, oldFeedEvery
+		portscanExposure = oldExposure
+	})
+
+	reg := devices.New(devices.Options{NodeID: "t", AllowLoopback: true})
+	id := reg.Observe(devices.Observation{Source: devices.SourceNeighbor, MAC: "02:00:00:00:02:03", IP: "203.0.113.62", Time: time.Now()})
+
+	feedPath := filepath.Join(t.TempDir(), "feed.json")
+	write := func(severity string) {
+		// The fake Telnet conn gives no banner, so this signature never
+		// fires; it only has to be visible in the scanner's set, and its
+		// severity is what changes between the two feed versions.
+		doc := `{"schema": 1, "generated_at": "2026-11-01T06:00:00Z", "signatures": [{"id": "feed-marker", "name": "Feed marker", "severity": "` + severity + `", "description": "d", "ports": [23], "match": {"product": "openssh"}}]}`
+		if err := os.WriteFile(feedPath, []byte(doc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("low")
+
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.Vulnscan.FeedURL = "file://" + feedPath
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ps, err := startPortscan(ctx, cfg, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs, feed, err := startVulnscan(ctx, cfg, reg, ps, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if feed == nil {
+		t.Fatal("a configured feed_url should return an updater")
+	}
+
+	hasMarker := func(sev vulnscan.Severity) bool {
+		for _, s := range vs.Signatures() {
+			if s.ID == "feed-marker" && s.Severity == sev {
+				return true
+			}
+		}
+		return false
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && !hasMarker(vulnscan.SeverityLow) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !hasMarker(vulnscan.SeverityLow) {
+		t.Fatalf("feed signature never joined the set: %+v", feed.Status())
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "vulnscan-feed.json")); err != nil {
+		t.Fatalf("feed was not cached: %v", err)
+	}
+
+	// Wait for the first (scheduled) scan to land, then note its time.
+	deadline = time.Now().Add(3 * time.Second)
+	var first time.Time
+	for time.Now().Before(deadline) {
+		if ds, ok := vs.Result(id); ok && !ds.LastScanned.IsZero() {
+			first = ds.LastScanned
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if first.IsZero() {
+		t.Fatal("no first scan")
+	}
+
+	// A changed feed must re-scan without waiting for the hourly schedule.
+	time.Sleep(5 * time.Millisecond)
+	write("high")
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		ds, _ := vs.Result(id)
+		if hasMarker(vulnscan.SeverityHigh) && ds.LastScanned.After(first) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ds, _ := vs.Result(id)
+	if !hasMarker(vulnscan.SeverityHigh) || !ds.LastScanned.After(first) {
+		t.Fatalf("feed change did not trigger a rescan: marker high=%v, scanned %v vs first %v", hasMarker(vulnscan.SeverityHigh), ds.LastScanned, first)
+	}
+	cancel()
+	time.Sleep(30 * time.Millisecond)
+}
+
+func TestStartVulnscanWithoutAFeedURLReturnsNoUpdater(t *testing.T) {
+	oldPSEvery, oldVSEvery, oldExposure := portscanEvery, vulnscanEvery, portscanExposure
+	portscanEvery, vulnscanEvery, portscanExposure = time.Hour, time.Hour, fakeExposure{}
+	t.Cleanup(func() { portscanEvery, vulnscanEvery, portscanExposure = oldPSEvery, oldVSEvery, oldExposure })
+	reg := devices.New(devices.Options{NodeID: "t"})
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.Vulnscan.FeedURL = ""
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ps, err := startPortscan(ctx, cfg, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs, feed, err := startVulnscan(ctx, cfg, reg, ps, nil)
+	if err != nil || vs == nil || feed != nil {
+		t.Fatalf("vs=%v feed=%v err=%v", vs != nil, feed, err)
+	}
+	if len(vs.Signatures()) != len(vulnscan.BuiltinSignatures()) {
+		t.Fatal("without a feed only the built-ins apply")
 	}
 }

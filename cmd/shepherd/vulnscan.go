@@ -20,8 +20,9 @@ import (
 // Test seams, in the same style as portscanEvery/portscanDial. Production
 // leaves them at their defaults.
 var (
-	vulnscanEvery time.Duration
-	vulnscanDial  vulnscan.DialFunc
+	vulnscanEvery     time.Duration
+	vulnscanDial      vulnscan.DialFunc
+	vulnscanFeedEvery time.Duration
 )
 
 // startVulnscan builds the vulnerability scanner, restores its saved
@@ -31,7 +32,14 @@ var (
 // this feature never scans for open ports on its own. eng may be nil (the
 // alarm engine is disabled); findings are still probed, persisted and
 // logged either way, just never raised as alarms.
-func startVulnscan(ctx context.Context, cfg config.Config, reg *devices.Registry, ps *portscan.Scanner, eng *alarms.Engine) (*vulnscan.Scanner, error) {
+//
+// When [vulnscan].feed_url is set it also starts the signature feed
+// updater: the last good feed is restored from <data>/vulnscan-feed.json
+// at once, the published one is fetched on its own interval, and every
+// genuinely new feed re-scans right away so a signature for a newly
+// exploited bug is applied the same hour it is published, not at the next
+// daily scan. The returned updater is nil when the feed is disabled.
+func startVulnscan(ctx context.Context, cfg config.Config, reg *devices.Registry, ps *portscan.Scanner, eng *alarms.Engine) (*vulnscan.Scanner, *vulnscan.FeedUpdater, error) {
 	s := vulnscan.New(vulnscan.Options{Dial: vulnscanDial})
 	path := filepath.Join(cfg.DataDir, "vulnscan.json")
 	if err := s.Load(path); err != nil && !os.IsNotExist(err) {
@@ -49,7 +57,37 @@ func startVulnscan(ctx context.Context, cfg config.Config, reg *devices.Registry
 	}
 	lister := func() []vulnscan.Target { return vulnscan.TargetsFromPortscan(ps.Results()) }
 	go s.Run(ctx, lister, every)
-	return s, nil
+
+	var feed *vulnscan.FeedUpdater
+	if cfg.Vulnscan.FeedURL != "" {
+		feedEvery := time.Duration(cfg.Vulnscan.FeedRefreshSeconds) * time.Second
+		if vulnscanFeedEvery > 0 {
+			feedEvery = vulnscanFeedEvery
+		}
+		feed = &vulnscan.FeedUpdater{
+			URL:   cfg.Vulnscan.FeedURL,
+			Path:  filepath.Join(cfg.DataDir, "vulnscan-feed.json"),
+			Every: feedEvery,
+		}
+		feed.OnChange = func(sigs []vulnscan.Signature, initial bool) {
+			s.SetFeedSignatures(sigs)
+			st := feed.Status()
+			built := "unknown date"
+			if !st.GeneratedAt.IsZero() {
+				built = st.GeneratedAt.Format("2006-01-02")
+			}
+			if initial {
+				log.Printf("vulnscan: restored %d feed signatures from cache (feed built %s)", len(sigs), built)
+				return
+			}
+			log.Printf("vulnscan: signature feed updated: %d signatures (feed built %s); re-scanning now", len(sigs), built)
+			go s.Scan(ctx, lister())
+		}
+		go func() {
+			feed.Run(ctx)
+		}()
+	}
+	return s, feed, nil
 }
 
 // vulnscanDeviceName looks up a device's display name for a log line or

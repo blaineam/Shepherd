@@ -33,6 +33,23 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   design decision.
 
 ### Added
+- **The vulnerability scanner now updates itself from a signature feed.** Until now
+  `internal/vulnscan` matched against a fixed table of twenty signatures compiled into the binary, so a
+  bug exploited this week could not be recognized before a release. Every Shepherd now fetches
+  `feeds/vulnscan.json` from this repository — rebuilt daily by the new `vulnfeed` workflow
+  (`cmd/vulnfeed`, `internal/vulnfeed`) from the NVD CVE API and CISA's Known Exploited Vulnerabilities
+  catalog — every six hours, conditionally, and **re-scans every device the moment the feed changes**.
+  The feed is declarative data, never code: a signature names a product and version ranges, or a banner
+  substring, over what the existing probes already collect, and it cannot make Shepherd probe anything
+  new. It covers the fourteen products a banner or HTTP `Server:` header states a version for (OpenSSH,
+  Dropbear, vsftpd, ProFTPD, Exim, Apache httpd, nginx, lighttpd, OpenSSL, PHP, Boa, mini_httpd,
+  GoAhead, IIS); CISA-listed CVEs get a critical signature each, and the NVD's network-exploitable,
+  no-credentials critical and high CVEs are aggregated per product with the matched CVE identifiers in
+  the evidence. The last good feed is cached under the data directory, a bad download never replaces it,
+  `[vulnscan].feed_url = ""` turns it off, and the Vulnerabilities page shows the feed's state with an
+  "Update feed" button. [VULNSCAN.md](docs/VULNSCAN.md) has the selection rules, the format and the
+  trust argument; its former "no external CVE database, and there is not going to be one" promise is
+  withdrawn in favor of this, deliberately.
 - **A design and staged migration for Gateway mode: [GATEWAY.md](docs/GATEWAY.md).** Written
   because the night's Watch-mode measurements settled that per-device bandwidth, the thing actually
   wanted, cannot be had from one-sided ARP steering at all: it is outbound-only by construction, its
@@ -308,6 +325,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   continuously and can be sampled freely; the interface counters cannot. The regression test for
   this uses the measured rates against the production floor and fails if the floor rises again.
 ### Fixed
+- **`smb1-enabled` fired on servers that have SMBv1 disabled.** The probe treated any SMBv1-framed reply
+  to its Negotiate Protocol request as proof of SMBv1, but a server with SMBv1 turned off (Samba with
+  `server min protocol = SMB2`, which is what most NAS appliances ship) still answers in SMBv1 framing —
+  with a DialectIndex of `0xFFFF`, the protocol's own way of saying "none of your dialects". A NAS whose
+  SMB settings offered only SMB2/2.1/3 was listed as critical on every address it had. The probe now reads
+  the reply's status and DialectIndex and only reports SMBv1 when the server actually selected the
+  dialect; the refusal, a bare header, and an error status all stay unflagged.
 - **Shepherd will not steer a device record that carries one of this host's addresses, or the
   gateway's.** The registry on the live host had merged the gateway, both LAN interfaces and all
   nine container bridge addresses into a single device record -- the ARP monitor learning

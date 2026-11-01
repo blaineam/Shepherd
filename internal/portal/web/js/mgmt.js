@@ -96,6 +96,7 @@ export function createMgmt(api) {
     vulnscanDevices: () => api('/api/vulnscan/devices'),
     vulnscanDevice: (id) => api('/api/vulnscan/devices/' + encodeURIComponent(id)),
     scanVulns: (deviceId) => post('/api/vulnscan/scan', deviceId ? { device_id: deviceId } : {}),
+    vulnscanFeedRefresh: () => post('/api/vulnscan/feed/refresh', {}),
 
     nethealthStatus: () => api('/api/nethealth'),
     nethealthSeries: (params) => api('/api/nethealth/series' + Q(params)),
