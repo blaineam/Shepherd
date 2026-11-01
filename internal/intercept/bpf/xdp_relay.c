@@ -44,6 +44,29 @@
 #define IPV4_MIN_HLEN 20
 #define IPV6_HLEN 40
 
+// The duplicate brake. A relay loop is the same frame arriving and being
+// relayed over and over: every reproduction on real hardware showed a
+// handful of frames with one IP ID each and a TTL that never decremented,
+// circulating thousands of times a second. So the program fingerprints
+// each frame it relays and refuses to relay the same frame twice inside a
+// short window, which breaks a loop on its second pass whatever is
+// echoing the frame.
+//
+// DUP_WINDOW_NS is deliberately shorter than any TCP retransmission
+// timeout (Linux's minimum is 200ms) and vastly longer than a loop's round
+// trip, which is microseconds. A genuine retransmission is therefore never
+// suppressed, and a frame going round is caught the second time it is
+// seen. A frame that really is a network-level duplicate is dropped rather
+// than relayed twice, which is what should happen to it: the first copy
+// already reached the gateway.
+#define DUP_WINDOW_NS 100000000ULL /* 100 ms */
+#define DUP_SLOTS 8192
+
+struct dup_entry {
+	__u64 fingerprint;
+	__u64 ts;
+};
+
 // Family bits, matching Go's intercept.SteerV4 / SteerV6.
 #define FAM_V4 1
 #define FAM_V6 2
@@ -110,6 +133,12 @@ struct dev_counters {
 	__u64 packets6;     // IPv6
 	__u64 bytes6;       // IPv6
 	__u64 last_seen_ns6;
+	// duplicates is this device's share of the frames the duplicate brake
+	// refused. Per device, not just globally, because the global figure
+	// cannot say whether a loop belongs to one device or to all of them --
+	// and that is exactly the question left open about what re-delivers
+	// them (docs/WATCH.md).
+	__u64 duplicates;
 	__u8 families;      // FAM_V4 | FAM_V6
 	__u8 pad[7];
 };
@@ -120,6 +149,52 @@ struct relay_stats {
 	__u64 passed_local;    // matched a steered device but was for Shepherd itself (rule 4)
 	__u64 relayed_frames;
 	__u64 relayed_bytes;
+	// Diagnostics for the relay loop (docs/WATCH.md). A frame this program
+	// relays leaves with src = Shepherd's MAC and dst = the gateway's, so
+	// either of those arriving back on this interface is Shepherd's own
+	// output returning to it -- which is what a loop is made of. Counted
+	// and sampled separately from the relay path, and never acted on.
+	__u64 ours_returning;  // src MAC is Shepherd's own
+	__u64 to_gateway;      // dst MAC is the gateway's
+	// duplicates is frames refused because this program had already
+	// relayed the same frame inside DUP_WINDOW_NS: the substance of a
+	// relay loop, and on a healthy network a flat zero.
+	__u64 duplicates;
+	// How long each duplicate took to come back, bucketed. This is the
+	// measurement that says where the echo comes from, which nothing else
+	// has been able to settle: a frame that never left the machine returns
+	// in microseconds, one that went to the switch and back takes
+	// hundreds of microseconds, and one that crossed a wireless hop or a
+	// mesh backhaul takes longer still. The delay is free to compute --
+	// the duplicate table already holds the moment the frame first
+	// arrived.
+	__u64 echo_under_10us;
+	__u64 echo_under_100us;
+	__u64 echo_under_1ms;
+	__u64 echo_under_10ms;
+	__u64 echo_over_10ms;
+};
+
+// A sample of a relayed frame: its first SAMPLE_BYTES bytes (Ethernet,
+// IPv4 and the start of the transport header), taken for every
+// SAMPLE_EVERY-th frame the program relays on a CPU and written into a
+// ring the loader reads once a second. This exists because a frame this
+// program bounces back out with XDP_TX never reaches an AF_PACKET socket,
+// so no packet capture on the host can see what the relay is carrying --
+// and twice the answer to "what was that storm made of" had to be guessed.
+// seq is a global counter so the reader can tell a fresh sample from one it
+// has already seen; ts is bpf_ktime_get_ns.
+#define SAMPLE_BYTES 60
+#define SAMPLE_EVERY 256
+#define SAMPLE_RING 128
+
+struct frame_sample {
+	__u64 seq;
+	__u64 ts;
+	__u32 len;
+	__u32 pad;
+	__u8 bytes[SAMPLE_BYTES];
+	__u8 pad2[4];
 };
 
 struct {
@@ -128,6 +203,20 @@ struct {
 	__type(key, __u32);
 	__type(value, struct relay_config);
 } config SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, SAMPLE_RING);
+	__type(key, __u32);
+	__type(value, struct frame_sample);
+} samples SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, __u64);
+} sample_cursor SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
@@ -157,6 +246,21 @@ struct {
 	__type(value, struct relay_stats);
 } stats SEC(".maps");
 
+// Per CPU, not shared, and that is the whole point. As one shared table
+// this caught about 80% of a steady echo and only 3% of an actual runaway,
+// because is_duplicate reads a slot, compares and writes it back with no
+// atomicity: at tens of thousands of frames a second across a dozen cores,
+// two copies of one frame routinely both read "not seen" and both get
+// relayed, so the brake failed exactly when it was needed. A per-CPU table
+// has no such race, and costs nothing in accuracy here because the receive
+// hash puts a flow and its echo on the same queue, and so the same CPU.
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, DUP_SLOTS);
+	__type(key, __u32);
+	__type(value, struct dup_entry);
+} recent SEC(".maps");
+
 static __attribute__((always_inline)) int mac_equal(const __u8 *a, const __u8 *b)
 {
 	// Two loads instead of a byte loop: keeps the verifier's instruction
@@ -171,14 +275,163 @@ static __attribute__((always_inline)) void mac_copy(__u8 *dst, const __u8 *src)
 	*(__u16 *)(dst + 4) = *(const __u16 *)(src + 4);
 }
 
+// take_sample copies the first SAMPLE_BYTES of the frame as it arrived
+// (before the MAC rewrite) into the next ring slot. Frames shorter than
+// that are not sampled; the smallest frame on the wire is 60 bytes, so in
+// practice that is only a truncated one.
+static __attribute__((always_inline)) void take_sample(void *data, void *data_end, __u64 len)
+{
+	__u32 zero = 0;
+	if (data + SAMPLE_BYTES > data_end)
+		return;
+	__u64 *cur = bpf_map_lookup_elem(&sample_cursor, &zero);
+	if (!cur)
+		return;
+	// Not atomic on purpose: the BPF target in use has no atomic
+	// fetch-and-add with a usable result, and two CPUs occasionally
+	// writing the same slot costs one sample, not correctness.
+	__u64 seq = *cur + 1;
+	*cur = seq;
+	__u32 slot = (__u32)(seq % SAMPLE_RING);
+	struct frame_sample *s = bpf_map_lookup_elem(&samples, &slot);
+	if (!s)
+		return;
+	s->seq = seq;
+	s->ts = bpf_ktime_get_ns();
+	s->len = (__u32)len;
+	__builtin_memcpy(s->bytes, data, SAMPLE_BYTES);
+}
+
+// fingerprint identifies one frame well enough to recognise it coming
+// round again: the IPv4 identification field, the length fields, both
+// addresses, the protocol and the first sixteen bytes of the transport
+// header.
+//
+// Each part is there because something real varies it and something real
+// does not. The identification field alone is not enough, because a Linux
+// sender leaves it zero on an unfragmentable packet. The transport header
+// is what carries the difference between two packets of a flow: for TCP
+// those sixteen bytes hold the ports, the sequence and acknowledgement
+// numbers, the flags and the window; for UDP the ports, the length, the
+// checksum and the first eight bytes of payload, which for QUIC include
+// the connection ID. The frame's own length on the wire is included as
+// well as the header's, since a truncated or padded copy is a different
+// frame.
+//
+// Two genuinely different packets colliding costs one suppressed frame.
+// Two copies of one frame failing to collide costs one more pass round a
+// loop that the next pass catches. Neither is serious; both get wider
+// margin from more of the transport header, which is why sixteen bytes
+// rather than the eight this started with.
+static __attribute__((always_inline)) __u64 fingerprint(struct iphdr_min *ip, void *l4, void *data_end, __u64 wire_len)
+{
+	__u64 h = 1469598103934665603ULL; /* FNV-1a offset basis */
+	__u32 words[9];
+	words[0] = ((__u32)ip->id << 16) | (__u32)ip->tot_len;
+	words[1] = ip->saddr;
+	words[2] = ip->daddr;
+	words[3] = ((__u32)ip->protocol << 16) | (__u32)wire_len;
+	words[4] = 0;
+	words[5] = 0;
+	words[6] = 0;
+	words[7] = 0;
+	words[8] = 0;
+	if (l4 + 8 <= data_end) {
+		words[4] = *(__u32 *)l4;
+		words[5] = *(__u32 *)(l4 + 4);
+	}
+	if (l4 + 16 <= data_end) {
+		words[6] = *(__u32 *)(l4 + 8);
+		words[7] = *(__u32 *)(l4 + 12);
+	}
+	for (int i = 0; i < 9; i++) {
+		h ^= (__u64)words[i];
+		h *= 1099511628211ULL; /* FNV-1a prime */
+	}
+	// Never return 0: an empty slot holds a zero fingerprint.
+	return h | 1;
+}
+
+// fingerprint6 is fingerprint for IPv6. There is no identification field
+// to use, so it leans on what IPv6 does have: the traffic class and flow
+// label, the payload length, the next header, both 16-byte addresses and
+// the first sixteen bytes of the transport header. A flow label is constant
+// for a flow, so the transport header is doing most of the work here, which
+// is the same thing that distinguishes two IPv4 packets of one flow.
+static __attribute__((always_inline)) __u64 fingerprint6(struct ipv6hdr_min *ip6, void *l4, void *data_end, __u64 wire_len)
+{
+	__u64 h = 1469598103934665603ULL; /* FNV-1a offset basis */
+	__u32 words[14];
+	words[0] = ((__u32)ip6->tc_fl << 16) | (__u32)ip6->fl;
+	words[1] = ((__u32)ip6->payload_len << 16) | ((__u32)ip6->next_hdr << 8);
+	words[2] = (__u32)wire_len;
+	for (int i = 0; i < 4; i++) {
+		words[3 + i] = *(__u32 *)(ip6->saddr + i * 4);
+		words[7 + i] = *(__u32 *)(ip6->daddr + i * 4);
+	}
+	words[11] = 0;
+	words[12] = 0;
+	words[13] = 0;
+	if (l4 + 8 <= data_end) {
+		words[11] = *(__u32 *)l4;
+		words[12] = *(__u32 *)(l4 + 4);
+	}
+	if (l4 + 16 <= data_end)
+		words[13] = *(__u32 *)(l4 + 8) ^ *(__u32 *)(l4 + 12);
+	for (int i = 0; i < 14; i++) {
+		h ^= (__u64)words[i];
+		h *= 1099511628211ULL; /* FNV-1a prime */
+	}
+	return h | 1;
+}
+
+// is_duplicate reports whether this program already relayed this exact
+// frame inside DUP_WINDOW_NS, and records it either way. One slot per
+// fingerprint hash, overwritten freely: a collision costs one suppressed
+// frame, and an eviction costs one unsuppressed loop pass, neither of
+// which matters at the rates involved.
+//
+// The table is per CPU (see the map), so the read-compare-write below needs
+// no atomicity and cannot lose a race to another core. It also means a
+// frame and its echo must land on the same CPU to be matched, which the
+// receive hash guarantees for a given flow.
+static __attribute__((always_inline)) int is_duplicate(__u64 fp, __u64 now,
+						       struct relay_stats *st)
+{
+	__u32 slot = (__u32)((fp >> 16) % DUP_SLOTS);
+	struct dup_entry *e = bpf_map_lookup_elem(&recent, &slot);
+	if (!e)
+		return 0;
+	int dup = e->fingerprint == fp && now >= e->ts && (now - e->ts) < DUP_WINDOW_NS;
+	__u64 delay = now - e->ts;
+	e->fingerprint = fp;
+	e->ts = now;
+	if (dup && st) {
+		if (delay < 10000)
+			st->echo_under_10us++;
+		else if (delay < 100000)
+			st->echo_under_100us++;
+		else if (delay < 1000000)
+			st->echo_under_1ms++;
+		else if (delay < 10000000)
+			st->echo_under_10ms++;
+		else
+			st->echo_over_10ms++;
+	}
+	return dup;
+}
+
 // relay rewrites both MACs and counts the frame; the caller has already
 // decided it should be relayed. Returns XDP_TX.
 static __attribute__((always_inline)) int do_relay(struct ethhdr *eth,
+						   void *data_end,
 						   struct relay_config *cfg,
 						   struct dev_counters *dev,
 						   struct relay_stats *st,
 						   __u64 len, int is_v6)
 {
+	if (st && (st->relayed_frames % SAMPLE_EVERY) == 0)
+		take_sample(eth, data_end, len);
 	mac_copy(eth->h_dest, cfg->gateway_mac);
 	mac_copy(eth->h_source, cfg->shepherd_mac);
 	if (is_v6) {
@@ -226,6 +479,21 @@ int xdp_relay(struct xdp_md *ctx)
 	if (!cfg)
 		return XDP_PASS;
 
+	// Diagnostics, before any relay decision and affecting none of them:
+	// is this frame one Shepherd itself put on the wire, coming back?
+	if (st) {
+		int ours = mac_equal(eth->h_source, cfg->shepherd_mac);
+		int togw = mac_equal(eth->h_dest, cfg->gateway_mac);
+		if (ours || togw) {
+			if (ours)
+				st->ours_returning++;
+			if (togw)
+				st->to_gateway++;
+			if ((st->ours_returning % SAMPLE_EVERY) == 0)
+				take_sample(data, data_end, data_end - data);
+		}
+	}
+
 	// Rule 2: addressed to Shepherd.
 	if (!mac_equal(eth->h_dest, cfg->shepherd_mac))
 		return XDP_PASS;
@@ -254,7 +522,18 @@ int xdp_relay(struct xdp_md *ctx)
 				st->passed_local++;
 			return XDP_PASS;
 		}
-		return do_relay(eth, cfg, dev, st, len, 1);
+		// The duplicate brake, IPv6 side. The loop that made this
+		// necessary was IPv4 and IPv6 steering is off by default, but a
+		// loop here would be exactly as severe, so the brake is not left
+		// to cover one family only.
+		__u64 fp6 = fingerprint6(ip6, (void *)(ip6 + 1), data_end, len);
+		if (is_duplicate(fp6, bpf_ktime_get_ns(), st)) {
+			if (st)
+				st->duplicates++;
+			__sync_fetch_and_add(&dev->duplicates, 1);
+			return XDP_DROP;
+		}
+		return do_relay(eth, data_end, cfg, dev, st, len, 1);
 	}
 
 	struct iphdr_min *ip = (void *)(eth + 1);
@@ -265,7 +544,20 @@ int xdp_relay(struct xdp_md *ctx)
 			st->passed_local++;
 		return XDP_PASS;
 	}
-	return do_relay(eth, cfg, dev, st, len, 0);
+	// The duplicate brake: a frame this program has already relayed inside
+	// DUP_WINDOW_NS is the same frame coming round, so it is dropped rather
+	// than relayed again. Dropped, not passed: IPv4 forwarding is on on
+	// many hosts, and passing it would hand the kernel a frame it would
+	// route straight back out of this same interface.
+	__u64 now_ns = bpf_ktime_get_ns();
+	__u64 fp = fingerprint(ip, (void *)ip + ((ip->ver_ihl & 0x0f) * 4), data_end, len);
+	if (is_duplicate(fp, now_ns, st)) {
+		if (st)
+			st->duplicates++;
+		__sync_fetch_and_add(&dev->duplicates, 1);
+		return XDP_DROP;
+	}
+	return do_relay(eth, data_end, cfg, dev, st, len, 0);
 }
 
 char _license[] SEC("license") = "GPL";

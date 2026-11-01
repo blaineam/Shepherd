@@ -50,6 +50,16 @@ func (m XDPMode) String() string {
 	return fmt.Sprintf("XDPMode(%d)", int(m))
 }
 
+// ErrRelayLoops means the relay self-test found that a frame this relay
+// transmits comes back to the interface it left, so steering any device
+// would loop at line rate. See xdp_probe_linux.go for what is measured.
+// ErrRelayUnverified means the self-test could not reach a verdict; the
+// relay is used anyway, with the loop brake as the backstop.
+var (
+	ErrRelayLoops      = errors.New("intercept: the relay loops on this interface")
+	ErrRelayUnverified = errors.New("intercept: the relay could not be verified")
+)
+
 // DefaultXDPPollInterval is how often AttachXDP reads the kernel's
 // per-device counters back into the Controller when the caller does not
 // choose: well inside the health loop's IdleGrace, so a device that is
@@ -73,8 +83,19 @@ type XDPOptions struct {
 	// enabled; empty means "every IPv6 address configured on the
 	// interface", read at attach time.
 	LocalIPs6 []netip.Addr
+	// SelfTest relays one probe frame of Shepherd's own, before any device
+	// is steered, and refuses the relay with ErrRelayLoops when that frame
+	// comes back to the interface it left. Strongly recommended: it is the
+	// only check that catches a relay whose MAC rewrite does not reach the
+	// wire, which is a loop at line rate the moment a real device is
+	// steered. See xdp_probe_linux.go.
+	SelfTest bool
+	// OnSelfTestInconclusive, if set, is called when the self-test ran but
+	// could not reach a verdict. The relay is used anyway. Optional.
+	OnSelfTestInconclusive func(error)
 	// OnAttached, if set, is called once the program is attached, with the
 	// mode actually in effect (meaningful when Mode is XDPAuto). Optional.
+	// It is called after the self-test has passed.
 	OnAttached func(mode XDPMode)
 }
 

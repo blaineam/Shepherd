@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1268,6 +1269,17 @@ func TestTheKillSwitchDoesNotEraseTheLearnedDriverList(t *testing.T) {
 // interface counters show exactly that traffic mirrored: received and
 // transmitted the same, with the relay accounting for all of it. That is
 // the shape both live incidents had.
+// loopTickUnrelayed moves the interface counters without feeding the relay,
+// which is the shape measured on real hardware: 54,000 packets a second
+// received against 49,000 transmitted while the relay reported 8 pkt/s. The
+// brake must trip on this, and the version keyed on the relay's share could
+// not see it at all.
+func (te *testEngine) loopTickUnrelayed(t *testing.T, plat *fakePlatform, rx, tx uint64) {
+	t.Helper()
+	plat.addCounters(rx*42, rx, tx*42, tx)
+	te.clock.Advance(time.Second)
+}
+
 func (te *testEngine) loopTick(t *testing.T, plat *fakePlatform, n uint64, mirrored bool) {
 	t.Helper()
 	te.mu.Lock()
@@ -1307,7 +1319,7 @@ func TestTheLoopBrakeStopsARelayCarryingItsOwnOutput(t *testing.T) {
 	if snap.Armed {
 		t.Fatal("the brake should have disarmed steering")
 	}
-	if !strings.Contains(snap.Reason, "its own output") {
+	if !strings.Contains(snap.Reason, "mirroring traffic") {
 		t.Fatalf("reason = %q, want it to say what happened", snap.Reason)
 	}
 	if te.isSteered(phoneMAC) {
@@ -1374,6 +1386,105 @@ func TestTheLoopBrakeHasAFloor(t *testing.T) {
 	}
 }
 
+// The loop measured on real hardware put almost nothing through the relay's
+// own counter -- 8 pkt/s against 54,000 received -- so a brake that asked
+// the relay how much it was carrying watched the whole thing happen. This
+// is that shape, to the ratio: mirrored within 9.3%, over the floor, relay
+// silent.
+func TestTheLoopBrakeStopsALoopTheRelayIsNotCarrying(t *testing.T) {
+	statePath := t.TempDir() + "/watch.json"
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, func(c *Config) { c.StatePath = statePath })
+	// The *production* floor, not a test one: the point of this test is that
+	// loopFloorPPS is low enough for the loop actually measured on hardware.
+	// It was 50,000 once, which is above this loop, so the brake would have
+	// watched it happen.
+	te.loopFloor = loopFloorPPS
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	// The measured rates, verbatim: 26,994 received against 24,492
+	// transmitted in one second, 9.27% apart, relay reporting nothing. One
+	// tick per poll, because FakeClock drops a tick fired before the engine
+	// has registered its next waiter, and a dropped tick is silent.
+	waitFor(t, "the loop brake to trip with the relay silent", func() bool {
+		te.loopTickUnrelayed(t, plat, 26994, 24492)
+		return !te.Snapshot().Armed
+	})
+
+	if te.isSteered(phoneMAC) {
+		t.Fatal("nothing should still be steered")
+	}
+	st, err := loadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Killed {
+		t.Fatal("the stop must persist")
+	}
+	// The share is still reported, because it is the evidence that the loop
+	// is not the relay's own output.
+	var saidShare bool
+	for _, l := range te.logs.all() {
+		if strings.Contains(l, "loop brake evidence:") && strings.Contains(l, "the relay reported 0") {
+			saidShare = true
+		}
+	}
+	if !saidShare {
+		t.Fatalf("the brake must report the relay's share as evidence; got %v", te.logs.all())
+	}
+}
+
+// The earlier single-device run was about 465,000 packets a second received
+// against 517,000 transmitted: 10.06% apart, which the original 0.10
+// symmetry threshold excluded by six hundredths of a percent. A threshold
+// that only just misses a real incident is the wrong threshold.
+func TestTheLoopBrakeCatchesATenPercentAsymmetricLoop(t *testing.T) {
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, nil)
+	te.loopFloor = loopFloorPPS
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	waitFor(t, "the loop brake to trip on a 10.06% asymmetric loop", func() bool {
+		te.loopTickUnrelayed(t, plat, 465000, 517000)
+		return !te.Snapshot().Armed
+	})
+}
+
+// Healthy but genuinely busy stays untouched even above the floor: the live
+// host transmitted 800 to 1000 Mbit/s against 600 received, 25 to 40% apart,
+// which is well outside loopSymmetry. The floor alone would not have saved
+// it -- that run reached roughly 83,000 packets a second.
+func TestTheLoopBrakeLeavesBusyLopsidedTrafficAloneAboveTheFloor(t *testing.T) {
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, nil)
+	te.loopFloor = loopFloorPPS
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	// The live host's own background with nothing steered, measured in clean
+	// two-second samples: receive far above the floor, transmit a tenth of
+	// it, 90% apart. The brake has to sit beside this every second of every
+	// day without firing, which is why the floor cannot be the test.
+	for i := 0; i < (loopHits+4)*4; i++ {
+		te.loopTickUnrelayed(t, plat, 39521, 3008)
+		time.Sleep(2 * time.Millisecond)
+	}
+	if !te.Snapshot().Armed {
+		t.Fatal("the brake tripped on heavy lopsided traffic above the floor")
+	}
+	if !te.isSteered(phoneMAC) {
+		t.Fatal("steering should be untouched")
+	}
+}
+
 // This host's own Docker containers arrive in the registry looking like
 // ordinary LAN devices: a 172.x address from the host's neighbour table and
 // several MACs each. They are not on the relay interface's segment, so an
@@ -1412,10 +1523,11 @@ func TestAnUnknownSegmentRefusesNothing(t *testing.T) {
 }
 
 // A host that both forwards IPv4 and has a second interface on the relay's
-// own subnet is routing the segment Watch mode would steer. That is the
-// shape of the maintainer's NAS, which is the only host on which the relay
-// has ever ended up carrying its own output back to itself, so Shepherd
-// refuses rather than relay into it.
+// own subnet is routing the segment Watch mode would steer. On the one host
+// with that shape, steering a single ordinary device took the interface to
+// ~465k packets/s in and ~517k out, mirrored, in about ten seconds -- with
+// the relay accounting for under a tenth of it. So Shepherd refuses rather
+// than relay into it. See routingOwnSegment.
 func TestRefusesToRelayOnAHostRoutingItsOwnSegment(t *testing.T) {
 	plat := newFakePlatform()
 	plat.ipForward = true
@@ -1439,6 +1551,35 @@ func TestRefusesToRelayOnAHostRoutingItsOwnSegment(t *testing.T) {
 	}
 }
 
+// Rule 4 of the relay ("not for Shepherd itself") is driven by the
+// local_ips map, and the relay interface's own addresses are not the whole
+// of this host. A second interface on the same segment -- the maintainer's
+// NAS answers DNS on one -- is an address steered devices legitimately
+// talk to, and those frames must reach the stack, not the gateway. The
+// gateway's own address must stay out: it is not this host's.
+func TestLocalIPsCoverEveryHostAddressButNotTheGateway(t *testing.T) {
+	plat := newFakePlatform()
+	second := netip.MustParseAddr("192.0.2.77")
+	plat.extraIPs = []netip.Addr{second}
+	te := newTestEngine(t, plat, nil)
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+
+	plat.mu.Lock()
+	got := append([]netip.Addr(nil), plat.xdpLocalIPs...)
+	plat.mu.Unlock()
+	if !slices.Contains(got, second) {
+		t.Errorf("local_ips = %v, want it to include this host's other address %v", got, second)
+	}
+	if !slices.Contains(got, shepherdIP) {
+		t.Errorf("local_ips = %v, want it to include the relay interface's own %v", got, shepherdIP)
+	}
+	if slices.Contains(got, gwIP) {
+		t.Errorf("local_ips = %v, must not include the gateway %v", got, gwIP)
+	}
+}
+
 // Forwarding alone is fine. Plenty of hosts forward; what matters is
 // forwarding plus a second interface on the relay's own segment.
 func TestForwardingAloneDoesNotRefuse(t *testing.T) {
@@ -1451,4 +1592,182 @@ func TestForwardingAloneDoesNotRefuse(t *testing.T) {
 	te.start(t)
 	te.waitRunning(t)
 	te.waitSteered(t, phoneMAC, true)
+}
+
+// The brake's evidence has to survive a restart, because a container
+// rebuild takes the logs with it -- which destroyed this very evidence
+// twice during the investigation that produced the brake.
+func TestTheLoopBrakeRecordsItsEvidenceWhereARestartCannotLoseIt(t *testing.T) {
+	statePath := t.TempDir() + "/watch.json"
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, func(c *Config) { c.StatePath = statePath })
+	te.loopFloor = loopFloorPPS
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	waitFor(t, "the loop brake to trip", func() bool {
+		te.loopTickUnrelayed(t, plat, 26994, 24492)
+		return !te.Snapshot().Armed
+	})
+
+	// Read it back from disk, as a restart would.
+	st, err := loadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.LastLoopStop == nil {
+		t.Fatal("the brake tripped and left nothing on disk, so a redeploy loses the evidence again")
+	}
+	ls := st.LastLoopStop
+	if ls.RxPackets != 26994 || ls.TxPackets != 24492 {
+		t.Errorf("recorded rates = rx %.0f tx %.0f, want the measured 26994 and 24492", ls.RxPackets, ls.TxPackets)
+	}
+	if ls.ApartPercent < 9 || ls.ApartPercent > 10 {
+		t.Errorf("recorded apart = %.2f%%, want about 9.3%%", ls.ApartPercent)
+	}
+	if ls.At.IsZero() {
+		t.Error("the record has no timestamp, so it cannot be tied to anything else that happened")
+	}
+	// The devices that were relaying most are the whole point of the
+	// record: that list is what the unexplained incident lacked.
+	if len(ls.Devices) == 0 {
+		t.Error("no device was named, which is the evidence the first unexplained loop was missing")
+	}
+
+	// And the engine reports it, so the portal and the API can show it
+	// without anyone reading a log file.
+	if snap := te.Snapshot(); snap.LastLoopStop == nil {
+		t.Error("Snapshot() does not carry the record, so nothing can display it")
+	} else if snap.LastLoopStop.RxPackets != 26994 {
+		t.Errorf("Snapshot()'s record disagrees with the one on disk: rx %.0f", snap.LastLoopStop.RxPackets)
+	}
+}
+
+// The echo warning's thresholds. It must stay silent about a stray
+// duplicate or a near-idle relay, and speak up when most of what the relay
+// relays is coming back -- which is what the live host does.
+func TestTheEchoWarningThresholds(t *testing.T) {
+	cases := []struct {
+		name          string
+		relayed, dups uint64
+		want          bool
+	}{
+		{"a healthy relay, nothing coming back", 100000, 0, false},
+		{"one stray duplicate in heavy traffic", 100000, 1, false},
+		{"just under the ratio", 10000, 2499, false},
+		{"exactly at the ratio", 10000, 2500, true},
+		{"the live host's measured 0.8", 18361, 16196, true},
+		{"a high ratio but far too few frames to conclude from", 100, 99, false},
+		{"just under the frame floor", echoWarnMinFrames - 1, echoWarnMinFrames - 1, false},
+		{"exactly at the frame floor, ratio met", echoWarnMinFrames, echoWarnMinFrames, true},
+		{"no traffic at all", 0, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := echoing(tc.relayed, tc.dups); got != tc.want {
+				t.Fatalf("echoing(%d relayed, %d duplicates) = %v, want %v", tc.relayed, tc.dups, got, tc.want)
+			}
+		})
+	}
+	// It must never divide by zero or treat silence as an echo.
+	if echoing(0, 5) {
+		t.Error("duplicates with no relayed frames must not warn")
+	}
+}
+
+// The relay's evidence lines: what gets reported, in what order, and what
+// is left out. Gathering the evidence needs an in-kernel relay, which no
+// test can attach, so the wording and the choices are tested here instead
+// of going unverified.
+func TestRelayEvidenceLines(t *testing.T) {
+	names := func(m arp.MAC) string { return "dev-" + m.String() }
+	a := arp.MAC{2, 0, 0, 0, 0, 1}
+	b := arp.MAC{2, 0, 0, 0, 0, 2}
+	c := arp.MAC{2, 0, 0, 0, 0, 3}
+	d := arp.MAC{2, 0, 0, 0, 0, 4}
+
+	t.Run("a healthy relay says only that there is nothing to show", func(t *testing.T) {
+		got := relayEvidence{}.lines(names)
+		if len(got) != 1 || got[0] != "no relayed-frame samples available" {
+			t.Fatalf("lines = %q, want just the no-samples line", got)
+		}
+	})
+
+	t.Run("zero counters are left out rather than printed as zeroes", func(t *testing.T) {
+		got := relayEvidence{Flows: []string{"a flow"}}.lines(names)
+		if len(got) != 1 || got[0] != "a flow" {
+			t.Fatalf("lines = %q, want only the flow", got)
+		}
+	})
+
+	t.Run("everything present, busiest device first", func(t *testing.T) {
+		got := relayEvidence{
+			Echo:          intercept.EchoDelays{Under100us: 900, Under1ms: 100},
+			Duplicates:    1000,
+			OursReturning: 2,
+			ToGateway:     3,
+			ByDevice:      map[arp.MAC]uint64{a: 10, b: 500, c: 100},
+			Flows:         []string{"flow one", "flow two"},
+			Interface:     "eth0",
+		}.lines(names)
+		joined := strings.Join(got, "\n")
+		for _, want := range []string{
+			"how long the echoed frames took to come back",
+			"consistent with a wired switch sending it straight back",
+			"1000 frames were not relayed",
+			"2 frames arrived with Shepherd's own source MAC and 3",
+			"eth0",
+			"flow one", "flow two",
+		} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("lines missing %q:\n%s", want, joined)
+			}
+		}
+		// Busiest device first, and only three named.
+		iB := strings.Index(joined, "500 of dev-"+b.String())
+		iC := strings.Index(joined, "100 of dev-"+c.String())
+		iA := strings.Index(joined, "10 of dev-"+a.String())
+		if iB < 0 || iC < 0 || iA < 0 || !(iB < iC && iC < iA) {
+			t.Errorf("devices not ordered busiest first (%d, %d, %d):\n%s", iB, iC, iA, joined)
+		}
+	})
+
+	t.Run("at most three devices are named", func(t *testing.T) {
+		got := relayEvidence{
+			ByDevice: map[arp.MAC]uint64{a: 4, b: 3, c: 2, d: 1},
+			Flows:    []string{"f"},
+		}.lines(names)
+		n := 0
+		for _, l := range got {
+			if strings.Contains(l, "frames came back and were dropped") {
+				n++
+			}
+		}
+		if n != 3 {
+			t.Fatalf("named %d devices, want at most 3: %q", n, got)
+		}
+	})
+
+	t.Run("devices with equal counts keep a stable order", func(t *testing.T) {
+		ev := relayEvidence{ByDevice: map[arp.MAC]uint64{a: 5, b: 5, c: 5}, Flows: []string{"f"}}
+		first := strings.Join(ev.lines(names), "\n")
+		for i := 0; i < 20; i++ {
+			if again := strings.Join(ev.lines(names), "\n"); again != first {
+				t.Fatalf("the order changed between digests:\n%s\n---\n%s", first, again)
+			}
+		}
+	})
+
+	t.Run("the echo verdict is omitted when there is too little to say", func(t *testing.T) {
+		got := relayEvidence{Echo: intercept.EchoDelays{Under10us: 3}, Flows: []string{"f"}}.lines(names)
+		joined := strings.Join(got, "\n")
+		if !strings.Contains(joined, "how long the echoed frames took") {
+			t.Error("the histogram itself should still be reported")
+		}
+		if strings.Contains(joined, "look at the host") || strings.Contains(joined, "consistent with") {
+			t.Errorf("a verdict was drawn from 3 samples:\n%s", joined)
+		}
+	})
 }

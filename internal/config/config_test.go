@@ -716,9 +716,13 @@ func TestWatchDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Watch mode is on by default (docs/DESIGN.md's protect-by-default
-	// decision), in auto mode, and never steers infrastructure.
-	if !cfg.Watch.Enabled || cfg.Watch.Mode != "auto" || cfg.Watch.SteerInfrastructure || cfg.Watch.ActiveWindowSeconds != 900 {
+	// Watch mode is retired, so it is OFF by default. It was on, under the
+	// protect-by-default decision in docs/DESIGN.md, until the measurements
+	// in docs/WATCH.md retired it: one-sided ARP steering loops on real
+	// hardware, and a device reported as steered had none of a 100 MB
+	// transfer relayed. The rest of the defaults are unchanged so an
+	// install that deliberately turns it back on behaves as it used to.
+	if cfg.Watch.Enabled || cfg.Watch.Mode != "auto" || cfg.Watch.SteerInfrastructure || cfg.Watch.ActiveWindowSeconds != 900 {
 		t.Errorf("watch defaults = %+v", cfg.Watch)
 	}
 	if cfg.Watch.Interface != "" || cfg.Watch.Workers != 0 {

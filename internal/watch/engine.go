@@ -108,6 +108,18 @@ type Config struct {
 	// StatePath persists the kill switch (0600). Empty keeps it in memory.
 	StatePath string
 
+	// AllowRoutingHost runs Watch mode even on a host that forwards IPv4
+	// and has a second interface on the relay's own segment, which the
+	// engine otherwise refuses (routingOwnSegment). The refusal stands on
+	// correlation with the relay loops seen on exactly one such host, and
+	// this is the knob for investigating them there: the loop brake stays
+	// armed, and the refusal is logged as a warning instead of enforced.
+	AllowRoutingHost bool
+	// Diagnostics logs a digest of sampled relayed frames (what the relay
+	// is actually carrying: addresses, ports, TTL and IP ID) every few
+	// seconds while traffic is moving, besides when the brake trips.
+	Diagnostics bool
+
 	Platform Platform        // default RealPlatform{}
 	Clock    intercept.Clock // default the wall clock
 	// Logf receives the engine's log lines; default log.Printf.
@@ -178,12 +190,54 @@ const (
 	// genuinely busy: receive 600 Mbit/s against transmit 800 to 1000, so
 	// 25 to 40% apart, with the relay reporting well under half the
 	// interface's packets.
-	loopSymmetry = 0.10   // |tx-rx| / max(tx,rx) at or below this is mirrored
-	loopShare    = 0.80   // relayed packets as a share of received packets
-	loopFloorPPS = 50_000 // below this, a home network is not looping
+	// loopSymmetry is the whole test now, so it is placed from measurement
+	// rather than taste. Loops observed: 0.03% apart (the two original
+	// incidents), 9.3% (the instrumented single-device run, about 26,994
+	// received against 24,492 transmitted) and 10.1% (the earlier
+	// single-device run, about 465,000 against 517,000). Busy but healthy
+	// on the same host sits far outside that: six clean samples with
+	// nothing steered ran 89 to 92% apart. 0.15 leaves wide margin on both
+	// sides; the old 0.10 would have excluded the 10.1% run, which is
+	// exactly the kind of threshold that only just misses a real incident.
+	//
+	// The ratio is the one thing the sampling artefact described on
+	// checkForLoop does not disturb: the driver publishes rx and tx in the
+	// same lump, so a bucket's rx:tx is right even when its duration is not.
+	loopSymmetry = 0.15
+	// loopFloorPPS keeps a quiet network from tripping it, and that is all
+	// it does: symmetry is what separates looping from busy. Measured on
+	// the live host with nothing steered, six clean two-second samples ran
+	// rx 12,325 to 39,521 a second against tx 1,324 to 3,008 -- so max(rx,
+	// tx) routinely reaches 40,000 while sitting 89 to 92% apart. A floor
+	// alone could not tell that from a loop; the symmetry test can.
+	//
+	// 15,000 sits between this host's transmit background (about 3,000) and
+	// the smallest loop measured (max(rx, tx) about 27,000), with roughly
+	// 1.8x of margin either way. It was 50,000 until the measurement below
+	// was corrected, which would have missed that loop outright.
+	loopFloorPPS = 15_000
 	// loopHits is how many consecutive one-second samples must agree
 	// before the brake trips, so a burst cannot cause one.
 	loopHits = 3
+	// The echo warning. A relay whose frames keep coming back is working
+	// but wasting most of its effort, and the network is carrying nearly
+	// twice the relayed traffic. The duplicate brake contains that, so it
+	// is not an emergency and must not stop steering -- but it is not
+	// normal either, and an owner who never turns diagnostics on would
+	// otherwise never learn of it. So it is said out loud, rarely, with the
+	// numbers and the busiest device.
+	//
+	// The thresholds only keep it quiet about nothing: a ratio this high
+	// over this many frames is not a stray duplicate, and a healthy relay
+	// sits at zero for as long as it runs.
+	echoWarnRatio     = 0.25
+	echoWarnMinFrames = 2000
+	echoWarnEvery     = time.Hour
+	// diagnosticsEvery and diagnosticsMinPPS bound the Config.Diagnostics
+	// digest: at most one every few seconds, and only while the relay is
+	// carrying something worth looking at.
+	diagnosticsEvery  = 5 * time.Second
+	diagnosticsMinPPS = 1000
 	// observeEvery bounds how often a steered device's relayed traffic is
 	// reported to the registry as a sighting.
 	observeEvery = time.Minute
@@ -235,6 +289,11 @@ type DeviceStatus struct {
 	// NextRetry is when a device on a health-failure backoff is tried
 	// again; zero otherwise.
 	NextRetry time.Time `json:"next_retry,omitempty"`
+	// DuplicatesSuppressed is this device's share of the frames the relay
+	// refused because it had already relayed the same frame moments
+	// earlier. Zero on a healthy network; a figure here names the device
+	// whose frames are coming back.
+	DuplicatesSuppressed uint64 `json:"duplicates_suppressed"`
 	// Failures is how many times in a row the health loop failed it open.
 	Failures int `json:"failures,omitempty"`
 }
@@ -261,6 +320,10 @@ type Snapshot struct {
 	// Armed is false after the kill switch, until Rearm.
 	Armed     bool   `json:"armed"`
 	Interface string `json:"interface,omitempty"`
+	// LastLoopStop is what the loop brake measured when it last stopped
+	// steering, surviving a restart and a container rebuild. Nil when it
+	// has never tripped here.
+	LastLoopStop *LoopStop `json:"last_loop_stop,omitempty"`
 	// IPv6 is true while IPv6 steering is actually in effect. IPv6Wanted
 	// says whether the configuration asked for it, and IPv6Reason says why
 	// it is not in effect when it was asked for (no IPv6 router, no global
@@ -283,13 +346,19 @@ type Snapshot struct {
 // RelayStats is intercept.ControllerStats plus the live rates derived from
 // consecutive samples of it.
 type RelayStats struct {
-	FramesExamined          uint64  `json:"frames_examined"`
-	FramesRelayed           uint64  `json:"frames_relayed"`
-	BytesRelayed            uint64  `json:"bytes_relayed"`
-	FramesForShepherdItself uint64  `json:"frames_for_shepherd_itself"`
-	FramesNotForShepherd    uint64  `json:"frames_not_for_shepherd"`
-	PacketsPerSecond        float64 `json:"packets_per_second"`
-	BytesPerSecond          float64 `json:"bytes_per_second"`
+	FramesExamined          uint64 `json:"frames_examined"`
+	FramesRelayed           uint64 `json:"frames_relayed"`
+	BytesRelayed            uint64 `json:"bytes_relayed"`
+	FramesForShepherdItself uint64 `json:"frames_for_shepherd_itself"`
+	FramesNotForShepherd    uint64 `json:"frames_not_for_shepherd"`
+	// DuplicatesSuppressed is frames the relay refused to relay because it
+	// had already relayed the same frame moments earlier: the same frame
+	// coming round, which is what a relay loop is made of. A healthy relay
+	// reports zero for as long as it runs, so any sustained figure here is
+	// something to look at even though the relay is containing it.
+	DuplicatesSuppressed uint64  `json:"duplicates_suppressed"`
+	PacketsPerSecond     float64 `json:"packets_per_second"`
+	BytesPerSecond       float64 `json:"bytes_per_second"`
 }
 
 type retryState struct {
@@ -384,6 +453,15 @@ type Engine struct {
 	// time it was read; see own().
 	localAddrs   Own
 	localAddrsAt time.Time
+	// lastDiag is when the Diagnostics digest was last logged, and
+	// lastDupSeen the duplicate count as of then, so the digest can fire on
+	// duplicates appearing rather than only on a high relayed rate.
+	lastDiag    time.Time
+	lastDupSeen uint64
+	// echoWindow is the start of the interval the echo warning measures
+	// over, with the relayed and duplicate counts as they were then.
+	echoWindow               time.Time
+	echoRelayedAt, echoDupAt uint64
 	// ifaceCounters is the previous reading of the interface's own
 	// counters, and loopStreak how many consecutive samples have looked
 	// like a relay loop. See the loop brake constants.
@@ -592,7 +670,10 @@ func (e *Engine) session(ctx context.Context) error {
 	// routing the very segment the relay would work on.
 	if ownNow, ok := e.own(e.clock.Now()); ok {
 		if routing, why := e.routingOwnSegment(link, ownNow); routing {
-			return errors.New(why)
+			if !e.cfg.AllowRoutingHost {
+				return errors.New(why)
+			}
+			e.logOnce("watch: WARNING: watch.allow_routing_host is set, so steering goes ahead although %s", why)
 		}
 	}
 
@@ -756,6 +837,45 @@ func (e *Engine) learnIfNativeFlapped(ctx context.Context, iface, driver string,
 	}
 }
 
+// localRelayIPs is every address of this host, for the relay's "not for
+// Shepherd itself" rule (xdp_relay.c rule 4, Relay.HandleFrame's local
+// check). The relay interface's own addresses are not enough: a host with
+// a second interface on the same segment, or with container bridges, has
+// addresses a steered device can legitimately talk to, and a frame for one
+// of those must be passed up to the stack rather than relayed to the
+// gateway. The maintainer's NAS answers DNS on a second address on the
+// very segment it steers, so this is the normal case, not a corner.
+//
+// The gateway is deliberately not in this set, even though own() includes
+// it for policy: traffic to the gateway's own address belongs to the
+// gateway, not to this host, and passing it up would strand it.
+func (e *Engine) localRelayIPs(link Link) (v4, v6 []netip.Addr) {
+	seen := map[netip.Addr]bool{}
+	add := func(ip netip.Addr) {
+		if !ip.IsValid() || seen[ip] {
+			return
+		}
+		seen[ip] = true
+		if ip.Is4() {
+			v4 = append(v4, ip)
+			return
+		}
+		v6 = append(v6, ip)
+	}
+	for _, ip := range link.IPv4s {
+		add(ip)
+	}
+	for _, ip := range link.IPv6s {
+		add(ip)
+	}
+	if _, ips, err := e.plat.LocalAddrs(); err == nil {
+		for _, ip := range ips {
+			add(ip)
+		}
+	}
+	return v4, v6
+}
+
 func (e *Engine) startXDP(ctx context.Context, ctrl *intercept.Controller, link Link) (string, <-chan error, func(), error) {
 	mode, driver := e.xdpModeFor(link.Name)
 	var before uint64
@@ -765,13 +885,27 @@ func (e *Engine) startXDP(ctx context.Context, ctrl *intercept.Controller, link 
 			before, haveCarrier = n, true
 		}
 	}
+	// A relay already known to loop on this interface is not attached at
+	// all, and not re-tested: running the test costs a short burst of
+	// looping frames, and the answer does not change.
+	for _, name := range relayNamesFor(mode) {
+		if key := link.Name + "/" + name; e.knownLooping(key) {
+			return "", nil, nil, fmt.Errorf("%w: the %s relay is already known to loop on %s (recorded in watch.json)", intercept.ErrRelayLoops, name, link.Name)
+		}
+	}
 	rctx, cancel := context.WithCancel(ctx)
 	attached := make(chan intercept.XDPMode, 1)
 	done := make(chan error, 1)
+	v4, v6 := e.localRelayIPs(link)
 	go func() {
 		done <- e.plat.AttachXDP(rctx, ctrl, link.Name, intercept.XDPOptions{
-			Mode:       mode,
-			LocalIPs:   link.IPv4s,
+			Mode:      mode,
+			LocalIPs:  v4,
+			LocalIPs6: v6,
+			SelfTest:  true,
+			OnSelfTestInconclusive: func(err error) {
+				e.logOnce("watch: the relay self-test on %s could not reach a verdict (%v); carrying on with the loop brake as the backstop", link.Name, err)
+			},
 			OnAttached: func(m intercept.XDPMode) { attached <- m },
 		})
 	}()
@@ -790,10 +924,54 @@ func (e *Engine) startXDP(ctx context.Context, ctrl *intercept.Controller, link 
 		if err == nil {
 			err = errRelayStopped
 		}
+		if errors.Is(err, intercept.ErrRelayLoops) {
+			for _, name := range relayNamesFor(mode) {
+				e.rememberLooping(link.Name + "/" + name)
+			}
+			e.logf("watch: the relay self-test on %s found a loop and nothing was steered: %v", link.Name, err)
+		}
 		return "", nil, nil, err
 	case <-time.After(e.attachTimeout):
 		cancel()
 		return "", nil, nil, errors.New("XDP attach timed out")
+	}
+}
+
+// relayNamesFor names the relays an attach in this mode could end up
+// using, for the per-interface "known to loop" record. XDPAuto can land on
+// either, and a loop found under one says nothing about the other, so auto
+// records only the mode it actually attached in -- which is why the lookup
+// side checks both and the record side is given the attached name.
+func relayNamesFor(mode intercept.XDPMode) []string {
+	switch mode {
+	case intercept.XDPNative:
+		return []string{RelayXDPNative}
+	case intercept.XDPGeneric:
+		return []string{RelayXDPGeneric}
+	}
+	return []string{RelayXDPNative, RelayXDPGeneric}
+}
+
+// knownLooping reports whether a relay is already recorded as looping here.
+func (e *Engine) knownLooping(key string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.state.hasLoopingRelay(key)
+}
+
+// rememberLooping records a relay as looping on this interface, so it is
+// never attached again here, and persists it.
+func (e *Engine) rememberLooping(key string) {
+	e.mu.Lock()
+	if e.state.hasLoopingRelay(key) {
+		e.mu.Unlock()
+		return
+	}
+	e.state.LoopingRelays = append(e.state.LoopingRelays, key)
+	err := saveState(e.cfg.StatePath, e.state)
+	e.mu.Unlock()
+	if err != nil {
+		e.logf("watch: WARNING: could not remember that %s loops (%v), so it will be tested again next start", key, err)
 	}
 }
 
@@ -1044,7 +1222,181 @@ func (e *Engine) sample(now time.Time) {
 	for _, d := range observe {
 		e.reg.Observe(devices.Observation{Source: devices.SourceARP, MAC: d.MAC.String(), IP: d.IP.String(), Time: now})
 	}
+	// The digest fires on either of two signals, and the second matters
+	// more: a high relayed rate, or the duplicate brake actually dropping
+	// frames. Gating on rate alone was a mistake -- on the live host the
+	// brake suppresses frames steadily at 30 to 60 relayed packets a
+	// second, far below any sensible rate threshold, so the evidence for
+	// what is coming back was never logged at all.
+	if e.cfg.Diagnostics && now.Sub(e.lastDiag) >= diagnosticsEvery {
+		dup := ctrl.DuplicatesSuppressed()
+		switch {
+		case dup > e.lastDupSeen:
+			e.lastDiag = now
+			e.logSamples(ctrl, fmt.Sprintf("diagnostics: %d frames suppressed as duplicates since the last digest", dup-e.lastDupSeen))
+		case relayedPPS >= diagnosticsMinPPS:
+			e.lastDiag = now
+			e.logSamples(ctrl, fmt.Sprintf("diagnostics at %.0f relayed pkt/s", relayedPPS))
+		}
+		e.lastDupSeen = dup
+	}
+	e.warnIfEchoing(now, ctrl)
 	e.checkForLoop(now, relayedPPS, status)
+}
+
+// echoing reports whether, over one window, enough of what the relay
+// relayed came straight back to be worth saying out loud. Separated from
+// the logging so the thresholds -- the part a mistake would live in -- can
+// be tested without an in-kernel relay, which is the only data plane that
+// counts duplicates at all.
+func echoing(relayed, dups uint64) bool {
+	if relayed < echoWarnMinFrames {
+		return false // too little traffic to conclude anything
+	}
+	return float64(dups) >= echoWarnRatio*float64(relayed)
+}
+
+// warnIfEchoing says once an hour, at most, that most of what the relay
+// relays is coming straight back to it. The duplicate brake is dropping
+// those copies, so nothing is broken and steering continues; but a relay
+// doing twice the work for the same traffic is worth knowing about, and
+// without this it is visible only to someone who turned diagnostics on.
+func (e *Engine) warnIfEchoing(now time.Time, ctrl *intercept.Controller) {
+	st := ctrl.Stats()
+	dup := ctrl.DuplicatesSuppressed()
+
+	e.mu.Lock()
+	if e.echoWindow.IsZero() {
+		e.echoWindow, e.echoRelayedAt, e.echoDupAt = now, st.FramesRelayed, dup
+		e.mu.Unlock()
+		return
+	}
+	if now.Sub(e.echoWindow) < echoWarnEvery {
+		e.mu.Unlock()
+		return
+	}
+	relayed := st.FramesRelayed - e.echoRelayedAt
+	dups := dup - e.echoDupAt
+	e.echoWindow, e.echoRelayedAt, e.echoDupAt = now, st.FramesRelayed, dup
+	e.mu.Unlock()
+
+	if !echoing(relayed, dups) {
+		return
+	}
+	e.logf("watch: %d of the last %d relayed frames came straight back and were dropped (%.0f%%). Steering is working and nothing is broken -- the relay drops the copies -- but something on this network re-delivers the frames it relays, so the segment carries nearly twice the traffic it needs to. See docs/WATCH.md.",
+		dups, relayed, float64(dups)/float64(relayed)*100)
+	if ed := ctrl.EchoDelays(); ed.Total() > 0 {
+		e.logf("watch: how long they took to come back -- %s", ed)
+		if v := ed.Verdict(); v != "" {
+			e.logf("watch: %s", v)
+		}
+	}
+	if byDev := ctrl.DuplicatesByDevice(); len(byDev) > 0 {
+		var worst arp.MAC
+		var worstN uint64
+		for mac, n := range byDev {
+			if n > worstN {
+				worst, worstN = mac, n
+			}
+		}
+		name := worst.String()
+		if d, ok := e.reg.FindByMAC(worst.String()); ok {
+			name = d.DisplayName() + " (" + worst.String() + ")"
+		}
+		e.logf("watch: most of those were %s's, %d frames in all", name, worstN)
+	}
+}
+
+// logSamples drains the relay's frame samples and logs their digest: the
+// busiest flows, each with its TTL range and distinct IP IDs, which is what
+// tells a loop from traffic (intercept.SummarizeSamples). Only the
+// in-kernel relay samples; the userspace relay yields nothing here.
+func (e *Engine) logSamples(ctrl *intercept.Controller, why string) {
+	r := relayEvidence{
+		Echo:       ctrl.EchoDelays(),
+		Duplicates: ctrl.DuplicatesSuppressed(),
+		ByDevice:   ctrl.DuplicatesByDevice(),
+		Flows:      intercept.SummarizeSamples(ctrl.FrameSamples()),
+		Interface:  e.ifaceName(),
+	}
+	r.OursReturning, r.ToGateway = ctrl.ReturnPathCounts()
+	for _, line := range r.lines(e.deviceName) {
+		e.logf("watch: %s: %s", why, line)
+	}
+}
+
+// deviceName is a device's display name with its MAC, or just the MAC when
+// the registry does not know it.
+func (e *Engine) deviceName(mac arp.MAC) string {
+	if d, ok := e.reg.FindByMAC(mac.String()); ok {
+		return d.DisplayName() + " (" + mac.String() + ")"
+	}
+	return mac.String()
+}
+
+// relayEvidence is everything the in-kernel relay can say about frames
+// coming back to it. Gathering it needs that relay; turning it into lines
+// does not, which is why the two are separate: the wording and the choice
+// of what to report is the part worth testing, and no test can attach an
+// XDP program.
+type relayEvidence struct {
+	Echo          intercept.EchoDelays
+	Duplicates    uint64
+	OursReturning uint64
+	ToGateway     uint64
+	ByDevice      map[arp.MAC]uint64
+	Flows         []string
+	Interface     string
+}
+
+// lines renders the evidence, busiest devices first, naming each with the
+// given function. Everything that has nothing to say is left out, so a
+// healthy relay produces one line rather than a screen of zeroes.
+func (r relayEvidence) lines(name func(arp.MAC) string) []string {
+	var out []string
+	if r.Echo.Total() > 0 {
+		out = append(out, "how long the echoed frames took to come back -- "+r.Echo.String())
+		if v := r.Echo.Verdict(); v != "" {
+			out = append(out, v)
+		}
+	}
+	if r.Duplicates > 0 {
+		out = append(out, fmt.Sprintf("%d frames were not relayed because the relay had already relayed the same frame moments earlier -- the same frame coming round, which is what a loop is made of", r.Duplicates))
+	}
+	if r.OursReturning > 0 || r.ToGateway > 0 {
+		out = append(out, fmt.Sprintf("%d frames arrived with Shepherd's own source MAC and %d addressed to the gateway's -- Shepherd's relayed output coming back to %s",
+			r.OursReturning, r.ToGateway, r.Interface))
+	}
+	type pair struct {
+		mac arp.MAC
+		n   uint64
+	}
+	var ds []pair
+	for mac, n := range r.ByDevice {
+		ds = append(ds, pair{mac, n})
+	}
+	slices.SortFunc(ds, func(a, b pair) int {
+		switch {
+		case a.n > b.n:
+			return -1
+		case a.n < b.n:
+			return 1
+		}
+		// Equal counts sort by MAC, so the lines do not reorder between
+		// one digest and the next for no reason.
+		return strings.Compare(a.mac.String(), b.mac.String())
+	})
+	for i, d := range ds {
+		if i == 3 {
+			break
+		}
+		out = append(out, fmt.Sprintf("%d of %s's frames came back and were dropped", d.n, name(d.mac)))
+	}
+	if len(r.Flows) == 0 {
+		out = append(out, "no relayed-frame samples available")
+		return out
+	}
+	return append(out, r.Flows...)
 }
 
 // checkForLoop is the loop brake. Twice on real hardware the relay ended up
@@ -1053,11 +1405,59 @@ func (e *Engine) sample(now time.Time) {
 // established -- and both times it ran for minutes because a person had to
 // notice. This notices in three seconds.
 //
-// The signature it looks for is the one that identified both incidents by
-// hand: the interface receives and transmits the same amount, and the relay
-// accounts for almost all of it. Legitimate heavy traffic fails the first
-// test, because downloads and the host's own traffic make receive and
-// transmit diverge, and a quiet network fails the floor.
+// The signature is mirrored traffic -- the interface receiving and
+// transmitting the same amount -- above a rate a home network does not
+// reach, for loopHits consecutive seconds. Legitimate heavy traffic fails
+// the symmetry test, because downloads and the host's own traffic make
+// receive and transmit diverge by 25 to 40%, and a quiet network fails the
+// floor.
+//
+// It deliberately does **not** test the relay's own share of the traffic,
+// and an earlier version of this brake did: the relay had to report at
+// least 80% of the interface's receive rate, and at least loopFloorPPS
+// itself. The reason for dropping it is not that the relay carries little
+// of a loop -- it carries most of one -- but that **its counter lags the
+// storm by seconds**, and those are the seconds that matter.
+//
+// Measured on one device, sampled every two seconds from the moment
+// steering began:
+//
+//	t+2s   examined  17,952/s   relayed      0/s
+//	t+4s   examined  62,756/s   relayed 27,587/s   (34 MB/s)
+//	t+6s   examined  89,336/s   relayed 45,516/s   (56 MB/s)
+//	t+8s   examined 102,516/s   relayed 73,704/s   (90 MB/s)
+//
+// A separate run of the same shape had the interface already mirrored at
+// about 27,000 packets a second received against 24,500 transmitted 3.5
+// seconds in, while the relay still reported 8 pkt/s. So at the instant a
+// stop is worth making, the share is near zero; by the time the share
+// passes 80% the card has been at 90 MB/s for several seconds. Gating on
+// it buys nothing and costs the only seconds in which stopping is cheap.
+//
+// The share is therefore evidence, not a trigger, and a low reading early
+// in a storm is expected. The earlier single-device run fits the same
+// curve: 41,116 relayed against 465,000 received at the moment it was
+// sampled.
+//
+// So the share is logged as evidence and ignored as a trigger. The cost,
+// accepted knowingly: genuinely symmetric traffic above loopFloorPPS
+// sustained for loopHits seconds now stops steering. On the measured host
+// nothing legitimate came close to symmetric -- its heavy traffic runs 89
+// to 92% lopsided -- but this is a safety stop that now fires on less
+// evidence than before, which is the right trade only because the thing it
+// guards against melts a home network in a few seconds.
+//
+// MEASURING THIS CORRECTLY, because getting it wrong set the floor above
+// the very loop it was meant to catch. This brake samples once a second,
+// which is fine. Anything sampling /sys/class/net/<if>/statistics faster
+// is not: the atlantic driver publishes those counters in one lump roughly
+// once a second, so 100ms sampling reads "0 0 0 0 0 24073 0 0 0 0" and a
+// half-second bucket that catches a lump holds a whole second of packets.
+// Doubling such a bucket to get a rate overstates it twofold, which is how
+// the instrumented loop was first written up as 54,000 packets a second
+// instead of 27,000, and why loopFloorPPS was 50,000. Ip:InReceives in
+// /proc/net/snmp updates continuously and may be sampled as fast as you
+// like; the interface counters may not.
 //
 // When it trips it panic-stops, which unsteers every device with its
 // corrective reply, and latches like the kill switch so a restart does not
@@ -1080,8 +1480,7 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 	tx := float64(cur.TxPackets - prev.TxPackets)
 	hi := math.Max(rx, tx)
 	mirrored := hi > 0 && math.Abs(tx-rx)/hi <= loopSymmetry
-	dominant := rx > 0 && relayedPPS >= loopShare*rx
-	looping := mirrored && dominant && relayedPPS >= e.loopFloor && hi >= e.loopFloor
+	looping := mirrored && hi >= e.loopFloor
 	if !looping {
 		e.loopStreak = 0
 		e.mu.Unlock()
@@ -1093,18 +1492,47 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 		e.mu.Unlock()
 		return
 	}
+	e.mu.Unlock()
+	// Read the relay's own evidence before latching, since PanicStop
+	// empties the steered set and with it the per-device counters.
+	suppressed := ctrl.DuplicatesSuppressed()
+	flows := intercept.SummarizeSamples(ctrl.FrameSamples())
+	e.mu.Lock()
+	if e.killed { // another goroutine latched it while the lock was free
+		e.mu.Unlock()
+		return
+	}
 	e.killed = true
 	e.state.Killed = true
-	e.reason = "stopped automatically: the relay was carrying its own output back to itself"
+	e.reason = "stopped automatically: the relay interface was mirroring traffic at a rate a home network does not reach"
+	share := 0.0
+	if rx > 0 {
+		share = relayedPPS / rx * 100
+	}
+	// Persist what was measured, not just log it. A container rebuild takes
+	// the logs with it, which has already destroyed this evidence twice.
+	e.state.LastLoopStop = &LoopStop{
+		At: now, RxPackets: rx, TxPackets: tx, ApartPercent: math.Abs(tx-rx) / hi * 100,
+		RelayedPPS: relayedPPS, SharePercent: share,
+		Suppressed: suppressed,
+		Devices:    loopSuspects(status, e.reg),
+		Flows:      flows,
+	}
 	saveErr := saveState(e.cfg.StatePath, e.state)
 	e.loopStreak = 0
 	e.mu.Unlock()
 
 	ctrl.PanicStop()
-	e.logf("watch: LOOP BRAKE: the relay was carrying its own output back to itself, so all steering has been stopped and will stay stopped until it is re-armed")
-	e.logf("watch: loop brake evidence: interface received %.0f and transmitted %.0f packets in the last second (%.2f%% apart), of which the relay reported %.0f (%.0f%%)",
-		rx, tx, math.Abs(tx-rx)/hi*100, relayedPPS, relayedPPS/rx*100)
+	e.logf("watch: LOOP BRAKE: the relay interface is mirroring traffic at a rate a home network does not reach, so all steering has been stopped and will stay stopped until it is re-armed")
+	e.logf("watch: loop brake evidence: interface received %.0f and transmitted %.0f packets in the last second (%.2f%% apart), of which the relay reported %.0f (%.1f%%); the duplicate brake had suppressed %d frames",
+		rx, tx, math.Abs(tx-rx)/hi*100, relayedPPS, share, suppressed)
+	e.logf("watch: loop brake: this is also recorded in %s as last_loop_stop, because a container rebuild discards the log", e.cfg.StatePath)
+	// The share is evidence, not a trigger. It lags the storm by seconds --
+	// 0 pkt/s at t+2, 73,704 by t+8 on one measured device -- so a low
+	// figure here means the brake caught it early, not that the relay is
+	// innocent.
 	e.logLoopSuspects(status)
+	e.logSamples(ctrl, "loop brake")
 	if saveErr != nil {
 		e.logf("watch: WARNING: could not persist the loop stop (%v), so a restart may resume it", saveErr)
 	}
@@ -1114,9 +1542,21 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 // tripped. The cause of the second incident was never established because
 // nobody had this list at the moment it mattered.
 func (e *Engine) logLoopSuspects(status []intercept.SteeredDevice) {
-	if len(status) == 0 {
+	lines := loopSuspects(status, e.reg)
+	if len(lines) == 0 {
 		e.logf("watch: loop brake: no device was steered at the time, so the relay was not carrying a steered device's traffic")
 		return
+	}
+	for _, l := range lines {
+		e.logf("watch: loop brake: %s", l)
+	}
+}
+
+// loopSuspects describes the devices that were relaying most, busiest
+// first, for both the log and the persisted record.
+func loopSuspects(status []intercept.SteeredDevice, reg *devices.Registry) []string {
+	if len(status) == 0 {
+		return nil
 	}
 	byBytes := append([]intercept.SteeredDevice(nil), status...)
 	slices.SortFunc(byBytes, func(a, b intercept.SteeredDevice) int {
@@ -1128,17 +1568,19 @@ func (e *Engine) logLoopSuspects(status []intercept.SteeredDevice) {
 		}
 		return 0
 	})
+	var out []string
 	for i, d := range byBytes {
 		if i == 3 {
 			break
 		}
 		name := d.MAC.String()
-		if dev, ok := e.reg.FindByMAC(d.MAC.String()); ok {
+		if dev, ok := reg.FindByMAC(d.MAC.String()); ok {
 			name = dev.DisplayName() + " (" + d.MAC.String() + ")"
 		}
-		e.logf("watch: loop brake: %s had relayed %d frames and %d bytes, address %s",
-			name, d.PacketsRelayed, d.BytesRelayed, d.IP)
+		out = append(out, fmt.Sprintf("%s had relayed %d frames and %d bytes, address %s",
+			name, d.PacketsRelayed, d.BytesRelayed, d.IP))
 	}
+	return out
 }
 
 // ifaceName is the interface the relay is attached to, or "".
@@ -1393,6 +1835,7 @@ func (e *Engine) Snapshot() Snapshot {
 		History: append([]HistoryRecord(nil), e.history...),
 	}
 	snap.IPv6, snap.IPv6Wanted, snap.IPv6Reason = e.v6, e.cfg.IPv6, e.v6Why
+	snap.LastLoopStop = e.state.LastLoopStop
 	if e.gwLL.IsValid() {
 		snap.GatewayLinkLocal = e.gwLL.String()
 	}
@@ -1418,6 +1861,7 @@ func (e *Engine) Snapshot() Snapshot {
 		st := ctrl.Stats()
 		snap.Stats.FramesExamined, snap.Stats.FramesRelayed, snap.Stats.BytesRelayed = st.FramesExamined, st.FramesRelayed, st.BytesRelayed
 		snap.Stats.FramesForShepherdItself, snap.Stats.FramesNotForShepherd = st.FramesForShepherdItself, st.FramesNotForShepherd
+		snap.Stats.DuplicatesSuppressed = ctrl.DuplicatesSuppressed()
 		for _, d := range ctrl.Status() {
 			steered[d.MAC] = d
 		}
@@ -1439,6 +1883,13 @@ func (e *Engine) DeviceStatuses() map[string]DeviceStatus {
 
 func (e *Engine) deviceStatuses(now time.Time, steered map[arp.MAC]intercept.SteeredDevice, running bool) []DeviceStatus {
 	own, _ := e.own(now)
+	e.mu.Lock()
+	ctrl := e.ctrl
+	e.mu.Unlock()
+	var dupByMAC map[arp.MAC]uint64
+	if ctrl != nil {
+		dupByMAC = ctrl.DuplicatesByDevice()
+	}
 	e.mu.Lock()
 	retry := make(map[arp.MAC]retryState, len(e.retry))
 	for mac, rs := range e.retry {
@@ -1480,6 +1931,7 @@ func (e *Engine) deviceStatuses(now time.Time, steered map[arp.MAC]intercept.Ste
 			ds.Healthy = ds.Healthy && sd.Healthy
 			ds.BytesRelayed += sd.BytesRelayed
 			ds.PacketsRelayed += sd.PacketsRelayed
+			ds.DuplicatesSuppressed += dupByMAC[mac]
 			if rs, ok := rates[mac]; ok {
 				ds.BytesPerSecond += rs.bps
 				ds.PacketsPerSecond += rs.pps
@@ -1615,23 +2067,117 @@ func familyNames(f intercept.Family) []string {
 var _ intercept.Excluder = v6Excluder{}
 
 // routingOwnSegment reports whether this host is routing the very subnet
-// the relay runs on, which Watch mode cannot safely steer.
+// the relay runs on, which Watch mode will not steer into: IPv4
+// forwarding is on and a second interface sits in the relay interface's
+// own prefix.
 //
-// One-sided ARP steering assumes Shepherd is a passive Layer 2 relay on a
-// segment: a steered device hands it a frame, it rewrites both MAC
-// addresses and puts it back on the wire. A host that also *routes* that
-// subnet breaks the assumption, because the kernel has its own opinion
-// about where the frame should go and, with two link routes for one
-// subnet, that can be straight back out onto the same segment.
+// The condition correlates with every loop ever seen, but **the mechanism
+// is not forwarding**, and three candidates are now excluded by direct
+// measurement rather than argument.
 //
-// This is a precaution, not a proven mechanism. The maintainer's NAS has
-// exactly this shape -- IPv4 forwarding on, a wired and a wireless
-// interface both on the same /24, and Tailscale advertising that subnet
-// while acting as an exit node -- and it is the host on which the relay
-// twice ended up
-// carrying its own output back to itself at line rate. The second of those
-// was not explained by anything else, so Shepherd refuses the combination
-// rather than relay into it. The loop brake stays as the backstop.
+// Measured on the maintainer's NAS (forwarding on, eth0 and wlan0 both on
+// one /24), steering a *single ordinary device* -- one phone, by explicit
+// MAC, nothing to do with the registry or the gateway -- loops every time.
+// The instrumented run took the interface to roughly 27,000 packets a
+// second in and 24,500 out, mirrored, 3.5 seconds after steering began,
+// while counters sampled in the same bucket said:
+//
+//	ForwDatagrams          1 datagram    -- not kernel IPv4 forwarding
+//	hairpin drops (in eth0, out eth0)
+//	                       0 packets     -- not same-segment routing
+//	relay's own relayed    8 pkt/s       -- see below; NOT an exclusion
+//
+// That is about 27,000 packets a second received against 24,500
+// transmitted. An earlier revision of this comment said 54,000 against
+// 49,000, having doubled a half-second bucket from a driver that publishes
+// its counters once a second; checkForLoop's comment has the detail.
+//
+// The third line was read as excluding the relay, and that was wrong. A
+// later run let the same storm develop instead of stopping it at 3.5
+// seconds, and the relay's own counter went 0, then 27,587, then 45,516,
+// then 73,704 pkt/s at 90 MB/s by eight seconds in -- 72% of what the
+// program examined. The 8 pkt/s reading was the first instant of a ramp,
+// not a steady state. So the relay is not excluded; it is the leading
+// candidate. A comparison run with the XDP program off (-xdp off)
+// produced no storm, examined holding at 16,000 to 28,000 pkt/s -- but
+// that is weaker evidence than it first looked, because -xdp off does not
+// mean "no relay". The trial then relays in userspace across four workers,
+// and in one run it managed only 88 pkt/s and 107 kB/s. So "no storm
+// without XDP" may mean no more than "a userspace relay is too slow to
+// make one". The fast path is a suspect, not a conclusion.
+//
+// Only two mechanisms are therefore excluded here, not three: kernel IPv4
+// forwarding and same-segment routing.
+//
+// One thing that looks like a clue and is not: examined 102,516 against
+// 73,704 relayed leaves ~29,000 frames a second seen and not relayed, with
+// not_for_shepherd and for_shepherd_itself both zero. That is expected.
+// The XDP program bumps `examined` for every frame it sees and bumps no
+// counter at all on the XDP_PASS paths for "not Shepherd's MAC" and "not
+// from a steered device"; only rule 4 has a counter. So the gap is the
+// rest of the segment's traffic, and ~29,000/s matches this host's
+// measured background almost exactly.
+//
+// So whatever put ~24,500 frames a second onto that interface is
+// accounted for by neither Shepherd's relay nor the kernel's IP stack. It
+// is not this function's premise either, which is why the explanation that
+// used to sit here -- the router learning the client at Shepherd's MAC and
+// the kernel routing its downloads back onto the segment -- is gone. One
+// forwarded datagram during a 24,500-packet-a-second storm refutes it.
+//
+// What survives is the other half of the condition, and it is worth
+// stating because it is the one structural feature present in every
+// incident: this host has **two interfaces on one segment**, and the
+// steered device is REACHABLE through both of them at once:
+//
+//	192.0.2.37 dev eth0  lladdr 02:00:5e:00:00:37 REACHABLE
+//	192.0.2.37 dev wlan0 lladdr 02:00:5e:00:00:37 REACHABLE
+//
+// That makes the IPv4-forwarding half of this test look like it is doing
+// no work. Dropping it would make the refusal narrower and more honest,
+// not broader -- but not before the mechanism is actually identified,
+// because the last two times a mechanism was asserted here it was wrong.
+//
+// Two explanations have been asserted here and then refuted by trial, in
+// this order, and both are recorded so a third is not reached for lightly.
+// First: a polluted registry record that had merged the gateway into a
+// steerable device. Disproved by steering one phone by explicit MAC with
+// no registry involved -- same loop. That record is a real problem and
+// Decide() refuses it by address now, but it is not this. Second: kernel
+// forwarding, as above. Disproved by counting it: one datagram.
+//
+// So the refusal stands on correlation alone, which is a weaker footing
+// than it had when it was first written, not a stronger one. It is kept
+// because the loop is real, immediate and severe -- 3.5 seconds from
+// steering to tens of thousands of packets a second -- and being
+// unavailable on a dual-homed host is much better than melting its
+// network.
+//
+// For a while it was also carrying more weight than intended, because the
+// loop brake as first written would not have caught this loop: it required
+// the relay to report at least 80% of the interface's receive rate, and the
+// measured loop had it reporting 8 pkt/s against 27,000 received. That has
+// since been fixed -- checkForLoop now trips on mirrored traffic above its
+// floor and ignores the relay's share -- so the two guards are independent
+// again, which is how this refusal was always meant to be backed.
+//
+// One thing clearing net.ipv4.ip_forward would not do is help, and anyone
+// reading this should not try it. That host's forwarding is bursty and
+// load-bearing: over a minute with Watch mode off, ForwDatagrams had a
+// median of 34 a second, a p90 of 5,759 and a peak of 8,607, totalling
+// 80,521, and every burst is the relay interface's inbound traffic routed
+// to a container bridge for a service its owner runs on purpose. (Two
+// five-second samples taken earlier both landed inside bursts and were
+// written up here as a steady ~4,000 a second. They also explain the first
+// trial's odd pre-steering baseline of 12,000 packets a second on an
+// interface whose median is 65.)
+//
+// The next measurement has to find what is transmitting, since neither the
+// relay nor the IP stack claims it. Two cheap discriminators, in order:
+// re-run with the relay's XDP program off, which separates the kernel
+// fast-path from the userspace ARP sender; and compare the interface's
+// rx_packets against Ip:InReceives during a storm, which separates IP
+// traffic from a flood of ARP.
 func (e *Engine) routingOwnSegment(link Link, own Own) (bool, string) {
 	fwd, err := e.plat.IPForwarding()
 	if err != nil || !fwd {
