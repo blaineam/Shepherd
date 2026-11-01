@@ -683,6 +683,14 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Four `internal/alarms` tests polled a background worker with a 3-second real-wall-clock deadline against a fake-clock-advanced tick; under load (the full suite running concurrently) that was occasionally too tight and failed even though the worker itself was fine (instant in isolation). Widened to 10 seconds.
 
 ### Changed
+- **The portal has a new look.** A softer dark theme with rounded cards and controls, one
+  sans-serif voice (monospace only for addresses, domains and tokens), and no corner brackets or
+  glows. Navigation is a grouped sidebar (Monitor / Protect / Settings) on desktop and a slide-in
+  menu behind a labelled Menu button on phones. Pages use the full window width, and the Devices,
+  Alarms and Vulnerabilities lists scroll at the window edge rather than inside a panel. Screens
+  are named for what they show: Map, Overview, Network health, Upstream DNS, Reverse proxy, Watch
+  mode; the `#` routes are unchanged. Also fixes the Devices row wrapping its Mode column at
+  tablet widths and the History "would have blocked" checkbox being stretched full width.
 - **Watch mode's capture sockets filter in the kernel.** Each `PACKET_FANOUT` socket carries a
   classic BPF filter (IPv4, destination MAC is Shepherd's) so frames the Relay would discard are
   dropped before being copied to userspace; attached before bind so nothing slips in ahead of it.
