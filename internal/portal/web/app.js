@@ -536,28 +536,27 @@ function showView(name) {
   else if (name === 'accountability') devicesView.reloadGroups().catch(() => {}).finally(() => accountabilityView.show());
   else if (name === 'locking') lockingView.show();
 }
-// Below the width the horizontal .tabs row would otherwise scroll
-// sideways (10 tabs do not fit at phone widths), it becomes a
-// hamburger-triggered vertical dropdown instead (CSS only: the nav
-// itself, showView, hash routing and arrow-key navigation below are all
-// unchanged - closeNavMenu just also runs wherever the tab list should
-// dismiss itself on mobile).
-function closeNavMenu() {
-  $('.tabs').classList.remove('open');
-  $('#btn-navmenu').setAttribute('aria-expanded', 'false');
-}
-$('#btn-navmenu').addEventListener('click', () => {
-  const on = !$('.tabs').classList.contains('open');
-  $('.tabs').classList.toggle('open', on);
+// On narrow screens the side navigation is a slide-in menu behind the
+// Menu button in the top bar (CSS does the sliding; this only toggles the
+// classes, the scrim and focus). On wide screens it is always visible and
+// these are no-ops that nothing observes. showView, hash routing and the
+// arrow-key navigation below are the same either way.
+function navOpen() { return $('#sidenav').classList.contains('open'); }
+function setNavMenu(on) {
+  $('#sidenav').classList.toggle('open', on);
+  $('#nav-scrim').hidden = !on;
   $('#btn-navmenu').setAttribute('aria-expanded', on ? 'true' : 'false');
-});
-document.addEventListener('click', (e) => {
-  if (!$('.tabs').classList.contains('open')) return;
-  if (e.target.closest('.tabs') || e.target.closest('#btn-navmenu')) return;
-  closeNavMenu();
-});
+  $('#btn-navmenu').setAttribute('aria-label', on ? 'Close menu' : 'Open menu');
+  document.body.classList.toggle('nav-open', on);
+  if (on) { const cur = $('.tabs [aria-selected="true"]'); (cur || $('.tabs button')).focus(); }
+  else if (document.activeElement && $('#sidenav').contains(document.activeElement)) $('#btn-navmenu').focus();
+}
+function closeNavMenu() { if (navOpen()) setNavMenu(false); }
+$('#btn-navmenu').addEventListener('click', () => setNavMenu(!navOpen()));
+$('#btn-navclose').addEventListener('click', () => setNavMenu(false));
+$('#nav-scrim').addEventListener('click', () => setNavMenu(false));
 for (const v of VIEWS) $('#tab-' + v).addEventListener('click', () => { showView(v); closeNavMenu(); });
-window.addEventListener('hashchange', () => { const h = location.hash.slice(1) || 'hud'; if (VIEWS.includes(h) && $('#view-' + h).hidden) showView(h); });
+window.addEventListener('hashchange', () => { const h = location.hash.slice(1) || 'hud'; if (VIEWS.includes(h) && $('#view-' + h).hidden) showView(h); closeNavMenu(); });
 $('.tabs').addEventListener('keydown', (e) => {
   if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
   const cur = VIEWS.findIndex((v) => $('#tab-' + v).getAttribute('aria-selected') === 'true');
@@ -595,7 +594,7 @@ $('#btn-legend').addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if ($('.tabs').classList.contains('open')) closeNavMenu();
+  if (navOpen()) closeNavMenu();
   else if (homeMode) setHomeMode(false);
   else if (inspector.selection) { inspector.clear(); if (globe) globe.setSelected(null); dirty = true; }
 });
