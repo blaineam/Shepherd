@@ -12,6 +12,15 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+- **The passive ARP monitor's findings are alarms.** Every event type in docs/ARP.md now maps to
+  an alarm (`arp-gateway-changed`, `arp-spoofing`, `arp-ip-moved`, `arp-duplicate-ip`,
+  `arp-many-ips`, `arp-flood`, `arp-reply-storm`) or deliberately to none: a new MAC is the
+  registry's own `new-device` alarm, a private-address rotation is nothing, and the monitor's
+  baseline period raises nothing except a gateway change or suspected spoofing. The monitor's own
+  severity is kept per event, the alarm is keyed by the event's stable key so repeats fold, and
+  it is attributed to the registry's device for the suspect MAC. Roadmap step 10 is done.
+
 ### Fixed
 - **The loop brake was stopping uploads, and Watch mode is reinstated as opt-in.** The three
   storms that retired Watch mode earlier on 2026-11-01 were read from sampled frames that shared

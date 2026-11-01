@@ -66,8 +66,8 @@ func startARP(ctx context.Context, cfg config.Config, reg *devices.Registry, onE
 
 It is started after the device registry, run in a goroutine, and torn down by cancelling `ctx`
 (`Monitor.Run` closes the source on return). `onEvent` receives every `arp.Event`; `cmd/shepherd`
-currently passes `nil`, so `startARP` just logs each one through the standard `log` package. A
-future alarm engine wiring passes a non-nil callback instead, keyed by `Event.Key`. ARP never
+passes a callback that logs each one and raises it as an alarm (`cmd/shepherd/arpalarms.go`,
+mapping below), and that tells Watch mode about a moved gateway. ARP never
 fails Shepherd's startup: if `cfg.ARP.Enabled` is false, or `arp.Open` fails (wrong platform, no
 `CAP_NET_RAW`), `startARP` logs a clear warning and returns `(nil, nil)`, and the rest of Shepherd
 starts normally.
@@ -115,6 +115,27 @@ Observations are separate from events: a chatty device is observed once per
 as are sender IPs of 0.0.0.0 (probes), multicast, loopback, broadcast and 0.x.x.x. A probe
 yields no observation because it carries no IP. Randomized (locally administered) MACs
 are passed through unchanged; the registry already recognises them.
+
+## As alarms
+
+`cmd/shepherd/arpalarms.go` maps each event to one alarm type in `internal/alarms`, or to none on
+purpose, keyed by the event's own `Key` so a repeat folds into the open alarm and attributed to
+the registry's device for the suspect MAC when there is one. The monitor's severity is kept: it
+rates the same event type differently by what it saw, and the alarm follows.
+
+| Event | Alarm type | Default severity | Note |
+|---|---|---|---|
+| `new-mac-seen` | none | | The registry's own `new-device` alarm covers a new arrival, with its learning period; a second alarm would be noise, and a rotating private address would ring it every time |
+| `ip-moved-to-new-mac` | `arp-ip-moved` | low (medium when the old owner was active) | An `info` rotation between two randomized addresses raises nothing |
+| `gateway-mac-changed` | `arp-gateway-changed` | high | Raised even during the monitor's baseline period |
+| `duplicate-ip` | `arp-duplicate-ip` | medium | |
+| `mac-claims-many-ips` | `arp-many-ips` | medium | |
+| `gratuitous-arp-flood` | `arp-flood` | low (medium for the gateway's address) | Portal only by default |
+| `arp-reply-without-request-storm` | `arp-reply-storm` | medium | |
+| `arp-spoofing-suspected` | `arp-spoofing` | critical | Raised even during the baseline period |
+
+Every other event with `Baseline` set (the first two minutes after start) raises nothing: every
+device looks new then and every lease looks like a handover, and the monitor says so.
 
 ## Bounds and failure behaviour
 

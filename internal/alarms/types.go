@@ -37,7 +37,17 @@ const (
 	TypeSelfUpdate         = "self-update"          // for self-update
 	TypeVulnerabilityFound = "vulnerability-found"  // internal/vulnscan
 	TypeNetworkDegraded    = "network-degraded"     // internal/nethealth
-	TypeTest               = "test"
+	// The passive ARP monitor's findings (internal/arp, docs/ARP.md), one
+	// type per event type that raises an alarm; cmd/shepherd/arpalarms.go
+	// is the mapping.
+	TypeARPGatewayChanged = "arp-gateway-changed"
+	TypeARPSpoofing       = "arp-spoofing"
+	TypeARPIPMoved        = "arp-ip-moved"
+	TypeARPDuplicateIP    = "arp-duplicate-ip"
+	TypeARPManyIPs        = "arp-many-ips"
+	TypeARPFlood          = "arp-flood"
+	TypeARPReplyStorm     = "arp-reply-storm"
+	TypeTest              = "test"
 )
 
 // AlarmType describes a kind of alarm: how it reads, how severe it is by
@@ -90,6 +100,13 @@ func BuiltinTypes() []AlarmType {
 		all(TypeSelfUpdate, "Shepherd update", "Shepherd updated itself, or an update needs attention.", SeverityLow, false, false),
 		all(TypeVulnerabilityFound, "Vulnerability found", "internal/vulnscan matched a device's open port against a known vulnerability signature.", SeverityHigh, false, false),
 		all(TypeNetworkDegraded, "Network degraded", "Latency, packet loss or reachability has been sustained bad for several probe cycles in a row.", SeverityMedium, true, false),
+		all(TypeARPGatewayChanged, "Gateway MAC changed", "The router's address is being claimed by a different hardware address: the classic ARP spoofing signature, or a replaced router.", SeverityHigh, false, false),
+		all(TypeARPSpoofing, "ARP spoofing suspected", "One device shows several independent signs of ARP poisoning within a few minutes.", SeverityCritical, false, false),
+		all(TypeARPIPMoved, "IP moved to another device", "An address is now claimed by a different device; medium when the previous owner was still active.", SeverityLow, true, true),
+		all(TypeARPDuplicateIP, "Duplicate IP", "Two devices are claiming one address, usually a static address clashing with DHCP.", SeverityMedium, true, false),
+		all(TypeARPManyIPs, "One device claims many IPs", "One hardware address claimed many addresses in a few minutes: a scanner, a poisoner, or a host running virtual machines.", SeverityMedium, true, true),
+		portal(all(TypeARPFlood, "Gratuitous ARP flood", "A stream of unsolicited address announcements from one device.", SeverityLow, true, true)),
+		all(TypeARPReplyStorm, "ARP reply storm", "Many ARP replies from one device that answered no request: poisoning replies, or a bridge Shepherd cannot see requests through.", SeverityMedium, true, true),
 		func() AlarmType {
 			t := all(TypeTest, "Test notification", "Sent on request to check that notifications arrive.", SeverityHigh, false, false)
 			t.Bypass = true

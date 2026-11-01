@@ -481,6 +481,8 @@ func TestTypeRegistry(t *testing.T) {
 		TypeDNSErrorSpike: {SeverityMedium, true}, TypeBlockedSpike: {SeverityLow, true}, TypePrivateRelay: {SeverityInfo, false},
 		TypePortOpened: {SeverityHigh, true}, TypeNewInboundExposure: {SeverityCritical, false}, TypeThreatMatch: {SeverityCritical, false},
 		TypeSelfUpdate: {SeverityLow, false}, TypeVulnerabilityFound: {SeverityHigh, false}, TypeNetworkDegraded: {SeverityMedium, true}, TypeTest: {SeverityHigh, false},
+		TypeARPGatewayChanged: {SeverityHigh, false}, TypeARPSpoofing: {SeverityCritical, false}, TypeARPIPMoved: {SeverityLow, true},
+		TypeARPDuplicateIP: {SeverityMedium, true}, TypeARPManyIPs: {SeverityMedium, true}, TypeARPFlood: {SeverityLow, true}, TypeARPReplyStorm: {SeverityMedium, true},
 	}
 	for id, w := range want {
 		ty, ok := e.Type(id)

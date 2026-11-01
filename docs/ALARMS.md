@@ -250,6 +250,13 @@ alarm is recorded at medium severity on all channels, so a typo never loses an a
 | `threat-match` (future) | critical | all | no |
 | `self-update` (future) | low | all | no |
 | `vulnerability-found` (internal/vulnscan) | high (the finding's own severity overrides this per event) | all | no |
+| `arp-gateway-changed` (internal/arp) | high | all | no |
+| `arp-spoofing` (internal/arp) | critical | all | no |
+| `arp-ip-moved` (internal/arp) | low (the monitor's own severity overrides per event) | all | yes (install and device) |
+| `arp-duplicate-ip` (internal/arp) | medium | all | yes (install period only) |
+| `arp-many-ips` (internal/arp) | medium | all | yes (install and device) |
+| `arp-flood` (internal/arp) | low (medium for the gateway's address) | portal | yes (install and device) |
+| `arp-reply-storm` (internal/arp) | medium | all | yes (install and device) |
 | `test` | high | all | no, and it **bypasses** mute rules, quiet hours and learning mode |
 
 "Install and device" means the type is also suppressed for a device that was first seen recently (see
