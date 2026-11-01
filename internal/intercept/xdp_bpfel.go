@@ -25,6 +25,22 @@ type xdpDevCounters struct {
 	Pad         [7]uint8
 }
 
+type xdpDupEntry struct {
+	_           structs.HostLayout
+	Fingerprint uint64
+	Ts          uint64
+}
+
+type xdpFrameSample struct {
+	_     structs.HostLayout
+	Seq   uint64
+	Ts    uint64
+	Len   uint32
+	Pad   uint32
+	Bytes [60]uint8
+	Pad2  [4]uint8
+}
+
 type xdpIn6Key struct {
 	_    structs.HostLayout
 	Addr [16]uint8
@@ -48,18 +64,24 @@ type xdpRelayStats struct {
 	PassedLocal   uint64
 	RelayedFrames uint64
 	RelayedBytes  uint64
+	OursReturning uint64
+	ToGateway     uint64
+	Duplicates    uint64
 }
 
 // Names of all BPF objects in the ELF.
 //
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
-	xdpMapConfig    = "config"
-	xdpMapLocalIps  = "local_ips"
-	xdpMapLocalIps6 = "local_ips6"
-	xdpMapStats     = "stats"
-	xdpMapSteered   = "steered"
-	xdpProgXdpRelay = "xdp_relay"
+	xdpMapConfig       = "config"
+	xdpMapLocalIps     = "local_ips"
+	xdpMapLocalIps6    = "local_ips6"
+	xdpMapRecent       = "recent"
+	xdpMapSampleCursor = "sample_cursor"
+	xdpMapSamples      = "samples"
+	xdpMapStats        = "stats"
+	xdpMapSteered      = "steered"
+	xdpProgXdpRelay    = "xdp_relay"
 )
 
 // loadXdp returns the embedded CollectionSpec for xdp.
@@ -111,11 +133,14 @@ type xdpProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type xdpMapSpecs struct {
-	Config    *ebpf.MapSpec `ebpf:"config"`
-	LocalIps  *ebpf.MapSpec `ebpf:"local_ips"`
-	LocalIps6 *ebpf.MapSpec `ebpf:"local_ips6"`
-	Stats     *ebpf.MapSpec `ebpf:"stats"`
-	Steered   *ebpf.MapSpec `ebpf:"steered"`
+	Config       *ebpf.MapSpec `ebpf:"config"`
+	LocalIps     *ebpf.MapSpec `ebpf:"local_ips"`
+	LocalIps6    *ebpf.MapSpec `ebpf:"local_ips6"`
+	Recent       *ebpf.MapSpec `ebpf:"recent"`
+	SampleCursor *ebpf.MapSpec `ebpf:"sample_cursor"`
+	Samples      *ebpf.MapSpec `ebpf:"samples"`
+	Stats        *ebpf.MapSpec `ebpf:"stats"`
+	Steered      *ebpf.MapSpec `ebpf:"steered"`
 }
 
 // xdpVariableSpecs contains global variables before they are loaded into the kernel.
@@ -144,11 +169,14 @@ func (o *xdpObjects) Close() error {
 //
 // It can be passed to loadXdpObjects or ebpf.CollectionSpec.LoadAndAssign.
 type xdpMaps struct {
-	Config    *ebpf.Map `ebpf:"config"`
-	LocalIps  *ebpf.Map `ebpf:"local_ips"`
-	LocalIps6 *ebpf.Map `ebpf:"local_ips6"`
-	Stats     *ebpf.Map `ebpf:"stats"`
-	Steered   *ebpf.Map `ebpf:"steered"`
+	Config       *ebpf.Map `ebpf:"config"`
+	LocalIps     *ebpf.Map `ebpf:"local_ips"`
+	LocalIps6    *ebpf.Map `ebpf:"local_ips6"`
+	Recent       *ebpf.Map `ebpf:"recent"`
+	SampleCursor *ebpf.Map `ebpf:"sample_cursor"`
+	Samples      *ebpf.Map `ebpf:"samples"`
+	Stats        *ebpf.Map `ebpf:"stats"`
+	Steered      *ebpf.Map `ebpf:"steered"`
 }
 
 func (m *xdpMaps) Close() error {
@@ -156,6 +184,9 @@ func (m *xdpMaps) Close() error {
 		m.Config,
 		m.LocalIps,
 		m.LocalIps6,
+		m.Recent,
+		m.SampleCursor,
+		m.Samples,
 		m.Stats,
 		m.Steered,
 	)

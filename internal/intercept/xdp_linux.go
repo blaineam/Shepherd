@@ -9,9 +9,11 @@ package intercept
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
+	"sort"
 	"sync"
 	"time"
 
@@ -116,6 +118,26 @@ func (c *Controller) AttachXDP(ctx context.Context, iface string, opts XDPOption
 		return err
 	}
 	defer l.Close()
+
+	// The relay self-test, before the Controller's steered set is mirrored
+	// and so before any real device can be relayed. A relay that would
+	// loop is refused here rather than discovered by the loop brake once a
+	// device's traffic is going round at line rate.
+	if opts.SelfTest {
+		switch err := dp.probeRelay(c); {
+		case errors.Is(err, ErrRelayLoops):
+			return err
+		case err != nil:
+			// Could not reach a verdict (ErrRelayUnverified, or the probe
+			// could not be sent). Carry on with the loop brake as the
+			// backstop, but say so: an unverified relay is the state every
+			// relay was in when this check did not exist.
+			if opts.OnSelfTestInconclusive != nil {
+				opts.OnSelfTestInconclusive(err)
+			}
+		}
+	}
+
 	if opts.OnAttached != nil {
 		opts.OnAttached(mode)
 	}
@@ -224,6 +246,47 @@ type xdpDataPlane struct {
 	last map[arp.MAC]xdpDevCounters // counters as of the previous harvest
 	// stats as of the previous harvest, summed across CPUs
 	lastStats xdpRelayStats
+	// lastSampleSeq is the newest sample sequence number already handed
+	// out by frameSamples.
+	lastSampleSeq uint64
+}
+
+// returnPathCounts implements frameSampler: the program's own count of
+// frames arriving with Shepherd's source MAC, or addressed to the
+// gateway's -- Shepherd's relayed output coming back to the interface.
+func (dp *xdpDataPlane) returnPathCounts() (oursReturning, toGateway uint64) {
+	dp.mu.Lock()
+	defer dp.mu.Unlock()
+	return dp.lastStats.OursReturning, dp.lastStats.ToGateway
+}
+
+// duplicatesSuppressed implements frameSampler: frames the program refused
+// to relay because it had already relayed the same frame moments earlier.
+func (dp *xdpDataPlane) duplicatesSuppressed() uint64 {
+	dp.mu.Lock()
+	defer dp.mu.Unlock()
+	return dp.lastStats.Duplicates
+}
+
+// frameSamples implements frameSampler: it reads the program's sample ring
+// and returns every entry newer than the previous call, oldest first.
+func (dp *xdpDataPlane) frameSamples() []FrameSample {
+	dp.mu.Lock()
+	defer dp.mu.Unlock()
+	var out []FrameSample
+	n := dp.objs.Samples.MaxEntries()
+	for i := uint32(0); i < n; i++ {
+		var v xdpFrameSample
+		if err := dp.objs.Samples.Lookup(i, &v); err != nil || v.Seq == 0 || v.Seq <= dp.lastSampleSeq {
+			continue
+		}
+		out = append(out, FrameSample{Seq: v.Seq, Ts: v.Ts, Len: v.Len, Bytes: append([]byte(nil), v.Bytes[:]...)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	if len(out) > 0 {
+		dp.lastSampleSeq = out[len(out)-1].Seq
+	}
+	return out
 }
 
 func macKey(mac arp.MAC) xdpMacKey {
@@ -368,6 +431,9 @@ func (dp *xdpDataPlane) harvest(c *Controller) {
 			sum.PassedLocal += s.PassedLocal
 			sum.RelayedFrames += s.RelayedFrames
 			sum.RelayedBytes += s.RelayedBytes
+			sum.OursReturning += s.OursReturning
+			sum.ToGateway += s.ToGateway
+			sum.Duplicates += s.Duplicates
 		}
 		if sum.Examined > dp.lastStats.Examined {
 			c.recordExaminedBatch(sum.Examined-dp.lastStats.Examined, 0, sum.PassedLocal-dp.lastStats.PassedLocal)
@@ -387,3 +453,4 @@ type XDPStats struct {
 }
 
 var _ steeredSetObserver = (*xdpDataPlane)(nil)
+var _ frameSampler = (*xdpDataPlane)(nil)

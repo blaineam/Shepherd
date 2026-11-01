@@ -95,6 +95,15 @@ type Watch struct {
 	HealthIntervalSeconds int `toml:"health_interval_seconds"`
 	IdleGraceSeconds      int `toml:"idle_grace_seconds"`
 	StartupGraceSeconds   int `toml:"startup_grace_seconds"`
+	// AllowRoutingHost lets Watch mode run on a host that forwards IPv4
+	// and has a second interface on the relay's own segment, which it
+	// otherwise refuses (docs/WATCH.md, "Two things that stop it by
+	// themselves"). Off by default; the loop brake stays armed either way.
+	AllowRoutingHost bool `toml:"allow_routing_host"`
+	// Diagnostics logs a digest of what the in-kernel relay is carrying
+	// (addresses, ports, TTL and IP ID of sampled frames, never payload)
+	// every few seconds while traffic moves. Off by default.
+	Diagnostics bool `toml:"diagnostics"`
 }
 
 // ARP controls the passive ARP monitor (docs/ARP.md): a read-only listener

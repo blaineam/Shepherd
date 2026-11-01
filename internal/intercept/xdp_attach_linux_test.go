@@ -7,6 +7,7 @@ package intercept
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"os"
@@ -133,13 +134,19 @@ func TestAttachXDPRelaysOnVeth(t *testing.T) {
 	}
 	// The observer path should have updated the map synchronously inside
 	// Steer; no sleep needed. Send a few frames.
-	frame = ipv4Frame(shepMAC, devMAC, devIP, remote, []byte("after steer"))
+	// Each frame is distinct, as a real device's are: the relay's duplicate
+	// brake drops a frame it has already relayed moments earlier, which is
+	// how it breaks a loop, so sending one frame five times would (rightly)
+	// be relayed once.
 	const n = 5
-	for i := 0; i < n; i++ {
-		if err := peerSender.Send(frame); err != nil {
+	frames := make([][]byte, n)
+	for i := range frames {
+		frames[i] = ipv4Frame(shepMAC, devMAC, devIP, remote, []byte(fmt.Sprintf("%d: after steer", i)))
+		if err := peerSender.Send(frames[i]); err != nil {
 			t.Fatal(err)
 		}
 	}
+	frame = frames[0]
 	for i := 0; i < n; i++ {
 		select {
 		case f := <-got:
@@ -149,7 +156,14 @@ func TestAttachXDPRelaysOnVeth(t *testing.T) {
 			if dst != gwMAC || src != shepMAC {
 				t.Fatalf("relayed frame MACs dst=%v src=%v, want dst=%v src=%v", dst, src, gwMAC, shepMAC)
 			}
-			if string(f[14:]) != string(frame[14:]) {
+			var seen bool
+			for _, want := range frames {
+				if string(f[14:]) == string(want[14:]) {
+					seen = true
+					break
+				}
+			}
+			if !seen {
 				t.Fatal("relayed frame's IP packet was altered")
 			}
 		case <-time.After(2 * time.Second):

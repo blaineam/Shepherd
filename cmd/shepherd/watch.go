@@ -52,12 +52,14 @@ func startWatch(ctx context.Context, cfg config.Config, reg *devices.Registry) (
 			SteerInfrastructure: cfg.Watch.SteerInfrastructure,
 			ActiveWindow:        secs(cfg.Watch.ActiveWindowSeconds),
 		},
-		HealthInterval: secs(cfg.Watch.HealthIntervalSeconds),
-		IdleGrace:      secs(cfg.Watch.IdleGraceSeconds),
-		StartupGrace:   secs(cfg.Watch.StartupGraceSeconds),
-		Registry:       reg,
-		StatePath:      filepath.Join(cfg.DataDir, "watch.json"),
-		Platform:       watchPlatform(),
+		HealthInterval:   secs(cfg.Watch.HealthIntervalSeconds),
+		IdleGrace:        secs(cfg.Watch.IdleGraceSeconds),
+		StartupGrace:     secs(cfg.Watch.StartupGraceSeconds),
+		AllowRoutingHost: cfg.Watch.AllowRoutingHost,
+		Diagnostics:      cfg.Watch.Diagnostics,
+		Registry:         reg,
+		StatePath:        filepath.Join(cfg.DataDir, "watch.json"),
+		Platform:         watchPlatform(),
 	})
 	if err != nil {
 		return nil, err

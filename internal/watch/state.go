@@ -22,6 +22,24 @@ type persisted struct {
 	// start. A driver listed here gets generic XDP instead, which runs in
 	// the kernel just the same and never reinitialises the interface.
 	FlappyDrivers []string `json:"flappy_drivers,omitempty"`
+	// LoopingRelays names relays whose self-test found that a frame they
+	// transmit comes back to the interface it left (intercept's
+	// ErrRelayLoops), as "<interface>/<relay>", e.g. "eth0/xdp-generic".
+	// Remembered because the test costs a brief burst of looping frames to
+	// run, so it is run once rather than on every restart, and because a
+	// relay that loops on this hardware will loop again.
+	LoopingRelays []string `json:"looping_relays,omitempty"`
+}
+
+// hasLoopingRelay reports whether the relay named "<iface>/<relay>" is
+// already known to loop here.
+func (p persisted) hasLoopingRelay(key string) bool {
+	for _, x := range p.LoopingRelays {
+		if x == key {
+			return true
+		}
+	}
+	return false
 }
 
 // hasDriver reports whether d is already known to flap.

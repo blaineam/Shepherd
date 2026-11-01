@@ -203,6 +203,8 @@ mode = "auto"            # auto | xdp | userspace | off
 workers = 0              # userspace relay workers; 0 = automatic
 ipv6 = false             # IPv6 steering; see above
 steer_infrastructure = false
+allow_routing_host = false    # run even on a dual-homed forwarding host; see below
+diagnostics = false           # log what the relay is carrying; see below
 active_window_seconds = 900
 health_interval_seconds = 0   # 0 keeps the engine's defaults (3 / 15 / 30 s)
 idle_grace_seconds = 0
@@ -242,190 +244,126 @@ that means `interface = "eth0"`.
 > and says so in the log: refusing costs visibility, steering the host costs the
 > network.
 
-## Two things that stop it by themselves
+## Three things that stop it by themselves
 
-**Shepherd refuses to relay on a host that routes the relay's own segment.** If IPv4 forwarding is
-on **and** another of this host's interfaces has an address inside the relay interface's own prefix,
-Watch mode reports itself unavailable with that reason and attaches nothing.
+**The duplicate brake, which is what actually stops a loop.** A relay loop is one frame arriving
+and being relayed over and over. Every storm on real hardware looked the same once there was a way
+to look at all: a handful of frames, one IP identification field each, a TTL that never
+decremented, the device's own source MAC and Shepherd's destination MAC, going round thousands of
+times a second.
 
-The condition correlates with every loop ever seen, but **the mechanism is not forwarding**, and
-three candidates are now excluded by direct measurement rather than by argument. Measured on the
-maintainer's NAS — forwarding on, `eth0` and `wlan0` both on one `/24` — steering a **single
-ordinary device**, one phone named by explicit MAC with the registry and the gateway out of the
-picture entirely, loops every time. The instrumented run reached roughly **27,000 packets a second
-in and 24,500 out, mirrored, 3.5 seconds after steering began**, and in the same sample:
+So the relay fingerprints every frame it relays -- the identification field, the lengths, both
+addresses, the protocol and the first sixteen bytes of the transport header -- and **drops** a
+frame it has already relayed inside 100 ms. Dropped rather than passed up: IPv4 forwarding is on
+on many hosts, and passing it would hand the kernel a frame it would route straight back out of
+the interface it came from.
 
-| counter | reading | what it excludes |
-| --- | --- | --- |
-| `ForwDatagrams` | **1 datagram** | kernel IPv4 forwarding |
-| hairpin drops (in `eth0`, out `eth0`) | **0 packets** | same-segment routing |
-| the relay's own `relayed` | **8 pkt/s** | *nothing* — see below |
+The window is placed between two real numbers. A loop's round trip is microseconds. The shortest
+TCP retransmission timeout Linux will use is 200 ms. So a frame going round is caught the second
+time it is seen, and a genuine retransmission is never suppressed. A frame that really is a
+network-level duplicate is dropped, which is what should happen to it, because the first copy
+already reached the gateway.
 
-One forwarded datagram during a 24,500-packet-a-second storm is not a kernel routing problem, which
-is why the explanation that used to stand here — the router learning the client at Shepherd's MAC,
-and the kernel routing its downloads back onto the segment — has been removed rather than softened.
+`GET /api/watch` reports the count as `duplicates_suppressed`. A healthy relay reports zero for as
+long as it runs. On the maintainer's NAS it runs at about 80% of relayed frames, which says
+plainly that whatever re-delivers those frames is still doing it and is now contained rather than
+catastrophic.
 
-**The third row was read as excluding the relay, and that was wrong.** A later run let the same
-storm develop instead of stopping it at 3.5 seconds, and the relay's own counter climbed fast:
+**The relay self-test, before a single device is steered.** On attach Shepherd relays one frame of
+its own and checks what happens to it: a 60-byte UDP datagram inside 198.51.100.0/24 (TEST-NET-2,
+which nothing answers) to the discard port, from a locally administered MAC no real device can
+hold.
+
+The program only ever sees frames the interface *receives*, and a frame this host transmits is not
+one of them. So a healthy relay relays the probe **zero** times: it goes out, the switch declines
+to send it back out the port it arrived on, and that is the end of it. That much was measured here
+before it was relied on. A probe the program *does* see is a frame that came back and was relayed
+again, which is a loop, and the relay is then refused with nothing steered. A relay found to loop
+is recorded per interface in `watch.json` (`looping_relays`) and never attached there again, the
+way a flapping driver already is: running the test costs a short burst of looping frames and the
+answer does not change.
+
+**The loop brake**, the backstop for anything the first two do not catch. Every second the engine
+compares the relay's own throughput against the interface's kernel counters and looks for mirrored
+traffic -- the interface receiving and transmitting the same amount -- at a rate a home network
+does not reach. Three consecutive seconds of that and it panic-stops, unsteering every device with
+its corrective reply, and latches like the kill switch so a restart does not resume it. It logs
+what it measured, the devices that were relaying most, and the sampled-frame digest described
+below.
+
+Symmetry is the whole test; the rate floor only keeps a quiet network from tripping it. Measured on
+the live host with nothing steered, six clean two-second samples ran 12,325 to 39,521 packets a
+second received against 1,324 to 3,008 transmitted -- 89 to 92% apart, routinely above any floor
+worth setting. Looping ran within 0.03 to 10% apart. The brake deliberately does not ask how much
+the relay itself is carrying: the relay's counter lags a storm by seconds, reading 8 packets a
+second while the interface was already mirrored at 27,000, so gating on it costs exactly the
+seconds in which stopping is cheap.
+
+## Seeing what the relay is carrying
+
+A frame the in-kernel relay bounces back out with `XDP_TX` never reaches an `AF_PACKET` socket, so
+no packet capture on the host can show it. That is why three line-rate storms were diagnosed by
+argument rather than measurement, and why two of those arguments were wrong.
+
+The relay now samples every 256th frame it relays -- the first 60 bytes, as the frame arrived and
+before either MAC was rewritten -- into a small ring the engine drains once a second. Set
+`watch.diagnostics` and it logs a digest every few seconds while traffic is moving; the loop brake
+logs one whenever it trips, whatever the setting. Addresses, ports, TTL and identification fields
+only, never payload:
 
 ```
-t+2s   examined  17,952/s   relayed      0/s
-t+4s   examined  62,756/s   relayed 27,587/s   (34 MB/s)
-t+6s   examined  89,336/s   relayed 45,516/s   (56 MB/s)
-t+8s   examined 102,516/s   relayed 73,704/s   (90 MB/s)
+watch: diagnostics at 69878 relayed pkt/s: 128 sampled frames in 4 flows (0 not IPv4)
+watch: ...   78  02:00:5e:00:00:37 -> 02:00:5e:00:00:20  udp 192.0.2.37->203.0.113.9 :59418->:443
+             ttl 64  1 ids, SAME IDs, SAME TTL: circulating at layer 2  avg 1196 B
 ```
 
-72% of what the program examined, and still rising when it was stopped. The 8 pkt/s figure was the
-first instant of that ramp, not a steady state. So the relay is **not** excluded — it is the leading
-candidate. A comparison run with the XDP program off (`-xdp off`) produced no storm, `examined`
-holding at 16,000–28,000 packets a second — but that is weaker evidence than it first appeared,
-because `-xdp off` does **not** mean "no relay". The trial then relays in userspace across four
-workers, and in one run it managed only 88 packets a second and 107 kB/s. So "no storm without XDP"
-may mean no more than "a userspace relay is too slow to make one". The fast path is a suspect, not a
-conclusion. Two mechanisms are excluded here, not three.
+The verdict on each line is the point of it. Repeated identification fields with a falling TTL is a
+frame circulating through a router; repeated identification fields with one TTL is a Layer 2 loop;
+all-distinct fields are ordinary traffic. The engine also reports two counters for Shepherd's own
+output coming back to it -- frames with its source MAC, and frames addressed to the gateway's.
 
-What survives is the *other* half of the condition, and it is the one structural feature present in
-every incident: this host has **two interfaces on one segment**, and the steered device is reachable
-through both at once.
+## What was ruled out, and how
 
-```
-192.0.2.37 dev eth0  lladdr 02:00:5e:00:00:37 REACHABLE
-192.0.2.37 dev wlan0 lladdr 02:00:5e:00:00:37 REACHABLE
-```
+Worth keeping, because the same wrong answers are easy to reach twice. Each of these was excluded
+by counting it, not by reasoning about it.
 
-That makes the IPv4-forwarding half of the test look like it is doing no work. Dropping it would
-make the refusal narrower and more honest, not broader — but not before the mechanism is actually
-identified, because the last two attempts to name one were both wrong.
+| Candidate | Reading | Verdict |
+|---|---|---|
+| Steering one of this host's own interfaces | `wlan0` steered, relay fed itself | **confirmed and fixed** (incident 1) |
+| A polluted registry record that had merged the gateway in | steering one phone by explicit MAC loops too | excluded |
+| Kernel IPv4 forwarding | `ForwDatagrams` moved by **1** during a 24,500 packet/s storm | excluded |
+| Same-segment hairpin routing | a rule counting `in eth0, out eth0` dropped **0** | excluded |
+| The relay's own output returning | both return-path counters read **0** throughout | excluded |
+| Shepherd's transmitted frames coming back | a probe frame addressed to `eth0`'s own MAC never returned | excluded |
+| Local duplication before the hook | `examined` was **0.972** of the interface's `rx_packets` over 30 s | excluded |
 
-So the refusal stands on correlation alone, which is a weaker footing than it had when it was
-written, not a stronger one. It is kept because the loop is real, immediate and severe, and being
-unavailable on a dual-homed host beats melting its network. The loop brake below is meant to be the
-backstop that does not depend on knowing the mechanism — and, as recorded there, it would **not**
-have caught this loop, so this refusal is currently carrying that gap on its own.
+What is left, and is measured rather than inferred: the duplicate frames **genuinely arrive over
+the wire**, bearing the device's original source MAC, Shepherd's destination MAC, one
+identification field and an undecremented TTL, and they only arrive while the relay is running.
+Something on the segment re-delivers a steered device's frames once the relay starts rewriting and
+retransmitting them. Which part of the network does that has not been identified, and identifying
+it needs a capture on the router rather than on this host.
 
-One thing that would **not** help is clearing `net.ipv4.ip_forward`, and nobody should try it. That
-host's forwarding is bursty and load-bearing: over a minute with Watch mode off, `ForwDatagrams` had
-a median of 34 a second, a 90th percentile of 5,759, a peak of 8,607 and 80,521 in all, and every
-burst is the relay interface's inbound traffic routed to a container bridge for a service the owner
-runs deliberately. Clearing the flag would cut that off and leave the loop exactly where it is.
+That is why the refusal below is kept as the default, and why it is only a default.
 
-> Two five-second samples taken before that minute both landed inside bursts and were written up
-> here as a steady four thousand a second. The distribution above is the honest shape. The same
-> burstiness explains the first trial's odd pre-steering baseline, which showed 12,000 packets a
-> second inbound on an interface whose median is 65.
+## The dual-homed refusal, and the knob that lifts it
 
-So the search points at the relay's own kernel fast path, with that caveat attached.
+Shepherd refuses to relay when IPv4 forwarding is on **and** another of this host's interfaces has
+an address inside the relay interface's own prefix. The maintainer's NAS has exactly that shape --
+forwarding on, `eth0` and `wlan0` both on one `/24` -- and it is the only host on which the relay
+has ever looped.
 
-The `examined` figure is not a second clue, though it looks like one. 102,516 examined against
-73,704 relayed leaves about 29,000 frames a second seen and not relayed, with both rule-4 counters
-at zero — but the program bumps `examined` for *every* frame it sees and bumps nothing on the
-`XDP_PASS` paths for "not Shepherd's MAC" and "not from a steered device". So that gap is simply the
-rest of the segment's traffic, and 29,000 a second is this host's measured background. The open
-question is narrower: why a relay that is passing traffic correctly drives the interface into
-mirrored transmit at all.
+The refusal rests on correlation alone. The mechanism it originally stood in for, the kernel
+routing a steered device's return traffic back onto the segment, is excluded above by direct count.
+Clearing `net.ipv4.ip_forward` would not help either, and would break things: on that host
+forwarding is bursty and load-bearing, a median of 34 datagrams a second with a peak of 8,607, and
+every burst is the relay interface's inbound traffic routed to a container bridge for a service its
+owner runs on purpose.
 
-> An earlier revision of this document blamed a polluted registry record that had merged the gateway
-> into a steerable device, and said the cause was settled. The single-device trial above disproved
-> it: no registry involvement, no gateway, same loop. That record is a real problem and is refused
-> now, but it was not the cause.
-
-**Shepherd never steers the gateway, or itself.** The policy refuses any record carrying a host or
-gateway address, **by MAC and by address**, checking every address on the record rather than its
-primary one. A merged record, a randomised MAC, or an address the ARP monitor learned from
-Shepherd's own steering frames is caught by the address even when the MAC looks like an ordinary
-device's. Devices off the relay interface's subnet are refused too, which is what the host's own
-containers look like.
-
-**The loop brake.** Whatever the cause, a relay interface mirroring traffic at a rate no home
-network reaches is caught in three seconds rather than by a person noticing. Every second the engine
-reads the interface's kernel counters and looks for two things: it **receives and transmits the same
-amount**, within 15%, at or above **15,000 packets a second**. Three consecutive seconds of that and
-it panic-stops, unsteering every device with its corrective reply, and latches like the kill switch
-so a restart does not resume the loop. It logs what it measured, the relay's own share of it, and
-the devices that were relaying most.
-
-Symmetry is what separates looping from busy, and the thresholds are placed from measurement rather
-than taste:
-
-| situation | receive vs transmit | max(rx,tx) packets/s |
-| --- | --- | --- |
-| live host's own background, nothing steered | **89–92% apart** | 12,000–40,000 |
-| the two original loops | 0.03% apart | 1.0–1.3M |
-| instrumented single-device loop | 9.3% apart | ~27,000 |
-| earlier single-device loop | 10.1% apart | 517,000 |
-
-So 15% leaves wide margin on both sides. The floor is emphatically **not** what separates looping
-from busy: this host's ordinary background reaches 40,000 packets a second, *above* the floor, and
-is excluded by symmetry alone. The floor's only job is to stop a quiet network tripping it, so it
-sits between this host's transmit background (about 3,000) and the smallest loop measured (about
-27,000), with roughly 1.8× of margin either way.
-
-> **Measure this correctly.** The floor was 50,000 — above the very loop it was meant to catch —
-> because of a sampling mistake worth knowing about. The `atlantic` driver publishes
-> `/sys/class/net/<if>/statistics` counters in one lump roughly **once a second**, so sampling every
-> 100 ms reads `0 0 0 0 0 24073 0 0 0 0`, and a half-second bucket that catches a lump holds a whole
-> second of packets. Doubling such a bucket to get a rate overstates it twofold, which is how the
-> instrumented loop was first written up as 54,000 packets a second instead of 27,000. The brake
-> itself samples once a second and is unaffected. `Ip:InReceives` in `/proc/net/snmp` updates
-> continuously and can be sampled as fast as you like; the interface counters cannot.
-
-> **Why the relay's own share is no longer part of the test.** The brake used to require it: the
-> relay had to report at least 80% of the interface's receive rate, and at least the packet floor
-> itself. The reason for dropping it is *not* that the relay carries little of a loop — it carries
-> most of one — but that **its counter lags the storm by seconds**, and those are the seconds that
-> matter. On the measured ramp above, the share is 0% at two seconds and only passes 80% after the
-> card has been at 90 MB/s for several seconds. A separate run had the interface already mirrored at
-> 27,000 against 24,500 at 3.5 seconds while the relay still reported 8 pkt/s. Gating on the share
-> buys nothing and costs the only seconds in which stopping is cheap.
->
-> The share is still logged, as evidence. A low figure there now means the brake caught the storm
-> early, not that the relay is innocent. The cost of dropping it, accepted knowingly: any genuinely
-> symmetric load above the floor sustained for three seconds will stop steering.
-
-> **A limit that no version of this brake escapes.** Mirrored receive and transmit is *inherent* to
-> a relay that bounces frames back out the same interface: each relayed frame is counted once
-> arriving and once leaving, so with `R` relayed packets a second the asymmetry is
-> `|bg_rx − bg_tx| / (max(bg_rx, bg_tx) + R)`. On the measured host that is `27,000 / (30,000 + R)`,
-> which falls under 15% once `R` reaches about **150,000 packets a second (~1.8 Gbit/s)**. A single
-> fast wired client pulling that much *through* the relay would therefore trip the brake while
-> working perfectly — and the old share test would have been satisfied too (150,000 of 180,000 is
-> 83%), so this is not a regression but a property of judging a relay by its interface counters.
-> Telling "working hard" from "looping" robustly needs something these counters do not expose:
-> duplicate detection, a TTL check, or relayed bytes measured against what the device could actually
-> receive. Worth knowing before Watch mode is ever enabled on a multi-gigabit client.
-
-Putting every run measured so far side by side does suggest a discriminator, and it is worth writing
-down because it is not one the brake has ever used. `relayed` is the relay's own count; *share* is
-that measured against the interface's transmit.
-
-| run | rx/s | tx/s | apart | relayed/s | share of tx | plausible as one client's traffic? |
-| --- | --- | --- | --- | --- | --- | --- |
-| the two original incidents | ~1.2M | ~1.2M | 0.03% | ~all of it | ~100% | **no** — 10 Gbit/s to a phone |
-| first single-device run | 465,000 | 517,000 | 10.1% | 41,116 | **8%** | **no** — ~4.5 Gbit/s |
-| instrumented run | 26,994 | 24,492 | 9.3% | **20 frames in total** | **~0%** | rate yes, share impossible |
-| later generic-XDP run | 60,683 | 60,716 | 0.05% | 37,164 | 61%+ | **yes** — 34 MB/s, ~273 Mbit/s |
-
-The last row is almost certainly the relay working correctly, and its `IP-IN` of 288 against 60,683
-received says so from an independent direction: `XDP_TX` frames never reach the stack, so a relay
-genuinely carrying the traffic should show almost nothing in the IP counters, and it showed 288. Its
-61% share is understated too — that is a two-second average of a quantity that went from 4 to 37,164
-inside the same window.
-
-Two prongs would separate all four, and neither is what the brake tests today:
-
-1. **Mirrored above a rate no single client can consume** (say 300,000 packets a second) — catches
-   the original incidents and the first single-device run regardless of share.
-2. **Mirrored above the ordinary floor *and* the relay accounting for only a small fraction of
-   transmit** — catches the instrumented run, where twenty relayed frames sat against ~24,000
-   packets a second leaving the interface, and leaves a busy, honest relay alone.
-
-Prong 2 is the inverse of the share test this branch removed, which asked the relay to account for
-*most* of the traffic. The comparison wants cumulative counts over the window rather than
-instantaneous rates, because the relay's rate ramps steeply and a rate reading understates it, while
-`packets_relayed` as a running total is unambiguous.
-
-This is recorded as a proposal and is **not implemented**: it would be the third change to a safety
-stop in one sitting, and the first two each rested on a reading that later turned out to be wrong.
+So the refusal stays on by default, because it is cheap and the thing it guards against melts a
+home network in seconds, and `watch.allow_routing_host = true` lifts it. With the duplicate brake
+and the loop brake both armed, that is how a dual-homed host runs Watch mode -- measured on the one
+that used to storm within four seconds of steering anything, now steering 13 devices with no loop.
 
 ## What it needs
 

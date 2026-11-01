@@ -13,6 +13,70 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **The relay loop has a mechanism, a measurement and a fix, and Watch mode runs on the
+  maintainer's NAS again.** Three times the relay carried traffic round in a circle at line rate
+  and each time the cause was argued rather than measured, because the one thing nobody could see
+  was what the storm was made of: a frame the in-kernel relay bounces back out with `XDP_TX` never
+  reaches an `AF_PACKET` socket, so no packet capture on the host can show it. The relay now
+  **samples every 256th frame it relays** into a small ring the engine reads once a second, and
+  logs a digest of the busiest flows with each one's TTL range and how many distinct IP
+  identification fields it carried. That digest answered the question on the first run:
+
+  ```
+  74  02:00:5e:00:00:37 -> 02:00:5e:00:00:20  tcp 192.0.2.37->203.0.113.9 :50027->:443
+      ttl 64  1 ids, SAME IDs, SAME TTL: circulating at layer 2  avg 832 B
+  ```
+
+  One IP identification field across thousands of frames, a TTL that never decremented, and the
+  device's own source MAC with Shepherd's destination MAC -- the same frame, going round, never
+  through a router. Repeated storms all looked like that.
+
+  **The fix is a duplicate brake in the relay itself.** The program fingerprints each frame it
+  relays (the identification field, the lengths, both addresses, the protocol and the first
+  sixteen bytes of the transport header) and **drops** a frame it has already relayed within
+  100 ms. Dropped rather than passed, because IPv4 forwarding is on on many hosts and passing it
+  would hand the kernel a frame it would route straight back out of the same interface. The window
+  is deliberately shorter than any TCP retransmission timeout (Linux's minimum is 200 ms) and
+  vastly longer than a loop's round trip, which is microseconds, so a genuine retransmission is
+  never suppressed and a frame going round is caught the second time it is seen. A frame that
+  really is a network-level duplicate is dropped, which is what should happen to it: the first copy
+  already reached the gateway.
+
+  Live result on the host that had never managed a minute: **Watch mode steering 13 devices,
+  including the machine behind every storm, with no loop and no brake trip.** The engine reports
+  the suppressed count (`duplicates_suppressed` on `GET /api/watch`), and on that host it runs at
+  about 80% of relayed frames -- so whatever re-delivers the frames is still doing it, and is now
+  contained instead of catastrophic.
+- **What the investigation established, by counting rather than arguing.** Three candidate
+  mechanisms are now excluded by direct measurement, and two of them had been asserted here
+  before: kernel IPv4 forwarding (one datagram during a 24,500-packet-a-second storm),
+  same-segment hairpin routing (zero packets dropped by a rule that counted them), and local
+  duplication inside the kernel -- the program's own `examined` count came to 0.972 of the
+  interface's `rx_packets` over 30 seconds, so every duplicate frame genuinely crosses the wire
+  rather than being duplicated on the way to the hook. New counters record the two shapes of
+  Shepherd's own output returning to it (a frame with its source MAC, a frame addressed to the
+  gateway's); both read zero throughout every storm, so the relay's own transmitted frames are not
+  what comes back.
+- **A relay self-test, before a single device is steered.** On attach, Shepherd relays one frame of
+  its own -- a 60-byte UDP datagram inside 198.51.100.0/24 (TEST-NET-2) to the discard port, from a
+  locally administered MAC no real device can hold -- and then checks whether it comes back. The
+  program only ever sees frames the interface *receives*, and a frame this host transmits is not
+  one of them, so a healthy relay relays the probe zero times: it goes out, the switch declines to
+  send it back out the port it arrived on, and that is the end of it. A probe the program *does*
+  see is a frame that came back and was relayed again, which is a loop, and the relay is refused
+  (`intercept.ErrRelayLoops`) with nothing steered. A relay found to loop is recorded per
+  interface in `watch.json` (`looping_relays`) and never attached there again, the way flapping
+  drivers already are, because running the test costs a brief burst of looping frames and the
+  answer does not change.
+- **`watch.allow_routing_host`** runs Watch mode on a host that forwards IPv4 and has a second
+  interface on the relay's own segment, which Shepherd otherwise refuses. The refusal was only ever
+  correlation -- it is this host's shape, and this host is the only one that ever looped -- and the
+  mechanism it stood in for is now excluded by measurement. It stays the default because it is
+  cheap and the loop is severe, but it is no longer a dead end: the knob is how a dual-homed host
+  runs Watch mode, with the duplicate brake and the loop brake both armed. **`watch.diagnostics`**
+  logs the relayed-frame digest every few seconds while traffic is moving; addresses, ports, TTL
+  and identification fields only, never payload.
+
 - **A loop brake for Watch mode.**
   Twice on real hardware the relay ended up carrying its own output back to itself at line rate --
   about 10 Gbit/s and over a million packets a second on a 10 GbE card -- and both times it ran for

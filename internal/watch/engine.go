@@ -108,6 +108,18 @@ type Config struct {
 	// StatePath persists the kill switch (0600). Empty keeps it in memory.
 	StatePath string
 
+	// AllowRoutingHost runs Watch mode even on a host that forwards IPv4
+	// and has a second interface on the relay's own segment, which the
+	// engine otherwise refuses (routingOwnSegment). The refusal stands on
+	// correlation with the relay loops seen on exactly one such host, and
+	// this is the knob for investigating them there: the loop brake stays
+	// armed, and the refusal is logged as a warning instead of enforced.
+	AllowRoutingHost bool
+	// Diagnostics logs a digest of sampled relayed frames (what the relay
+	// is actually carrying: addresses, ports, TTL and IP ID) every few
+	// seconds while traffic is moving, besides when the brake trips.
+	Diagnostics bool
+
 	Platform Platform        // default RealPlatform{}
 	Clock    intercept.Clock // default the wall clock
 	// Logf receives the engine's log lines; default log.Printf.
@@ -207,6 +219,11 @@ const (
 	// loopHits is how many consecutive one-second samples must agree
 	// before the brake trips, so a burst cannot cause one.
 	loopHits = 3
+	// diagnosticsEvery and diagnosticsMinPPS bound the Config.Diagnostics
+	// digest: at most one every few seconds, and only while the relay is
+	// carrying something worth looking at.
+	diagnosticsEvery  = 5 * time.Second
+	diagnosticsMinPPS = 1000
 	// observeEvery bounds how often a steered device's relayed traffic is
 	// reported to the registry as a sighting.
 	observeEvery = time.Minute
@@ -306,13 +323,19 @@ type Snapshot struct {
 // RelayStats is intercept.ControllerStats plus the live rates derived from
 // consecutive samples of it.
 type RelayStats struct {
-	FramesExamined          uint64  `json:"frames_examined"`
-	FramesRelayed           uint64  `json:"frames_relayed"`
-	BytesRelayed            uint64  `json:"bytes_relayed"`
-	FramesForShepherdItself uint64  `json:"frames_for_shepherd_itself"`
-	FramesNotForShepherd    uint64  `json:"frames_not_for_shepherd"`
-	PacketsPerSecond        float64 `json:"packets_per_second"`
-	BytesPerSecond          float64 `json:"bytes_per_second"`
+	FramesExamined          uint64 `json:"frames_examined"`
+	FramesRelayed           uint64 `json:"frames_relayed"`
+	BytesRelayed            uint64 `json:"bytes_relayed"`
+	FramesForShepherdItself uint64 `json:"frames_for_shepherd_itself"`
+	FramesNotForShepherd    uint64 `json:"frames_not_for_shepherd"`
+	// DuplicatesSuppressed is frames the relay refused to relay because it
+	// had already relayed the same frame moments earlier: the same frame
+	// coming round, which is what a relay loop is made of. A healthy relay
+	// reports zero for as long as it runs, so any sustained figure here is
+	// something to look at even though the relay is containing it.
+	DuplicatesSuppressed uint64  `json:"duplicates_suppressed"`
+	PacketsPerSecond     float64 `json:"packets_per_second"`
+	BytesPerSecond       float64 `json:"bytes_per_second"`
 }
 
 type retryState struct {
@@ -407,6 +430,8 @@ type Engine struct {
 	// time it was read; see own().
 	localAddrs   Own
 	localAddrsAt time.Time
+	// lastDiag is when the Diagnostics digest was last logged.
+	lastDiag time.Time
 	// ifaceCounters is the previous reading of the interface's own
 	// counters, and loopStreak how many consecutive samples have looked
 	// like a relay loop. See the loop brake constants.
@@ -615,7 +640,10 @@ func (e *Engine) session(ctx context.Context) error {
 	// routing the very segment the relay would work on.
 	if ownNow, ok := e.own(e.clock.Now()); ok {
 		if routing, why := e.routingOwnSegment(link, ownNow); routing {
-			return errors.New(why)
+			if !e.cfg.AllowRoutingHost {
+				return errors.New(why)
+			}
+			e.logOnce("watch: WARNING: watch.allow_routing_host is set, so steering goes ahead although %s", why)
 		}
 	}
 
@@ -827,15 +855,27 @@ func (e *Engine) startXDP(ctx context.Context, ctrl *intercept.Controller, link 
 			before, haveCarrier = n, true
 		}
 	}
+	// A relay already known to loop on this interface is not attached at
+	// all, and not re-tested: running the test costs a short burst of
+	// looping frames, and the answer does not change.
+	for _, name := range relayNamesFor(mode) {
+		if key := link.Name + "/" + name; e.knownLooping(key) {
+			return "", nil, nil, fmt.Errorf("%w: the %s relay is already known to loop on %s (recorded in watch.json)", intercept.ErrRelayLoops, name, link.Name)
+		}
+	}
 	rctx, cancel := context.WithCancel(ctx)
 	attached := make(chan intercept.XDPMode, 1)
 	done := make(chan error, 1)
 	v4, v6 := e.localRelayIPs(link)
 	go func() {
 		done <- e.plat.AttachXDP(rctx, ctrl, link.Name, intercept.XDPOptions{
-			Mode:       mode,
-			LocalIPs:   v4,
-			LocalIPs6:  v6,
+			Mode:      mode,
+			LocalIPs:  v4,
+			LocalIPs6: v6,
+			SelfTest:  true,
+			OnSelfTestInconclusive: func(err error) {
+				e.logOnce("watch: the relay self-test on %s could not reach a verdict (%v); carrying on with the loop brake as the backstop", link.Name, err)
+			},
 			OnAttached: func(m intercept.XDPMode) { attached <- m },
 		})
 	}()
@@ -854,10 +894,54 @@ func (e *Engine) startXDP(ctx context.Context, ctrl *intercept.Controller, link 
 		if err == nil {
 			err = errRelayStopped
 		}
+		if errors.Is(err, intercept.ErrRelayLoops) {
+			for _, name := range relayNamesFor(mode) {
+				e.rememberLooping(link.Name + "/" + name)
+			}
+			e.logf("watch: the relay self-test on %s found a loop and nothing was steered: %v", link.Name, err)
+		}
 		return "", nil, nil, err
 	case <-time.After(e.attachTimeout):
 		cancel()
 		return "", nil, nil, errors.New("XDP attach timed out")
+	}
+}
+
+// relayNamesFor names the relays an attach in this mode could end up
+// using, for the per-interface "known to loop" record. XDPAuto can land on
+// either, and a loop found under one says nothing about the other, so auto
+// records only the mode it actually attached in -- which is why the lookup
+// side checks both and the record side is given the attached name.
+func relayNamesFor(mode intercept.XDPMode) []string {
+	switch mode {
+	case intercept.XDPNative:
+		return []string{RelayXDPNative}
+	case intercept.XDPGeneric:
+		return []string{RelayXDPGeneric}
+	}
+	return []string{RelayXDPNative, RelayXDPGeneric}
+}
+
+// knownLooping reports whether a relay is already recorded as looping here.
+func (e *Engine) knownLooping(key string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.state.hasLoopingRelay(key)
+}
+
+// rememberLooping records a relay as looping on this interface, so it is
+// never attached again here, and persists it.
+func (e *Engine) rememberLooping(key string) {
+	e.mu.Lock()
+	if e.state.hasLoopingRelay(key) {
+		e.mu.Unlock()
+		return
+	}
+	e.state.LoopingRelays = append(e.state.LoopingRelays, key)
+	err := saveState(e.cfg.StatePath, e.state)
+	e.mu.Unlock()
+	if err != nil {
+		e.logf("watch: WARNING: could not remember that %s loops (%v), so it will be tested again next start", key, err)
 	}
 }
 
@@ -1108,7 +1192,33 @@ func (e *Engine) sample(now time.Time) {
 	for _, d := range observe {
 		e.reg.Observe(devices.Observation{Source: devices.SourceARP, MAC: d.MAC.String(), IP: d.IP.String(), Time: now})
 	}
+	if e.cfg.Diagnostics && relayedPPS >= diagnosticsMinPPS && now.Sub(e.lastDiag) >= diagnosticsEvery {
+		e.lastDiag = now
+		e.logSamples(ctrl, fmt.Sprintf("diagnostics at %.0f relayed pkt/s", relayedPPS))
+	}
 	e.checkForLoop(now, relayedPPS, status)
+}
+
+// logSamples drains the relay's frame samples and logs their digest: the
+// busiest flows, each with its TTL range and distinct IP IDs, which is what
+// tells a loop from traffic (intercept.SummarizeSamples). Only the
+// in-kernel relay samples; the userspace relay yields nothing here.
+func (e *Engine) logSamples(ctrl *intercept.Controller, why string) {
+	if dup := ctrl.DuplicatesSuppressed(); dup > 0 {
+		e.logf("watch: %s: %d frames were not relayed because the relay had already relayed the same frame moments earlier -- the same frame coming round, which is what a loop is made of", why, dup)
+	}
+	if ours, gw := ctrl.ReturnPathCounts(); ours > 0 || gw > 0 {
+		e.logf("watch: %s: %d frames arrived with Shepherd's own source MAC and %d addressed to the gateway's -- Shepherd's relayed output coming back to %s",
+			why, ours, gw, e.ifaceName())
+	}
+	samples := ctrl.FrameSamples()
+	if len(samples) == 0 {
+		e.logf("watch: %s: no relayed-frame samples available", why)
+		return
+	}
+	for _, line := range intercept.SummarizeSamples(samples) {
+		e.logf("watch: %s: %s", why, line)
+	}
 }
 
 // checkForLoop is the loop brake. Twice on real hardware the relay ended up
@@ -1224,6 +1334,7 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 	// figure here means the brake caught it early, not that the relay is
 	// innocent.
 	e.logLoopSuspects(status)
+	e.logSamples(ctrl, "loop brake")
 	if saveErr != nil {
 		e.logf("watch: WARNING: could not persist the loop stop (%v), so a restart may resume it", saveErr)
 	}
@@ -1537,6 +1648,7 @@ func (e *Engine) Snapshot() Snapshot {
 		st := ctrl.Stats()
 		snap.Stats.FramesExamined, snap.Stats.FramesRelayed, snap.Stats.BytesRelayed = st.FramesExamined, st.FramesRelayed, st.BytesRelayed
 		snap.Stats.FramesForShepherdItself, snap.Stats.FramesNotForShepherd = st.FramesForShepherdItself, st.FramesNotForShepherd
+		snap.Stats.DuplicatesSuppressed = ctrl.DuplicatesSuppressed()
 		for _, d := range ctrl.Status() {
 			steered[d.MAC] = d
 		}
