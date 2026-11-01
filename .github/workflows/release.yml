@@ -26,6 +26,10 @@ jobs:
         run: scripts/coverage
       - name: Build
         run: scripts/build-release "${GITHUB_REF_NAME#v}"
+      - name: Sign the checksums (docs/UPDATE.md)
+        env:
+          SHEPHERD_SIGNING_KEY: ${{ secrets.SHEPHERD_SIGNING_KEY }}
+        run: scripts/sign-release
       - name: Publish and remove betas
         env:
           GH_TOKEN: ${{ github.token }}

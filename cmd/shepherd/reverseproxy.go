@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"path/filepath"
 	"time"
 
@@ -99,7 +100,11 @@ func startReverseProxy(ctx context.Context, cfg config.Config, store *reversepro
 	proxy := reverseproxy.New(reverseproxy.Options{
 		Hosts: store,
 		// Only the name, never the path or query: those can carry tokens.
-		OnError: func(r *http.Request, err error) { log.Printf("reverseproxy: %s: %v", r.Host, err) },
+		OnError:       func(r *http.Request, err error) { log.Printf("reverseproxy: %s: %v", r.Host, err) },
+		LocalPrefixes: localPrefixes,
+		OnRefused: func(r *http.Request, client netip.Addr) {
+			log.Printf("reverseproxy: %s: refused %s, which is outside the host's allow list", r.Host, client)
+		},
 	})
 	srv := &http.Server{
 		Handler:           proxy,
@@ -139,15 +144,51 @@ func startReverseProxy(ctx context.Context, cfg config.Config, store *reversepro
 	return &reverseProxyServer{addr: ln.Addr(), cert: mgr, ln: ln, srv: srv, redirectLn: redirectLn, redirectSrv: redirectSrv}, nil
 }
 
-// redirectToHTTPS answers every request with a 302 to the same host and
+// redirectToHTTPS answers every request with a 301 to the same host and
 // path (and query) over https, stripping an explicit ":80" from the Host
 // header first so the redirect target is the plain, portless https URL.
+// Permanent, so a browser stops asking for http:// at all; a method other
+// than GET or HEAD gets 308, which keeps the method and body.
 func redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
 	host := r.Host
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	http.Redirect(w, r, "https://"+host+r.URL.RequestURI(), http.StatusFound)
+	code := http.StatusMovedPermanently
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		code = http.StatusPermanentRedirect
+	}
+	http.Redirect(w, r, "https://"+host+r.URL.RequestURI(), code)
+}
+
+// localPrefixes is what a proxy host's "local" allow entry stands for:
+// every network an interface of this machine has an address on, plus
+// loopback and Tailscale's own ranges (the IPv4 carrier-grade block and
+// its ULA), read fresh each time since addresses come and go.
+func localPrefixes() []netip.Prefix {
+	out := []netip.Prefix{
+		netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128"),
+		netip.MustParsePrefix("100.64.0.0/10"), netip.MustParsePrefix("fd7a:115c:a1e0::/48"), // leakcheck:allow Tailscale's own blocks, not hosts
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return out
+	}
+	for _, a := range addrs {
+		ipn, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		ip, ok := netip.AddrFromSlice(ipn.IP)
+		if !ok {
+			continue
+		}
+		ones, _ := ipn.Mask.Size()
+		if p, err := ip.Unmap().Prefix(ones); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // Close stops accepting connections and gives in-flight requests a few

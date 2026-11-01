@@ -52,7 +52,11 @@ var (
 // The returned target list is handed to the portal (deps.NethealthTargets)
 // for exactly that purpose.
 func startNethealth(ctx context.Context, cfg config.Config, eng *alarms.Engine) (*nethealth.Prober, []string, error) {
-	p := nethealth.New(nethealth.Options{Dial: nethealthDial, Load: nethealthLoad, BufferbloatDuration: nethealthBufferbloatDuration})
+	ret := nethealth.DefaultRetention()
+	if n := capsFor(cfg).Nethealth; n > 0 {
+		ret.MaxBytes = n
+	}
+	p := nethealth.New(nethealth.Options{Dial: nethealthDial, Load: nethealthLoad, BufferbloatDuration: nethealthBufferbloatDuration, Retention: ret})
 	path := filepath.Join(cfg.DataDir, "nethealth.json")
 	if err := p.Load(path); err != nil && !os.IsNotExist(err) {
 		log.Printf("nethealth: ignoring unreadable history %s: %v", path, err)

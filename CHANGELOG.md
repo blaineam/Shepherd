@@ -12,6 +12,111 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+- **Self-update with rollback.** `[update]` (on by default) checks GitHub's releases once a day on
+  the stable or beta channel, raises a `self-update` alarm when a newer Shepherd exists, and the
+  Overview's new **Software** card offers "Update now" where the binary can be replaced in place.
+  Applying downloads the release for this platform, checks it against `SHA256SUMS`, verifies that
+  file's Ed25519 signature against the key built into the binary (refusing an unsigned release or
+  a build with no key), swaps the binary in with the previous one kept as `shepherd.prev`, and
+  restarts into it. An updated binary that does not stay up for two minutes across three starts is
+  put back automatically on the next start; `shepherd -rollback` does the same by hand. A read-only
+  container cannot be updated in place and the card says so. Both CI workflows sign the checksums
+  when the `SHEPHERD_SIGNING_KEY` secret exists (`scripts/sign-release`, `cmd/shepherd-sign`); the
+  public half is `update.ReleasePublicKeyB64`, empty until the maintainer generates the pair. The
+  card also shows the data directory's size by part. See docs/UPDATE.md.
+- **One retention budget.** `[retention] max_mb` caps the data directory as a whole: it is split
+  into caps for query history, bandwidth history and network-health history (each still enforcing
+  its own), the Software card shows use against it, and a housekeeping check every six hours raises
+  a low `storage-over-budget` alarm, naming the largest part, if the directory outgrows it anyway.
+  0, the default, leaves each store to its own cap (docs/UPDATE.md "Retention").
+- **Delivery settings for alarms.** `GET`/`PUT /api/alarms/preferences` read and write the alarm
+  preferences, and the Notifications tab's new **Delivery** card sets the severity sent at once,
+  whether lower alarms wait for the digest, the digest's interval or time of day, and the time zone.
+- **Threat feeds: which device reached for a known bad name or address.** Four curated feeds
+  (HaGeZi's Threat Intelligence Feeds mini edition, IPsum level 3, abuse.ch's Feodo Tracker and
+  Spamhaus DROP; URLhaus and ThreatFox went behind an abuse.ch Auth-Key the same day and were
+  swapped out, and abuse.ch's SSL Blacklist has been empty since its deprecation in January 2025)
+  are downloaded every six
+  hours, cached under the data directory, and matched against every recorded DNS query's name and
+  answer, blocked or not: a name matches itself or a parent, an address matches exactly or by
+  prefix. A hit raises a `threat-match` alarm attributed to the device, keyed by device and
+  indicator so a beacon is one alarm with a rising count, with the name, the indicator, the feed and
+  what the engine did with the query as evidence. The Alarms screen gains a **Threat feeds** tab
+  with each feed's state, a refresh button and the recent matches. `[threats]` is on by default;
+  the cost is a few map lookups per query and a few hundred kilobytes per feed. Local AI is set
+  aside by decision. See docs/THREATS.md.
+- **Web Push delivery, end to end.** `internal/webpush` had the sender, VAPID keys and subscription
+  store for months, waiting on HTTPS; the portal has it now through `[tls]`, so `cmd/shepherd` wires
+  it in: a VAPID key pair generated once under the data directory, subscriptions saved beside it, and
+  a `Pusher` on the alarm Router next to ntfy. The Alarms screen gains a **Notifications** tab that
+  says whether this browser can subscribe (HTTPS, a home-screen web app on iOS, permission),
+  registers the service worker and subscribes with one button, lists every subscribed browser with
+  rename and remove, and sends a test notification through every channel. `[alarms.push]` is on by
+  default with an optional `contact`. New endpoints under `/api/alarms/push`. A `manifest.webmanifest`
+  lets iOS add the portal to the Home Screen, which Safari requires for push. Roadmap step 9 is done
+  apart from a real-browser trial.
+- **Reverse proxy: per-host access lists, a permanent HTTP-to-HTTPS redirect and HSTS.** Each
+  proxied host can name who may reach it: addresses, prefixes like `192.0.2.0/24`, and `local`,
+  which stands for every network this machine is on plus loopback and Tailscale's ranges. Anyone
+  else gets a 403 from Shepherd itself, logged with the client address at most once per client per
+  minute. `redirect_listen` now answers with a 301 (308 for anything but GET and HEAD, so the method
+  and body survive) instead of a 302, and a per-host `hsts` switch adds a 30-day
+  `Strict-Transport-Security` header over HTTPS, off by default. The Proxy tab has both controls and
+  shows "Local only", "Restricted" and "HSTS" badges. See docs/REVERSEPROXY.md.
+- **The passive ARP monitor's findings are alarms.** Every event type in docs/ARP.md now maps to
+  an alarm (`arp-gateway-changed`, `arp-spoofing`, `arp-ip-moved`, `arp-duplicate-ip`,
+  `arp-many-ips`, `arp-flood`, `arp-reply-storm`) or deliberately to none: a new MAC is the
+  registry's own `new-device` alarm, a private-address rotation is nothing, and the monitor's
+  baseline period raises nothing except a gateway change or suspected spoofing. The monitor's own
+  severity is kept per event, the alarm is keyed by the event's stable key so repeats fold, and
+  it is attributed to the registry's device for the suspect MAC. Roadmap step 10 is done.
+
+### Fixed
+- **The loop brake was stopping uploads, and Watch mode is reinstated as opt-in.** The three
+  storms that retired Watch mode earlier on 2026-11-01 were read from sampled frames that shared
+  one IP identification field and one TTL, which the sampler's verdict called "the same frame
+  circulating". They were not the same frame. macOS, iOS and Linux (for an unconnected socket) put
+  identification **0** on every don't-fragment packet, so a Mac uploading to iCloud over QUIC at
+  1,392 bytes a packet reads as one frame going round to a verdict that counts identification
+  fields, and the duplicate brake "catching 3% of a runaway" was the brake correctly finding almost
+  nothing to catch. The 05:00 trip that day was a 270 Mbit/s QUIC flow to Apple from a MacBook,
+  overnight; the two instrumented "runaways" were 87,516 and 347,963 distinct frames of the same
+  shape. Reread by the whole frame, the live digest on that NAS now prints `id 0 on every one: a
+  don't-fragment sender, not a loop` for exactly that Mac and exactly those destinations.
+
+  Three changes follow. The sampler's verdict compares the whole frame -- identification, total
+  length and the first sixteen bytes of the transport header -- and names a flow whose
+  identification is 0 throughout. The loop brake no longer stops steering on mirrored counters
+  alone, because a relay carrying a device's upload is mirrored by definition: a trip now needs the
+  duplicate brake to have refused at least a quarter of what the relay saw during the mirrored
+  seconds, or Shepherd's own output to have come back, or the sampled frames to be the same frame
+  over and over, or 300,000 packets a second, which no home device sends; mirrored counters with
+  none of those are logged once an hour as "a device sending through the relay, not a loop". And
+  the userspace relay gets the same duplicate brake as the kernel one (`intercept.Dedup`, same
+  fingerprint and window), so a loop is contained under either relay and `duplicates_suppressed`
+  means one thing. What *is* real -- the segment handing a steered device's frame back once, tens
+  of microseconds to a millisecond later, at about 60 to 80% of relayed frames when traffic is
+  light and 2 to 3% under load -- is dropped as before, and its mechanism is still not identified.
+  Watch mode stays **off by default**; the maintainer's NAS runs it again. Written up in
+  docs/WATCH.md, with the earlier readings kept and corrected rather than removed.
+
+### Changed
+- **A dual-homed forwarding host runs Watch mode by default.** `watch.allow_routing_host` now
+  defaults to true: the refusal rested on a correlation the measurements took apart (forwarding
+  moved one datagram during a storm, a single-homed phone echoed as the dual-homed Mac did, and the
+  storms were uploads), and what the shape actually risks is what the duplicate brake drops. The
+  engine notes the shape in the log and steers; set it to false to refuse as before.
+- **Ethernet is preferred and Wi-Fi is only a fallback.** With `watch.interface` empty, a default
+  route through a wireless interface is overridden by a wired interface that is up on the
+  gateway's network, and the log says so. A relay on Wi-Fi shares the air with the devices whose
+  frames it carries, so every relayed frame costs airtime twice.
+- **"Steered and healthy with almost nothing relayed" has a likely explanation.** macOS caches the
+  gateway's link-layer address per connection when the connection opens and does not revisit it
+  when the neighbour entry changes, so connections opened before steering keep going to the real
+  router and only new ones reach Shepherd. Stated in docs/WATCH.md as the explanation that fits
+  the 100 MB transfer measurement; not yet verified by a capture on the device.
+
 ### Changed
 - **Network health screen redesigned.** The old page spent most of its width on a near-empty status
   card, a lonely "Range" row and three small unlabeled charts. It is now one header row (title, a
@@ -43,6 +148,24 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   design decision.
 
 ### Added
+- **Bandwidth monitoring: how much each device, group and the whole network moves, live and over
+  time, including downloads, at no cost to the network.** Watch mode already relays every
+  steered device's outbound frames and counts them, which is an exact upload figure. Downloads
+  never pass through Shepherd, so they are now *estimated* from the one thing in those frames that
+  describes them: every TCP segment a device sends carries an acknowledgement number, the count of
+  bytes it has received on that connection, and summing the advances per connection gives the
+  download volume with nothing new on the wire. The meter lives in both relays (`intercept.AckMeter`
+  in userspace, `meter_ack` in the XDP program, held to agree frame for frame), credits only
+  genuine advances (a first sighting is a baseline, a duplicate ACK is nothing, a jump of a
+  gigabyte is a reused port and re-baselines), and is blind by construction to QUIC, other UDP and
+  VPN traffic, which the portal says everywhere it shows the number. A new `internal/traffic` store
+  keeps one series per device per minute for two days, per hour for 90, per day forever under an
+  8 MiB cap, with exact rollups since bytes add; groups and the network are sums over devices
+  computed from current membership. A **Bandwidth** screen (Monitor) shows the live rates and
+  totals per device, a chart of download and upload for the network, a group or a device over the
+  last hour to 90 days, and who used the most; `GET /api/traffic`, `/api/traffic/series` and
+  `/api/traffic/top` are the API. The Watch screen and each device's drawer show the live download
+  estimate too. See docs/TRAFFIC.md.
 - **The vulnerability scanner now updates itself from a signature feed.** Until now
   `internal/vulnscan` matched against a fixed table of twenty signatures compiled into the binary, so a
   bug exploited this week could not be recognized before a release. Every Shepherd now fetches
@@ -865,6 +988,8 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- The sidebar's close button no longer shows on desktop, where it did nothing: the generic
+  icon-button rule came later in the stylesheet and overrode the one hiding it.
 - **Watch mode no longer attaches native XDP on a driver that drops the link doing it, and learns
   the ones it is not told about.** A native attach makes the driver tear down and rebuild its
   receive rings; on the maintainer's 10G Aquantia card (`atlantic`) that takes the interface down

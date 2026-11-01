@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# sign-release: sign dist/SHA256SUMS with the release key in SHEPHERD_SIGNING_KEY
+# (docs/UPDATE.md). Without the key the build is published unsigned, which a
+# running Shepherd reports but refuses to apply on its own.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+if [ -z "${SHEPHERD_SIGNING_KEY:-}" ]; then
+  echo "sign-release: SHEPHERD_SIGNING_KEY is not set; publishing unsigned (self-update will not apply this release)"
+  exit 0
+fi
+go run ./cmd/shepherd-sign -sign dist/SHA256SUMS -key-env SHEPHERD_SIGNING_KEY

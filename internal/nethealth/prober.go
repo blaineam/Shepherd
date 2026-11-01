@@ -73,6 +73,9 @@ type Options struct {
 	// Timeout bounds one probe connection attempt. Default: 1 second.
 	Timeout time.Duration
 	Now     func() time.Time
+	// Retention bounds the Store's history (see Retention); the zero value
+	// is DefaultRetention.
+	Retention Retention
 
 	// Load generates a bufferbloat check's bounded traffic burst. Default:
 	// DefaultLoadFunc against DefaultLoadURL. Set once here, at
@@ -133,7 +136,7 @@ func New(opts Options) *Prober {
 		now:                 opts.Now,
 		load:                opts.Load,
 		bufferbloatDuration: opts.BufferbloatDuration,
-		store:               NewStore(StoreOptions{Now: opts.Now}),
+		store:               NewStore(StoreOptions{Now: opts.Now, Retention: opts.Retention}),
 	}
 	if p.dial == nil {
 		p.dial = defaultDial

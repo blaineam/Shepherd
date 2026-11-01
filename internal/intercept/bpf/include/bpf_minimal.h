@@ -21,6 +21,10 @@ typedef unsigned long long __u64;
 #define BPF_MAP_TYPE_HASH 1
 #define BPF_MAP_TYPE_ARRAY 2
 #define BPF_MAP_TYPE_PERCPU_ARRAY 6
+#define BPF_MAP_TYPE_LRU_HASH 9
+
+/* Flags for bpf_map_update_elem. */
+#define BPF_ANY 0
 
 /* XDP verdicts (enum xdp_action). */
 #define XDP_ABORTED 0
@@ -44,9 +48,12 @@ struct xdp_md {
 
 /* Helpers, by their stable helper IDs (enum bpf_func_id). */
 static void *(*bpf_map_lookup_elem)(void *map, const void *key) = (void *)1;
+static long (*bpf_map_update_elem)(void *map, const void *key, const void *value, __u64 flags) = (void *)2;
+static long (*bpf_map_delete_elem)(void *map, const void *key) = (void *)3;
 static __u64 (*bpf_ktime_get_ns)(void) = (void *)5;
 
 #define bpf_htons(x) __builtin_bswap16(x)
 #define bpf_ntohs(x) __builtin_bswap16(x)
+#define bpf_ntohl(x) __builtin_bswap32(x)
 
 #endif

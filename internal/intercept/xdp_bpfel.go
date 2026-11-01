@@ -22,6 +22,8 @@ type xdpDevCounters struct {
 	Bytes6      uint64
 	LastSeenNs6 uint64
 	Duplicates  uint64
+	RxEst       uint64
+	RxEst6      uint64
 	Families    uint8
 	Pad         [7]uint8
 }
@@ -30,6 +32,21 @@ type xdpDupEntry struct {
 	_           structs.HostLayout
 	Fingerprint uint64
 	Ts          uint64
+}
+
+type xdpFlowKey struct {
+	_     structs.HostLayout
+	Saddr [16]uint8
+	Daddr [16]uint8
+	Sport uint16
+	Dport uint16
+	Pad   uint32
+}
+
+type xdpFlowState struct {
+	_   structs.HostLayout
+	Ack uint32
+	Pad uint32
 }
 
 type xdpFrameSample struct {
@@ -80,6 +97,7 @@ type xdpRelayStats struct {
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
 	xdpMapConfig       = "config"
+	xdpMapFlows        = "flows"
 	xdpMapLocalIps     = "local_ips"
 	xdpMapLocalIps6    = "local_ips6"
 	xdpMapRecent       = "recent"
@@ -140,6 +158,7 @@ type xdpProgramSpecs struct {
 // It can be passed ebpf.CollectionSpec.Assign.
 type xdpMapSpecs struct {
 	Config       *ebpf.MapSpec `ebpf:"config"`
+	Flows        *ebpf.MapSpec `ebpf:"flows"`
 	LocalIps     *ebpf.MapSpec `ebpf:"local_ips"`
 	LocalIps6    *ebpf.MapSpec `ebpf:"local_ips6"`
 	Recent       *ebpf.MapSpec `ebpf:"recent"`
@@ -176,6 +195,7 @@ func (o *xdpObjects) Close() error {
 // It can be passed to loadXdpObjects or ebpf.CollectionSpec.LoadAndAssign.
 type xdpMaps struct {
 	Config       *ebpf.Map `ebpf:"config"`
+	Flows        *ebpf.Map `ebpf:"flows"`
 	LocalIps     *ebpf.Map `ebpf:"local_ips"`
 	LocalIps6    *ebpf.Map `ebpf:"local_ips6"`
 	Recent       *ebpf.Map `ebpf:"recent"`
@@ -188,6 +208,7 @@ type xdpMaps struct {
 func (m *xdpMaps) Close() error {
 	return _XdpClose(
 		m.Config,
+		m.Flows,
 		m.LocalIps,
 		m.LocalIps6,
 		m.Recent,

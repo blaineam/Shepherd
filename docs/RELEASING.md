@@ -32,6 +32,11 @@ After a stable release, bump `VERSION` to the next planned version.
 - **Minor** (0.2.0): new features. Before 1.0.0, breaking changes also go here and are listed under Changed or Removed.
 - **Major** (1.0.0): the first stable promise of compatibility for the configuration file and API.
 
-## Coming in Wave 5
+## Signing, and self-update
 
-Signed releases and signed self-update with rollback, so a Shepherd can update itself safely.
+Both workflows sign `dist/SHA256SUMS` with the Ed25519 key in the `SHEPHERD_SIGNING_KEY`
+repository secret (`scripts/sign-release`, `cmd/shepherd-sign`), producing `SHA256SUMS.sig` next to
+it. A running Shepherd verifies that signature against the public key built into it before it
+applies an update, and refuses an unsigned release. Without the secret the build is published
+unsigned and self-update only reports it. See [UPDATE.md](UPDATE.md) for generating the key pair
+once and where each half goes.

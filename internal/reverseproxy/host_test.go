@@ -4,6 +4,8 @@ package reverseproxy
 
 import (
 	"errors"
+	"net/netip"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -91,7 +93,7 @@ func TestHostNormalize(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Normalize(): %v", err)
 			}
-			if got != c.want {
+			if !reflect.DeepEqual(got, c.want) {
 				t.Errorf("Normalize() = %+v, want %+v", got, c.want)
 			}
 		})
@@ -128,5 +130,44 @@ func TestCovers(t *testing.T) {
 		if got := Covers(c.base, c.domain); got != c.want {
 			t.Errorf("Covers(%q, %q) = %v, want %v", c.base, c.domain, got, c.want)
 		}
+	}
+}
+
+func TestNormalizeAllowAndAllowed(t *testing.T) {
+	h, err := Host{Domain: "a.example.com", TargetHost: "app", TargetPort: 80,
+		Allow: []string{" Local ", "192.0.2.10", "192.0.2.0/24", "192.0.2.7/24", "2001:db8::1", "", "local"}}.Normalize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"local", "192.0.2.10/32", "192.0.2.0/24", "2001:db8::1/128"}
+	if !reflect.DeepEqual(h.Allow, want) {
+		t.Fatalf("Allow = %v, want %v (canonical, masked, deduplicated)", h.Allow, want)
+	}
+	for _, bad := range []string{"nope", "192.0.2.0/33", "anyone", "10.0.0.0/8 extra"} {
+		if _, err := (Host{Domain: "a.example.com", TargetHost: "app", TargetPort: 80, Allow: []string{bad}}).Normalize(); err == nil || !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "allow") {
+			t.Errorf("%q: err = %v, want an ErrInvalid about allow", bad, err)
+		}
+	}
+	// An empty list normalizes to nil and allows anyone.
+	open, _ := (Host{Domain: "a.example.com", TargetHost: "app", TargetPort: 80, Allow: []string{" ", ""}}).Normalize()
+	if open.Allow != nil || !open.Allowed(netip.MustParseAddr("203.0.113.9"), nil) {
+		t.Fatalf("empty allow = %v, allowed=%v", open.Allow, open.Allowed(netip.MustParseAddr("203.0.113.9"), nil))
+	}
+	local := func() []netip.Prefix {
+		return []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24"), netip.MustParsePrefix("100.64.0.0/10")}
+	}
+	cases := map[string]bool{
+		"192.0.2.10": true, "192.0.2.200": true, "192.0.3.1": false, "2001:db8::1": true, "2001:db8::2": false,
+		"10.0.0.7": true, "100.100.1.1": true, "10.0.1.7": false, "::ffff:192.0.2.5": true,
+	}
+	for ip, want := range cases {
+		if got := h.Allowed(netip.MustParseAddr(ip), local); got != want {
+			t.Errorf("Allowed(%s) = %v, want %v", ip, got, want)
+		}
+	}
+	// "local" with no prefix source matches nothing, and a prefix entry
+	// still works on its own.
+	if h.Allowed(netip.MustParseAddr("10.0.0.7"), nil) || !h.Allowed(netip.MustParseAddr("192.0.2.1"), nil) {
+		t.Fatal("local without a source should match nothing; a prefix should still match")
 	}
 }

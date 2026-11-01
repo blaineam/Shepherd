@@ -43,7 +43,7 @@ func TestSummarizeSamplesTellsALoopFromTraffic(t *testing.T) {
 		if !strings.Contains(lines[0], "10 sampled frames in 1 flows") {
 			t.Errorf("header = %q", lines[0])
 		}
-		if !strings.Contains(lines[1], "distinct ids") || !strings.Contains(lines[1], "ttl 64") || !strings.Contains(lines[1], "10 ids") {
+		if !strings.Contains(lines[1], "distinct packets") || !strings.Contains(lines[1], "ttl 64") || !strings.Contains(lines[1], "10 ids") {
 			t.Errorf("flow line = %q", lines[1])
 		}
 		if !strings.Contains(lines[1], "192.0.2.37->198.51.100.7 :51000->:443") {
@@ -67,9 +67,41 @@ func TestSummarizeSamplesTellsALoopFromTraffic(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			s = append(s, sampleFrame(777, 64, phone, site))
 		}
-		lines := SummarizeSamples(s)
-		if !strings.Contains(lines[1], "SAME TTL: circulating at layer 2") {
-			t.Errorf("flow line = %q", lines[1])
+		lines, circulating := AnalyzeSamples(s)
+		if !strings.Contains(lines[1], "SAME TTL: circulating at layer 2") || !circulating {
+			t.Errorf("flow line = %q, circulating = %v", lines[1], circulating)
+		}
+	})
+
+	// The reading that once stopped an overnight iCloud upload: every
+	// packet with identification 0 and TTL 64, as macOS sends don't-
+	// fragment packets, but each a different packet. Judged by the ID that
+	// was "SAME IDs, SAME TTL: circulating"; judged by the frame it is not.
+	t.Run("id 0 on distinct packets is a don't-fragment sender, not a loop", func(t *testing.T) {
+		var s []FrameSample
+		for i := uint32(1); i <= 10; i++ {
+			f := sampleFrame(0, 64, phone, site)
+			binary.BigEndian.PutUint32(f.Bytes[38:42], i*1460) // the sequence number moves
+			s = append(s, f)
+		}
+		lines, circulating := AnalyzeSamples(s)
+		if circulating || !strings.Contains(lines[1], "don't-fragment sender") || !strings.Contains(lines[1], "1 ids") {
+			t.Errorf("flow line = %q, circulating = %v", lines[1], circulating)
+		}
+		if _, c := AnalyzeSamples(nil); c {
+			t.Error("nothing circulates in no samples")
+		}
+	})
+
+	t.Run("a few repeats among distinct packets are counted, not called a loop", func(t *testing.T) {
+		var s []FrameSample
+		for i := uint16(1); i <= 8; i++ {
+			s = append(s, sampleFrame(i, 64, phone, site))
+		}
+		s = append(s, sampleFrame(3, 64, phone, site))
+		lines, circulating := AnalyzeSamples(s)
+		if circulating || !strings.Contains(lines[1], "1 repeated frames") {
+			t.Errorf("flow line = %q, circulating = %v", lines[1], circulating)
 		}
 	})
 

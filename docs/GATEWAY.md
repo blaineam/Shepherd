@@ -282,9 +282,13 @@ delegates a prefix at all.**
 3. ~~**What happens to traffic when Shepherd's process is not running?**~~ **Answered: fail closed**
    (2026-11-01), a considered departure from Guard mode's fail-open precedent. The mechanism it
    requires, and the one exception that keeps a bug remotely fixable, are above.
-4. ~~**Is Watch mode retired, kept, or left off?**~~ **Answered: retired** (2026-11-01). Off by
-   default, nothing new built on it, every claim that it worked corrected in the README, DESIGN.md
-   and the roadmap, and the reasons kept in [WATCH.md](WATCH.md) because they are the argument.
+4. ~~**Is Watch mode retired, kept, or left off?**~~ **Answered: kept, opt-in, off by default**
+   (2026-11-01, revised the same evening). The morning's retirement rested partly on storms that
+   were uploads misread as loops -- see [WATCH.md](WATCH.md)'s status note -- so it runs again where
+   it is deliberately enabled, with downloads estimated from TCP acknowledgements
+   ([TRAFFIC.md](TRAFFIC.md)). That does not change this document's argument: the estimate is
+   blind to QUIC and UDP, a device's open connections can bypass steering, and only a router sees
+   both directions.
    Removing the roughly 14,000 lines of `internal/watch`, `internal/intercept` and
    `cmd/intercept-trial` is a separate piece of work, deliberately: it is large and mechanical, and
    it should not ride along with a design decision.

@@ -101,6 +101,18 @@ export function hostWarnings(h, wildcard) {
   return out;
 }
 
+// Informational badges: who may reach the host, and whether it pins
+// browsers to HTTPS.
+export function hostBadges(h) {
+  const out = [];
+  const allow = h.allow || [];
+  if (allow.length) {
+    out.push({ kind: 'restricted', label: allow.length === 1 && allow[0] === 'local' ? 'Local only' : 'Restricted', title: 'Only ' + allow.join(', ') + ' can reach this name; anyone else gets a 403.' });
+  }
+  if (h.hsts) out.push({ kind: 'hsts', label: 'HSTS', title: 'Browsers that have seen this name over HTTPS refuse plain http for it for 30 days.' });
+  return out;
+}
+
 export function sortHosts(hosts) {
   return [...(hosts || [])].sort((a, b) => a.domain.localeCompare(b.domain));
 }
@@ -128,13 +140,42 @@ export function certSummary(status, now = Date.now()) {
   return { tone: 'good', text: 'Valid until ' + date + ' (' + days + ' days)' };
 }
 
+// parseAllow reads the access field: a comma- or space-separated list of
+// addresses, prefixes and the word "local" (this host's networks and
+// Tailscale). Empty means anyone. Mirrors reverseproxy.normalizeAllow's
+// acceptance; the server canonicalises the entries.
+export function parseAllow(input) {
+  const parts = String(input || '').split(/[\s,]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const allow = [];
+  for (const p of parts) {
+    if (p === 'local' || p === 'anyone') { if (p === 'local' && !allow.includes(p)) allow.push(p); continue; }
+    const [addr, bits, extra] = p.split('/');
+    if (extra !== undefined) return { ok: false, error: '"' + p + '" is not an address or a prefix like 192.0.2.0/24' };
+    const v4 = isIPv4(addr);
+    const v6 = !v4 && isIPv6(addr);
+    if (!v4 && !v6) return { ok: false, error: '"' + p + '" is not an address, a prefix like 192.0.2.0/24, or "local"' };
+    if (bits !== undefined) {
+      const n = /^\d{1,3}$/.test(bits) ? Number(bits) : -1;
+      if (n < 0 || n > (v4 ? 32 : 128)) return { ok: false, error: '"' + p + '" has an impossible prefix length' };
+    }
+    if (!allow.includes(p)) allow.push(p);
+  }
+  return { ok: true, allow };
+}
+
+export function formatAllow(allow) {
+  return (allow || []).join(', ');
+}
+
 // Builds the POST/PUT body from the form, or says which field is wrong.
-export function hostBody({ domain, target, skipVerify, enabled }) {
+export function hostBody({ domain, target, skipVerify, allow, hsts, enabled }) {
   const d = validateDomain(domain);
   if (!d.ok) return { ok: false, field: 'domain', error: d.error };
   const t = parseTarget(target);
   if (!t.ok) return { ok: false, field: 'target', error: t.error };
-  const body = { domain: d.domain, target_scheme: t.scheme, target_host: t.host, target_port: t.port, skip_tls_verify: t.scheme === 'https' && !!skipVerify };
+  const a = parseAllow(allow);
+  if (!a.ok) return { ok: false, field: 'allow', error: a.error };
+  const body = { domain: d.domain, target_scheme: t.scheme, target_host: t.host, target_port: t.port, skip_tls_verify: t.scheme === 'https' && !!skipVerify, allow: a.allow, hsts: !!hsts };
   if (typeof enabled === 'boolean') body.enabled = enabled;
   return { ok: true, body };
 }

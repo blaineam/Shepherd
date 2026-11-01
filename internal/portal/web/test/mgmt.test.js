@@ -240,6 +240,56 @@ test('nethealth endpoints', async () => {
   assert.deepEqual([calls[4][0], calls[4][1].method, calls[4][1].body], ['/api/nethealth/bufferbloat/run', 'POST', '{}']);
 });
 
+test('update endpoints', async () => {
+  const { calls, m } = rig();
+  await m.update();
+  assert.equal(calls[0][0], '/api/update');
+  await m.checkUpdate();
+  assert.deepEqual([calls[1][0], calls[1][1].method], ['/api/update/check', 'POST']);
+  await m.applyUpdate();
+  assert.deepEqual([calls[2][0], calls[2][1].method], ['/api/update/apply', 'POST']);
+});
+
+test('threat feed endpoints', async () => {
+  const { calls, m } = rig();
+  await m.threats();
+  assert.equal(calls[0][0], '/api/threats');
+  await m.refreshThreats();
+  assert.deepEqual([calls[1][0], calls[1][1].method], ['/api/threats/refresh', 'POST']);
+});
+
+test('alarm preference endpoints', async () => {
+  const { calls, m } = rig();
+  await m.alarmPrefs();
+  assert.equal(calls[0][0], '/api/alarms/preferences');
+  await m.setAlarmPrefs({ immediate_min: 'medium' });
+  assert.deepEqual([calls[1][0], calls[1][1].method, calls[1][1].body], ['/api/alarms/preferences', 'PUT', '{"immediate_min":"medium"}']);
+});
+
+test('push endpoints', async () => {
+  const { calls, m } = rig();
+  await m.pushStatus();
+  assert.equal(calls[0][0], '/api/alarms/push');
+  await m.pushSubscribe({ subscription: { endpoint: 'https://push.example/x', keys: {} }, name: 'Phone' });
+  assert.deepEqual([calls[1][0], calls[1][1].method], ['/api/alarms/push/subscribe', 'POST']);
+  await m.pushTest();
+  assert.deepEqual([calls[2][0], calls[2][1].method], ['/api/alarms/push/test', 'POST']);
+  await m.pushRename('ab12', 'Tablet');
+  assert.deepEqual([calls[3][0], calls[3][1].method, calls[3][1].body], ['/api/alarms/push/ab12', 'PATCH', '{"name":"Tablet"}']);
+  await m.pushRemove('ab12');
+  assert.deepEqual([calls[4][0], calls[4][1].method], ['/api/alarms/push/ab12', 'DELETE']);
+});
+
+test('traffic endpoints', async () => {
+  const { calls, m } = rig();
+  await m.traffic();
+  assert.equal(calls[0][0], '/api/traffic');
+  await m.trafficSeries({ from: '2026-01-01T00:00:00Z', to: '2026-01-02T00:00:00Z', scope: 'group:g1' });
+  assert.equal(calls[1][0], '/api/traffic/series?from=2026-01-01T00%3A00%3A00Z&to=2026-01-02T00%3A00%3A00Z&scope=group%3Ag1');
+  await m.trafficTop({ from: '2026-01-01T00:00:00Z', limit: 5 });
+  assert.equal(calls[2][0], '/api/traffic/top?from=2026-01-01T00%3A00%3A00Z&limit=5');
+});
+
 test('reverse proxy endpoints', async () => {
   const { calls, m } = rig();
   await m.reverseProxy();

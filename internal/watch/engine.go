@@ -18,6 +18,7 @@ import (
 	"shepherd/internal/arp"
 	"shepherd/internal/devices"
 	"shepherd/internal/intercept"
+	"shepherd/internal/traffic"
 )
 
 // Mode is the relay the configuration asks for.
@@ -119,6 +120,11 @@ type Config struct {
 	// is actually carrying: addresses, ports, TTL and IP ID) every few
 	// seconds while traffic is moving, besides when the brake trips.
 	Diagnostics bool
+	// Traffic, when set, receives each device's bytes once a second: sent
+	// (the relayed bytes, exact) and received (the TCP-acknowledgement
+	// estimate), keyed by registry device ID. *traffic.Store is the
+	// production recorder (docs/TRAFFIC.md). Nil records nothing.
+	Traffic TrafficRecorder
 
 	Platform Platform        // default RealPlatform{}
 	Clock    intercept.Clock // default the wall clock
@@ -219,6 +225,23 @@ const (
 	// loopHits is how many consecutive one-second samples must agree
 	// before the brake trips, so a burst cannot cause one.
 	loopHits = 3
+	// Mirrored counters alone are not a loop. A relay carrying a device's
+	// upload is mirrored by definition -- every frame received is one
+	// frame transmitted -- and the brake once stopped an overnight iCloud
+	// upload at 24,000 packets a second on exactly that reading, with
+	// every frame distinct. So a trip also needs evidence that frames are
+	// coming round: during the mirrored streak the duplicate brake must
+	// have refused at least loopDupShare of what it saw (a loop with the
+	// duplicate brake working gives about half), or Shepherd's own output
+	// must have arrived back (the return-path counters), or the sampled
+	// frames must be the same frame over and over. Above loopHardFloorPPS
+	// the brake trips on symmetry alone: no home device sends that many
+	// packets a second, and the first line-rate incident ran at a million.
+	loopDupShare     = 0.25
+	loopHardFloorPPS = 300_000
+	// mirrorNoteEvery bounds how often the engine says, in the log, that
+	// the interface is mirrored but nothing is circulating.
+	mirrorNoteEvery = time.Hour
 	// The echo warning. A relay whose frames keep coming back is working
 	// but wasting most of its effort, and the network is carrying nearly
 	// twice the relayed traffic. The duplicate brake contains that, so it
@@ -250,6 +273,13 @@ const (
 	restartBackoffMax = 5 * time.Minute
 	historyCap        = 256
 )
+
+// TrafficRecorder is where the engine's per-device byte counts go
+// (Config.Traffic). rows is keyed by registry device ID; a device with no
+// movement since the previous call is absent.
+type TrafficRecorder interface {
+	Record(now time.Time, rows map[string]traffic.Delta)
+}
 
 // HistoryRecord is one unsteer, with the device's registry identity
 // attached to the Controller's own record.
@@ -283,9 +313,16 @@ type DeviceStatus struct {
 	// Totals across the device's steered entries since they were steered.
 	BytesRelayed   uint64 `json:"bytes_relayed"`
 	PacketsRelayed uint64 `json:"packets_relayed"`
+	// BytesReceivedEst is the device's estimated download since it was
+	// steered, inferred from the TCP acknowledgements in its relayed
+	// frames (intercept.AckMeter): never an over-count, blind to QUIC,
+	// UDP and tunnels.
+	BytesReceivedEst uint64 `json:"bytes_received_est"`
 	// Live rates over the last sampling interval.
 	BytesPerSecond   float64 `json:"bytes_per_second"`
 	PacketsPerSecond float64 `json:"packets_per_second"`
+	// RxBytesPerSecond is the live estimated download rate.
+	RxBytesPerSecond float64 `json:"rx_bytes_per_second"`
 	// NextRetry is when a device on a health-failure backoff is tried
 	// again; zero otherwise.
 	NextRetry time.Time `json:"next_retry,omitempty"`
@@ -349,6 +386,7 @@ type RelayStats struct {
 	FramesExamined          uint64 `json:"frames_examined"`
 	FramesRelayed           uint64 `json:"frames_relayed"`
 	BytesRelayed            uint64 `json:"bytes_relayed"`
+	BytesReceivedEst        uint64 `json:"bytes_received_est"`
 	FramesForShepherdItself uint64 `json:"frames_for_shepherd_itself"`
 	FramesNotForShepherd    uint64 `json:"frames_not_for_shepherd"`
 	// DuplicatesSuppressed is frames the relay refused to relay because it
@@ -359,6 +397,7 @@ type RelayStats struct {
 	DuplicatesSuppressed uint64  `json:"duplicates_suppressed"`
 	PacketsPerSecond     float64 `json:"packets_per_second"`
 	BytesPerSecond       float64 `json:"bytes_per_second"`
+	RxBytesPerSecond     float64 `json:"rx_bytes_per_second"`
 }
 
 type retryState struct {
@@ -388,9 +427,9 @@ type retryGate struct {
 }
 
 type rateSample struct {
-	packets, bytes uint64
-	at             time.Time
-	pps, bps       float64
+	packets, bytes, rx uint64
+	at                 time.Time
+	pps, bps, rxbps    float64
 }
 
 // Engine runs Watch mode. Build one with New, run it with Run, and read it
@@ -468,9 +507,16 @@ type Engine struct {
 	ifaceCounters Counters
 	haveIfaceCnt  bool
 	loopStreak    int
-	global        rateSample
-	history       []HistoryRecord
-	lastLog       string
+	// streakRelayed, streakDups and streakReturned are the relay's
+	// counters when the current mirrored streak began, so the trip can
+	// judge what happened during it rather than since the session began.
+	streakRelayed, streakDups, streakReturned uint64
+	// mirrorNoted is when the engine last logged that the interface was
+	// mirrored without anything circulating.
+	mirrorNoted time.Time
+	global      rateSample
+	history     []HistoryRecord
+	lastLog     string
 
 	kick    chan struct{} // reconcile now
 	gwCheck chan struct{} // re-read the gateway MAC now
@@ -601,6 +647,7 @@ func (e *Engine) session(ctx context.Context) error {
 	case e.cfg.Interface != "":
 		iface = e.cfg.Interface
 	default:
+		iface = e.preferWired(iface, gw)
 		// Stay on the interface an earlier session settled on, even if the
 		// default route has since moved. A host with both a wired and a
 		// wireless interface on one subnet can briefly publish a default
@@ -673,7 +720,7 @@ func (e *Engine) session(ctx context.Context) error {
 			if !e.cfg.AllowRoutingHost {
 				return errors.New(why)
 			}
-			e.logOnce("watch: WARNING: watch.allow_routing_host is set, so steering goes ahead although %s", why)
+			e.logOnce("watch: steering goes ahead although %s. The duplicate brake drops any copy of a frame the segment hands back, and the loop brake stays armed (docs/WATCH.md)", why)
 		}
 	}
 
@@ -749,6 +796,35 @@ func (e *Engine) session(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// preferWired returns a wired interface on the gateway's network when the
+// default route points at a wireless one, else iface unchanged. Ethernet
+// is always preferred and Wi-Fi is only a fallback: a relay on Wi-Fi
+// shares the air with the devices whose frames it carries, so every
+// relayed frame costs airtime twice, and a host with both (the
+// maintainer's NAS) can publish its default route through either.
+func (e *Engine) preferWired(iface string, gw netip.Addr) string {
+	link, err := e.plat.Link(iface)
+	if err != nil || !link.Wireless {
+		return iface
+	}
+	links, err := e.plat.Interfaces()
+	if err != nil {
+		return iface
+	}
+	for _, l := range links {
+		if l.Wireless || l.MAC.IsZero() || l.Name == iface {
+			continue
+		}
+		for _, n := range l.IPv4Nets {
+			if n.Contains(gw) {
+				e.logOnce("watch: the default route is through the wireless interface %s; using the wired %s on the same network instead, since Wi-Fi is only ever a fallback", iface, l.Name)
+				return l.Name
+			}
+		}
+	}
+	return iface
 }
 
 // gatewayChanged re-reads the gateway's MAC from the neighbour table and
@@ -1180,10 +1256,12 @@ func (e *Engine) sample(now time.Time) {
 	if elapsed > 0 {
 		e.global.pps = float64(st.FramesRelayed-e.global.packets) / elapsed
 		e.global.bps = float64(st.BytesRelayed-e.global.bytes) / elapsed
+		e.global.rxbps = float64(st.BytesReceivedEst-e.global.rx) / elapsed
 	}
 	relayedPPS := e.global.pps
-	e.global.packets, e.global.bytes, e.global.at = st.FramesRelayed, st.BytesRelayed, now
+	e.global.packets, e.global.bytes, e.global.rx, e.global.at = st.FramesRelayed, st.BytesRelayed, st.BytesReceivedEst, now
 	live := map[arp.MAC]bool{}
+	var rows map[arp.MAC]traffic.Delta
 	for _, d := range status {
 		live[d.MAC] = true
 		rs := e.rates[d.MAC]
@@ -1191,15 +1269,33 @@ func (e *Engine) sample(now time.Time) {
 			rs = &rateSample{at: d.Since}
 			e.rates[d.MAC] = rs
 		}
+		// Counters only grow while a device stays steered, and a device
+		// that is unsteered loses its rates entry, so a smaller reading
+		// cannot happen; the guards keep a wrap or a reset from ever
+		// crediting a huge delta.
+		var delta traffic.Delta
+		if d.BytesRelayed >= rs.bytes {
+			delta.Up = d.BytesRelayed - rs.bytes
+		}
+		if d.BytesReceivedEst >= rs.rx {
+			delta.Down = d.BytesReceivedEst - rs.rx
+		}
 		if el := now.Sub(rs.at).Seconds(); el > 0 {
 			rs.pps = float64(d.PacketsRelayed-rs.packets) / el
-			rs.bps = float64(d.BytesRelayed-rs.bytes) / el
+			rs.bps = float64(delta.Up) / el
+			rs.rxbps = float64(delta.Down) / el
+		}
+		if delta.Up > 0 || delta.Down > 0 {
+			if rows == nil {
+				rows = map[arp.MAC]traffic.Delta{}
+			}
+			rows[d.MAC] = delta
 		}
 		moved := d.PacketsRelayed > rs.packets
 		if d.PacketsRelayed > 0 {
 			e.relayed[d.MAC] = true
 		}
-		rs.packets, rs.bytes, rs.at = d.PacketsRelayed, d.BytesRelayed, now
+		rs.packets, rs.bytes, rs.rx, rs.at = d.PacketsRelayed, d.BytesRelayed, d.BytesReceivedEst, now
 		if moved && now.Sub(e.observed[d.MAC]) >= observeEvery {
 			e.observed[d.MAC] = now
 			observe = append(observe, d)
@@ -1240,6 +1336,7 @@ func (e *Engine) sample(now time.Time) {
 		}
 		e.lastDupSeen = dup
 	}
+	e.recordTraffic(now, rows)
 	e.warnIfEchoing(now, ctrl)
 	e.checkForLoop(now, relayedPPS, status)
 }
@@ -1399,6 +1496,31 @@ func (r relayEvidence) lines(name func(arp.MAC) string) []string {
 	return append(out, r.Flows...)
 }
 
+// recordTraffic hands this second's per-MAC byte deltas to the traffic
+// recorder, keyed by registry device ID (a device merged from several MACs
+// gets one row). A MAC the registry does not know is skipped: there is no
+// device to attribute it to, and the registry is what steered it in the
+// first place, so this does not happen in practice.
+func (e *Engine) recordTraffic(now time.Time, rows map[arp.MAC]traffic.Delta) {
+	if e.cfg.Traffic == nil || len(rows) == 0 {
+		return
+	}
+	byID := make(map[string]traffic.Delta, len(rows))
+	for mac, d := range rows {
+		dev, ok := e.reg.FindByMAC(mac.String())
+		if !ok {
+			continue
+		}
+		cur := byID[dev.ID]
+		cur.Up += d.Up
+		cur.Down += d.Down
+		byID[dev.ID] = cur
+	}
+	if len(byID) > 0 {
+		e.cfg.Traffic.Record(now, byID)
+	}
+}
+
 // checkForLoop is the loop brake. Twice on real hardware the relay ended up
 // carrying its own output back to itself at line rate -- once because it
 // steered one of this host's own interfaces, once for a cause not yet
@@ -1468,6 +1590,19 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 	if err != nil {
 		return
 	}
+	// The relay's own evidence, read before taking the engine's lock
+	// (the Controller has locks of its own).
+	e.mu.Lock()
+	ctrl := e.ctrl
+	e.mu.Unlock()
+	var relayed, dups, returned uint64
+	if ctrl != nil {
+		relayed = ctrl.Stats().FramesRelayed
+		dups = ctrl.DuplicatesSuppressed()
+		ours, togw := ctrl.ReturnPathCounts()
+		returned = ours + togw
+	}
+
 	e.mu.Lock()
 	prev, had := e.ifaceCounters, e.haveIfaceCnt
 	e.ifaceCounters, e.haveIfaceCnt = cur, true
@@ -1486,17 +1621,52 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 		e.mu.Unlock()
 		return
 	}
+	if e.loopStreak == 0 {
+		e.streakRelayed, e.streakDups, e.streakReturned = relayed, dups, returned
+	}
 	e.loopStreak++
-	hits, ctrl := e.loopStreak, e.ctrl
+	hits := e.loopStreak
 	if hits < loopHits || ctrl == nil || e.killed {
 		e.mu.Unlock()
 		return
 	}
+	streakRelayed := relayed - e.streakRelayed
+	streakDups := dups - e.streakDups
+	streakReturned := returned - e.streakReturned
 	e.mu.Unlock()
-	// Read the relay's own evidence before latching, since PanicStop
-	// empties the steered set and with it the per-device counters.
-	suppressed := ctrl.DuplicatesSuppressed()
-	flows := intercept.SummarizeSamples(ctrl.FrameSamples())
+
+	// Mirrored for long enough. Is anything actually circulating? The
+	// sampled frames are drained here either way, since the trip's record
+	// wants them too.
+	flows, circulating := intercept.AnalyzeSamples(ctrl.FrameSamples())
+	dupShare := 0.0
+	if streakRelayed+streakDups > 0 {
+		dupShare = float64(streakDups) / float64(streakRelayed+streakDups)
+	}
+	corroborated := hi >= loopHardFloorPPS || streakReturned > 0 || circulating ||
+		(streakDups > 0 && dupShare >= loopDupShare)
+	if !corroborated {
+		e.mu.Lock()
+		e.loopStreak = 0 // judge the next three seconds afresh
+		say := now.Sub(e.mirrorNoted) >= mirrorNoteEvery
+		if say {
+			e.mirrorNoted = now
+		}
+		e.mu.Unlock()
+		if say {
+			e.logf("watch: the interface is mirroring traffic (received %.0f and transmitted %.0f packets in the last second) but nothing is circulating: %d of the relay's last %d frames were copies, none of its output came back, and the sampled frames are distinct. That is a device sending through the relay, not a loop, so steering continues.",
+				rx, tx, streakDups, streakRelayed+streakDups)
+			for _, line := range flows {
+				e.logf("watch: mirrored traffic: %s", line)
+			}
+		}
+		return
+	}
+
+	// Read the rest of the relay's evidence before latching, since
+	// PanicStop empties the steered set and with it the per-device
+	// counters.
+	suppressed := dups
 	e.mu.Lock()
 	if e.killed { // another goroutine latched it while the lock was free
 		e.mu.Unlock()
@@ -1504,7 +1674,7 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 	}
 	e.killed = true
 	e.state.Killed = true
-	e.reason = "stopped automatically: the relay interface was mirroring traffic at a rate a home network does not reach"
+	e.reason = "stopped automatically: the relay was carrying frames round in a loop"
 	share := 0.0
 	if rx > 0 {
 		share = relayedPPS / rx * 100
@@ -1523,16 +1693,15 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 	e.mu.Unlock()
 
 	ctrl.PanicStop()
-	e.logf("watch: LOOP BRAKE: the relay interface is mirroring traffic at a rate a home network does not reach, so all steering has been stopped and will stay stopped until it is re-armed")
-	e.logf("watch: loop brake evidence: interface received %.0f and transmitted %.0f packets in the last second (%.2f%% apart), of which the relay reported %.0f (%.1f%%); the duplicate brake had suppressed %d frames",
-		rx, tx, math.Abs(tx-rx)/hi*100, relayedPPS, share, suppressed)
+	e.logf("watch: LOOP BRAKE: the relay was carrying frames round in a loop, so all steering has been stopped and will stay stopped until it is re-armed")
+	e.logf("watch: loop brake evidence: interface received %.0f and transmitted %.0f packets in the last second (%.2f%% apart), of which the relay reported %.0f (%.1f%%); during the mirrored seconds the duplicate brake refused %d of %d frames (%.0f%%), %d of Shepherd's own frames came back, and the sampled frames %s",
+		rx, tx, math.Abs(tx-rx)/hi*100, relayedPPS, share, streakDups, streakRelayed+streakDups, dupShare*100, streakReturned,
+		map[bool]string{true: "were the same frame over and over", false: "were distinct"}[circulating])
 	e.logf("watch: loop brake: this is also recorded in %s as last_loop_stop, because a container rebuild discards the log", e.cfg.StatePath)
-	// The share is evidence, not a trigger. It lags the storm by seconds --
-	// 0 pkt/s at t+2, 73,704 by t+8 on one measured device -- so a low
-	// figure here means the brake caught it early, not that the relay is
-	// innocent.
 	e.logLoopSuspects(status)
-	e.logSamples(ctrl, "loop brake")
+	for _, line := range flows {
+		e.logf("watch: loop brake: %s", line)
+	}
 	if saveErr != nil {
 		e.logf("watch: WARNING: could not persist the loop stop (%v), so a restart may resume it", saveErr)
 	}
@@ -1831,7 +2000,7 @@ func (e *Engine) Snapshot() Snapshot {
 	snap := Snapshot{
 		Enabled: e.enabled(), Phase: e.phase, Reason: e.reason, Relay: e.relay, Armed: !e.killed,
 		Interface: e.link.Name, Since: e.since,
-		Stats:   RelayStats{PacketsPerSecond: e.global.pps, BytesPerSecond: e.global.bps},
+		Stats:   RelayStats{PacketsPerSecond: e.global.pps, BytesPerSecond: e.global.bps, RxBytesPerSecond: e.global.rxbps},
 		History: append([]HistoryRecord(nil), e.history...),
 	}
 	snap.IPv6, snap.IPv6Wanted, snap.IPv6Reason = e.v6, e.cfg.IPv6, e.v6Why
@@ -1860,6 +2029,7 @@ func (e *Engine) Snapshot() Snapshot {
 	if ctrl != nil {
 		st := ctrl.Stats()
 		snap.Stats.FramesExamined, snap.Stats.FramesRelayed, snap.Stats.BytesRelayed = st.FramesExamined, st.FramesRelayed, st.BytesRelayed
+		snap.Stats.BytesReceivedEst = st.BytesReceivedEst
 		snap.Stats.FramesForShepherdItself, snap.Stats.FramesNotForShepherd = st.FramesForShepherdItself, st.FramesNotForShepherd
 		snap.Stats.DuplicatesSuppressed = ctrl.DuplicatesSuppressed()
 		for _, d := range ctrl.Status() {
@@ -1932,9 +2102,11 @@ func (e *Engine) deviceStatuses(now time.Time, steered map[arp.MAC]intercept.Ste
 			ds.BytesRelayed += sd.BytesRelayed
 			ds.PacketsRelayed += sd.PacketsRelayed
 			ds.DuplicatesSuppressed += dupByMAC[mac]
+			ds.BytesReceivedEst += sd.BytesReceivedEst
 			if rs, ok := rates[mac]; ok {
 				ds.BytesPerSecond += rs.bps
 				ds.PacketsPerSecond += rs.pps
+				ds.RxBytesPerSecond += rs.rxbps
 			}
 		}
 		ds.Families = familyNames(fams)

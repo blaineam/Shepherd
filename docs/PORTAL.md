@@ -8,6 +8,7 @@ or the file `portal-token` in the data directory).
 The portal is a dashboard with a side menu. On a desktop the menu is always visible on the left,
 grouped into **Monitor** (Map, Overview, History, Alarms, Vulnerabilities, Network health), **Protect**
 (Devices, Blocking, Watch mode) and **Settings** (Upstream DNS, Reverse proxy, Accountability, Locking).
+Monitor also holds **Bandwidth** ([TRAFFIC.md](TRAFFIC.md)): live and historical bytes per device, group and network.
 The top bar carries the connection state (live, demo, replay or offline), the clock, the demo-data switch
 and the Lock button. Below about 1024px the side menu slides in from the left behind a labelled **Menu**
 button in the top bar; picking a screen, tapping outside the menu or pressing Escape closes it.

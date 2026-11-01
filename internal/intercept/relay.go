@@ -148,6 +148,22 @@ type Relay struct {
 	// own. Optional.
 	OnRelayError func(mac arp.MAC, fam Family, err error)
 
+	// Meter, when set, inspects every relayed frame's TCP acknowledgement
+	// to estimate the device's *download* volume, the direction the relay
+	// never carries (see AckMeter). OnInferredRx receives each credit:
+	// the device's MAC, the frame's family, and the bytes the device's
+	// own acknowledgement says it has just received. Both optional; nil
+	// costs nothing on the hot path.
+	Meter        *AckMeter
+	OnInferredRx func(mac arp.MAC, fam Family, n uint64)
+
+	// Dedup, when set, is the duplicate brake (see Dedup): a frame this
+	// relay already relayed inside the window is dropped rather than
+	// relayed again, which is what stops a relay loop sustaining itself.
+	// OnDuplicate is called for each frame dropped that way. Optional.
+	Dedup       *Dedup
+	OnDuplicate func(mac arp.MAC, fam Family)
+
 	// OnFrameExamined, when set, is called once for every frame passed to
 	// HandleFrame, before any filtering, with its wire length. It exists
 	// purely for packet-rate diagnostics (bytes and frames per second,
@@ -256,6 +272,13 @@ func (r *Relay) HandleFrame(raw []byte) (bool, error) {
 		return false, nil
 	}
 
+	if r.Dedup != nil && r.Dedup.Seen(raw, r.now()) {
+		if r.OnDuplicate != nil {
+			r.OnDuplicate(src, family)
+		}
+		return false, nil
+	}
+
 	out := make([]byte, len(raw))
 	copy(out, raw)
 	copy(out[0:6], r.GatewayMAC[:])
@@ -267,8 +290,14 @@ func (r *Relay) HandleFrame(raw []byte) (bool, error) {
 		}
 		return false, err
 	}
+	now := r.now()
 	if r.OnRelayed != nil {
-		r.OnRelayed(src, family, len(raw), r.now())
+		r.OnRelayed(src, family, len(raw), now)
+	}
+	if r.Meter != nil && r.OnInferredRx != nil {
+		if n := r.Meter.Observe(raw, now); n > 0 {
+			r.OnInferredRx(src, family, n)
+		}
 	}
 	return true, nil
 }

@@ -171,6 +171,7 @@ func TestHistoryValidation(t *testing.T) {
 		"[history]\nkey_source = \"cloud\"": "history.key_source",
 		"[history]\nretention_days = -1":    "must not be negative",
 		"[history]\nmax_mb = -5":            "must not be negative",
+		"[retention]\nmax_mb = -1":          "retention.max_mb must not be negative",
 	}
 	for body, want := range cases {
 		path := filepath.Join(t.TempDir(), "c.toml")
@@ -542,11 +543,61 @@ func TestAlarmsDefaults(t *testing.T) {
 	if cfg.Alarms.Ntfy.Topic != "shepherd-alarms" {
 		t.Errorf("default ntfy topic = %q", cfg.Alarms.Ntfy.Topic)
 	}
+	if !cfg.Alarms.Push.Enabled || cfg.Alarms.Push.Contact != "" {
+		t.Errorf("Web Push should be on by default with no contact to fill in: %+v", cfg.Alarms.Push)
+	}
+}
+
+func TestThreatsDefaultsAndValidation(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Threats.Enabled || cfg.Threats.IntervalHours != 6 {
+		t.Errorf("threats defaults = %+v", cfg.Threats)
+	}
+	cfg = writeCfg(t, "[threats]\nenabled = false\ninterval_hours = 24\n")
+	if cfg.Threats.Enabled || cfg.Threats.IntervalHours != 24 {
+		t.Errorf("threats overrides = %+v", cfg.Threats)
+	}
+	path := filepath.Join(t.TempDir(), "c.toml")
+	if err := os.WriteFile(path, []byte("[threats]\ninterval_hours = 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "threats.interval_hours") {
+		t.Errorf("interval 0 should be rejected: %v", err)
+	}
+}
+
+func TestUpdateDefaultsAndValidation(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Update.Enabled || cfg.Update.Channel != "stable" || cfg.Update.CheckHours != 24 {
+		t.Errorf("update defaults = %+v", cfg.Update)
+	}
+	cfg = writeCfg(t, "[update]\nenabled = false\nchannel = \"beta\"\ncheck_hours = 6\n")
+	if cfg.Update.Enabled || cfg.Update.Channel != "beta" || cfg.Update.CheckHours != 6 {
+		t.Errorf("update overrides = %+v", cfg.Update)
+	}
+	for body, want := range map[string]string{"[update]\nchannel = \"nightly\"\n": "update.channel", "[update]\ncheck_hours = 0\n": "update.check_hours"} {
+		path := filepath.Join(t.TempDir(), "c.toml")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: err = %v, want %s", body, err, want)
+		}
+	}
 }
 
 func TestAlarmsOverrides(t *testing.T) {
 	cfg := writeCfg(t, `[alarms]
 enabled = false
+[alarms.push]
+enabled = false
+contact = "admin@example.com"
 [alarms.ntfy]
 enabled = true
 server = "https://ntfy.example.com"
@@ -556,6 +607,9 @@ token = "secret"
 	a := cfg.Alarms
 	if a.Enabled || !a.Ntfy.Enabled || a.Ntfy.Server != "https://ntfy.example.com" || a.Ntfy.Topic != "my-shepherd" || a.Ntfy.Token != "secret" {
 		t.Errorf("alarms overrides = %+v", a)
+	}
+	if a.Push.Enabled || a.Push.Contact != "admin@example.com" {
+		t.Errorf("push overrides = %+v", a.Push)
 	}
 }
 
@@ -742,6 +796,12 @@ func TestWatchDefaults(t *testing.T) {
 	}
 	if cfg.Watch.Interface != "" || cfg.Watch.Workers != 0 {
 		t.Errorf("watch defaults = %+v", cfg.Watch)
+	}
+	// A dual-homed forwarding host runs by default: the refusal was a
+	// precaution the measurements did not bear out, and the duplicate
+	// brake is what contains a loop (docs/WATCH.md).
+	if !cfg.Watch.AllowRoutingHost {
+		t.Errorf("allow_routing_host should default to true, got %+v", cfg.Watch)
 	}
 }
 

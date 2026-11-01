@@ -22,8 +22,9 @@ var arpOpen = arp.Open
 // startup: when ARP monitoring is turned off, or arp.Open cannot get a read
 // socket (wrong platform, no CAP_NET_RAW), it logs a clear warning and
 // returns a nil Monitor. onEvent receives every arp.Event; it may be nil, in
-// which case events are just logged until something consumes them (the
-// alarm engine, once wired).
+// which case events are just logged. cmd/shepherd passes a callback that
+// raises them as alarms (arpalarms.go) and tells Watch mode about a moved
+// gateway.
 func startARP(ctx context.Context, cfg config.Config, reg *devices.Registry, onEvent func(arp.Event)) (*arp.Monitor, error) {
 	if !cfg.ARP.Enabled {
 		return nil, nil

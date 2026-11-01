@@ -248,3 +248,13 @@ func TestManualAndScheduledScansDoNotOverlap(t *testing.T) {
 		t.Errorf("dial calls = %d, want %d", got, 2*2*p.burst)
 	}
 }
+
+func TestOptionsRetentionReachesTheStore(t *testing.T) {
+	p := New(Options{Retention: Retention{Raw: time.Hour, Hour: 2 * time.Hour, MaxBytes: 1 << 20}})
+	if got := p.store.opt.Retention; got.MaxBytes != 1<<20 || got.Raw != time.Hour {
+		t.Fatalf("retention = %+v", got)
+	}
+	if got := New(Options{}).store.opt.Retention; got != DefaultRetention() {
+		t.Fatalf("zero retention should mean the default, got %+v", got)
+	}
+}

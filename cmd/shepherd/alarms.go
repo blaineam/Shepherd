@@ -19,7 +19,8 @@ import (
 // and its recovery raise alarms. The returned engine is also handed to the
 // portal (cmd/shepherd/main.go). The Router itself is not returned: nothing
 // outside this file needs to drive it directly, only the engine it delivers
-// for. Web Push is not wired in; see docs/ALARMS.md.
+// for. Web Push is wired through startPush (push.go) when [alarms.push] is
+// on, and the returned pushService is the portal's handle on subscriptions.
 //
 // The returned stop func cancels the Router's own context (derived from ctx,
 // but independently cancelable) and waits for its goroutine to actually
@@ -31,16 +32,21 @@ import (
 // that let main.go's own ctx cancellation race the Router's final
 // Router.Save, intermittently leaving <data_dir>/alarms mid-write when a
 // test's early failure tore the directory down immediately after.
-func startAlarms(ctx context.Context, cfg config.Config, pool *dnsengine.Pool) (eng *alarms.Engine, stop func(), err error) {
+func startAlarms(ctx context.Context, cfg config.Config, pool *dnsengine.Pool) (eng *alarms.Engine, push *pushService, stop func(), err error) {
 	dir := filepath.Join(cfg.DataDir, "alarms")
 	eng, err = alarms.New(alarms.Options{Dir: dir})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	rt := alarms.NewRouter(alarms.RouterOptions{Source: eng, Ntfy: ntfyPublisherFor(cfg.Alarms.Ntfy), Path: alarms.DefaultRouterPath(dir)})
+	push, pusher, err := startPush(cfg)
+	if err != nil {
+		eng.Close()
+		return nil, nil, nil, err
+	}
+	rt := alarms.NewRouter(alarms.RouterOptions{Source: eng, Pusher: pusher, Ntfy: ntfyPublisherFor(cfg.Alarms.Ntfy), Path: alarms.DefaultRouterPath(dir)})
 	if err := rt.Load(); err != nil {
 		eng.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	eng.Subscribe(rt.Handle)
 	rctx, rcancel := context.WithCancel(ctx)
@@ -53,7 +59,7 @@ func startAlarms(ctx context.Context, cfg config.Config, pool *dnsengine.Pool) (
 		wg.Wait()
 		eng.Close()
 	}
-	return eng, stop, nil
+	return eng, push, stop, nil
 }
 
 // ntfyPublisherFor adapts the ntfy config section to the Router's

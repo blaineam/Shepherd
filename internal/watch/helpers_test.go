@@ -85,8 +85,11 @@ type fakePlatform struct {
 	gateway       netip.Addr
 	gwMAC         arp.MAC
 	link          Link
-	neighbors     []Neighbor
-	sender        *intercept.FakeSender
+	// links are the other interfaces Interfaces() reports besides link,
+	// for the wired-over-wireless preference.
+	links     []Link
+	neighbors []Neighbor
+	sender    *intercept.FakeSender
 
 	route6    Route6
 	route6Err error
@@ -142,9 +145,23 @@ func (p *fakePlatform) Link(name string) (Link, error) {
 	if p.linkErr != nil {
 		return Link{}, p.linkErr
 	}
+	for _, l := range p.links {
+		if l.Name == name {
+			return l, nil
+		}
+	}
 	l := p.link
 	l.Name = name
 	return l, nil
+}
+
+func (p *fakePlatform) Interfaces() ([]Link, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.linkErr != nil {
+		return nil, p.linkErr
+	}
+	return append([]Link{p.link}, p.links...), nil
 }
 
 // LocalAddrs is the host's own addresses. The fake answers with the links

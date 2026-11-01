@@ -113,15 +113,44 @@ interface = ""                   # empty auto-detects the default route's interf
 # list update rejected, and more. Always recorded in the portal when enabled.
 enabled = true
 
+[alarms.push]
+# Web Push to every browser that subscribed on the Alarms screen's
+# Notifications tab. A browser can only subscribe from the HTTPS portal
+# ([tls]); the VAPID key pair is generated once under the data directory.
+enabled = true
+contact = ""               # email or https URL a push service may contact; empty picks one
+
 [alarms.ntfy]
-# ntfy delivery is off until you point it at a server: Web Push needs HTTPS,
-# which the portal does not have yet, so ntfy is the one channel wired in.
+# ntfy delivery is off until you point it at a server. It is the fallback
+# when a push could not be delivered, or the second channel with "always".
 enabled = false
 server = ""                # e.g. "https://ntfy.example.com" (self-hosted or public)
 topic = "shepherd-alarms"
 token = ""                 # bearer token, or leave empty and use username/password
 username = ""
 password = ""
+
+[retention]
+# One budget for everything in data_dir (docs/UPDATE.md "Retention"). 0 leaves each
+# store to its own cap: history.max_mb, and 8 MiB each for bandwidth and network
+# health history. A value is split between them and the Overview shows use against it.
+max_mb = 0
+
+[update]
+# Self-update (docs/UPDATE.md): one request a day to GitHub's releases, an
+# alarm when a newer Shepherd exists, and "Update now" on the Overview screen
+# when this install can be replaced in place (not from a read-only container).
+enabled = true
+channel = "stable"         # or "beta" to follow the rolling beta
+check_hours = 24
+
+[threats]
+# Threat feeds (docs/THREATS.md): four curated lists of malware hosts, botnet
+# controllers and hijacked networks (abuse.ch and Spamhaus), matched against
+# every lookup's name and answer and raised as threat-match alarms naming the
+# device. A few hundred kilobytes each, refreshed on the interval.
+enabled = true
+interval_hours = 6
 
 [accountability]
 # Accountability-partner email alerts (docs/ACCOUNTABILITY.md): email a

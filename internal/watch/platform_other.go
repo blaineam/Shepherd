@@ -22,6 +22,7 @@ func (RealPlatform) DefaultRoute() (string, netip.Addr, error) {
 }
 func (RealPlatform) DefaultRoute6() (Route6, error) { return Route6{}, ErrUnsupported }
 func (RealPlatform) Link(string) (Link, error)      { return Link{}, ErrUnsupported }
+func (RealPlatform) Interfaces() ([]Link, error)    { return nil, ErrUnsupported }
 func (RealPlatform) Driver(string) (string, error)  { return "", ErrUnsupported }
 func (RealPlatform) IPForwarding() (bool, error)    { return false, ErrUnsupported }
 func (RealPlatform) InterfaceCounters(string) (Counters, error) {

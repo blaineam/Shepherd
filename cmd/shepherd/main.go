@@ -41,6 +41,7 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 	cfgPath := fs.String("config", "shepherd.toml", "path to the configuration file")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	printToken := fs.Bool("print-token", false, "print the portal access token and exit")
+	rollback := fs.Bool("rollback", false, "put the binary from before the last self-update back and exit")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -49,6 +50,17 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 	}
 	if *showVersion {
 		fmt.Fprintln(stdout, "shepherd", version)
+		return 0
+	}
+	if *rollback {
+		cfg, err := config.Load(*cfgPath)
+		if err == nil {
+			err = rollbackNow(cfg)
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "shepherd: %v\n", err)
+			return 1
+		}
 		return 0
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -67,6 +79,12 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		return err
 	}
 	if err := os.MkdirAll(cfg.DataDir, 0o750); err != nil {
+		return err
+	}
+	// An update that never stayed up is undone before anything else runs
+	// (docs/UPDATE.md); a rollback re-executes this process and does not
+	// return.
+	if err := startupRollback(cfg); err != nil {
 		return err
 	}
 	// An install that has run before has a portal token or a rules.json. Its
@@ -135,12 +153,15 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		DataDir: cfg.DataDir, IdleLockMinutes: cfg.Portal.IdleLockMinutes}
 
 	if cfg.Alarms.Enabled {
-		alarmEngine, stopAlarms, err := startAlarms(ctx, cfg, pool)
+		alarmEngine, push, stopAlarms, err := startAlarms(ctx, cfg, pool)
 		if err != nil {
 			return err
 		}
 		defer stopAlarms()
 		deps.Alarms = alarmEngine
+		if push != nil { // avoid a non-nil interface over a nil *pushService
+			deps.Push = push
+		}
 	}
 
 	var mapLocator *geo.Locator
@@ -179,27 +200,26 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	// so nothing else in run() has to know about it. It is on by default
 	// and refuses cleanly (logged, visible in the portal, DNS untouched) on
 	// a host that cannot run it.
-	watchEngine, err := startWatch(ctx, cfg, registry)
+	trafficStore := openTraffic(cfg)
+	deps.Traffic = trafficStore
+	watchEngine, err := startWatch(ctx, cfg, registry, trafficStore)
 	if err != nil {
 		return err
 	}
 	if watchEngine != nil { // avoid a non-nil interface over a nil *watch.Engine
 		deps.Watch = watchEngine
 	}
-	// The passive ARP monitor's gateway-mac-changed event is the one ARP
-	// event something now consumes: it tells Watch mode to re-read the
+	// Every passive ARP event is logged and, when the alarm engine is on,
+	// raised as the alarm docs/ARP.md's table maps it to (arpalarms.go).
+	// The gateway-mac-changed event also tells Watch mode to re-read the
 	// kernel's neighbour table, since every relayed frame is addressed to
-	// the gateway's MAC and a stale one would send traffic nowhere. The
-	// event's own MAC is never taken on trust; the engine re-reads the
-	// table itself and only acts if that moved too. Every other event is
-	// still just logged.
-	var onARPEvent func(arp.Event)
-	if watchEngine != nil {
-		onARPEvent = func(e arp.Event) {
-			log.Printf("arp: %s (%s): %s", e.Type, e.Severity, e.Summary)
-			if e.Type == arp.EventGatewayMACChanged {
-				watchEngine.GatewayChanged()
-			}
+	// the gateway's MAC and a stale one would send traffic nowhere; the
+	// event's own MAC is never taken on trust, the engine re-reads the
+	// table itself and only acts if that moved too.
+	onARPEvent := func(e arp.Event) {
+		reportARPEvent(deps.Alarms, registry, e)
+		if e.Type == arp.EventGatewayMACChanged && watchEngine != nil {
+			watchEngine.GatewayChanged()
 		}
 	}
 	arpMon, err := startARP(ctx, cfg, registry, onARPEvent)
@@ -229,6 +249,25 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	deps.VerifySMTP = verifySMTP
 	deps.DNSProviderUsers = dnsProviderUsers(cfg)
 	deps.OnSecretsChanged = secretsChanged(sec, acctRelay, kicker)
+
+	// ---- Self-update (docs/UPDATE.md) -----------------------------------
+	startRetention(ctx, cfg, deps.Alarms)
+	upd, err := startUpdate(ctx, cfg, deps.Alarms)
+	if err != nil {
+		return err
+	}
+	if upd != nil { // avoid a non-nil interface over a nil *updater
+		deps.Update = upd
+	}
+
+	// ---- Threat feeds (docs/THREATS.md) ---------------------------------
+	threatEngine, err := startThreats(ctx, cfg, engine, registry, deps.Alarms)
+	if err != nil {
+		return err
+	}
+	if threatEngine != nil { // avoid a non-nil interface over a nil *threats.Engine
+		deps.Threats, deps.ThreatsEnabled = threatEngine, true
+	}
 
 	if cfg.Portscan.Enabled {
 		scanner, err := startPortscan(ctx, cfg, registry)
@@ -427,6 +466,6 @@ func openHistory(cfg config.Config) (*history.Store, error) {
 	}
 	return history.Open(history.Options{
 		Dir: filepath.Join(dir, "store"), Keys: keys,
-		RetentionDays: cfg.History.RetentionDays, MaxBytes: int64(cfg.History.MaxMB) << 20,
+		RetentionDays: cfg.History.RetentionDays, MaxBytes: capsFor(cfg).History,
 	})
 }

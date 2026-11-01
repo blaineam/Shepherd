@@ -9,12 +9,15 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"shepherd/internal/arp"
 	"shepherd/internal/devices"
 	"shepherd/internal/intercept"
+	"shepherd/internal/traffic"
 )
 
 func TestNewRequiresARegistry(t *testing.T) {
@@ -362,8 +365,19 @@ func TestHealthFailureBacksOffThenRetries(t *testing.T) {
 
 // relayFrame is a minimal IPv4 frame from the phone to Shepherd's MAC, the
 // shape the Relay relays, so the FakeSender-backed relay path can credit
-// the phone with traffic.
+// the phone with traffic. Each call is a different packet (the IP ID
+// moves), as a device's traffic is; echoFrame is the same packet every
+// time, as a loop delivers it.
+var relayFrameID atomic.Uint32
+
 func relayFrame() []byte {
+	f := echoFrame()
+	id := uint16(relayFrameID.Add(1))
+	f[14+4], f[14+5] = byte(id>>8), byte(id)
+	return f
+}
+
+func echoFrame() []byte {
 	f := make([]byte, 14+20+8)
 	copy(f[0:6], shepherdMAC[:])
 	copy(f[6:12], phoneMAC[:])
@@ -1269,14 +1283,46 @@ func TestTheKillSwitchDoesNotEraseTheLearnedDriverList(t *testing.T) {
 // interface counters show exactly that traffic mirrored: received and
 // transmitted the same, with the relay accounting for all of it. That is
 // the shape both live incidents had.
-// loopTickUnrelayed moves the interface counters without feeding the relay,
-// which is the shape measured on real hardware: 54,000 packets a second
-// received against 49,000 transmitted while the relay reported 8 pkt/s. The
-// brake must trip on this, and the version keyed on the relay's share could
-// not see it at all.
+// loopTickUnrelayed moves the interface counters without feeding the relay:
+// mirrored counters with nothing circulating, which is what a device's
+// upload through the relay looks like. Below the hard floor the brake must
+// leave it alone; above it, it trips on the counters alone.
 func (te *testEngine) loopTickUnrelayed(t *testing.T, plat *fakePlatform, rx, tx uint64) {
 	t.Helper()
 	plat.addCounters(rx*42, rx, tx*42, tx)
+	te.clock.Advance(time.Second)
+}
+
+// loopTickEcho is a loop with the measured counters: the relay sees the
+// same frame over and over while the interface shows rx and tx.
+func (te *testEngine) loopTickEcho(t *testing.T, plat *fakePlatform, rx, tx uint64) {
+	t.Helper()
+	te.mu.Lock()
+	c := te.ctrl
+	te.mu.Unlock()
+	for i := 0; i < 200; i++ {
+		if _, err := c.HandleFrame(echoFrame()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plat.addCounters(rx*42, rx, tx*42, tx)
+	te.clock.Advance(time.Second)
+}
+
+// uploadTick is a device uploading through the relay: the relay carries n
+// distinct frames and the interface mirrors them exactly. Indistinguishable
+// from a loop by the counters, and not one.
+func (te *testEngine) uploadTick(t *testing.T, plat *fakePlatform, n uint64) {
+	t.Helper()
+	te.mu.Lock()
+	c := te.ctrl
+	te.mu.Unlock()
+	for i := uint64(0); i < n; i++ {
+		if _, err := c.HandleFrame(relayFrame()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plat.addCounters(n*1400, n, n*1400, n)
 	te.clock.Advance(time.Second)
 }
 
@@ -1286,7 +1332,12 @@ func (te *testEngine) loopTick(t *testing.T, plat *fakePlatform, n uint64, mirro
 	c := te.ctrl
 	te.mu.Unlock()
 	for i := uint64(0); i < n; i++ {
-		if _, err := c.HandleFrame(relayFrame()); err != nil {
+		// A loop is the same frame coming round; busy is distinct frames.
+		f := relayFrame()
+		if mirrored {
+			f = echoFrame()
+		}
+		if _, err := c.HandleFrame(f); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1319,7 +1370,7 @@ func TestTheLoopBrakeStopsARelayCarryingItsOwnOutput(t *testing.T) {
 	if snap.Armed {
 		t.Fatal("the brake should have disarmed steering")
 	}
-	if !strings.Contains(snap.Reason, "mirroring traffic") {
+	if !strings.Contains(snap.Reason, "round in a loop") {
 		t.Fatalf("reason = %q, want it to say what happened", snap.Reason)
 	}
 	if te.isSteered(phoneMAC) {
@@ -1386,54 +1437,58 @@ func TestTheLoopBrakeHasAFloor(t *testing.T) {
 	}
 }
 
-// The loop measured on real hardware put almost nothing through the relay's
-// own counter -- 8 pkt/s against 54,000 received -- so a brake that asked
-// the relay how much it was carrying watched the whole thing happen. This
-// is that shape, to the ratio: mirrored within 9.3%, over the floor, relay
-// silent.
-func TestTheLoopBrakeStopsALoopTheRelayIsNotCarrying(t *testing.T) {
-	statePath := t.TempDir() + "/watch.json"
+// Mirrored counters are what a device uploading through the relay looks
+// like: every frame received is one transmitted. The brake once stopped an
+// overnight iCloud upload at 24,000 packets a second on that reading alone
+// (the sampled frames all carried IP ID 0 and TTL 64, as macOS sends
+// don't-fragment packets, and were taken for one frame going round). With
+// every frame distinct and nothing coming back, it must leave steering
+// alone and say so, once.
+func TestTheLoopBrakeLeavesAnUploadAlone(t *testing.T) {
 	plat := newFakePlatform()
-	te := newTestEngine(t, plat, func(c *Config) { c.StatePath = statePath })
-	// The *production* floor, not a test one: the point of this test is that
-	// loopFloorPPS is low enough for the loop actually measured on hardware.
-	// It was 50,000 once, which is above this loop, so the brake would have
-	// watched it happen.
+	te := newTestEngine(t, plat, nil)
+	te.loopFloor = 100
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	for i := 0; i < loopHits*3; i++ {
+		te.uploadTick(t, plat, 400)
+	}
+	if !te.Snapshot().Armed {
+		t.Fatal("the brake stopped a device's upload")
+	}
+	if !te.isSteered(phoneMAC) {
+		t.Fatal("steering should be untouched")
+	}
+	var noted int
+	for _, l := range te.logs.all() {
+		if strings.Contains(l, "not a loop, so steering continues") {
+			noted++
+		}
+	}
+	if noted != 1 {
+		t.Fatalf("the mirrored-but-distinct note should be logged exactly once an hour; got %d in %v", noted, te.logs.all())
+	}
+}
+
+// Mirrored counters with the relay silent, below the hard floor, are not a
+// loop either: the measured 26,994 against 24,492 was an upload.
+func TestTheLoopBrakeLeavesMirroredCountersAloneBelowTheHardFloor(t *testing.T) {
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, nil)
 	te.loopFloor = loopFloorPPS
 	te.addPhone(t)
 	te.start(t)
 	te.waitRunning(t)
 	te.waitSteered(t, phoneMAC, true)
 
-	// The measured rates, verbatim: 26,994 received against 24,492
-	// transmitted in one second, 9.27% apart, relay reporting nothing. One
-	// tick per poll, because FakeClock drops a tick fired before the engine
-	// has registered its next waiter, and a dropped tick is silent.
-	waitFor(t, "the loop brake to trip with the relay silent", func() bool {
+	for i := 0; i < loopHits*2; i++ {
 		te.loopTickUnrelayed(t, plat, 26994, 24492)
-		return !te.Snapshot().Armed
-	})
-
-	if te.isSteered(phoneMAC) {
-		t.Fatal("nothing should still be steered")
 	}
-	st, err := loadState(statePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !st.Killed {
-		t.Fatal("the stop must persist")
-	}
-	// The share is still reported, because it is the evidence that the loop
-	// is not the relay's own output.
-	var saidShare bool
-	for _, l := range te.logs.all() {
-		if strings.Contains(l, "loop brake evidence:") && strings.Contains(l, "the relay reported 0") {
-			saidShare = true
-		}
-	}
-	if !saidShare {
-		t.Fatalf("the brake must report the relay's share as evidence; got %v", te.logs.all())
+	if !te.Snapshot().Armed || !te.isSteered(phoneMAC) {
+		t.Fatal("the brake tripped on mirrored counters with nothing circulating")
 	}
 }
 
@@ -1608,7 +1663,7 @@ func TestTheLoopBrakeRecordsItsEvidenceWhereARestartCannotLoseIt(t *testing.T) {
 	te.waitSteered(t, phoneMAC, true)
 
 	waitFor(t, "the loop brake to trip", func() bool {
-		te.loopTickUnrelayed(t, plat, 26994, 24492)
+		te.loopTickEcho(t, plat, 26994, 24492)
 		return !te.Snapshot().Armed
 	})
 
@@ -1770,4 +1825,208 @@ func TestRelayEvidenceLines(t *testing.T) {
 			t.Errorf("a verdict was drawn from 3 samples:\n%s", joined)
 		}
 	})
+}
+
+// tcpAckFrame is a TCP segment from the phone to a remote, carrying the
+// given acknowledgement number, the shape the download meter credits.
+func tcpAckFrame(port uint16, ack uint32) []byte {
+	f := make([]byte, 14+20+20)
+	copy(f[0:6], shepherdMAC[:])
+	copy(f[6:12], phoneMAC[:])
+	f[12], f[13] = 0x08, 0x00
+	ip := f[14:]
+	ip[0] = 0x45
+	ip[2], ip[3] = 0, 40
+	ip[8] = 64
+	ip[9] = 6
+	copy(ip[12:16], phoneIP.AsSlice())
+	copy(ip[16:20], []byte{198, 51, 100, 1})
+	tcp := ip[20:]
+	tcp[0], tcp[1] = byte(port>>8), byte(port)
+	tcp[2], tcp[3] = 0x01, 0xbb
+	tcp[8], tcp[9], tcp[10], tcp[11] = byte(ack>>24), byte(ack>>16), byte(ack>>8), byte(ack)
+	tcp[12] = 5 << 4
+	tcp[13] = 0x10 // ACK
+	return f
+}
+
+// recordingTraffic is a TrafficRecorder that remembers every call.
+type recordingTraffic struct {
+	mu    sync.Mutex
+	calls []map[string]traffic.Delta
+}
+
+func (r *recordingTraffic) Record(_ time.Time, rows map[string]traffic.Delta) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := make(map[string]traffic.Delta, len(rows))
+	for k, v := range rows {
+		cp[k] = v
+	}
+	r.calls = append(r.calls, cp)
+}
+
+func (r *recordingTraffic) total(id string) traffic.Delta {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var d traffic.Delta
+	for _, c := range r.calls {
+		d.Up += c[id].Up
+		d.Down += c[id].Down
+	}
+	return d
+}
+
+func TestDownloadEstimateFeedsRatesAndTheTrafficRecorder(t *testing.T) {
+	rec := &recordingTraffic{}
+	te := newTestEngine(t, newFakePlatform(), func(c *Config) { c.Traffic = rec })
+	id := te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+	te.mu.Lock()
+	c := te.ctrl
+	te.mu.Unlock()
+	// A download of 3000 bytes as the phone's ACKs describe it: a
+	// baseline, then two advances.
+	for _, ack := range []uint32{1000, 2000, 4000} {
+		if relayed, err := c.HandleFrame(tcpAckFrame(50000, ack)); err != nil || !relayed {
+			t.Fatalf("relay: %v %v", relayed, err)
+		}
+	}
+	te.clock.Advance(time.Second)
+	waitFor(t, "download rate", func() bool { return te.status(t, id).RxBytesPerSecond > 0 })
+	ds := te.status(t, id)
+	if ds.BytesReceivedEst != 3000 || ds.BytesRelayed != 3*54 {
+		t.Fatalf("device = %+v, want 3000 received (est.) and 162 relayed", ds)
+	}
+	snap := te.Snapshot()
+	if snap.Stats.BytesReceivedEst != 3000 || snap.Stats.RxBytesPerSecond <= 0 {
+		t.Fatalf("stats = %+v", snap.Stats)
+	}
+	// The recorder got one row for the phone, by registry ID, with both
+	// directions, and nothing for a quiet second.
+	waitFor(t, "traffic row", func() bool { return rec.total(id).Down == 3000 })
+	if got := rec.total(id); got.Up != 162 {
+		t.Fatalf("recorded %+v, want 162 up", got)
+	}
+	rec.mu.Lock()
+	n := len(rec.calls)
+	rec.mu.Unlock()
+	te.clock.Advance(time.Second)
+	time.Sleep(20 * time.Millisecond)
+	rec.mu.Lock()
+	after := len(rec.calls)
+	rec.mu.Unlock()
+	if after != n {
+		t.Fatalf("a quiet second produced %d extra rows", after-n)
+	}
+	// Movement after that is a fresh delta, not a repeat of the total.
+	if relayed, err := c.HandleFrame(tcpAckFrame(50000, 4100)); err != nil || !relayed {
+		t.Fatalf("relay: %v %v", relayed, err)
+	}
+	te.clock.Advance(time.Second)
+	waitFor(t, "second row", func() bool { return rec.total(id).Down == 3100 })
+}
+
+func TestTrafficRecorderIsOptionalAndSkipsUnknownMACs(t *testing.T) {
+	te := newTestEngine(t, newFakePlatform(), nil)
+	// No recorder: a no-op, not a panic.
+	te.recordTraffic(t0, map[arp.MAC]traffic.Delta{phoneMAC: {Up: 1}})
+	rec := &recordingTraffic{}
+	te.cfg.Traffic = rec
+	te.recordTraffic(t0, nil)
+	te.recordTraffic(t0, map[arp.MAC]traffic.Delta{mustMAC("02:00:5e:00:00:99"): {Up: 1}})
+	if len(rec.calls) != 0 {
+		t.Fatalf("unknown MAC or empty rows reached the recorder: %v", rec.calls)
+	}
+	// Two MACs of one merged device make one row.
+	id := te.addPhone(t)
+	other := mustMAC("02:00:5e:00:00:11")
+	otherID := te.reg.Observe(devices.Observation{Source: devices.SourceNeighbor, MAC: other.String(), IP: "192.0.2.11"})
+	if err := te.reg.Merge(id, otherID); err != nil {
+		t.Fatal(err)
+	}
+	te.recordTraffic(t0, map[arp.MAC]traffic.Delta{phoneMAC: {Up: 1, Down: 10}, other: {Up: 2, Down: 20}})
+	if len(rec.calls) != 1 || len(rec.calls[0]) != 1 || rec.calls[0][id] != (traffic.Delta{Up: 3, Down: 30}) {
+		t.Fatalf("rows = %v", rec.calls)
+	}
+}
+
+// Ethernet is always preferred; Wi-Fi is only a fallback. A host with both
+// on one subnet can publish its default route through either, and a relay
+// on Wi-Fi shares the air with the devices it relays.
+func TestPrefersAWiredInterfaceOverTheWirelessDefaultRoute(t *testing.T) {
+	plat := newFakePlatform()
+	plat.iface = "wlan0" // the default route is through Wi-Fi
+	wired := plat.link
+	wired.Name = "eth0"
+	wired.IPv4Nets = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+	wireless := plat.link
+	wireless.Name = "wlan0"
+	wireless.Wireless = true
+	wireless.MAC = mustMAC("02:00:5e:00:00:77")
+	wireless.IPv4Nets = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+	plat.links = []Link{wired, wireless}
+	te := newTestEngine(t, plat, nil)
+	te.start(t)
+	te.waitRunning(t)
+	if snap := te.Snapshot(); snap.Interface != "eth0" {
+		t.Fatalf("interface = %q, want the wired eth0", snap.Interface)
+	}
+	var said bool
+	for _, l := range te.logs.all() {
+		if strings.Contains(l, "using the wired eth0") {
+			said = true
+		}
+	}
+	if !said {
+		t.Fatalf("the preference should be logged; got %v", te.logs.all())
+	}
+}
+
+func TestWirelessIsUsedWhenNothingWiredReachesTheGateway(t *testing.T) {
+	plat := newFakePlatform()
+	plat.iface = "wlan0"
+	wireless := plat.link
+	wireless.Name = "wlan0"
+	wireless.Wireless = true
+	wireless.IPv4Nets = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+	elsewhere := plat.link
+	elsewhere.Name = "eth1"
+	elsewhere.MAC = mustMAC("02:00:5e:00:00:78")
+	elsewhere.IPv4Nets = []netip.Prefix{netip.MustParsePrefix("10.9.0.0/24")} // another network
+	plat.links = []Link{wireless, elsewhere}
+	te := newTestEngine(t, plat, nil)
+	te.start(t)
+	te.waitRunning(t)
+	if snap := te.Snapshot(); snap.Interface != "wlan0" {
+		t.Fatalf("interface = %q, want the wireless fallback", snap.Interface)
+	}
+	// And a configured interface is never second-guessed.
+	plat2 := newFakePlatform()
+	plat2.iface = "wlan0"
+	plat2.links = []Link{wireless, wired(plat2.link)}
+	te2 := newTestEngine(t, plat2, func(c *Config) { c.Interface = "wlan0" })
+	te2.start(t)
+	te2.waitRunning(t)
+	if snap := te2.Snapshot(); snap.Interface != "wlan0" {
+		t.Fatalf("interface = %q, want the configured wlan0", snap.Interface)
+	}
+	// Interfaces() failing leaves the route's choice alone.
+	plat3 := newFakePlatform()
+	plat3.iface = "wlan0"
+	e3 := newTestEngine(t, plat3, nil)
+	plat3.mu.Lock()
+	plat3.link.Wireless = true
+	plat3.mu.Unlock()
+	if got := e3.preferWired("wlan0", gwIP); got != "wlan0" {
+		t.Fatalf("with no wired alternative preferWired = %q", got)
+	}
+}
+
+func wired(l Link) Link {
+	l.Name = "eth0"
+	l.IPv4Nets = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+	return l
 }

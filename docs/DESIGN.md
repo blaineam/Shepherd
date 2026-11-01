@@ -13,7 +13,7 @@ much traffic reaches it:
 | Profile | How | Capabilities | Risk if Shepherd is down |
 |---|---|---|---|
 | **Guard** (default) | Router hands out Shepherd as DNS | DNS filtering, categories, allow/block lists, Tailscale-wide protection, remote access, uptime and speed tests | DNS fallback only; no path risk |
-| **Watch** (**retired**, off by default — [WATCH.md](WATCH.md)) | Shepherd steered chosen devices' IPv4 traffic through itself by one-sided ARP | Outbound destinations only. The per-device bandwidth it promised was never achievable: one-sided steering cannot see the return path | Selected devices lose IPv4 internet until they recover |
+| **Watch** (opt-in, off by default — [WATCH.md](WATCH.md)) | Shepherd steers chosen devices' IPv4 traffic through itself by one-sided ARP | Outbound destinations, upload measured exactly, download estimated from TCP acknowledgements ([TRAFFIC.md](TRAFFIC.md)); one-sided steering cannot see the return path itself | Selected devices lose IPv4 internet until they recover |
 | **Gateway** (future, optional) | Shepherd as router | Everything | Total outage |
 
 Watch mode is IPv4 only. See [IPV6.md](IPV6.md).

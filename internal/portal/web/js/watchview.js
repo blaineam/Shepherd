@@ -25,7 +25,7 @@ export function createWatch({ root, mgmt, notify, onOpenDevice = null }) {
   const head = el('div', 'pg-head stack');
   const title = el('h2', 'pg-title');
   title.append(el('span', '', 'Watch'));
-  head.append(title, el('p', 'pg-sub muted', 'Watch mode steers each device’s outbound traffic through Shepherd on its way to your router, so Shepherd sees what a device actually connects to even when it never asks Shepherd to look up a name. It only ever sees the outbound half: what a device sends, not what it downloads. Nothing here blocks anything.'));
+  head.append(title, el('p', 'pg-sub muted', 'Watch mode steers each device’s outbound traffic through Shepherd on its way to your router, so Shepherd sees what a device actually connects to even when it never asks Shepherd to look up a name. It carries only the outbound half, what a device sends; downloads are estimated from each device’s own acknowledgements on the Bandwidth screen. Nothing here blocks anything.'));
   const body = el('div', 'wm-body');
   root.append(head, body);
 
@@ -120,12 +120,13 @@ export function createWatch({ root, mgmt, notify, onOpenDevice = null }) {
     };
     tile('Relayed now', fmtBitsPerSecond(st.bytes_per_second), fmtPacketsPerSecond(st.packets_per_second));
     tile('Relayed in total', fmtTotalBytes(st.bytes_relayed), Number(st.frames_relayed || 0).toLocaleString() + ' packets');
+    tile('Download now', fmtBitsPerSecond(st.rx_bytes_per_second), 'estimated · ' + fmtTotalBytes(st.bytes_received_est) + ' in total');
     tile('Devices watched', String(Number(status.steered) || 0), (summarize(status.devices).unhealthy || 0) + ' with no traffic yet');
     liveCard.append(tiles);
     if (Number(st.frames_for_shepherd_itself)) {
       liveCard.append(el('p', 'muted small wm-note', Number(st.frames_for_shepherd_itself).toLocaleString() + ' packets were left alone because a watched device was talking to Shepherd itself (a DNS lookup, this portal) rather than to the internet.'));
     }
-    liveCard.append(el('p', 'muted small wm-note', 'This is the outbound direction only, so it is always less than a device’s real traffic: downloads come straight back from your router and never pass through Shepherd.'));
+    liveCard.append(el('p', 'muted small wm-note', 'Relayed traffic is the outbound direction only: downloads come straight back from your router and never pass through Shepherd. The download figure is estimated from each device’s TCP acknowledgements and cannot see QUIC, other UDP or VPN traffic; the Bandwidth screen has the history.'));
   }
 
   // One device row. It is a button when the Devices screen can be opened
@@ -142,7 +143,7 @@ export function createWatch({ root, mgmt, notify, onOpenDevice = null }) {
     const main = el('div', 'lr-main');
     main.append(el('div', 'lr-name', d.name || d.device_id || 'Unknown device'));
     if (withRate) {
-      const parts = [fmtBitsPerSecond(d.bytes_per_second), fmtPacketsPerSecond(d.packets_per_second), fmtTotalBytes(d.bytes_relayed) + ' so far'];
+      const parts = [fmtBitsPerSecond(d.bytes_per_second) + ' up', fmtBitsPerSecond(d.rx_bytes_per_second) + ' down (est.)', fmtPacketsPerSecond(d.packets_per_second), fmtTotalBytes(d.bytes_relayed) + ' so far'];
       main.append(el('p', 'lr-desc mono', parts.join('  ·  ')));
       const addrs = (d.steered || []).map((s) => s.ip + ' · ' + s.mac).join('   ');
       if (addrs) main.append(el('p', 'lr-desc mono muted small', addrs));

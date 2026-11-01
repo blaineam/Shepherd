@@ -33,6 +33,11 @@ type Engine struct {
 	// filter runs, so the device registry can learn who is asking. It must be
 	// cheap and rate-limit itself.
 	ClientSeen func(clientIP string)
+	// OnEntry, when set, is called with every recorded query, allowed,
+	// cached, blocked or failed, after it has been logged. It runs on the
+	// DNS path and must not block: internal/threats matches each one
+	// against its feeds in a few map lookups.
+	OnEntry func(Entry)
 	// Observe is called with every allowed or cached query's real answer
 	// addresses (never a blocked query's sinkhole address), so the automatic
 	// classifier can learn what a device talks to. Must be cheap; the
@@ -230,6 +235,9 @@ func (e *Engine) done(entry Entry, start time.Time) {
 	entry.Ms = float64(time.Since(start).Microseconds()) / 1000
 	e.Log.Add(entry)
 	e.Stats.Record(entry)
+	if e.OnEntry != nil {
+		e.OnEntry(entry)
+	}
 }
 
 // reportAccess calls OnAccess when entry's name matches a watched item.

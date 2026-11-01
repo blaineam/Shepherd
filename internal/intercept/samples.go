@@ -123,15 +123,16 @@ func (c *Controller) ReturnPathCounts() (oursReturning, toGateway uint64) {
 // made of. A healthy relay reports zero, for as long as it runs. Zero
 // where the data plane in use does not count them.
 func (c *Controller) DuplicatesSuppressed() uint64 {
+	n := c.duplicatesTotal.Load() // the userspace relay's own brake
 	o := c.observer.Load()
 	if o == nil {
-		return 0
+		return n
 	}
 	s, ok := (*o).(frameSampler)
 	if !ok {
-		return 0
+		return n
 	}
-	return s.duplicatesSuppressed()
+	return n + s.duplicatesSuppressed()
 }
 
 // EchoDelays reports how long echoed frames took to come back. Zero values
@@ -155,15 +156,31 @@ func (c *Controller) EchoDelays() EchoDelays {
 // open about what re-delivers the frames (docs/WATCH.md). Empty where the
 // data plane in use does not count them.
 func (c *Controller) DuplicatesByDevice() map[arp.MAC]uint64 {
+	var out map[arp.MAC]uint64
+	for _, d := range c.Status() { // the userspace relay's own brake
+		if d.DuplicatesSuppressed == 0 {
+			continue
+		}
+		if out == nil {
+			out = map[arp.MAC]uint64{}
+		}
+		out[d.MAC] += d.DuplicatesSuppressed
+	}
 	o := c.observer.Load()
 	if o == nil {
-		return nil
+		return out
 	}
 	s, ok := (*o).(frameSampler)
 	if !ok {
-		return nil
+		return out
 	}
-	return s.duplicatesByDevice()
+	for mac, n := range s.duplicatesByDevice() {
+		if out == nil {
+			out = map[arp.MAC]uint64{}
+		}
+		out[mac] += n
+	}
+	return out
 }
 
 // sampleFlow is what SummarizeSamples groups by: who sent it, where it was
@@ -185,17 +202,41 @@ type sampleFlow struct {
 // a router; repeated IDs with one TTL are a Layer 2 loop; all-distinct IDs
 // are traffic. It never logs payload -- only addresses, ports, TTL and ID.
 func SummarizeSamples(samples []FrameSample) []string {
+	lines, _ := AnalyzeSamples(samples)
+	return lines
+}
+
+// AnalyzeSamples is SummarizeSamples with its conclusion as a value:
+// circulating is true when at least one flow's samples are the *same
+// frame* seen over and over, which is what a relay loop is made of.
+//
+// "The same frame" means identical in the identification field, the
+// total length, the TTL and the first sixteen bytes of the transport
+// header -- not merely the same identification field. That distinction
+// is the whole verdict: macOS, iOS and Linux (for an unconnected socket)
+// send every don't-fragment packet with identification 0, so a stream of
+// distinct QUIC or TCP packets from such a device shares one ID and one
+// TTL while being thousands of different packets. Judged by the ID alone
+// that reads as a loop, and the loop brake once stopped an overnight
+// iCloud upload on that reading (docs/WATCH.md).
+func AnalyzeSamples(samples []FrameSample) (lines []string, circulating bool) {
 	if len(samples) == 0 {
-		return nil
+		return nil, false
+	}
+	type identity struct {
+		id, totLen uint16
+		ttl        uint8
+		l4         [16]byte
 	}
 	type agg struct {
 		n        int
 		ttlMin   uint8
 		ttlMax   uint8
 		ids      map[uint16]int
+		seen     map[identity]int
 		bytes    uint64
 		nonIPv4  int
-		repeated int // samples whose IP ID had been seen before within this batch
+		repeated int // samples identical to one already seen in this batch
 	}
 	flows := map[sampleFlow]*agg{}
 	other := 0
@@ -229,7 +270,7 @@ func SummarizeSamples(samples []FrameSample) []string {
 		}
 		a := flows[f]
 		if a == nil {
-			a = &agg{ttlMin: ttl, ttlMax: ttl, ids: map[uint16]int{}}
+			a = &agg{ttlMin: ttl, ttlMax: ttl, ids: map[uint16]int{}, seen: map[identity]int{}}
 			flows[f] = a
 		}
 		a.n++
@@ -240,10 +281,19 @@ func SummarizeSamples(samples []FrameSample) []string {
 		if ttl > a.ttlMax {
 			a.ttlMax = ttl
 		}
-		if a.ids[id] > 0 {
+		a.ids[id]++
+		// The same frame: same ID, length and TTL, and the same transport
+		// header. A frame circulating through a router keeps everything
+		// but the TTL, so the TTL is left out of that identity on purpose
+		// and reported through the TTL range instead.
+		key := identity{id: id, totLen: binary.BigEndian.Uint16(b[16:18])}
+		if end := 14 + ihl + 16; end <= len(b) {
+			copy(key.l4[:], b[14+ihl:end])
+		}
+		if a.seen[key] > 0 {
 			a.repeated++
 		}
-		a.ids[id]++
+		a.seen[key]++
 	}
 	keys := make([]sampleFlow, 0, len(flows))
 	for k := range flows {
@@ -270,17 +320,21 @@ func SummarizeSamples(samples []FrameSample) []string {
 		if k.proto == "tcp" || k.proto == "udp" {
 			ports = fmt.Sprintf(" :%d->:%d", k.srcPort, k.dstPort)
 		}
-		verdict := "distinct ids"
+		verdict := "distinct packets"
 		switch {
 		case a.n >= 4 && a.repeated >= a.n/2 && a.ttlMax != a.ttlMin:
-			verdict = "SAME IDs, FALLING TTL: circulating through a router"
+			verdict = "SAME FRAME, FALLING TTL: circulating through a router"
+			circulating = true
 		case a.n >= 4 && a.repeated >= a.n/2:
-			verdict = "SAME IDs, SAME TTL: circulating at layer 2"
+			verdict = "SAME FRAME, SAME TTL: circulating at layer 2"
+			circulating = true
 		case a.repeated > 0:
-			verdict = fmt.Sprintf("%d repeated ids", a.repeated)
+			verdict = fmt.Sprintf("%d repeated frames", a.repeated)
+		case len(a.ids) == 1 && a.ids[0] == a.n:
+			verdict = "distinct packets (id 0 on every one: a don't-fragment sender, not a loop)"
 		}
 		out = append(out, fmt.Sprintf("%4d  %s -> %s  %s %s->%s%s  %s  %d ids, %s  avg %d B",
 			a.n, k.src, k.dst, k.proto, k.srcIP, k.dstIP, ports, ttl, len(a.ids), verdict, a.bytes/uint64(a.n)))
 	}
-	return out
+	return out, circulating
 }

@@ -5,7 +5,7 @@
 import { el } from './dom.js';
 import { button, iconButton, toggle, emptyState, unavailableCard, confirmDialog } from './ui.js';
 import { unavailable } from './mgmt.js';
-import { parseTarget, formatTarget, hostWarnings, sortHosts, filterHosts, certSummary, hostBody, publicURL } from './reverseproxy.js';
+import { parseTarget, formatTarget, formatAllow, hostWarnings, hostBadges, sortHosts, filterHosts, certSummary, hostBody, publicURL } from './reverseproxy.js';
 import { dnsProviderSummary, usedByText, sourceText, tokenBody } from './secrets.js';
 
 export function createReverseProxy({ root, mgmt, notify }) {
@@ -130,16 +130,26 @@ export function createReverseProxy({ root, mgmt, notify }) {
     const syncSkip = () => { const t = parseTarget(target.value); skipWrap.hidden = !(t.ok && t.scheme === 'https'); };
     target.addEventListener('input', syncSkip);
     syncSkip();
+    const allow = el('input', 'mono');
+    allow.placeholder = 'anyone';
+    allow.setAttribute('aria-label', 'Who may reach it');
+    allow.autocomplete = 'off';
+    allow.spellcheck = false;
+    allow.value = h ? formatAllow(h.allow) : '';
+    const hsts = toggle({ checked: h ? !!h.hsts : false, label: 'Pin browsers to HTTPS (HSTS)', title: 'Adds a Strict-Transport-Security header of 30 days, so a browser that has seen this name over HTTPS refuses plain http for it. Off until you are sure the name will stay on HTTPS.' });
+    const access = el('div', 'rp-access small');
+    const accessLabel = el('label', 'muted', 'Who may reach it');
+    access.append(accessLabel, allow, el('span', 'muted', 'blank for anyone; or "local" (this network and Tailscale), addresses and prefixes like 192.0.2.0/24, separated by commas'), hsts.root, el('span', '', 'Pin browsers to HTTPS (HSTS)'));
     const err = el('p', 'err small');
     err.setAttribute('role', 'status');
     const read = (enabled) => {
-      const r = hostBody({ domain: domain.value, target: target.value, skipVerify: skip.input.checked, enabled });
+      const r = hostBody({ domain: domain.value, target: target.value, skipVerify: skip.input.checked, allow: allow.value, hsts: hsts.input.checked, enabled });
       err.textContent = r.ok ? '' : r.error;
-      if (!r.ok) (r.field === 'domain' ? domain : target).focus();
+      if (!r.ok) (r.field === 'domain' ? domain : r.field === 'allow' ? allow : target).focus();
       return r;
     };
-    const reset = () => { domain.value = ''; target.value = ''; skip.input.checked = false; syncSkip(); };
-    return { domain, target, skipWrap, err, read, reset };
+    const reset = () => { domain.value = ''; target.value = ''; allow.value = ''; skip.input.checked = false; hsts.input.checked = false; syncSkip(); };
+    return { domain, target, skipWrap, access, err, read, reset };
   }
 
   function paintAdd() {
@@ -150,7 +160,7 @@ export function createReverseProxy({ root, mgmt, notify }) {
     add.type = 'submit';
     const row = el('div', 'rp-form-row');
     row.append(fields.domain, el('span', 'rp-arrow muted', '→'), fields.target, add);
-    f.append(row, fields.skipWrap, fields.err);
+    f.append(row, fields.skipWrap, fields.access, fields.err);
     f.addEventListener('submit', async (e) => {
       e.preventDefault();
       const r = fields.read(true);
@@ -183,6 +193,11 @@ export function createReverseProxy({ root, mgmt, notify }) {
     const meta = el('div', 'lr-meta');
     if (!h.enabled) meta.append(el('span', 'badge', 'Off: answers 404'));
     if (h.target_scheme === 'https') meta.append(el('span', 'badge enc', 'HTTPS backend'));
+    for (const b of hostBadges(h)) {
+      const x = el('span', 'badge', b.label);
+      x.title = b.title;
+      meta.append(x);
+    }
     for (const w of hostWarnings(h, status && status.wildcard)) {
       const b = el('span', 'badge warn', w.label);
       b.title = w.title;
@@ -207,7 +222,7 @@ export function createReverseProxy({ root, mgmt, notify }) {
     const main = el('div', 'lr-main');
     const line = el('div', 'rp-form-row');
     line.append(fields.domain, el('span', 'rp-arrow muted', '→'), fields.target, save, cancel);
-    main.append(line, fields.skipWrap, fields.err);
+    main.append(line, fields.skipWrap, fields.access, fields.err);
     row.append(main);
     row.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -229,7 +244,7 @@ export function createReverseProxy({ root, mgmt, notify }) {
   async function setEnabled(h, on, input) {
     input.disabled = true;
     try {
-      const upd = await mgmt.updateProxyHost(h.id, { domain: h.domain, target_scheme: h.target_scheme, target_host: h.target_host, target_port: h.target_port, skip_tls_verify: h.skip_tls_verify, enabled: on });
+      const upd = await mgmt.updateProxyHost(h.id, { domain: h.domain, target_scheme: h.target_scheme, target_host: h.target_host, target_port: h.target_port, skip_tls_verify: h.skip_tls_verify, allow: h.allow || [], hsts: !!h.hsts, enabled: on });
       hosts = hosts.map((x) => (x.id === h.id ? upd : x));
       paintList();
     } catch (e) {

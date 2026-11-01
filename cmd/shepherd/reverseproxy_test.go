@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -277,11 +278,43 @@ func TestStartReverseProxyRedirectsPlainHTTPToHTTPS(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusFound {
-		t.Fatalf("status = %d, want %d", res.StatusCode, http.StatusFound)
+	if res.StatusCode != http.StatusMovedPermanently {
+		t.Fatalf("status = %d, want %d", res.StatusCode, http.StatusMovedPermanently)
 	}
 	if got, want := res.Header.Get("Location"), "https://jellyfin.example.com/web/?x=1"; got != want {
 		t.Errorf("Location = %q, want %q (no port, same path and query)", got, want)
+	}
+	// A POST keeps its method and body through a 308.
+	post, _ := http.NewRequest("POST", "http://"+rp.redirectLn.Addr().String()+"/api", strings.NewReader("x"))
+	post.Host = "jellyfin.example.com"
+	res2, err := client.Do(post)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res2.Body.Close()
+	if res2.StatusCode != http.StatusPermanentRedirect {
+		t.Fatalf("POST status = %d, want %d", res2.StatusCode, http.StatusPermanentRedirect)
+	}
+}
+
+func TestLocalPrefixesCoverLoopbackTailscaleAndThisHost(t *testing.T) {
+	ps := localPrefixes()
+	has := func(ip string) bool {
+		a := netip.MustParseAddr(ip)
+		for _, p := range ps {
+			if p.Contains(a) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, ip := range []string{"127.0.0.1", "::1", "100.100.1.1", "fd7a:115c:a1e0::1"} { // leakcheck:allow Tailscale's own blocks, not hosts
+		if !has(ip) {
+			t.Errorf("%s should be local", ip)
+		}
+	}
+	if has("203.0.113.1") {
+		t.Error("a public address must not be local")
 	}
 }
 

@@ -455,6 +455,12 @@ func (dp *xdpDataPlane) harvest(c *Controller) {
 		if v.Packets6 > prev.Packets6 {
 			c.recordRelayedBatch(mac, SteerV6, v.Packets6-prev.Packets6, v.Bytes6-prev.Bytes6, now)
 		}
+		if v.RxEst > prev.RxEst {
+			c.recordInferredRxBatch(mac, SteerV4, v.RxEst-prev.RxEst)
+		}
+		if v.RxEst6 > prev.RxEst6 {
+			c.recordInferredRxBatch(mac, SteerV6, v.RxEst6-prev.RxEst6)
+		}
 	}
 
 	var perCPU []xdpRelayStats

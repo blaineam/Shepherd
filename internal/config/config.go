@@ -40,20 +40,21 @@ type Config struct {
 	Accountability Accountability `toml:"accountability"`
 	Portscan       Portscan       `toml:"portscan"`
 	Vulnscan       Vulnscan       `toml:"vulnscan"`
+	Threats        Threats        `toml:"threats"`
+	Update         Update         `toml:"update"`
+	Retention      Retention      `toml:"retention"`
 	TLS            TLS            `toml:"tls"`
 	Nethealth      Nethealth      `toml:"nethealth"`
 	ReverseProxy   ReverseProxy   `toml:"reverseproxy"`
 	Watch          Watch          `toml:"watch"`
 }
 
-// Watch controls Watch mode, which is **retired** (docs/WATCH.md) and off by
-// default. It is kept configurable rather than removed outright so that an
-// install which deliberately enables it keeps working, and so the reasons it
-// was retired stay readable next to the thing they retired. Nothing new
-// should be built on it; the capability it was reaching for needs the return
-// path, which means Gateway mode (docs/GATEWAY.md).
+// Watch controls Watch mode (docs/WATCH.md), which is opt-in and off by
+// default: outbound-only by construction, with downloads estimated from TCP
+// acknowledgements (docs/TRAFFIC.md), and bandwidth in both directions
+// still needs Gateway mode (docs/GATEWAY.md).
 //
-// Watch mode (docs/WATCH.md): one-sided ARP steering of each
+// Watch mode: one-sided ARP steering of each
 // eligible device's outbound IPv4 traffic through Shepherd, relayed to the
 // real gateway in the kernel (XDP) or by a parallel userspace relay
 // (internal/intercept). Enabled defaults true, per the protect-by-default
@@ -104,9 +105,11 @@ type Watch struct {
 	IdleGraceSeconds      int `toml:"idle_grace_seconds"`
 	StartupGraceSeconds   int `toml:"startup_grace_seconds"`
 	// AllowRoutingHost lets Watch mode run on a host that forwards IPv4
-	// and has a second interface on the relay's own segment, which it
-	// otherwise refuses (docs/WATCH.md, "Two things that stop it by
-	// themselves"). Off by default; the loop brake stays armed either way.
+	// and has a second interface on the relay's own segment. On by
+	// default since 2026-11-01: that shape was measured not to be the
+	// loop's mechanism (a single-homed phone echoed too), the duplicate
+	// brake in both relays drops any copy the segment hands back, and the
+	// loop brake stays armed. Set false to refuse instead (docs/WATCH.md).
 	AllowRoutingHost bool `toml:"allow_routing_host"`
 	// Diagnostics logs a digest of what the in-kernel relay is carrying
 	// (addresses, ports, TTL and IP ID of sampled frames, never payload)
@@ -167,12 +170,24 @@ type Classify struct {
 
 // Alarms controls Shepherd's alarm engine (docs/ALARMS.md): the engine itself
 // (dedupe, mute rules, quiet hours, learning mode) always records alarms when
-// enabled; Ntfy is the one delivery channel wired in so far. Web Push needs a
-// secure context (HTTPS) the portal does not have yet, so it stays
-// unconfigured; see docs/ALARMS.md.
+// enabled, and delivers them over Web Push (Push, on by default; a browser
+// can only subscribe from the HTTPS portal) and ntfy (Ntfy, off until a
+// server is named).
 type Alarms struct {
 	Enabled bool       `toml:"enabled"`
+	Push    AlarmsPush `toml:"push"`
 	Ntfy    AlarmsNtfy `toml:"ntfy"`
+}
+
+// AlarmsPush configures Web Push delivery (internal/webpush, docs/ALARMS.md).
+// The VAPID key pair is generated once under <data_dir>/alarms and kept:
+// browsers subscribe against its public half. Nothing here needs filling in.
+type AlarmsPush struct {
+	Enabled bool `toml:"enabled"`
+	// Contact is the RFC 8292 contact a push service may use to reach the
+	// operator: an email address or an https URL. Empty uses the portal's
+	// own HTTPS address when [tls] is on, else Shepherd's project page.
+	Contact string `toml:"contact"`
 }
 
 // AlarmsNtfy configures the ntfy delivery channel: a self-hosted or public
@@ -305,6 +320,31 @@ type Vulnscan struct {
 	// default, minimum 300). The published feed itself is rebuilt daily, and
 	// an unchanged one costs one conditional request.
 	FeedRefreshSeconds int `toml:"feed_refresh_seconds"`
+}
+
+// Update controls the self-update checker (internal/update, docs/UPDATE.md):
+// one request a day to GitHub's releases for a newer Shepherd, an alarm
+// when there is one, and an "update now" on the Overview screen that
+// downloads, verifies and swaps the binary in, keeping the previous one.
+type Update struct {
+	Enabled bool `toml:"enabled"`
+	// Channel is "stable" (releases marked latest) or "beta" (the rolling
+	// beta too).
+	Channel string `toml:"channel"`
+	// CheckHours is how often to look. Nothing is downloaded by a check.
+	CheckHours int `toml:"check_hours"`
+}
+
+// Threats controls the threat-intelligence feeds (internal/threats,
+// docs/THREATS.md): curated lists of malware hosts, botnet controllers and
+// hijacked networks, matched against every DNS query's name and answer and
+// raised as alarms. On by default: the feeds are a few hundred kilobytes
+// refreshed every few hours, the same kind of download the blocklists
+// already make, and a match costs a few map lookups.
+type Threats struct {
+	Enabled bool `toml:"enabled"`
+	// IntervalHours is how often the feeds are re-downloaded.
+	IntervalHours int `toml:"interval_hours"`
 }
 
 // TLS obtains and renews a real certificate for the portal's own hostname
@@ -443,6 +483,19 @@ type History struct {
 	KeyFile       string `toml:"key_file"`       // default <data_dir>/history/history.key
 }
 
+// Retention is the one budget for everything Shepherd keeps on disk
+// (docs/UPDATE.md "Retention"). MaxMB 0, the default, leaves each store to
+// its own cap (history.max_mb; 8 MiB each for bandwidth and network health
+// history). A value caps the data directory as a whole: bandwidth and
+// network health history each get up to 8 MiB, a share is reserved for the
+// small files (devices, alarms, the threat-feed cache), and query history
+// gets the rest, never more than history.max_mb when that is set too. The
+// Overview's Software card shows how much of the budget is in use and a
+// low-severity alarm says when the directory has grown past it anyway.
+type Retention struct {
+	MaxMB int `toml:"max_mb"`
+}
+
 // Map controls the globe's location data, a free GeoIP database downloaded
 // once a month and used entirely on this machine.
 type Map struct {
@@ -524,18 +577,20 @@ func Default() Config {
 		Devices:        Devices{Enabled: true, DNS: true, Neighbors: true, NeighborIntervalSeconds: 30, MDNS: true, ReverseDNS: true, SaveIntervalSeconds: 60, QuarantineNewDevices: true},
 		Classify:       Classify{Enabled: true, IntervalSeconds: 300},
 		ARP:            ARP{Enabled: true},
-		Alarms:         Alarms{Enabled: true, Ntfy: AlarmsNtfy{Topic: "shepherd-alarms"}},
+		Alarms:         Alarms{Enabled: true, Push: AlarmsPush{Enabled: true}, Ntfy: AlarmsNtfy{Topic: "shepherd-alarms"}},
 		Accountability: Accountability{Enabled: true, SMTP: AccountabilitySMTP{Port: 587, TLS: "starttls"}},
 		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600, WANExposure: WANExposure{Enabled: true, RefreshIntervalSeconds: 600}},
 		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600, FeedURL: vulnscan.DefaultFeedURL, FeedRefreshSeconds: 6 * 3600},
+		Threats:        Threats{Enabled: true, IntervalHours: 6},
+		Update:         Update{Enabled: true, Channel: "stable", CheckHours: 24},
 		Nethealth:      Nethealth{Enabled: false, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
 		ReverseProxy:   ReverseProxy{Listen: ":8443"},
-		// Watch mode is retired and therefore off by default. It was on,
-		// under the protect-by-default decision in docs/DESIGN.md; the
-		// measurements in docs/WATCH.md retired it. The configuration is
-		// kept so an existing install that sets it is not broken by an
-		// upgrade, and so the retirement can be read rather than guessed at.
-		Watch:   Watch{Enabled: false, Mode: "auto", ActiveWindowSeconds: 900},
+		// Watch mode is opt-in. It was on, under the protect-by-default
+		// decision in docs/DESIGN.md, until 2026-11-01; it is kept off by
+		// default because it is outbound-only and a device's already-open
+		// connections can bypass it (docs/WATCH.md), not because it loops:
+		// the loops that retired it that morning were uploads misread.
+		Watch:   Watch{Enabled: false, Mode: "auto", ActiveWindowSeconds: 900, AllowRoutingHost: true},
 		DataDir: "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
@@ -595,6 +650,9 @@ func (c Config) Validate() error {
 	if c.History.RetentionDays < 0 || c.History.MaxMB < 0 {
 		return errors.New("history.retention_days and history.max_mb must not be negative")
 	}
+	if c.Retention.MaxMB < 0 {
+		return errors.New("retention.max_mb must not be negative")
+	}
 	if c.Devices.NeighborIntervalSeconds < 5 || c.Devices.SaveIntervalSeconds < 5 {
 		return errors.New("devices.neighbor_interval_seconds and devices.save_interval_seconds must be at least 5")
 	}
@@ -633,6 +691,15 @@ func (c Config) Validate() error {
 	}
 	if c.Portal.IdleLockMinutes < 0 {
 		return errors.New("portal.idle_lock_minutes must not be negative")
+	}
+	if c.Update.Channel != "stable" && c.Update.Channel != "beta" {
+		return fmt.Errorf("update.channel must be \"stable\" or \"beta\", got %q", c.Update.Channel)
+	}
+	if c.Update.CheckHours < 1 {
+		return errors.New("update.check_hours must be at least 1")
+	}
+	if c.Threats.IntervalHours < 1 {
+		return errors.New("threats.interval_hours must be at least 1")
 	}
 	if c.Vulnscan.IntervalSeconds < 300 {
 		return errors.New("vulnscan.interval_seconds must be at least 300")

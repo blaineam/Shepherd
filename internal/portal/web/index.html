@@ -12,6 +12,13 @@
   <meta name="color-scheme" content="dark">
   <title>Shepherd</title>
   <link rel="icon" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
+  <!-- The manifest and the two Apple metas are what let iOS add this portal
+       to the Home Screen as a web app, which is the only way Safari on iOS
+       delivers Web Push (docs/ALARMS.md, "Web Push in the browser"). -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Shepherd">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -40,6 +47,7 @@
         <button type="button" role="tab" id="tab-alarms" aria-selected="false" aria-controls="view-alarms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span>Alarms</span></button>
         <button type="button" role="tab" id="tab-vulnscan" aria-selected="false" aria-controls="view-vulnscan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M12 8v4"/><path d="M12 15h.01"/></svg><span>Vulnerabilities</span></button>
         <button type="button" role="tab" id="tab-network" aria-selected="false" aria-controls="view-network"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span>Network health</span></button>
+        <button type="button" role="tab" id="tab-traffic" aria-selected="false" aria-controls="view-traffic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V11"/><path d="M9 19V5"/><path d="M14 19v-8"/><path d="M19 19V8"/><path d="M3 19h18"/></svg><span>Bandwidth</span></button>
         <div class="nav-h">Protect</div>
         <button type="button" role="tab" id="tab-devices" aria-selected="false" aria-controls="view-devices"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18v11H3z"/><path d="M8 20h8M12 16v4"/></svg><span>Devices</span></button>
         <button type="button" role="tab" id="tab-blocking" aria-selected="false" aria-controls="view-blocking"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"/><path d="M5.6 5.6l12.8 12.8"/></svg><span>Blocking</span></button>
@@ -197,6 +205,7 @@
   <main id="view-vulnscan" class="page page-fill" role="tabpanel" aria-labelledby="tab-vulnscan" hidden></main>
   <main id="view-watch" class="page" role="tabpanel" aria-labelledby="tab-watch" hidden></main>
   <main id="view-network" class="page" role="tabpanel" aria-labelledby="tab-network" hidden></main>
+  <main id="view-traffic" class="page" role="tabpanel" aria-labelledby="tab-traffic" hidden></main>
   <main id="view-upstreams" class="page" role="tabpanel" aria-labelledby="tab-upstreams" hidden></main>
   <main id="view-proxy" class="page" role="tabpanel" aria-labelledby="tab-proxy" hidden></main>
   <main id="view-history" class="page" role="tabpanel" aria-labelledby="tab-history" hidden></main>
@@ -220,6 +229,20 @@
          is built but not wired into cmd/shepherd or the portal yet (docs/ROADMAP.md step 11),
          so there is genuinely nothing live to report either way. -->
     <p class="muted small watchmode-note">Counts above are DNS lookups. Watch mode adds what devices actually connect to and how much they send.</p>
+
+    <section class="card sw-card" id="sw-card">
+      <div class="card-h">
+        <h2>Software</h2>
+        <div class="sw-acts">
+          <button type="button" class="ghost" id="sw-check">Check now</button>
+          <button type="button" class="primary" id="sw-apply" hidden>Update now</button>
+        </div>
+      </div>
+      <p class="sw-line" id="sw-line"></p>
+      <p class="muted small" id="sw-reason" hidden></p>
+      <p class="muted small" id="sw-rollback" hidden></p>
+      <p class="muted small" id="sw-data" hidden></p>
+    </section>
 
     <section class="grid">
       <div class="card wide">

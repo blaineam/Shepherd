@@ -143,7 +143,8 @@ The daily series has no age limit by default — "is this getting worse over the
 an answer — but is capped at 8 MiB on disk (`Retention.MaxBytes`): once the store would exceed that, the
 *oldest* daily points are dropped first, since raw and hourly are already small and bounded by their own
 age limits. 8 MiB holds tens of thousands of daily points, far more than any real install will ever
-accumulate, so this cap is a safety net, not an expected limit.
+accumulate, so this cap is a safety net, not an expected limit. A `[retention] max_mb` budget in
+shepherd.toml can lower it (docs/UPDATE.md "Retention").
 
 Bufferbloat checks are kept as their own, much sparser series (no rollup — a check every hour or so for
 a year is still a small list) and pruned by the same daily retention window.

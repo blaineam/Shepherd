@@ -5,13 +5,35 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"path/filepath"
 	"time"
 
 	"shepherd/internal/config"
 	"shepherd/internal/devices"
+	"shepherd/internal/traffic"
 	"shepherd/internal/watch"
 )
+
+// openTraffic builds the bandwidth history store (docs/TRAFFIC.md),
+// restoring what <data>/traffic.json holds from the previous run. It saves
+// itself as it records, so nothing else has to remember to.
+func openTraffic(cfg config.Config) *traffic.Store {
+	path := filepath.Join(cfg.DataDir, "traffic.json")
+	ret := traffic.DefaultRetention()
+	if n := capsFor(cfg).Traffic; n > 0 {
+		ret.MaxBytes = n
+	}
+	store := traffic.NewStore(traffic.Options{
+		Path:        path,
+		Retention:   ret,
+		OnSaveError: func(err error) { log.Printf("traffic: saving history: %v", err) },
+	})
+	if err := store.Load(path); err != nil && !os.IsNotExist(err) {
+		log.Printf("traffic: ignoring unreadable history %s: %v", path, err)
+	}
+	return store
+}
 
 // watchPlatform is a test seam over watch.RealPlatform: production talks to
 // the real kernel (raw sockets, XDP, the ethtool ioctl, /proc); tests inject
@@ -31,8 +53,9 @@ var watchPlatform = func() watch.Platform { return watch.RealPlatform{} }
 //
 // The returned engine is the portal's handle on Watch mode (status, the
 // per-device state, the kill switch) and the sink for the ARP monitor's
-// gateway-changed events.
-func startWatch(ctx context.Context, cfg config.Config, reg *devices.Registry) (*watch.Engine, error) {
+// gateway-changed events. store, built by openTraffic, receives each
+// device's bytes once a second; nil records nothing.
+func startWatch(ctx context.Context, cfg config.Config, reg *devices.Registry, store *traffic.Store) (*watch.Engine, error) {
 	mode, err := watch.ParseMode(cfg.Watch.Mode)
 	if err != nil {
 		return nil, err
@@ -58,6 +81,7 @@ func startWatch(ctx context.Context, cfg config.Config, reg *devices.Registry) (
 		AllowRoutingHost: cfg.Watch.AllowRoutingHost,
 		Diagnostics:      cfg.Watch.Diagnostics,
 		Registry:         reg,
+		Traffic:          store,
 		StatePath:        filepath.Join(cfg.DataDir, "watch.json"),
 		Platform:         watchPlatform(),
 	})

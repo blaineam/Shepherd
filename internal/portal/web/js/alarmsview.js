@@ -8,9 +8,11 @@ import { el } from './dom.js';
 import { icon, iconButton, button, segmented, emptyState, unavailableCard, confirmDialog, openMenu, relTime } from './ui.js';
 import { unavailable } from './mgmt.js';
 import { Selection } from './selection.js';
+import { pushSupport, permissionLine, urlBase64ToUint8Array, subscribeBody, defaultDeviceName, deviceLine, isThisBrowser } from './push.js';
 import {
   SEVERITIES, STATES, severityLabel, severityBadgeClass, stateLabel,
-  MUTE_PRESETS, MUTE_SCOPES, bulkSummary, ruleMatchSummary,
+  MUTE_PRESETS, MUTE_SCOPES, bulkSummary, ruleMatchSummary, feedLine, matchLine,
+  hoursOf, deliveryLine, digestFromForm,
 } from './alarms.js';
 
 const PAGE_SIZE = 50;
@@ -45,11 +47,13 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
   const countEl = title.lastChild;
 
   const viewSeg = segmented(
-    [{ id: 'alarms', label: 'Alarms' }, { id: 'rules', label: 'Rules' }], view,
+    [{ id: 'alarms', label: 'Alarms' }, { id: 'rules', label: 'Rules' }, { id: 'push', label: 'Notifications' }, { id: 'threats', label: 'Threat feeds' }], view,
     (id) => {
       view = id;
       paintAll();
       if (id === 'rules') loadRules();
+      else if (id === 'push') { loadPush(); loadPrefs(); }
+      else if (id === 'threats') loadThreats();
       else load(true);
     }, 'Alarms view',
   );
@@ -129,7 +133,13 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
 
   const rulesWrap = el('section', 'al-rules-wrap panel-lite');
   rulesWrap.hidden = true;
-  main.append(wrap, rulesWrap);
+  const pushWrap = el('section', 'al-rules-wrap panel-lite');
+  pushWrap.hidden = true;
+  const prefsWrap = el('section', 'al-rules-wrap panel-lite');
+  prefsWrap.hidden = true;
+  const threatsWrap = el('section', 'al-rules-wrap panel-lite');
+  threatsWrap.hidden = true;
+  main.append(wrap, rulesWrap, pushWrap, prefsWrap, threatsWrap);
   root.append(head, main);
 
   // ------------------------------------------------------------- loading
@@ -412,10 +422,330 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
     rulesWrap.append(list);
   }
 
+  // ------------------------------------------------------------- delivery
+  // The alarm preferences' delivery part (docs/ALARMS.md "When"): which
+  // severities go out at once and when the digest carries the rest. The
+  // whole preferences object is read and written back with just these
+  // fields changed, so nothing else is disturbed.
+  let prefs = null;
+  let prefsError = null;
+
+  async function loadPrefs() {
+    try {
+      prefs = (await mgmt.alarmPrefs()).preferences;
+      prefsError = null;
+    } catch (e) { prefsError = e; }
+    paintPrefs();
+  }
+
+  function paintPrefs() {
+    prefsWrap.replaceChildren();
+    const h = el('div', 'card-h');
+    h.append(el('h3', 'card-t', 'Delivery'));
+    prefsWrap.append(h);
+    if (prefsError) {
+      prefsWrap.append(unavailable(prefsError) ? unavailableCard('Delivery settings') : emptyState('Could not load delivery settings', prefsError.message, button('Try again', 'ghost', loadPrefs)));
+      return;
+    }
+    if (!prefs) return;
+    prefsWrap.append(el('p', 'al-push-line muted', deliveryLine(prefs)));
+
+    const form = el('form', 'al-prefs');
+    const minSel = el('select');
+    for (const sv of SEVERITIES) { const o = el('option', '', severityLabel(sv)); o.value = sv; minSel.append(o); }
+    minSel.value = prefs.immediate_min || 'high';
+    form.append(labelWrap('Send at once from', minSel));
+
+    const d = prefs.digest || {};
+    const onSel = el('select');
+    for (const [v, t] of [['on', 'On: lower alarms are gathered'], ['off', 'Off: everything is sent at once']]) { const o = el('option', '', t); o.value = v; onSel.append(o); }
+    onSel.value = d.enabled ? 'on' : 'off';
+    form.append(labelWrap('Digest', onSel));
+
+    const modeSel = el('select');
+    for (const [v, t] of [['every', 'Every so many hours'], ['at', 'At a time of day']]) { const o = el('option', '', t); o.value = v; modeSel.append(o); }
+    modeSel.value = d.at ? 'at' : 'every';
+    const modeRow = labelWrap('Digest timing', modeSel);
+    form.append(modeRow);
+
+    const hours = el('input');
+    hours.type = 'number'; hours.min = '0.02'; hours.step = '0.5';
+    hours.value = String(hoursOf(d.every) || 6);
+    const hoursRow = labelWrap('Hours between digests', hours);
+    form.append(hoursRow);
+
+    const at = el('input');
+    at.type = 'time'; at.value = d.at || '08:00';
+    const atRow = labelWrap('Digest time', at);
+    form.append(atRow);
+
+    const tz = el('input');
+    tz.type = 'text'; tz.placeholder = 'Server\'s local zone'; tz.value = prefs.timezone || '';
+    tz.setAttribute('autocomplete', 'off');
+    form.append(labelWrap('Time zone (IANA name)', tz));
+
+    const sync = () => {
+      const on = onSel.value === 'on';
+      modeRow.hidden = !on;
+      hoursRow.hidden = !on || modeSel.value !== 'every';
+      atRow.hidden = !on || modeSel.value !== 'at';
+    };
+    onSel.addEventListener('change', sync);
+    modeSel.addEventListener('change', sync);
+    sync();
+
+    const acts = el('div', 'al-push-acts');
+    const savePrefs = async () => {
+      const r = digestFromForm({ enabled: onSel.value === 'on', mode: modeSel.value, hours: hours.value, at: at.value });
+      if (r.error) { notify(r.error); return; }
+      save.disabled = true;
+      try {
+        prefs = (await mgmt.setAlarmPrefs({ ...prefs, immediate_min: minSel.value, digest: r.digest, timezone: tz.value.trim() })).preferences;
+        notify('Delivery settings saved');
+        paintPrefs();
+      } catch (e) { notify('Could not save: ' + e.message); save.disabled = false; }
+    };
+    const save = button('Save delivery settings', 'primary', savePrefs);
+    acts.append(save);
+    form.append(acts);
+    form.addEventListener('submit', (ev) => { ev.preventDefault(); savePrefs(); });
+    prefsWrap.append(form);
+  }
+
+  // ------------------------------------------------------------- notifications
+  // Web Push for this browser. The server keeps the subscriptions; this
+  // browser's own is recognised by the id the server gave it at subscribe
+  // time, kept in localStorage so a reload still knows.
+  let push = null;
+  let pushError = null;
+  let pushBusy = false;
+  const THIS_KEY = 'shepherd.push.id';
+  const thisID = () => { try { return localStorage.getItem(THIS_KEY) || ''; } catch { return ''; } };
+  const setThisID = (v) => { try { if (v) localStorage.setItem(THIS_KEY, v); else localStorage.removeItem(THIS_KEY); } catch { /* ignore */ } };
+  const env = () => ({
+    secureContext: !!window.isSecureContext,
+    hasServiceWorker: 'serviceWorker' in navigator,
+    hasPushManager: typeof PushManager !== 'undefined',
+    hasNotification: typeof Notification !== 'undefined',
+    ios: /iPhone|iPad|iPod/.test(navigator.userAgent),
+    standalone: !!(window.navigator.standalone || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)),
+  });
+
+  async function loadPush() {
+    try {
+      push = await mgmt.pushStatus();
+      pushError = null;
+    } catch (e) { pushError = e; }
+    paintPush();
+  }
+
+  async function subscribeThisBrowser() {
+    pushBusy = true;
+    paintPush();
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') throw new Error('notifications were not allowed');
+      const reg = await navigator.serviceWorker.register('sw.js');
+      await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(push.public_key) });
+      const d = await mgmt.pushSubscribe(subscribeBody(sub.toJSON(), defaultDeviceName(navigator.userAgent)));
+      setThisID(d.id);
+      notify('This browser now receives Shepherd\'s notifications');
+    } catch (e) {
+      notify('Could not subscribe: ' + e.message);
+    }
+    pushBusy = false;
+    await loadPush();
+  }
+
+  async function unsubscribeThisBrowser() {
+    pushBusy = true;
+    paintPush();
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      const sub = reg ? await reg.pushManager.getSubscription() : null;
+      if (sub) await sub.unsubscribe();
+      const id = thisID();
+      if (id) await mgmt.pushRemove(id).catch(() => {});
+      setThisID('');
+      notify('This browser no longer receives notifications');
+    } catch (e) { notify('Could not unsubscribe: ' + e.message); }
+    pushBusy = false;
+    await loadPush();
+  }
+
+  async function sendTest() {
+    try {
+      await mgmt.pushTest();
+      notify('Test notification sent to every subscribed browser and to ntfy');
+    } catch (e) { notify('Could not send a test: ' + e.message); }
+  }
+
+  async function renameDevice(d) {
+    const name = window.prompt('Name for this browser', d.name || '');
+    if (name == null) return;
+    try {
+      await mgmt.pushRename(d.id, name.trim());
+      await loadPush();
+    } catch (e) { notify(e.message); }
+  }
+
+  async function removeDevice(d) {
+    const ok = await confirmDialog({ title: 'Stop notifying ' + (d.name || 'this browser') + '?', body: 'It can subscribe again from its own Alarms screen.', confirm: 'Remove', danger: true });
+    if (!ok) return;
+    try {
+      await mgmt.pushRemove(d.id);
+      if (isThisBrowser(d, thisID())) setThisID('');
+      await loadPush();
+    } catch (e) { notify(e.message); }
+  }
+
+  function paintPush() {
+    pushWrap.replaceChildren();
+    const h = el('div', 'card-h');
+    h.append(el('h3', 'card-t', 'Notifications'));
+    pushWrap.append(h);
+    if (pushError) {
+      pushWrap.append(unavailable(pushError) ? unavailableCard('Notifications') : emptyState('Could not load notification settings', pushError.message, button('Try again', 'ghost', loadPush)));
+      return;
+    }
+    if (!push) return;
+    if (!push.enabled) {
+      pushWrap.append(el('p', 'al-push-line muted', 'Web Push is turned off in shepherd.toml ([alarms.push]). ntfy, when configured, still delivers.'));
+      return;
+    }
+    const support = pushSupport(env());
+    const mine = (push.devices || []).find((d) => isThisBrowser(d, thisID()));
+    if (!support.ok) {
+      pushWrap.append(el('p', 'al-push-line warn', support.reason));
+    } else {
+      const perm = permissionLine(typeof Notification !== 'undefined' ? Notification.permission : 'default');
+      pushWrap.append(el('p', 'al-push-line ' + (mine ? 'good' : perm.tone), mine ? 'This browser receives Shepherd\'s notifications.' : perm.text));
+    }
+    const acts = el('div', 'al-push-acts');
+    if (support.ok && !mine) {
+      const b = button('Notify this browser', 'primary', subscribeThisBrowser);
+      b.disabled = pushBusy;
+      acts.append(b);
+    }
+    if (mine) {
+      const b = button('Stop notifying this browser', 'ghost', unsubscribeThisBrowser);
+      b.disabled = pushBusy;
+      acts.append(b);
+    }
+    acts.append(button('Send a test notification', 'ghost', sendTest));
+    pushWrap.append(acts);
+
+    const devs = push.devices || [];
+    if (!devs.length) {
+      pushWrap.append(emptyState('No browser is subscribed yet', 'Subscribe each phone or computer from its own copy of this screen, over the HTTPS portal.'));
+      return;
+    }
+    const list = el('div', 'al-push-devs list-rows');
+    for (const d of devs) {
+      const line = deviceLine(d);
+      const row = el('div', 'list-row');
+      const main = el('div', 'lr-main');
+      main.append(el('div', 'lr-name', line.name + (isThisBrowser(d, thisID()) ? ' (this browser)' : '')));
+      main.append(el('p', 'lr-desc ' + (line.tone === 'warn' ? 'warn' : 'muted'), line.text));
+      const actsRow = el('div', 'up-acts');
+      actsRow.append(iconButton('pencil', 'Rename ' + line.name, () => renameDevice(d)), iconButton('trash', 'Remove ' + line.name, () => removeDevice(d), 'danger-i'));
+      row.append(main, actsRow);
+      list.append(row);
+    }
+    pushWrap.append(list);
+    pushWrap.append(el('p', 'muted small', 'On an iPhone or iPad, Shepherd must be added to the Home Screen and opened from there. A phone in Lockdown Mode never shows Web Push; use ntfy there.'));
+  }
+
+  // ------------------------------------------------------------- threat feeds
+  let threats = null;
+  let threatsError = null;
+  let refreshingFeeds = false;
+
+  async function loadThreats() {
+    try {
+      threats = await mgmt.threats();
+      threatsError = null;
+    } catch (e) { threatsError = e; }
+    paintThreats();
+  }
+
+  async function refreshFeeds() {
+    refreshingFeeds = true;
+    paintThreats();
+    try {
+      await mgmt.refreshThreats();
+      notify('Threat feeds refreshed');
+    } catch (e) { notify('Could not refresh the feeds: ' + e.message); }
+    refreshingFeeds = false;
+    await loadThreats();
+  }
+
+  function paintThreats() {
+    threatsWrap.replaceChildren();
+    const h = el('div', 'card-h');
+    h.append(el('h3', 'card-t', 'Threat feeds'));
+    if (threats && threats.enabled) {
+      const b = button(refreshingFeeds ? 'Refreshing…' : 'Refresh now', 'ghost', refreshFeeds);
+      b.disabled = refreshingFeeds;
+      h.append(b);
+    }
+    threatsWrap.append(h);
+    if (threatsError) {
+      threatsWrap.append(unavailable(threatsError) ? unavailableCard('Threat feeds') : emptyState('Could not load the threat feeds', threatsError.message, button('Try again', 'ghost', loadThreats)));
+      return;
+    }
+    if (!threats) return;
+    if (!threats.enabled) {
+      threatsWrap.append(el('p', 'al-push-line muted', 'Threat feeds are turned off in shepherd.toml ([threats]).'));
+      return;
+    }
+    threatsWrap.append(el('p', 'muted small', 'Every lookup, blocked or not, is checked against these lists of malware hosts, botnet controllers and hijacked networks. A match raises a threat-match alarm naming the device. ' + Number(threats.loaded || 0).toLocaleString() + ' indicators loaded.'));
+    const feeds = el('div', 'al-push-devs list-rows');
+    for (const f of threats.feeds || []) {
+      const line = feedLine(f);
+      const row = el('div', 'list-row');
+      const main = el('div', 'lr-main');
+      main.append(el('div', 'lr-name', f.name || f.id));
+      main.append(el('p', 'lr-desc muted small', (f.describes ? 'Lists ' + f.describes + '. ' : '') + line.text));
+      const meta = el('div', 'lr-meta');
+      meta.append(el('span', 'badge ' + (line.tone === 'warn' ? 'warn' : line.tone === 'good' ? 'good' : 'muted'), f.kind === 'ip' ? 'addresses' : 'names'));
+      main.append(meta);
+      row.append(main);
+      feeds.append(row);
+    }
+    threatsWrap.append(feeds);
+
+    const matches = threats.matches || [];
+    const mh = el('div', 'card-h');
+    mh.append(el('h3', 'card-t', 'Recent matches' + (matches.length ? ' (' + matches.length + ')' : '')));
+    threatsWrap.append(mh);
+    if (!matches.length) {
+      threatsWrap.append(emptyState('No device has reached for anything on these feeds', 'That is the good outcome. Matches also appear as alarms.'));
+      return;
+    }
+    const list = el('div', 'al-push-devs list-rows');
+    for (const m of matches) {
+      const line = matchLine(m);
+      const row = el('div', 'list-row');
+      const main = el('div', 'lr-main');
+      main.append(el('div', 'lr-name', line.who));
+      main.append(el('p', 'lr-desc', line.text));
+      main.append(el('p', 'lr-desc muted small', m.time ? relTime(m.time) : ''));
+      row.append(main);
+      list.append(row);
+    }
+    threatsWrap.append(list);
+  }
+
   // ------------------------------------------------------------- view switching
   function paintAll() {
     wrap.hidden = view !== 'alarms';
     rulesWrap.hidden = view !== 'rules';
+    pushWrap.hidden = view !== 'push';
+    prefsWrap.hidden = view !== 'push';
+    threatsWrap.hidden = view !== 'threats';
     sevSel.hidden = stateSel.hidden = searchBox.hidden = archToggle.hidden = view !== 'alarms';
   }
 

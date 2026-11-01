@@ -35,6 +35,8 @@ import (
 	"shepherd/internal/reverseproxy"
 	"shepherd/internal/secrets"
 	"shepherd/internal/settings"
+	"shepherd/internal/threats"
+	"shepherd/internal/traffic"
 	"shepherd/internal/vulnscan"
 	"shepherd/internal/watch"
 )
@@ -97,6 +99,16 @@ type Deps struct {
 	// in-memory engine that nothing raises alarms through, so the API still
 	// works (and returns no alarms).
 	Alarms *alarms.Engine
+	// Push is Web Push's key and subscription store (docs/ALARMS.md). Nil
+	// means Web Push is off; /api/alarms/push says so.
+	Push PushService
+	// Threats is the threat-feed matcher (docs/THREATS.md); nil means it is
+	// off, and ThreatsEnabled says so to the portal.
+	Threats        *threats.Engine
+	ThreatsEnabled bool
+	// Update is the self-update service (docs/UPDATE.md); nil means the
+	// checker is off.
+	Update Updater
 
 	// Accountability manages accountability-partner contacts and
 	// subscriptions (docs/ACCOUNTABILITY.md). Nil means the feature is not
@@ -188,6 +200,10 @@ type Deps struct {
 	// hostname, passkeys are unavailable and the portal says why.
 	TLSHostname string
 	TLSListen   string
+	// Traffic is the bandwidth history (docs/TRAFFIC.md), fed by Watch
+	// mode. Nil gets an empty, memory-only store so the API still answers.
+	Traffic *traffic.Store
+
 	// Watch is Watch mode's engine (docs/WATCH.md): the per-device steering
 	// state, the live relayed rates and the kill switch. Nil means
 	// cmd/shepherd did not wire it in (switched off, or a build without
@@ -280,6 +296,9 @@ func New(d Deps) *Server {
 	}
 	if d.Nethealth == nil {
 		d.Nethealth = nethealth.New(nethealth.Options{})
+	}
+	if d.Traffic == nil {
+		d.Traffic = traffic.NewStore(traffic.Options{})
 	}
 	if d.ReverseProxy == nil {
 		d.ReverseProxy, _ = reverseproxy.Open("") // empty path never errors
@@ -607,9 +626,21 @@ func (s *Server) routes() {
 	h("GET /api/alarms", s.listAlarms)
 	h("GET /api/alarms/summary", s.alarmsSummary)
 	h("GET /api/alarms/types", s.alarmTypes)
+	h("GET /api/alarms/preferences", s.getAlarmPrefs)
+	h("PUT /api/alarms/preferences", s.putAlarmPrefs)
 	h("GET /api/alarms/rules", s.listAlarmRules)
 	h("POST /api/alarms/rules", s.createAlarmRule)
 	h("DELETE /api/alarms/rules/{id}", s.deleteAlarmRule)
+	h("GET /api/update", s.getUpdate)
+	h("POST /api/update/check", s.checkUpdate)
+	h("POST /api/update/apply", s.applyUpdate)
+	h("GET /api/threats", s.getThreats)
+	h("POST /api/threats/refresh", s.refreshThreats)
+	h("GET /api/alarms/push", s.getPush)
+	h("POST /api/alarms/push/subscribe", s.subscribePush)
+	h("POST /api/alarms/push/test", s.testPush)
+	h("PATCH /api/alarms/push/{id}", s.renamePush)
+	h("DELETE /api/alarms/push/{id}", s.removePush)
 	h("POST /api/alarms/bulk", s.alarmsBulk)
 	h("POST /api/alarms/undo", s.undoAlarms)
 	h("GET /api/alarms/{id}", s.getAlarm)
@@ -627,6 +658,10 @@ func (s *Server) routes() {
 	h("GET /api/vulnscan/devices/{id}", s.getVulnscanDevice)
 	h("POST /api/vulnscan/scan", s.vulnscanNow)
 	h("POST /api/vulnscan/feed/refresh", s.vulnscanFeedRefresh)
+
+	h("GET /api/traffic", s.getTraffic)
+	h("GET /api/traffic/series", s.trafficSeries)
+	h("GET /api/traffic/top", s.trafficTop)
 
 	h("GET /api/nethealth", s.getNethealth)
 	h("GET /api/nethealth/series", s.nethealthSeries)

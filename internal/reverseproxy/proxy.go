@@ -12,6 +12,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
+	"strconv"
+	"sync"
 	"time"
 )
 
@@ -41,6 +44,15 @@ type Options struct {
 	// OnError, when set, hears about every request a backend failed, for
 	// the server log. A client that hung up first is not reported.
 	OnError func(r *http.Request, err error)
+	// LocalPrefixes supplies what Host.Allow's "local" stands for: every
+	// network this machine has an address on, plus Tailscale's range.
+	// Called per refused-or-checked request, so it should be cheap or
+	// cached. Nil means "local" matches nothing.
+	LocalPrefixes func() []netip.Prefix
+	// OnRefused, when set, hears about a request a host's allow list
+	// turned away, at most once per client address per minute so a scan
+	// cannot flood the log.
+	OnRefused func(r *http.Request, client netip.Addr)
 }
 
 // Proxy forwards each request to the backend its Host header names. A name
@@ -48,12 +60,25 @@ type Options struct {
 // falls through to anything else, so a typo or a removed host cannot
 // expose Shepherd's own portal under someone else's name.
 type Proxy struct {
-	hosts    HostLookup
-	verify   *httputil.ReverseProxy
-	insecure *httputil.ReverseProxy
-	onError  func(*http.Request, error)
-	marker   string
+	hosts     HostLookup
+	verify    *httputil.ReverseProxy
+	insecure  *httputil.ReverseProxy
+	onError   func(*http.Request, error)
+	onRefused func(*http.Request, netip.Addr)
+	local     func() []netip.Prefix
+	marker    string
+
+	refusedMu sync.Mutex
+	refusedAt map[netip.Addr]time.Time
+	now       func() time.Time
 }
+
+// refusalLogEvery bounds OnRefused to one call per client per this long.
+const refusalLogEvery = time.Minute
+
+// refusedTableMax bounds the per-client timestamp table; past it the
+// table is reset, which costs at worst one extra log line per client.
+const refusedTableMax = 4096
 
 type hostKey struct{}
 
@@ -65,7 +90,8 @@ type hostKey struct{}
 func New(opts Options) *Proxy {
 	marker := make([]byte, 8)
 	rand.Read(marker) // crypto/rand.Read never fails on supported platforms
-	p := &Proxy{hosts: opts.Hosts, onError: opts.OnError, marker: hex.EncodeToString(marker)}
+	p := &Proxy{hosts: opts.Hosts, onError: opts.OnError, onRefused: opts.OnRefused, local: opts.LocalPrefixes,
+		marker: hex.EncodeToString(marker), refusedAt: map[netip.Addr]time.Time{}, now: time.Now}
 	verify, insecure := opts.Transport, opts.InsecureTransport
 	if verify == nil {
 		verify = newTransport(&tls.Config{RootCAs: opts.RootCAs, MinVersion: tls.VersionTLS12})
@@ -109,11 +135,59 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "shepherd: no proxy host is configured for this name", http.StatusNotFound)
 		return
 	}
+	if len(h.Allow) > 0 {
+		client := clientAddr(r.RemoteAddr)
+		if !client.IsValid() || !h.Allowed(client, p.local) {
+			p.refused(r, client)
+			http.Error(w, "shepherd: this name is not open to your address", http.StatusForbidden)
+			return
+		}
+	}
+	if h.HSTS && r.TLS != nil {
+		// Set before the backend's headers are copied in; ReverseProxy
+		// adds to the writer's header rather than replacing it.
+		w.Header().Set("Strict-Transport-Security", "max-age="+strconv.Itoa(HSTSMaxAge))
+	}
 	rp := p.verify
 	if h.TargetScheme == "https" && h.SkipTLSVerify {
 		rp = p.insecure
 	}
 	rp.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), hostKey{}, h)))
+}
+
+// clientAddr is the address a request came from, or an invalid Addr when
+// RemoteAddr is not an address (a test without one, say).
+func clientAddr(remote string) netip.Addr {
+	host := remote
+	if h, _, err := net.SplitHostPort(remote); err == nil {
+		host = h
+	}
+	a, err := netip.ParseAddr(host)
+	if err != nil {
+		return netip.Addr{}
+	}
+	return a.Unmap()
+}
+
+// refused reports one turned-away request to OnRefused, once per client
+// per refusalLogEvery.
+func (p *Proxy) refused(r *http.Request, client netip.Addr) {
+	if p.onRefused == nil {
+		return
+	}
+	now := p.now()
+	p.refusedMu.Lock()
+	if len(p.refusedAt) >= refusedTableMax {
+		p.refusedAt = map[netip.Addr]time.Time{}
+	}
+	last, seen := p.refusedAt[client]
+	if seen && now.Sub(last) < refusalLogEvery {
+		p.refusedMu.Unlock()
+		return
+	}
+	p.refusedAt[client] = now
+	p.refusedMu.Unlock()
+	p.onRefused(r, client)
 }
 
 // rewrite points the outbound request at the backend while keeping what
