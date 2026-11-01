@@ -80,12 +80,9 @@ func buildTLSProbeCipherSuites() []uint16 {
 // server reveals itself by what it negotiates rather than being refused a
 // connection by Go's modern defaults.
 func tlsProbeConfig() *tls.Config {
-	// Intentional: this is a scanner reporting on what a device offers, not a
-	// client sending it anything sensitive, and it must handshake with
-	// self-signed and legacy servers to assess them.
 	return &tls.Config{
-		InsecureSkipVerify: true,             // codeql[go/disabled-certificate-check] deliberate, see above
-		MinVersion:         tls.VersionTLS10, // codeql[go/insecure-tls] deliberate: probing for weak TLS versions
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS10,
 		CipherSuites:       tlsProbeCipherSuites,
 	}
 }
