@@ -179,7 +179,9 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	// so nothing else in run() has to know about it. It is on by default
 	// and refuses cleanly (logged, visible in the portal, DNS untouched) on
 	// a host that cannot run it.
-	watchEngine, err := startWatch(ctx, cfg, registry)
+	trafficStore := openTraffic(cfg)
+	deps.Traffic = trafficStore
+	watchEngine, err := startWatch(ctx, cfg, registry, trafficStore)
 	if err != nil {
 		return err
 	}

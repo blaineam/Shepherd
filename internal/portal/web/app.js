@@ -26,6 +26,7 @@ import { createAlarms } from './js/alarmsview.js';
 import { createVulnscan } from './js/vulnscanview.js';
 import { createNethealth } from './js/nethealthview.js';
 import { createWatch } from './js/watchview.js';
+import { createTraffic } from './js/trafficview.js';
 import { createReverseProxy } from './js/reverseproxyview.js';
 import { createHistory } from './js/historyview.js';
 import { createAccountability } from './js/accountability.js';
@@ -463,7 +464,7 @@ async function pollStatus() {
 // ---------------------------------------------------------------- management screens
 const mgmt = createMgmt(api);
 const policyStore = createPolicyStore({ mgmt });
-const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'vulnscan', 'watch', 'network', 'upstreams', 'proxy', 'history', 'accountability', 'locking', 'details'];
+const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'vulnscan', 'watch', 'network', 'traffic', 'upstreams', 'proxy', 'history', 'accountability', 'locking', 'details'];
 
 const blocking = createBlocking({
   root: $('#view-blocking'), mgmt, store: policyStore, notify,
@@ -483,6 +484,10 @@ const vulnscanView = createVulnscan({
 const networkView = createNethealth({ root: $('#view-network'), mgmt, notify });
 const watchView = createWatch({
   root: $('#view-watch'), mgmt, notify,
+  onOpenDevice: (id) => { showView('devices'); devicesView.openDevice(id); },
+});
+const trafficView = createTraffic({
+  root: $('#view-traffic'), mgmt, notify,
   onOpenDevice: (id) => { showView('devices'); devicesView.openDevice(id); },
 });
 const upstreamsView = createUpstreams({ root: $('#view-upstreams'), mgmt, notify });
@@ -523,12 +528,14 @@ function showView(name) {
   if (name !== 'vulnscan') vulnscanView.hide();
   if (name !== 'network') networkView.hide();
   if (name !== 'watch') watchView.hide();
+  if (name !== 'traffic') trafficView.hide();
   if (name !== 'locking') lockingView.hide();
   if (name === 'devices') devicesView.show();
   else if (name === 'blocking') devicesView.reloadGroups().catch(() => {}).finally(() => blocking.show());
   else if (name === 'alarms') alarmsView.show();
   else if (name === 'vulnscan') vulnscanView.show();
   else if (name === 'watch') watchView.show();
+  else if (name === 'traffic') trafficView.show().catch(() => {});
   else if (name === 'network') networkView.show();
   else if (name === 'upstreams') upstreamsView.show();
   else if (name === 'proxy') proxyView.show();

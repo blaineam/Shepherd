@@ -30,12 +30,17 @@ is a deliberate, accepted boundary, not a bug:
 - **Seen:** everything the device sends out. Connection attempts, destination addresses, the
   names in TLS and QUIC handshakes, upload volume — including from an app that hardcodes its own
   DNS-over-HTTPS resolver and never asks Shepherd anything.
-- **Not seen:** the matching downloads. A device's traffic total as reported here is the upload
-  half only, and most home traffic is download-heavy, so the number is always an undercount. The
+- **Not seen:** the matching downloads. A device's *relayed* traffic total is the upload half
+  only, and most home traffic is download-heavy, so that number is always an undercount. The
   portal says so where it shows it.
+- **Estimated:** the downloads, from the TCP acknowledgements in the frames that *are* seen. Each
+  ACK a device sends says how many bytes it has received on that connection, so summing the
+  advances gives the download volume without touching the return path. It never over-counts and
+  it cannot see QUIC, other UDP or VPN traffic. See [TRAFFIC.md](TRAFFIC.md), which is also where
+  the history lives.
 
-Closing that gap needs two-sided interception or Gateway mode, both of which are future work in
-[DESIGN.md](DESIGN.md).
+Seeing the downloads themselves needs two-sided interception or Gateway mode, both of which are
+future work in [DESIGN.md](DESIGN.md).
 
 ## What is never steered
 

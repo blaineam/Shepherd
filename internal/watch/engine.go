@@ -18,6 +18,7 @@ import (
 	"shepherd/internal/arp"
 	"shepherd/internal/devices"
 	"shepherd/internal/intercept"
+	"shepherd/internal/traffic"
 )
 
 // Mode is the relay the configuration asks for.
@@ -108,6 +109,12 @@ type Config struct {
 	// StatePath persists the kill switch (0600). Empty keeps it in memory.
 	StatePath string
 
+	// Traffic, when set, receives each device's bytes once a second: sent
+	// (the relayed bytes, exact) and received (the TCP-acknowledgement
+	// estimate), keyed by registry device ID. *traffic.Store is the
+	// production recorder (docs/TRAFFIC.md). Nil records nothing.
+	Traffic TrafficRecorder
+
 	Platform Platform        // default RealPlatform{}
 	Clock    intercept.Clock // default the wall clock
 	// Logf receives the engine's log lines; default log.Printf.
@@ -197,6 +204,13 @@ const (
 	historyCap        = 256
 )
 
+// TrafficRecorder is where the engine's per-device byte counts go
+// (Config.Traffic). rows is keyed by registry device ID; a device with no
+// movement since the previous call is absent.
+type TrafficRecorder interface {
+	Record(now time.Time, rows map[string]traffic.Delta)
+}
+
 // HistoryRecord is one unsteer, with the device's registry identity
 // attached to the Controller's own record.
 type HistoryRecord struct {
@@ -229,9 +243,16 @@ type DeviceStatus struct {
 	// Totals across the device's steered entries since they were steered.
 	BytesRelayed   uint64 `json:"bytes_relayed"`
 	PacketsRelayed uint64 `json:"packets_relayed"`
+	// BytesReceivedEst is the device's estimated download since it was
+	// steered, inferred from the TCP acknowledgements in its relayed
+	// frames (intercept.AckMeter): never an over-count, blind to QUIC,
+	// UDP and tunnels.
+	BytesReceivedEst uint64 `json:"bytes_received_est"`
 	// Live rates over the last sampling interval.
 	BytesPerSecond   float64 `json:"bytes_per_second"`
 	PacketsPerSecond float64 `json:"packets_per_second"`
+	// RxBytesPerSecond is the live estimated download rate.
+	RxBytesPerSecond float64 `json:"rx_bytes_per_second"`
 	// NextRetry is when a device on a health-failure backoff is tried
 	// again; zero otherwise.
 	NextRetry time.Time `json:"next_retry,omitempty"`
@@ -286,10 +307,12 @@ type RelayStats struct {
 	FramesExamined          uint64  `json:"frames_examined"`
 	FramesRelayed           uint64  `json:"frames_relayed"`
 	BytesRelayed            uint64  `json:"bytes_relayed"`
+	BytesReceivedEst        uint64  `json:"bytes_received_est"`
 	FramesForShepherdItself uint64  `json:"frames_for_shepherd_itself"`
 	FramesNotForShepherd    uint64  `json:"frames_not_for_shepherd"`
 	PacketsPerSecond        float64 `json:"packets_per_second"`
 	BytesPerSecond          float64 `json:"bytes_per_second"`
+	RxBytesPerSecond        float64 `json:"rx_bytes_per_second"`
 }
 
 type retryState struct {
@@ -319,9 +342,9 @@ type retryGate struct {
 }
 
 type rateSample struct {
-	packets, bytes uint64
-	at             time.Time
-	pps, bps       float64
+	packets, bytes, rx uint64
+	at                 time.Time
+	pps, bps, rxbps    float64
 }
 
 // Engine runs Watch mode. Build one with New, run it with Run, and read it
@@ -1002,10 +1025,12 @@ func (e *Engine) sample(now time.Time) {
 	if elapsed > 0 {
 		e.global.pps = float64(st.FramesRelayed-e.global.packets) / elapsed
 		e.global.bps = float64(st.BytesRelayed-e.global.bytes) / elapsed
+		e.global.rxbps = float64(st.BytesReceivedEst-e.global.rx) / elapsed
 	}
 	relayedPPS := e.global.pps
-	e.global.packets, e.global.bytes, e.global.at = st.FramesRelayed, st.BytesRelayed, now
+	e.global.packets, e.global.bytes, e.global.rx, e.global.at = st.FramesRelayed, st.BytesRelayed, st.BytesReceivedEst, now
 	live := map[arp.MAC]bool{}
+	var rows map[arp.MAC]traffic.Delta
 	for _, d := range status {
 		live[d.MAC] = true
 		rs := e.rates[d.MAC]
@@ -1013,15 +1038,33 @@ func (e *Engine) sample(now time.Time) {
 			rs = &rateSample{at: d.Since}
 			e.rates[d.MAC] = rs
 		}
+		// Counters only grow while a device stays steered, and a device
+		// that is unsteered loses its rates entry, so a smaller reading
+		// cannot happen; the guards keep a wrap or a reset from ever
+		// crediting a huge delta.
+		var delta traffic.Delta
+		if d.BytesRelayed >= rs.bytes {
+			delta.Up = d.BytesRelayed - rs.bytes
+		}
+		if d.BytesReceivedEst >= rs.rx {
+			delta.Down = d.BytesReceivedEst - rs.rx
+		}
 		if el := now.Sub(rs.at).Seconds(); el > 0 {
 			rs.pps = float64(d.PacketsRelayed-rs.packets) / el
-			rs.bps = float64(d.BytesRelayed-rs.bytes) / el
+			rs.bps = float64(delta.Up) / el
+			rs.rxbps = float64(delta.Down) / el
+		}
+		if delta.Up > 0 || delta.Down > 0 {
+			if rows == nil {
+				rows = map[arp.MAC]traffic.Delta{}
+			}
+			rows[d.MAC] = delta
 		}
 		moved := d.PacketsRelayed > rs.packets
 		if d.PacketsRelayed > 0 {
 			e.relayed[d.MAC] = true
 		}
-		rs.packets, rs.bytes, rs.at = d.PacketsRelayed, d.BytesRelayed, now
+		rs.packets, rs.bytes, rs.rx, rs.at = d.PacketsRelayed, d.BytesRelayed, d.BytesReceivedEst, now
 		if moved && now.Sub(e.observed[d.MAC]) >= observeEvery {
 			e.observed[d.MAC] = now
 			observe = append(observe, d)
@@ -1044,7 +1087,33 @@ func (e *Engine) sample(now time.Time) {
 	for _, d := range observe {
 		e.reg.Observe(devices.Observation{Source: devices.SourceARP, MAC: d.MAC.String(), IP: d.IP.String(), Time: now})
 	}
+	e.recordTraffic(now, rows)
 	e.checkForLoop(now, relayedPPS, status)
+}
+
+// recordTraffic hands this second's per-MAC byte deltas to the traffic
+// recorder, keyed by registry device ID (a device merged from several MACs
+// gets one row). A MAC the registry does not know is skipped: there is no
+// device to attribute it to, and the registry is what steered it in the
+// first place, so this does not happen in practice.
+func (e *Engine) recordTraffic(now time.Time, rows map[arp.MAC]traffic.Delta) {
+	if e.cfg.Traffic == nil || len(rows) == 0 {
+		return
+	}
+	byID := make(map[string]traffic.Delta, len(rows))
+	for mac, d := range rows {
+		dev, ok := e.reg.FindByMAC(mac.String())
+		if !ok {
+			continue
+		}
+		cur := byID[dev.ID]
+		cur.Up += d.Up
+		cur.Down += d.Down
+		byID[dev.ID] = cur
+	}
+	if len(byID) > 0 {
+		e.cfg.Traffic.Record(now, byID)
+	}
 }
 
 // checkForLoop is the loop brake. Twice on real hardware the relay ended up
@@ -1389,7 +1458,7 @@ func (e *Engine) Snapshot() Snapshot {
 	snap := Snapshot{
 		Enabled: e.enabled(), Phase: e.phase, Reason: e.reason, Relay: e.relay, Armed: !e.killed,
 		Interface: e.link.Name, Since: e.since,
-		Stats:   RelayStats{PacketsPerSecond: e.global.pps, BytesPerSecond: e.global.bps},
+		Stats:   RelayStats{PacketsPerSecond: e.global.pps, BytesPerSecond: e.global.bps, RxBytesPerSecond: e.global.rxbps},
 		History: append([]HistoryRecord(nil), e.history...),
 	}
 	snap.IPv6, snap.IPv6Wanted, snap.IPv6Reason = e.v6, e.cfg.IPv6, e.v6Why
@@ -1417,6 +1486,7 @@ func (e *Engine) Snapshot() Snapshot {
 	if ctrl != nil {
 		st := ctrl.Stats()
 		snap.Stats.FramesExamined, snap.Stats.FramesRelayed, snap.Stats.BytesRelayed = st.FramesExamined, st.FramesRelayed, st.BytesRelayed
+		snap.Stats.BytesReceivedEst = st.BytesReceivedEst
 		snap.Stats.FramesForShepherdItself, snap.Stats.FramesNotForShepherd = st.FramesForShepherdItself, st.FramesNotForShepherd
 		for _, d := range ctrl.Status() {
 			steered[d.MAC] = d
@@ -1480,9 +1550,11 @@ func (e *Engine) deviceStatuses(now time.Time, steered map[arp.MAC]intercept.Ste
 			ds.Healthy = ds.Healthy && sd.Healthy
 			ds.BytesRelayed += sd.BytesRelayed
 			ds.PacketsRelayed += sd.PacketsRelayed
+			ds.BytesReceivedEst += sd.BytesReceivedEst
 			if rs, ok := rates[mac]; ok {
 				ds.BytesPerSecond += rs.bps
 				ds.PacketsPerSecond += rs.pps
+				ds.RxBytesPerSecond += rs.rxbps
 			}
 		}
 		ds.Families = familyNames(fams)

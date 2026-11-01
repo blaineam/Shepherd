@@ -8,12 +8,14 @@ import (
 	"net/netip"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"shepherd/internal/arp"
 	"shepherd/internal/devices"
 	"shepherd/internal/intercept"
+	"shepherd/internal/traffic"
 )
 
 func TestNewRequiresARegistry(t *testing.T) {
@@ -1451,4 +1453,130 @@ func TestForwardingAloneDoesNotRefuse(t *testing.T) {
 	te.start(t)
 	te.waitRunning(t)
 	te.waitSteered(t, phoneMAC, true)
+}
+
+// tcpAckFrame is a TCP segment from the phone to a remote, carrying the
+// given acknowledgement number, the shape the download meter credits.
+func tcpAckFrame(port uint16, ack uint32) []byte {
+	f := make([]byte, 14+20+20)
+	copy(f[0:6], shepherdMAC[:])
+	copy(f[6:12], phoneMAC[:])
+	f[12], f[13] = 0x08, 0x00
+	ip := f[14:]
+	ip[0] = 0x45
+	ip[2], ip[3] = 0, 40
+	ip[8] = 64
+	ip[9] = 6
+	copy(ip[12:16], phoneIP.AsSlice())
+	copy(ip[16:20], []byte{198, 51, 100, 1})
+	tcp := ip[20:]
+	tcp[0], tcp[1] = byte(port>>8), byte(port)
+	tcp[2], tcp[3] = 0x01, 0xbb
+	tcp[8], tcp[9], tcp[10], tcp[11] = byte(ack>>24), byte(ack>>16), byte(ack>>8), byte(ack)
+	tcp[12] = 5 << 4
+	tcp[13] = 0x10 // ACK
+	return f
+}
+
+// recordingTraffic is a TrafficRecorder that remembers every call.
+type recordingTraffic struct {
+	mu    sync.Mutex
+	calls []map[string]traffic.Delta
+}
+
+func (r *recordingTraffic) Record(_ time.Time, rows map[string]traffic.Delta) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := make(map[string]traffic.Delta, len(rows))
+	for k, v := range rows {
+		cp[k] = v
+	}
+	r.calls = append(r.calls, cp)
+}
+
+func (r *recordingTraffic) total(id string) traffic.Delta {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var d traffic.Delta
+	for _, c := range r.calls {
+		d.Up += c[id].Up
+		d.Down += c[id].Down
+	}
+	return d
+}
+
+func TestDownloadEstimateFeedsRatesAndTheTrafficRecorder(t *testing.T) {
+	rec := &recordingTraffic{}
+	te := newTestEngine(t, newFakePlatform(), func(c *Config) { c.Traffic = rec })
+	id := te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+	te.mu.Lock()
+	c := te.ctrl
+	te.mu.Unlock()
+	// A download of 3000 bytes as the phone's ACKs describe it: a
+	// baseline, then two advances.
+	for _, ack := range []uint32{1000, 2000, 4000} {
+		if relayed, err := c.HandleFrame(tcpAckFrame(50000, ack)); err != nil || !relayed {
+			t.Fatalf("relay: %v %v", relayed, err)
+		}
+	}
+	te.clock.Advance(time.Second)
+	waitFor(t, "download rate", func() bool { return te.status(t, id).RxBytesPerSecond > 0 })
+	ds := te.status(t, id)
+	if ds.BytesReceivedEst != 3000 || ds.BytesRelayed != 3*54 {
+		t.Fatalf("device = %+v, want 3000 received (est.) and 162 relayed", ds)
+	}
+	snap := te.Snapshot()
+	if snap.Stats.BytesReceivedEst != 3000 || snap.Stats.RxBytesPerSecond <= 0 {
+		t.Fatalf("stats = %+v", snap.Stats)
+	}
+	// The recorder got one row for the phone, by registry ID, with both
+	// directions, and nothing for a quiet second.
+	waitFor(t, "traffic row", func() bool { return rec.total(id).Down == 3000 })
+	if got := rec.total(id); got.Up != 162 {
+		t.Fatalf("recorded %+v, want 162 up", got)
+	}
+	rec.mu.Lock()
+	n := len(rec.calls)
+	rec.mu.Unlock()
+	te.clock.Advance(time.Second)
+	time.Sleep(20 * time.Millisecond)
+	rec.mu.Lock()
+	after := len(rec.calls)
+	rec.mu.Unlock()
+	if after != n {
+		t.Fatalf("a quiet second produced %d extra rows", after-n)
+	}
+	// Movement after that is a fresh delta, not a repeat of the total.
+	if relayed, err := c.HandleFrame(tcpAckFrame(50000, 4100)); err != nil || !relayed {
+		t.Fatalf("relay: %v %v", relayed, err)
+	}
+	te.clock.Advance(time.Second)
+	waitFor(t, "second row", func() bool { return rec.total(id).Down == 3100 })
+}
+
+func TestTrafficRecorderIsOptionalAndSkipsUnknownMACs(t *testing.T) {
+	te := newTestEngine(t, newFakePlatform(), nil)
+	// No recorder: a no-op, not a panic.
+	te.recordTraffic(t0, map[arp.MAC]traffic.Delta{phoneMAC: {Up: 1}})
+	rec := &recordingTraffic{}
+	te.cfg.Traffic = rec
+	te.recordTraffic(t0, nil)
+	te.recordTraffic(t0, map[arp.MAC]traffic.Delta{mustMAC("02:00:5e:00:00:99"): {Up: 1}})
+	if len(rec.calls) != 0 {
+		t.Fatalf("unknown MAC or empty rows reached the recorder: %v", rec.calls)
+	}
+	// Two MACs of one merged device make one row.
+	id := te.addPhone(t)
+	other := mustMAC("02:00:5e:00:00:11")
+	otherID := te.reg.Observe(devices.Observation{Source: devices.SourceNeighbor, MAC: other.String(), IP: "192.0.2.11"})
+	if err := te.reg.Merge(id, otherID); err != nil {
+		t.Fatal(err)
+	}
+	te.recordTraffic(t0, map[arp.MAC]traffic.Delta{phoneMAC: {Up: 1, Down: 10}, other: {Up: 2, Down: 20}})
+	if len(rec.calls) != 1 || len(rec.calls[0]) != 1 || rec.calls[0][id] != (traffic.Delta{Up: 3, Down: 30}) {
+		t.Fatalf("rows = %v", rec.calls)
+	}
 }

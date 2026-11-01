@@ -34,6 +34,13 @@
 // The inner packet is never touched (the IPv4 TTL / IPv6 hop limit
 // included — unlike a router, this relay does not decrement it); only the
 // two Ethernet addresses change.
+//
+// A relayed frame is also read, never written, by meter_ack: the same
+// TCP-acknowledgement download estimate as Go's AckMeter (ackmeter.go),
+// with the same rules, so the two relays report the same number for the
+// same traffic. The per-flow state lives in the `flows` LRU map and the
+// running estimate in dev_counters.rx_est / rx_est6, which the loader
+// harvests like the relayed-byte counters.
 
 #include "bpf_minimal.h"
 
@@ -43,6 +50,15 @@
 #define ETH_P_IPV6 0x86dd
 #define IPV4_MIN_HLEN 20
 #define IPV6_HLEN 40
+#define IPPROTO_TCP 6
+#define TCP_HLEN 20
+#define TCP_FIN 0x01
+#define TCP_RST 0x04
+#define TCP_ACK 0x10
+// The largest acknowledgement advance credited as a download; matches
+// Go's intercept.MaxAdvance. Anything bigger is a reused port pair or a
+// badly reordered capture and re-baselines instead.
+#define MAX_ADVANCE (1u << 30)
 
 // Family bits, matching Go's intercept.SteerV4 / SteerV6.
 #define FAM_V4 1
@@ -86,6 +102,33 @@ struct in6_key {
 	__u8 addr[16];
 };
 
+// Just enough of the TCP header for meter_ack: ports, the acknowledgement
+// number and the flags byte.
+struct tcphdr_min {
+	__u16 source;
+	__u16 dest;
+	__u32 seq;
+	__u32 ack_seq;
+	__u8 doff_res;
+	__u8 flags;
+	__u16 window;
+} __attribute__((packed));
+
+// One TCP connection as the device sees it. IPv4 addresses are stored as
+// 4-in-6 so one key type serves both families (as Go's flowKey does).
+struct flow_key {
+	__u8 saddr[16];
+	__u8 daddr[16];
+	__u16 sport;
+	__u16 dport;
+	__u32 pad;
+};
+
+struct flow_state {
+	__u32 ack; // last acknowledgement number seen, host order
+	__u32 pad;
+};
+
 // Set once by the loader before the program is attached.
 struct relay_config {
 	__u8 shepherd_mac[ETH_ALEN];
@@ -110,6 +153,8 @@ struct dev_counters {
 	__u64 packets6;     // IPv6
 	__u64 bytes6;       // IPv6
 	__u64 last_seen_ns6;
+	__u64 rx_est;       // IPv4: estimated bytes received, from TCP acks
+	__u64 rx_est6;      // IPv6: the same
 	__u8 families;      // FAM_V4 | FAM_V6
 	__u8 pad[7];
 };
@@ -157,6 +202,15 @@ struct {
 	__type(value, struct relay_stats);
 } stats SEC(".maps");
 
+// The download meter's connection table. LRU so the kernel evicts the
+// oldest entry itself when it fills; the loader never touches it.
+struct {
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 65536);
+	__type(key, struct flow_key);
+	__type(value, struct flow_state);
+} flows SEC(".maps");
+
 static __attribute__((always_inline)) int mac_equal(const __u8 *a, const __u8 *b)
 {
 	// Two loads instead of a byte loop: keeps the verifier's instruction
@@ -169,6 +223,88 @@ static __attribute__((always_inline)) void mac_copy(__u8 *dst, const __u8 *src)
 {
 	*(__u32 *)dst = *(const __u32 *)src;
 	*(__u16 *)(dst + 4) = *(const __u16 *)(src + 4);
+}
+
+// meter_ack is AckMeter.Observe in the kernel: for a TCP segment the
+// device is sending, credit the device with the bytes its acknowledgement
+// number has advanced by since the previous segment of that connection.
+// tcp points at a TCP header already bounds-checked against data_end.
+static __attribute__((always_inline)) void meter_ack(struct tcphdr_min *tcp,
+						     struct flow_key *key,
+						     struct dev_counters *dev,
+						     int is_v6)
+{
+	__u8 flags = tcp->flags;
+	key->sport = tcp->source;
+	key->dport = tcp->dest;
+	if (flags & TCP_RST) {
+		bpf_map_delete_elem(&flows, key);
+		return;
+	}
+	if (!(flags & TCP_ACK))
+		return;
+	__u32 ack = bpf_ntohl(tcp->ack_seq);
+	struct flow_state *st = bpf_map_lookup_elem(&flows, key);
+	if (!st) {
+		struct flow_state fresh = { .ack = ack };
+		bpf_map_update_elem(&flows, key, &fresh, BPF_ANY);
+		return;
+	}
+	__u32 delta = ack - st->ack;
+	if (delta != 0) {
+		st->ack = ack;
+		if (delta < MAX_ADVANCE) {
+			if (is_v6)
+				__sync_fetch_and_add(&dev->rx_est6, (__u64)delta);
+			else
+				__sync_fetch_and_add(&dev->rx_est, (__u64)delta);
+		}
+	}
+	if (flags & TCP_FIN)
+		bpf_map_delete_elem(&flows, key);
+}
+
+// meter_v4 / meter_v6 find the TCP header behind an IP header the caller
+// has already bounds-checked, fill the flow key's addresses, and hand off
+// to meter_ack. A non-TCP packet, a later fragment, or one too short to
+// hold a TCP header is left alone.
+static __attribute__((always_inline)) void meter_v4(struct iphdr_min *ip,
+						    void *data_end,
+						    struct dev_counters *dev)
+{
+	if (ip->protocol != IPPROTO_TCP)
+		return;
+	if (ip->frag_off & bpf_htons(0x1fff))
+		return;
+	__u32 ihl = (ip->ver_ihl & 0x0f) * 4;
+	if (ihl < IPV4_MIN_HLEN)
+		return;
+	struct tcphdr_min *tcp = (void *)ip + ihl;
+	if ((void *)(tcp + 1) > data_end)
+		return;
+	struct flow_key key = {};
+	key.saddr[10] = 0xff;
+	key.saddr[11] = 0xff;
+	key.daddr[10] = 0xff;
+	key.daddr[11] = 0xff;
+	__builtin_memcpy(key.saddr + 12, &ip->saddr, 4);
+	__builtin_memcpy(key.daddr + 12, &ip->daddr, 4);
+	meter_ack(tcp, &key, dev, 0);
+}
+
+static __attribute__((always_inline)) void meter_v6(struct ipv6hdr_min *ip6,
+						    void *data_end,
+						    struct dev_counters *dev)
+{
+	if (ip6->next_hdr != IPPROTO_TCP)
+		return;
+	struct tcphdr_min *tcp = (void *)(ip6 + 1);
+	if ((void *)(tcp + 1) > data_end)
+		return;
+	struct flow_key key = {};
+	__builtin_memcpy(key.saddr, ip6->saddr, 16);
+	__builtin_memcpy(key.daddr, ip6->daddr, 16);
+	meter_ack(tcp, &key, dev, 1);
 }
 
 // relay rewrites both MACs and counts the frame; the caller has already
@@ -254,6 +390,7 @@ int xdp_relay(struct xdp_md *ctx)
 				st->passed_local++;
 			return XDP_PASS;
 		}
+		meter_v6(ip6, data_end, dev);
 		return do_relay(eth, cfg, dev, st, len, 1);
 	}
 
@@ -265,6 +402,7 @@ int xdp_relay(struct xdp_md *ctx)
 			st->passed_local++;
 		return XDP_PASS;
 	}
+	meter_v4(ip, data_end, dev);
 	return do_relay(eth, cfg, dev, st, len, 0);
 }
 

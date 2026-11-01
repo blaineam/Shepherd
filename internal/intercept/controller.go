@@ -94,7 +94,12 @@ type SteeredDevice struct {
 	Healthy        bool
 	BytesRelayed   uint64
 	PacketsRelayed uint64
-	LastVerified   time.Time // zero if no traffic has been relayed yet
+	// BytesReceivedEst is the device's estimated download volume, inferred
+	// from the TCP acknowledgements in its relayed frames (see AckMeter).
+	// An estimate that only ever under-counts: QUIC, UDP and tunnels are
+	// invisible to it.
+	BytesReceivedEst uint64
+	LastVerified     time.Time // zero if no traffic has been relayed yet
 }
 
 // ControllerStats is a cumulative, global packet-rate snapshot: every
@@ -116,6 +121,10 @@ type ControllerStats struct {
 	FramesForShepherdItself uint64
 	FramesRelayed           uint64 // subset actually relayed
 	BytesRelayed            uint64 // their total wire length
+	// BytesReceivedEst is the sum of every device's estimated download
+	// volume (SteeredDevice.BytesReceivedEst), including devices since
+	// unsteered.
+	BytesReceivedEst uint64
 }
 
 // UnsteerRecord is one entry in the Controller's unsteer history: what
@@ -253,6 +262,9 @@ func usableDeviceV6(a netip.Addr) bool {
 type famState struct {
 	bytesRelayed   atomic.Uint64
 	packetsRelayed atomic.Uint64
+	// bytesInferredRx is the download estimate from the AckMeter, the one
+	// counter here that is not about frames the relay carried.
+	bytesInferredRx atomic.Uint64
 	// lastVerifiedNanos is the wall-clock UnixNano of the last relayed
 	// frame; everVerified says whether there has been one at all, so a
 	// clock that happens to sit at the Unix epoch is not mistaken for
@@ -356,6 +368,7 @@ type Controller struct {
 	framesForShepherdItself atomic.Uint64
 	framesRelayed           atomic.Uint64
 	bytesRelayedTotal       atomic.Uint64
+	bytesInferredRxTotal    atomic.Uint64
 
 	// afterHealthCheck is a test-only hook, called at the end of every
 	// health-check tick the background loop runs, after the next tick has
@@ -400,6 +413,8 @@ func NewController(cfg ControllerConfig) (*Controller, error) {
 		Lookup:                   c.lookupSteered,
 		OnRelayed:                c.recordRelayed,
 		OnRelayError:             c.recordRelayError,
+		Meter:                    &AckMeter{},
+		OnInferredRx:             c.recordInferredRx,
 		OnFrameExamined:          c.recordFrameExamined,
 		OnFrameNotForShepherd:    c.recordFrameNotForShepherd,
 		OnFrameForShepherdItself: c.recordFrameForShepherdItself,
@@ -446,6 +461,8 @@ func (c *Controller) NewRelay(sender Sender) *Relay {
 		Lookup:                   c.lookupSteered,
 		OnRelayed:                c.recordRelayed,
 		OnRelayError:             c.recordRelayError,
+		Meter:                    &AckMeter{},
+		OnInferredRx:             c.recordInferredRx,
 		OnFrameExamined:          c.recordFrameExamined,
 		OnFrameNotForShepherd:    c.recordFrameNotForShepherd,
 		OnFrameForShepherdItself: c.recordFrameForShepherdItself,
@@ -560,6 +577,30 @@ func (c *Controller) recordRelayed(mac arp.MAC, fam Family, n int, now time.Time
 	}
 	if ds, ok := (*m)[mac]; ok {
 		ds.fs(fam).record(n, now)
+	}
+}
+
+// recordInferredRx is Relay.OnInferredRx: one AckMeter credit for one
+// device. recordInferredRxBatch is the same for the XDP harvest, which
+// reads the kernel's running estimate and credits the delta. Both are
+// lock-free, like the relayed-byte counters they sit beside, and neither
+// touches health: an acknowledgement is evidence of a download, not of
+// steering working, and the relayed frame it rode in on already did that.
+func (c *Controller) recordInferredRx(mac arp.MAC, fam Family, n uint64) {
+	c.recordInferredRxBatch(mac, fam, n)
+}
+
+func (c *Controller) recordInferredRxBatch(mac arp.MAC, fam Family, n uint64) {
+	if n == 0 {
+		return
+	}
+	c.bytesInferredRxTotal.Add(n)
+	m := c.steered.Load()
+	if m == nil {
+		return
+	}
+	if ds, ok := (*m)[mac]; ok {
+		ds.fs(fam).bytesInferredRx.Add(n)
 	}
 }
 
@@ -1019,7 +1060,7 @@ func (c *Controller) Status() []SteeredDevice {
 	out := make([]SteeredDevice, 0, len(c.devices))
 	for mac, ds := range c.devices {
 		fam := ds.family()
-		var bytes, packets uint64
+		var bytes, packets, rx uint64
 		var last time.Time
 		healthy := true
 		for _, f := range []Family{SteerV4, SteerV6} {
@@ -1029,6 +1070,7 @@ func (c *Controller) Status() []SteeredDevice {
 			fs := ds.fs(f)
 			bytes += fs.bytesRelayed.Load()
 			packets += fs.packetsRelayed.Load()
+			rx += fs.bytesInferredRx.Load()
 			if lv := fs.lastVerified(); lv.After(last) {
 				last = lv
 			}
@@ -1038,7 +1080,7 @@ func (c *Controller) Status() []SteeredDevice {
 		}
 		out = append(out, SteeredDevice{
 			MAC: mac, IP: ds.ip, Family: fam, Since: ds.since, Healthy: healthy,
-			BytesRelayed: bytes, PacketsRelayed: packets, LastVerified: last,
+			BytesRelayed: bytes, PacketsRelayed: packets, BytesReceivedEst: rx, LastVerified: last,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].MAC.String() < out[j].MAC.String() })
@@ -1055,6 +1097,7 @@ func (c *Controller) Stats() ControllerStats {
 		FramesForShepherdItself: c.framesForShepherdItself.Load(),
 		FramesRelayed:           c.framesRelayed.Load(),
 		BytesRelayed:            c.bytesRelayedTotal.Load(),
+		BytesReceivedEst:        c.bytesInferredRxTotal.Load(),
 	}
 }
 

@@ -35,6 +35,7 @@ import (
 	"shepherd/internal/reverseproxy"
 	"shepherd/internal/secrets"
 	"shepherd/internal/settings"
+	"shepherd/internal/traffic"
 	"shepherd/internal/vulnscan"
 	"shepherd/internal/watch"
 )
@@ -183,6 +184,10 @@ type Deps struct {
 	// hostname, passkeys are unavailable and the portal says why.
 	TLSHostname string
 	TLSListen   string
+	// Traffic is the bandwidth history (docs/TRAFFIC.md), fed by Watch
+	// mode. Nil gets an empty, memory-only store so the API still answers.
+	Traffic *traffic.Store
+
 	// Watch is Watch mode's engine (docs/WATCH.md): the per-device steering
 	// state, the live relayed rates and the kill switch. Nil means
 	// cmd/shepherd did not wire it in (switched off, or a build without
@@ -275,6 +280,9 @@ func New(d Deps) *Server {
 	}
 	if d.Nethealth == nil {
 		d.Nethealth = nethealth.New(nethealth.Options{})
+	}
+	if d.Traffic == nil {
+		d.Traffic = traffic.NewStore(traffic.Options{})
 	}
 	if d.ReverseProxy == nil {
 		d.ReverseProxy, _ = reverseproxy.Open("") // empty path never errors
@@ -621,6 +629,10 @@ func (s *Server) routes() {
 	h("GET /api/vulnscan/devices", s.listVulnscanDevices)
 	h("GET /api/vulnscan/devices/{id}", s.getVulnscanDevice)
 	h("POST /api/vulnscan/scan", s.vulnscanNow)
+
+	h("GET /api/traffic", s.getTraffic)
+	h("GET /api/traffic/series", s.trafficSeries)
+	h("GET /api/traffic/top", s.trafficTop)
 
 	h("GET /api/nethealth", s.getNethealth)
 	h("GET /api/nethealth/series", s.nethealthSeries)

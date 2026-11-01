@@ -278,3 +278,70 @@ func TestXDPResyncKeepsExistingCounters(t *testing.T) {
 		t.Fatalf("resync reset the counters: %+v", v)
 	}
 }
+
+// The kernel-side download meter must agree with Go's AckMeter frame for
+// frame: same baseline rule, same credit, same re-baseline on a jump, same
+// forgetting on FIN and RST, both families.
+func TestXDPMeterAgreesWithAckMeter(t *testing.T) {
+	objs := loadXDPForTest(t)
+	dp := &xdpDataPlane{objs: objs}
+	if err := dp.configure(shepherdMAC, gwMAC, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	dp.resync([]steeredEntry{{devMAC, SteerV4 | SteerV6}})
+	meter := &AckMeter{}
+	remote := netip.AddrFrom4([4]byte{203, 0, 113, 7})
+
+	frames := [][]byte{
+		tcpFrame4(devIP, remote, 50000, 443, 1000, tcpFlagACK),               // baseline
+		tcpFrame4(devIP, remote, 50000, 443, 2460, tcpFlagACK),               // +1460
+		tcpFrame4(devIP, remote, 50000, 443, 2460, tcpFlagACK),               // dup
+		tcpFrame4(devIP, remote, 50001, 443, 10, tcpFlagACK),                 // second flow
+		tcpFrame4(devIP, remote, 50001, 443, 10+MaxAdvance, tcpFlagACK),      // jump: re-baseline
+		tcpFrame4(devIP, remote, 50001, 443, 15+MaxAdvance, tcpFlagACK),      // +5
+		tcpFrame4(devIP, remote, 50001, 443, 20+MaxAdvance, tcpFlagACK|0x01), // +5 then FIN
+		tcpFrame4(devIP, remote, 50001, 443, 99+MaxAdvance, tcpFlagACK),      // new baseline after FIN
+		tcpFrame4(devIP, remote, 50000, 443, 2460, tcpFlagACK|0x04),          // RST
+		tcpFrame4(devIP, remote, 50000, 443, 5000, tcpFlagACK),               // baseline again
+		tcpFrame4(devIP, remote, 50002, 443, 0, 0x02),                        // SYN: ignored
+		tcpFrame6(devIP6, someV6, 40000, 80, 10, tcpFlagACK),
+		tcpFrame6(devIP6, someV6, 40000, 80, 110, tcpFlagACK), // +100 on v6
+	}
+	var wantV4, wantV6 uint64
+	for i, f := range frames {
+		credit := meter.Observe(append([]byte(nil), f...), t0)
+		if f[13] == 0xdd {
+			wantV6 += credit
+		} else {
+			wantV4 += credit
+		}
+		if verdict, _ := runXDP(t, objs, f); verdict != xdpTX {
+			t.Fatalf("frame %d: verdict %d, want TX", i, verdict)
+		}
+	}
+	if wantV4 != 1470 || wantV6 != 100 {
+		t.Fatalf("Go meter credited v4=%d v6=%d; the scenario expects 1470 and 100", wantV4, wantV6)
+	}
+	var v xdpDevCounters
+	if err := objs.Steered.Lookup(macKey(devMAC), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.RxEst != wantV4 || v.RxEst6 != wantV6 {
+		t.Fatalf("kernel meter rx_est=%d rx_est6=%d, Go meter %d/%d", v.RxEst, v.RxEst6, wantV4, wantV6)
+	}
+	// harvest credits the Controller with exactly the delta.
+	c, _, _ := newTestController(t, nil)
+	// IPv4 only: the v6 credit then lands in the total but not the device,
+	// which is also what harvest does for a device steered for one family.
+	if err := c.Steer(DeviceRef{MAC: devMAC, IP: devIP}, SteerOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	dp.harvest(c)
+	if got := c.Stats().BytesReceivedEst; got != wantV4+wantV6 {
+		t.Fatalf("harvest credited %d, want %d", got, wantV4+wantV6)
+	}
+	dp.harvest(c)
+	if got := c.Stats().BytesReceivedEst; got != wantV4+wantV6 {
+		t.Fatalf("second harvest double-credited: %d", got)
+	}
+}

@@ -103,6 +103,9 @@ export function createMgmt(api) {
     nethealthProbeNow: () => post('/api/nethealth/probe', {}),
     nethealthBufferbloatRun: () => post('/api/nethealth/bufferbloat/run', {}),
 
+    traffic: () => api('/api/traffic'),
+    trafficSeries: (params) => api('/api/traffic/series' + Q(params)),
+    trafficTop: (params) => api('/api/traffic/top' + Q(params)),
     watch: () => api('/api/watch'),
     killWatch: () => post('/api/watch/kill', {}),
     rearmWatch: () => post('/api/watch/rearm', {}),

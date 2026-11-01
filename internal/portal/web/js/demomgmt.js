@@ -101,12 +101,101 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
     st.packets_per_second = r.pps;
     st.bytes_relayed = Math.round(r.bps * secs * 0.6);
     st.packets_relayed = Math.round(r.pps * secs * 0.6);
+    st.rx_bytes_per_second = r.bps * (3 + (strHashDemo(d.id) % 9));
+    st.bytes_received_est = st.bytes_relayed * (3 + (strHashDemo(d.id) % 9));
     st.families = ['ipv4'];
     st.ipv6_reason = 'this network has no global IPv6 route (unique-local addresses only), so there is no off-link IPv6 traffic to steer';
     st.steered = [{ mac: d.macs[0], ip: (d.ips || []).find((ip) => ip.includes('.')) || '192.0.2.0', families: ['ipv4'], since: new Date(watchSince).toISOString(), healthy: r.healthy, last_verified: new Date(now() - 500).toISOString() }];
     return st;
   };
   const withWatch = (d) => ({ ...d, watch_state: watchStateFor(d) });
+
+  // Bandwidth (docs/TRAFFIC.md): the same per-device rates the Watch
+  // screen shows, with a download estimate several times the upload as a
+  // home network's is, and a deterministic history so charts look the
+  // same on every visit.
+  const downFactor = (d) => 3 + (strHashDemo(d.id) % 9);
+  function trafficStatus() {
+    const steered = devices.map((d) => [d, watchStateFor(d)]).filter(([, s]) => s.state === 'steered');
+    const rows = steered.map(([d, s]) => ({
+      device_id: d.id, name: d.name, groups: d.groups,
+      up_bytes_per_second: s.bytes_per_second, down_bytes_per_second: s.bytes_per_second * downFactor(d),
+      bytes_relayed: s.bytes_relayed, bytes_received_est: s.bytes_relayed * downFactor(d),
+    })).sort((a, b) => (b.up_bytes_per_second + b.down_bytes_per_second) - (a.up_bytes_per_second + a.down_bytes_per_second));
+    const sum = (k) => rows.reduce((n, r) => n + r[k], 0);
+    return {
+      enabled: true, measuring: watchArmed,
+      retention: { minute_hours: 48, hour_days: 90, day_days: 0, max_bytes: 8388608 },
+      devices_tracked: devices.length,
+      live: { up_bytes_per_second: sum('up_bytes_per_second'), down_bytes_per_second: sum('down_bytes_per_second'), bytes_relayed: sum('bytes_relayed'), bytes_received_est: sum('bytes_received_est') },
+      devices: rows,
+    };
+  }
+  const trafficBucket = (from, to) => { const span = to - from; return span <= 86400000 ? 'minute' : span <= 60 * 86400000 ? 'hour' : 'day'; };
+  const bucketMs = { minute: 60000, hour: 3600000, day: 86400000 };
+  // One device's bytes in one bucket: a daily rhythm (busy evenings) on a
+  // per-device base, zero while it is "asleep".
+  const bucketBytes = (d, t, bucket) => {
+    const h = strHashDemo(d.id);
+    const hour = new Date(t).getUTCHours();
+    const rhythm = 0.25 + 0.75 * Math.max(0, Math.sin(((hour - 6) / 24) * Math.PI));
+    const noise = 0.6 + ((h * 7 + Math.floor(t / 60000)) % 13) / 15;
+    const perSec = (12000 + (h % 900000)) * 0.5;
+    const up = Math.round(perSec * rhythm * noise * (bucketMs[bucket] / 1000));
+    return { up, down: up * downFactor(d) };
+  };
+  const trafficDevicesFor = (scope) => {
+    if (!scope || scope === 'network') return devices;
+    if (scope.startsWith('group:')) {
+      const gid = scope.slice(6);
+      if (!groups.some((g) => g.id === gid)) throw err(404, 'group not found');
+      return devices.filter((d) => d.groups.includes(gid));
+    }
+    if (scope.startsWith('device:')) {
+      const d = devices.find((x) => x.id === scope.slice(7));
+      if (!d) throw err(404, 'device not found');
+      return [d];
+    }
+    throw err(404, 'unknown scope');
+  };
+  function trafficSeries(params) {
+    const to = params.to ? Date.parse(params.to) : now();
+    const from = params.from ? Date.parse(params.from) : to - 86400000;
+    const bucket = ['minute', 'hour', 'day'].includes(params.bucket) ? params.bucket : trafficBucket(from, to);
+    const devs = trafficDevicesFor(params.scope).filter((d) => watchDecide(d).state !== 'skipped');
+    const step = bucketMs[bucket];
+    const points = [];
+    for (let t = Math.floor(from / step) * step; t <= to; t += step) {
+      let up = 0; let down = 0;
+      for (const d of devs) { const b = bucketBytes(d, t, bucket); up += b.up; down += b.down; }
+      if (up || down) points.push({ time: new Date(t).toISOString(), up, down });
+    }
+    return { scope: params.scope || 'network', bucket, from: new Date(from).toISOString(), to: new Date(to).toISOString(), points };
+  }
+  function trafficTop(params) {
+    const to = params.to ? Date.parse(params.to) : now();
+    const from = params.from ? Date.parse(params.from) : to - 86400000;
+    const bucket = trafficBucket(from, to);
+    const step = bucketMs[bucket];
+    const rows = [];
+    const byGroup = {};
+    const net = { up: 0, down: 0 };
+    for (const d of devices.filter((x) => watchDecide(x).state !== 'skipped')) {
+      let up = 0; let down = 0;
+      for (let t = Math.floor(from / step) * step; t <= to; t += step) { const b = bucketBytes(d, t, bucket); up += b.up; down += b.down; }
+      if (!up && !down) continue;
+      rows.push({ device_id: d.id, name: d.name, groups: d.groups, up, down });
+      net.up += up; net.down += down;
+      for (const g of d.groups) { byGroup[g] = byGroup[g] || { group_id: g, name: gname(g), up: 0, down: 0 }; byGroup[g].up += up; byGroup[g].down += down; }
+    }
+    rows.sort((a, b) => (b.up + b.down) - (a.up + a.down));
+    const limit = Number(params.limit) || 0;
+    return {
+      from: new Date(from).toISOString(), to: new Date(to).toISOString(), network: net,
+      devices: limit > 0 ? rows.slice(0, limit) : rows,
+      groups: Object.values(byGroup).sort((a, b) => (b.up + b.down) - (a.up + a.down)),
+    };
+  }
   function watchStatus() {
     const states = devices.map(watchStateFor);
     const steered = states.filter((s) => s.state === 'steered');
@@ -130,6 +219,8 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
         frames_not_for_shepherd: 0,
         packets_per_second: sum((s) => s.packets_per_second),
         bytes_per_second: sum((s) => s.bytes_per_second),
+        rx_bytes_per_second: sum((s) => s.rx_bytes_per_second || 0),
+        bytes_received_est: sum((s) => s.bytes_received_est || 0),
       },
       devices: states,
       history: watchHistory,
@@ -276,6 +367,9 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       }
     }
     // ---- watch
+    if (path === '/api/traffic' && method === 'GET') return trafficStatus();
+    if (path === '/api/traffic/series' && method === 'GET') return trafficSeries(Object.fromEntries(q));
+    if (path === '/api/traffic/top' && method === 'GET') return trafficTop(Object.fromEntries(q));
     if (path === '/api/watch' && method === 'GET') return watchStatus();
     if (path === '/api/watch/kill' && method === 'POST') {
       // Whose steering the kill switch stopped has to be read before it is

@@ -13,6 +13,25 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Bandwidth monitoring: how much each device, group and the whole network moves, live and over
+  time, including downloads, at no cost to the network.** Watch mode already relays every
+  steered device's outbound frames and counts them, which is an exact upload figure. Downloads
+  never pass through Shepherd, so they are now *estimated* from the one thing in those frames that
+  describes them: every TCP segment a device sends carries an acknowledgement number, the count of
+  bytes it has received on that connection, and summing the advances per connection gives the
+  download volume with nothing new on the wire. The meter lives in both relays (`intercept.AckMeter`
+  in userspace, `meter_ack` in the XDP program, held to agree frame for frame), credits only
+  genuine advances (a first sighting is a baseline, a duplicate ACK is nothing, a jump of a
+  gigabyte is a reused port and re-baselines), and is blind by construction to QUIC, other UDP and
+  VPN traffic, which the portal says everywhere it shows the number. A new `internal/traffic` store
+  keeps one series per device per minute for two days, per hour for 90, per day forever under an
+  8 MiB cap, with exact rollups since bytes add; groups and the network are sums over devices
+  computed from current membership. A **Bandwidth** screen (Monitor) shows the live rates and
+  totals per device, a chart of download and upload for the network, a group or a device over the
+  last hour to 90 days, and who used the most; `GET /api/traffic`, `/api/traffic/series` and
+  `/api/traffic/top` are the API. The Watch screen and each device's drawer show the live download
+  estimate too. See docs/TRAFFIC.md.
+
 - **A loop brake for Watch mode, and a refusal to relay on a host that routes its own segment.**
   Twice on real hardware the relay ended up carrying its own output back to itself at line rate --
   about 10 Gbit/s and over a million packets a second on a 10 GbE card -- and both times it ran for
@@ -499,6 +518,8 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Design and roadmap entries for device quarantine (a reserved group new devices land in until moved), portal locking (demo data until unlocked, configurable auto-lock, PIN, passkeys), and running Shepherd as a dual-NIC router someday (a stated, unscheduled future direction).
 
 ### Fixed
+- The sidebar's close button no longer shows on desktop, where it did nothing: the generic
+  icon-button rule came later in the stylesheet and overrode the one hiding it.
 - **Watch mode no longer attaches native XDP on a driver that drops the link doing it, and learns
   the ones it is not told about.** A native attach makes the driver tear down and rebuild its
   receive rings; on the maintainer's 10G Aquantia card (`atlantic`) that takes the interface down

@@ -81,6 +81,7 @@ Shepherd is early and built in public. This is real, tested and running on a rea
 - [x] **Management screens** for all of the above (Devices, Blocking, Upstreams, History) alongside the HUD.
 - [x] **Tailscale integration** for private remote access, validated on a live exit node and subnet router.
 - [x] **Watch mode** ([WATCH.md](docs/WATCH.md)), on by default: Shepherd steers each eligible device's outbound traffic through itself, so you can see what a device actually connects to even when it bypasses your DNS entirely. Relayed in the kernel with XDP where the driver allows it — measured at full gigabit with no perceivable slowdown on a real network — with automatic fail-open, a one-button kill switch, a per-device switch, and your router, Shepherd itself, excluded devices and all network and smart-home infrastructure never touched.
+- [x] **Bandwidth per device, group and network** ([TRAFFIC.md](docs/TRAFFIC.md)), live and over months: upload measured exactly by the relay, download estimated from each device's own TCP acknowledgements, at no cost to the network. Honest about its blind spot: QUIC, other UDP and VPN traffic are invisible to the estimate.
 - [x] **Thread, Matter and IPv6 safe by design**, written down as hard rules ([IPV6.md](docs/IPV6.md)). IPv6 steering exists (unicast Neighbor Advertisements only, never Router Advertisements) but is off by default and never touches Thread or Matter gear ([IPV6-WATCH.md](docs/IPV6-WATCH.md)).
 - [x] **97% test coverage** with the race detector, enforced by a floor that only rises.
 

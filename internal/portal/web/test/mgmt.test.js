@@ -238,6 +238,16 @@ test('nethealth endpoints', async () => {
   assert.deepEqual([calls[4][0], calls[4][1].method, calls[4][1].body], ['/api/nethealth/bufferbloat/run', 'POST', '{}']);
 });
 
+test('traffic endpoints', async () => {
+  const { calls, m } = rig();
+  await m.traffic();
+  assert.equal(calls[0][0], '/api/traffic');
+  await m.trafficSeries({ from: '2026-01-01T00:00:00Z', to: '2026-01-02T00:00:00Z', scope: 'group:g1' });
+  assert.equal(calls[1][0], '/api/traffic/series?from=2026-01-01T00%3A00%3A00Z&to=2026-01-02T00%3A00%3A00Z&scope=group%3Ag1');
+  await m.trafficTop({ from: '2026-01-01T00:00:00Z', limit: 5 });
+  assert.equal(calls[2][0], '/api/traffic/top?from=2026-01-01T00%3A00%3A00Z&limit=5');
+});
+
 test('reverse proxy endpoints', async () => {
   const { calls, m } = rig();
   await m.reverseProxy();

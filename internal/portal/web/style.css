@@ -83,7 +83,7 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -.01em; }
 .nav button:focus-visible { outline: 2px solid var(--teal); outline-offset: -2px; }
 .nav-foot { flex: none; padding: 12px 18px 16px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; color: var(--text-3); font-size: 12px; }
 .nav-foot .mono { font-size: 11.5px; }
-.nav-close { display: none; }
+.ibtn.nav-close { display: none; } /* beats .ibtn's display, which comes later */
 .nav-close svg { width: 20px; height: 20px; }
 .tb-actions svg { width: 16px; height: 16px; }
 .nav-scrim { display: none; }
@@ -849,7 +849,27 @@ tr.a-error .h-dom { color: var(--amber); }
 /* ======================================================================
    Watch
    ====================================================================== */
-.wm-body { display: flex; flex-direction: column; gap: 16px; }
+.wm-body, .tf-body { display: flex; flex-direction: column; gap: 16px; }
+.tf-headline { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
+.tf-headline.good { color: var(--teal); } .tf-headline.warn { color: var(--amber); } .tf-headline.muted { color: var(--text-2); }
+.tf-live { margin-top: 14px; }
+.tf-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tf-scope { min-width: 180px; max-width: 100%; }
+.tf-chart-wrap { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: stretch; }
+.tf-yaxis { display: flex; flex-direction: column; justify-content: space-between; text-align: right; padding: 2px 0; }
+.tf-svg { width: 100%; height: 140px; display: block; }
+.tf-down { fill: var(--teal); fill-opacity: .35; stroke: var(--teal); stroke-width: 1.5; }
+.tf-up { fill: var(--amber); fill-opacity: .45; stroke: var(--amber); stroke-width: 1.5; }
+.tf-chart-empty { grid-column: 1 / -1; margin: 0; padding: 40px 0; text-align: center; }
+.tf-xaxis { display: flex; justify-content: space-between; margin: 4px 0 0; }
+.tf-legend { display: flex; gap: 14px; flex-wrap: wrap; margin: 10px 0 14px; }
+.tf-key::before { content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.tf-key-down::before { background: var(--teal); } .tf-key-up::before { background: var(--amber); }
+.tf-top { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 12px; }
+.tf-top-t { margin: 0 0 8px; font: 600 11px var(--sans); letter-spacing: .05em; text-transform: uppercase; color: var(--text-3); }
+.tf-bar { height: 4px; background: var(--surface-2); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+.tf-bar-fill { height: 100%; background: var(--teal); border-radius: 2px; }
+.tf-row .lr-meta { align-self: center; }
 .wm-headline { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
 .wm-headline.good { color: var(--teal); } .wm-headline.warn { color: var(--amber); } .wm-headline.bad { color: var(--red); } .wm-headline.muted { color: var(--text-2); }
 .wm-note { margin: 12px 0 0; }
@@ -883,6 +903,7 @@ button.wm-row:hover, button.wm-row:focus-visible { background: #ffffff06; outlin
   .al-row { grid-template-columns: 36px 82px minmax(180px, 2fr) 120px 96px 92px 112px; }
   .vs-row { grid-template-columns: 96px minmax(200px, 2fr) minmax(140px, 1.1fr) 130px; }
   .nh-charts { grid-template-columns: minmax(0, 1fr); }
+  .tf-top { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Below this width the sidebar becomes a slide-in menu behind a real,
@@ -894,7 +915,7 @@ button.wm-row:hover, button.wm-row:focus-visible { background: #ffffff06; outlin
   .sidenav { position: fixed; top: 0; bottom: 0; left: 0; z-index: 50; width: min(300px, 86vw); transform: translateX(-104%); transition: transform .22s ease; box-shadow: none; border-right: 1px solid var(--line-2); }
   .sidenav.open { transform: translateX(0); box-shadow: 24px 0 60px #00000099; }
   .nav-scrim { display: block; position: fixed; inset: 0; z-index: 45; background: #070a0ea6; backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
-  .nav-close { display: inline-grid; position: absolute; top: 14px; right: 12px; }
+  .ibtn.nav-close { display: inline-grid; position: absolute; top: 14px; right: 12px; }
   .brand { padding-right: 56px; }
   .nav button { height: 46px; font-size: 15px; }
   .nav button svg { width: 20px; height: 20px; }

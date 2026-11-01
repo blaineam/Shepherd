@@ -6,6 +6,9 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"os"
+	"path/filepath"
+	"shepherd/internal/traffic"
 	"strings"
 	"testing"
 	"time"
@@ -62,7 +65,7 @@ func TestStartWatchOffDoesNothing(t *testing.T) {
 		{Enabled: false, Mode: "auto", ActiveWindowSeconds: 900},
 		{Enabled: true, Mode: "off", ActiveWindowSeconds: 900},
 	} {
-		eng, err := startWatch(context.Background(), watchConfig(t, w), devices.New(devices.Options{}))
+		eng, err := startWatch(context.Background(), watchConfig(t, w), devices.New(devices.Options{}), nil)
 		if err != nil || eng != nil {
 			t.Fatalf("%+v: engine %v err %v", w, eng, err)
 		}
@@ -70,7 +73,7 @@ func TestStartWatchOffDoesNothing(t *testing.T) {
 }
 
 func TestStartWatchRejectsABadMode(t *testing.T) {
-	_, err := startWatch(context.Background(), watchConfig(t, config.Watch{Enabled: true, Mode: "kernel"}), devices.New(devices.Options{}))
+	_, err := startWatch(context.Background(), watchConfig(t, config.Watch{Enabled: true, Mode: "kernel"}), devices.New(devices.Options{}), nil)
 	if err == nil || !strings.Contains(err.Error(), "kernel") {
 		t.Fatalf("err = %v", err)
 	}
@@ -86,7 +89,7 @@ func TestStartWatchWithoutCapabilitiesStartsAnyway(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	eng, err := startWatch(ctx, watchConfig(t, config.Watch{Enabled: true, Mode: "auto", ActiveWindowSeconds: 900}), devices.New(devices.Options{}))
+	eng, err := startWatch(ctx, watchConfig(t, config.Watch{Enabled: true, Mode: "auto", ActiveWindowSeconds: 900}), devices.New(devices.Options{}), nil)
 	if err != nil || eng == nil {
 		t.Fatalf("engine %v err %v", eng, err)
 	}
@@ -117,7 +120,7 @@ func TestARPGatewayEventReachesWatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	reg := devices.New(devices.Options{})
-	eng, err := startWatch(ctx, cfg, reg)
+	eng, err := startWatch(ctx, cfg, reg, openTraffic(cfg))
 	if err != nil || eng == nil {
 		t.Fatalf("engine %v err %v", eng, err)
 	}
@@ -151,12 +154,35 @@ func TestStartWatchPassesTheIPv6Switch(t *testing.T) {
 
 	for _, on := range []bool{false, true} {
 		cfg := watchConfig(t, config.Watch{Enabled: true, Mode: "auto", ActiveWindowSeconds: 900, IPv6: on})
-		eng, err := startWatch(ctx, cfg, devices.New(devices.Options{}))
+		eng, err := startWatch(ctx, cfg, devices.New(devices.Options{}), nil)
 		if err != nil || eng == nil {
 			t.Fatalf("ipv6=%v: engine %v err %v", on, eng, err)
 		}
 		if got := eng.Snapshot().IPv6Wanted; got != on {
 			t.Errorf("ipv6=%v: IPv6Wanted = %v", on, got)
 		}
+	}
+}
+
+func TestOpenTrafficRestoresHistoryAndSurvivesACorruptFile(t *testing.T) {
+	cfg := watchConfig(t, config.Watch{Enabled: true})
+	path := filepath.Join(cfg.DataDir, "traffic.json")
+	if err := os.WriteFile(path, []byte(`{"dev":{"minute":[{"time":"2026-11-01T12:00:00Z","up":5,"down":50}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := openTraffic(cfg)
+	if got := store.Devices(); len(got) != 1 || got[0] != "dev" {
+		t.Fatalf("restored devices = %v", got)
+	}
+	if err := os.WriteFile(path, []byte("{nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if store = openTraffic(cfg); store == nil || len(store.Devices()) != 0 {
+		t.Fatalf("corrupt history should give an empty store, got %v", store)
+	}
+	// Recording saves to the same file, so the next start restores it.
+	store.Record(time.Now(), map[string]traffic.Delta{"dev": {Up: 1}})
+	if again := openTraffic(cfg); len(again.Devices()) != 1 {
+		t.Fatalf("saved history not restored: %v", again.Devices())
 	}
 }

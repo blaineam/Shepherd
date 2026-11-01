@@ -1153,12 +1153,13 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
       if (st.reason) wrow('Why', st.reason);
       if (st.state === 'steered') {
         wrow('Sending', fmtBitsPerSecond(st.bytes_per_second) + '  \u00b7  ' + fmtPacketsPerSecond(st.packets_per_second));
-        wrow('Relayed', fmtTotalBytes(st.bytes_relayed));
+        wrow('Receiving', fmtBitsPerSecond(st.rx_bytes_per_second) + ' (estimated)');
+        wrow('Relayed', fmtTotalBytes(st.bytes_relayed) + ' up  \u00b7  ' + fmtTotalBytes(st.bytes_received_est) + ' down (est.)');
         const addrs = (st.steered || []).map((x) => x.ip + ' \u00b7 ' + x.mac).join('   ');
         if (addrs) wrow('Steering', addrs);
       }
       if (live.childNodes.length) sW.append(live);
-      sW.append(el('p', 'muted small', 'Watch mode sees only what this device sends out, never what it downloads, and blocks nothing on its own.'));
+      sW.append(el('p', 'muted small', 'Watch mode carries only what this device sends out; its downloads are estimated from its own TCP acknowledgements (QUIC, other UDP and VPN traffic are invisible to that). It blocks nothing on its own.'));
       drawer.append(sW);
     }
 

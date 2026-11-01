@@ -5,13 +5,30 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"path/filepath"
 	"time"
 
 	"shepherd/internal/config"
 	"shepherd/internal/devices"
+	"shepherd/internal/traffic"
 	"shepherd/internal/watch"
 )
+
+// openTraffic builds the bandwidth history store (docs/TRAFFIC.md),
+// restoring what <data>/traffic.json holds from the previous run. It saves
+// itself as it records, so nothing else has to remember to.
+func openTraffic(cfg config.Config) *traffic.Store {
+	path := filepath.Join(cfg.DataDir, "traffic.json")
+	store := traffic.NewStore(traffic.Options{
+		Path:        path,
+		OnSaveError: func(err error) { log.Printf("traffic: saving history: %v", err) },
+	})
+	if err := store.Load(path); err != nil && !os.IsNotExist(err) {
+		log.Printf("traffic: ignoring unreadable history %s: %v", path, err)
+	}
+	return store
+}
 
 // watchPlatform is a test seam over watch.RealPlatform: production talks to
 // the real kernel (raw sockets, XDP, the ethtool ioctl, /proc); tests inject
@@ -31,8 +48,9 @@ var watchPlatform = func() watch.Platform { return watch.RealPlatform{} }
 //
 // The returned engine is the portal's handle on Watch mode (status, the
 // per-device state, the kill switch) and the sink for the ARP monitor's
-// gateway-changed events.
-func startWatch(ctx context.Context, cfg config.Config, reg *devices.Registry) (*watch.Engine, error) {
+// gateway-changed events. store, built by openTraffic, receives each
+// device's bytes once a second; nil records nothing.
+func startWatch(ctx context.Context, cfg config.Config, reg *devices.Registry, store *traffic.Store) (*watch.Engine, error) {
 	mode, err := watch.ParseMode(cfg.Watch.Mode)
 	if err != nil {
 		return nil, err
@@ -57,6 +75,7 @@ func startWatch(ctx context.Context, cfg config.Config, reg *devices.Registry) (
 		StartupGrace:   secs(cfg.Watch.StartupGraceSeconds),
 		Registry:       reg,
 		StatePath:      filepath.Join(cfg.DataDir, "watch.json"),
+		Traffic:        store,
 		Platform:       watchPlatform(),
 	})
 	if err != nil {
