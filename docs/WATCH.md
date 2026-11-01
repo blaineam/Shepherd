@@ -440,6 +440,40 @@ wants Gateway mode instead (DESIGN.md), where a router sees both by construction
 
 That is why the refusal below is kept as the default, and why it is only a default.
 
+## "Steered and healthy" can mean almost none of a device's traffic
+
+The sharpest thing measured on this network, and it limits what Watch mode's numbers are worth.
+
+A device the portal reported as **steered, healthy, with tens of thousands of relayed frames** was
+given a 100 MB download over the very interface being steered. Per-interface counters on the device
+confirm the traffic went that way: 115 MB in and 26 MB out on the steered interface, under 12 KB on
+the other. Measured on Shepherd's side over the same download:
+
+| | |
+|---|---|
+| frames the relay program examined | +20,010 |
+| frames it relayed | **+0** |
+| the interface's own `rx_packets` | +18,454 |
+
+The relay saw none of it. The interface received only its ordinary background, which `examined`
+matches almost exactly, so those hundreds of thousands of frames **never reached this host**: the
+device sent them to the real router despite its own neighbour table showing the gateway at
+Shepherd's MAC on that interface.
+
+Two consequences, and the second is the one to be careful about.
+
+**A device's relayed byte count can be an arbitrary fraction of its traffic.** Not merely
+outbound-only and understated, which is documented elsewhere here, but unrepresentative: the tens
+of thousands of frames this device had relayed were background chatter, while its bulk traffic went
+straight past. A number like that is worse than no number, because it looks like a measurement.
+
+**"Healthy" means "frames were relayed for this device", which is not the same as "this device is
+steered".** The health loop exists to catch steering that never took, and it answers correctly by
+its own definition: traffic did move. It cannot distinguish a device whose traffic flows through the
+relay from one whose trickle does while the rest bypasses it. Anyone building on these counters
+should know that, and anyone wanting a device's real traffic volume wants Gateway mode, where a
+router sees every packet by construction.
+
 ## One-sided steering can reach an interface it is not steering
 
 Observed on the maintainer's network, and worth knowing before trusting a per-device Watch switch

@@ -68,6 +68,21 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   Shepherd's own output returning to it (a frame with its source MAC, a frame addressed to the
   gateway's); both read zero throughout every storm, so the relay's own transmitted frames are not
   what comes back.
+- **"Steered and healthy" can mean almost none of a device's traffic, measured.** A device the portal
+  reported as steered, healthy and with tens of thousands of relayed frames was given a 100 MB
+  download over the steered interface. The device's own per-interface counters confirm it went that
+  way (115 MB in, 26 MB out on the steered interface, under 12 KB on the other). On Shepherd's side
+  over the same download: **20,010 frames examined, 0 relayed**, against the interface's own
+  `rx_packets` of 18,454 -- so the frames never reached this host at all, and the device sent them
+  to the real router despite its neighbour table showing the gateway at Shepherd's MAC.
+
+  Two consequences. A device's relayed byte count can be an **arbitrary** fraction of its traffic,
+  not merely outbound-only and understated: here the relayed frames were background chatter while
+  the bulk went past, and a number like that is worse than none because it looks like a measurement.
+  And **"healthy" means "frames were relayed for this device", not "this device is steered"** -- the
+  health loop answers correctly by its own definition, since traffic did move, but it cannot tell a
+  device whose traffic flows through the relay from one whose trickle does while the rest bypasses
+  it. Both written up in [WATCH.md](docs/WATCH.md).
 - **A unicast ARP claim can still reach an interface Shepherd is not steering.** Observed live, and
   a limit of one-sided steering rather than a bug in it. Shepherd replies only to the steered
   device's own MAC; a host with two interfaces on one segment may apply the answer to both. On a Mac
