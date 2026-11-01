@@ -457,7 +457,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := s.sessions.create("", s.clock())
-	s.setSessionCookie(w, sess.id)
+	s.setSessionCookie(w, r, sess.id)
 	_, pinSet := s.lockStore.pin()
 	writeJSON(w, map[string]any{"ok": true, "pin_set": pinSet})
 }

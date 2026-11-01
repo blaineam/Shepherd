@@ -81,11 +81,24 @@ func (s *Server) currentTrustedDeviceID(r *http.Request) string {
 	return id
 }
 
-func (s *Server) setTrustedCookie(w http.ResponseWriter, id string, secret []byte) {
-	http.SetCookie(w, &http.Cookie{
+// requestIsSecure reports whether r arrived over TLS, directly or through a
+// TLS-terminating proxy. The portal also serves plain HTTP on the LAN
+// (docs/TLS.md), where a Secure cookie would never be sent back and sign-in
+// would silently break, so Secure is set exactly when the browser connection
+// is HTTPS.
+func requestIsSecure(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+func (s *Server) setTrustedCookie(w http.ResponseWriter, r *http.Request, id string, secret []byte) {
+	c := &http.Cookie{
 		Name: trustedCookieName, Value: encodeTrustedCookie(id, secret), Path: "/",
 		HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: trustedCookieMaxAge,
-	})
+	}
+	if requestIsSecure(r) {
+		c.Secure = true
+	}
+	http.SetCookie(w, c)
 }
 
 // verifyPIN checks submitted against the currently-set PIN using the same
@@ -156,7 +169,7 @@ func (s *Server) loginPIN(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.lockStore.recordPINSuccess(id, now)
 	sess := s.sessions.create(id, now)
-	s.setSessionCookie(w, sess.id)
+	s.setSessionCookie(w, r, sess.id)
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -206,15 +219,19 @@ func (s *Server) trustPIN(w http.ResponseWriter, r *http.Request) {
 		conflict(w, err.Error())
 		return
 	}
-	s.setTrustedCookie(w, id, secret)
+	s.setTrustedCookie(w, r, id, secret)
 	writeJSON(w, map[string]any{"ok": true, "device_id": id})
 }
 
-func (s *Server) setSessionCookie(w http.ResponseWriter, id string) {
-	http.SetCookie(w, &http.Cookie{
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, id string) {
+	c := &http.Cookie{
 		Name: cookieName, Value: id, Path: "/", HttpOnly: true,
 		SameSite: http.SameSiteStrictMode, MaxAge: 30 * 24 * 3600,
-	})
+	}
+	if requestIsSecure(r) {
+		c.Secure = true
+	}
+	http.SetCookie(w, c)
 }
 
 // lockSession ends the caller's session (the explicit Lock button). It sits
@@ -224,7 +241,7 @@ func (s *Server) lockSession(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(cookieName); err == nil {
 		s.sessions.delete(c.Value)
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", HttpOnly: true, Secure: requestIsSecure(r), SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -272,7 +289,7 @@ func (s *Server) setPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if secret != nil {
-		s.setTrustedCookie(w, devID, secret)
+		s.setTrustedCookie(w, r, devID, secret)
 	}
 	writeJSON(w, map[string]any{"ok": true, "device_id": devID})
 }

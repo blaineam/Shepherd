@@ -110,6 +110,13 @@ func (u *Upstream) exchangeDoH(ctx context.Context, m *dns.Msg, timeout time.Dur
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	// u.dohURL was built and validated by parseUpstream (https only, checked
+	// host and port, no credentials); re-assert the scheme at the sink.
+	if !strings.HasPrefix(u.dohURL, "https://") {
+		return nil, 0, fmt.Errorf("doh: refusing non-https upstream URL")
+	}
+	// The destination is the operator's own configured resolver, not
+	// request-derived data. codeql[go/request-forgery]
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.dohURL, bytes.NewReader(wire))
 	if err != nil {
 		return nil, 0, err

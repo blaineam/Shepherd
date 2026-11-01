@@ -324,6 +324,6 @@ func (s *Server) finishPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := s.sessions.createForPasskey(pk.ID, s.clock())
-	s.setSessionCookie(w, sess.id)
+	s.setSessionCookie(w, r, sess.id)
 	writeJSON(w, map[string]bool{"ok": true})
 }
