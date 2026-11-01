@@ -68,6 +68,16 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   Shepherd's own output returning to it (a frame with its source MAC, a frame addressed to the
   gateway's); both read zero throughout every storm, so the relay's own transmitted frames are not
   what comes back.
+- **A unicast ARP claim can still reach an interface Shepherd is not steering.** Observed live, and
+  a limit of one-sided steering rather than a bug in it. Shepherd replies only to the steered
+  device's own MAC; a host with two interfaces on one segment may apply the answer to both. On a Mac
+  with a steered wired interface and an unsteered wireless one, the gateway's mapping changed to
+  Shepherd's MAC on **both**, although Shepherd never addressed the wireless one. Nothing is
+  relayed that should not be -- rule 3 only relays frames whose source MAC is actually steered -- but
+  the frames do arrive, and on a forwarding host they then meet the kernel's routing table instead
+  of the relay. So **a per-device Watch switch is not a guarantee about a multi-homed device**:
+  turning it off for one interface does not stop that device's other interface from being told the
+  same thing by its own operating system. Written up in [WATCH.md](docs/WATCH.md).
 - **The echo is measured leaving the machine and coming back, which says it is the router.** The
   duplicate table already held the moment each frame first arrived, so the delay before its copy
   returns was free to compute, and it is the discriminator nothing else supplied. First reading on

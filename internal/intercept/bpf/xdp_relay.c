@@ -246,8 +246,16 @@ struct {
 	__type(value, struct relay_stats);
 } stats SEC(".maps");
 
+// Per CPU, not shared, and that is the whole point. As one shared table
+// this caught about 80% of a steady echo and only 3% of an actual runaway,
+// because is_duplicate reads a slot, compares and writes it back with no
+// atomicity: at tens of thousands of frames a second across a dozen cores,
+// two copies of one frame routinely both read "not seen" and both get
+// relayed, so the brake failed exactly when it was needed. A per-CPU table
+// has no such race, and costs nothing in accuracy here because the receive
+// hash puts a flow and its echo on the same queue, and so the same CPU.
 struct {
-	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__uint(max_entries, DUP_SLOTS);
 	__type(key, __u32);
 	__type(value, struct dup_entry);
@@ -382,6 +390,11 @@ static __attribute__((always_inline)) __u64 fingerprint6(struct ipv6hdr_min *ip6
 // fingerprint hash, overwritten freely: a collision costs one suppressed
 // frame, and an eviction costs one unsuppressed loop pass, neither of
 // which matters at the rates involved.
+//
+// The table is per CPU (see the map), so the read-compare-write below needs
+// no atomicity and cannot lose a race to another core. It also means a
+// frame and its echo must land on the same CPU to be matched, which the
+// receive hash guarantees for a given flow.
 static __attribute__((always_inline)) int is_duplicate(__u64 fp, __u64 now,
 						       struct relay_stats *st)
 {

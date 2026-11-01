@@ -440,6 +440,35 @@ wants Gateway mode instead (DESIGN.md), where a router sees both by construction
 
 That is why the refusal below is kept as the default, and why it is only a default.
 
+## One-sided steering can reach an interface it is not steering
+
+Observed on the maintainer's network, and worth knowing before trusting a per-device Watch switch
+on a multi-homed host.
+
+Shepherd's claim is a **unicast** ARP reply, sent only to the steered device's own MAC, which is
+what makes one-sided steering one-sided. On a machine with two interfaces on the same segment, the
+operating system may still apply the answer to both. Measured on a Mac with a steered wired
+interface and an unsteered wireless one, both on one `/24`:
+
+```
+before   192.0.2.1 at Shepherd's MAC    on the wired interface    (steered)
+         192.0.2.1 at the router's MAC  on the wireless interface (not steered)
+
+later    192.0.2.1 at Shepherd's MAC    on the wired interface
+         192.0.2.1 at Shepherd's MAC    on the wireless interface (never steered)
+```
+
+Shepherd never addressed the wireless interface. The host applied the mapping to it anyway, so an
+interface the owner did not choose to steer began sending its traffic to Shepherd's MAC. The relay
+passes those frames through untouched, because rule 3 only relays frames from a MAC that is
+actually steered -- so nothing is relayed that should not be -- but the frames do arrive, and on a
+host with IPv4 forwarding on they then meet the kernel's routing table rather than the relay.
+
+The practical consequence: **a per-device Watch switch is not a guarantee about a multi-homed
+device.** Turning Watch off for one of its interfaces does not stop the other from being told the
+same thing by its own operating system. That is not something Shepherd can prevent with a unicast
+reply, since it never sent anything to the second interface in the first place.
+
 ## The dual-homed refusal, and the knob that lifts it
 
 Shepherd refuses to relay when IPv4 forwarding is on **and** another of this host's interfaces has
