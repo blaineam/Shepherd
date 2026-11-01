@@ -68,6 +68,15 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   Shepherd's own output returning to it (a frame with its source MAC, a frame addressed to the
   gateway's); both read zero throughout every storm, so the relay's own transmitted frames are not
   what comes back.
+- **The dual-homed-device lead is refuted too, by the per-device counts.** The machine behind the
+  worst storms is itself dual-homed on the segment, which looked like the answer; it is not.
+  Measured live: that machine runs 16,196 duplicates against 18,361 relayed (0.88), a
+  **single-homed** phone 419 against 692 (0.61), and a barely-active wired device 0 against 7. So
+  the echo is not peculiar to the dual-homed machine, nor to wired or wireless, and what it tracks
+  is how much a device relays rather than how it is attached. That is the third explanation
+  offered and refuted by measurement, after the polluted registry record and kernel forwarding, and
+  it points at the relay and the segment under load rather than at any device. docs/WATCH.md says
+  so where it previously recorded the dual-homing as the next thing to test.
 - **A relay self-test, before a single device is steered.** On attach, Shepherd relays one frame of
   its own -- a 60-byte UDP datagram inside 198.51.100.0/24 (TEST-NET-2) to the discard port, from a
   locally administered MAC no real device can hold -- and then checks whether it comes back. The

@@ -361,21 +361,34 @@ Something on the segment re-delivers a steered device's frames once the relay st
 retransmitting them. Which part of the network does that has not been identified, and identifying
 it needs a capture on the router rather than on this host.
 
-One structural feature is worth writing down for whoever picks that up, because it was only
-noticed at the end. The device behind the worst storms is **itself dual-homed on this segment**,
-exactly like the host: a wired interface and a wireless one, each with its own address on the same
-`/24`, each with its own default route to the same router, and the two holding *different* MAC
-addresses for that router -- the steered interface has the gateway cached at Shepherd's MAC while
-the other has it cached at the router's own (documentation addresses below).
+Per-device duplicate counts say more than that, and the first thing they did was refute the next
+guess. The device behind the worst storms *is* itself dual-homed on this segment -- a wired and a
+wireless interface, each with its own address on the same `/24`, each with its own default route to
+the same router, the steered one holding the gateway at Shepherd's MAC while the other holds the
+router's own:
 
 ```
 eth0  192.0.2.86   gateway 192.0.2.1 at Shepherd's MAC    (steered)
 wlan0 192.0.2.122  gateway 192.0.2.1 at the router's MAC  (not steered)
 ```
 
-That is not a proven mechanism and it is not enough on its own -- a single-homed phone produced a
-storm too -- so it is recorded as the next thing to test, not as an answer. The test is cheap:
-steer one single-homed wired device on its own and see whether the duplicate count stays at zero.
+That looked like the answer, and it is not. Measured with per-device counts on the live host:
+
+| Device | Relayed | Duplicates | Ratio |
+|---|---|---|---|
+| the dual-homed machine, steered on its wired interface | 18,361 | 16,196 | 0.88 |
+| a phone, single-homed, wireless | 692 | 419 | 0.61 |
+| a barely-active wired device | 7 | 0 | 0.00 |
+
+So the echo is not peculiar to the dual-homed machine, nor to wired or to wireless: a single-homed
+phone shows it too. What it does track is how much the device relays -- a device with a handful of
+frames shows none at all, and the ratio climbs with traffic. That makes it look like a property of
+the relay and the segment under load rather than of any device, which is the opposite of what the
+dual-homing suggested.
+
+That is the third explanation offered here and refuted by measurement, after the polluted registry
+record and kernel forwarding. Whoever looks next should start from a capture on the router, because
+nothing measurable on this host has separated the remaining possibilities.
 
 That is why the refusal below is kept as the default, and why it is only a default.
 
