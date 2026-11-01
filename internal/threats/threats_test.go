@@ -262,3 +262,12 @@ func TestObservePrunesItsQuietTableAndSkipsUnreadableCaches(t *testing.T) {
 		t.Fatalf("an uncreatable cache dir should fail the refresh: %+v", b.Status()[0])
 	}
 }
+
+func TestParseReadsAddressesOutOfCSVColumns(t *testing.T) {
+	// abuse.ch's SSL Blacklist: a header comment, then first seen, address, port.
+	src := "# Firstseen,DstIP,DstPort\n2026-11-01 10:00:00,192.0.2.10,443\n2026-11-01 11:00:00,198.51.100.0/24,8080\nnot,an,address\n"
+	got, skipped, err := Parse(KindIP, strings.NewReader(src))
+	if err != nil || skipped != 1 || len(got.ips) != 1 || got.ips[0].String() != "192.0.2.10" || len(got.prefixes) != 1 || got.prefixes[0].String() != "198.51.100.0/24" {
+		t.Fatalf("csv parse = %+v skipped %d err %v", got, skipped, err)
+	}
+}

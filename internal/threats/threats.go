@@ -50,14 +50,15 @@ type Feed struct {
 
 // Builtin is the curated set: plain-text, permissively licensed, fetched
 // without a key, and maintained by people whose job it is. The address
-// feeds are a few kilobytes; the name feed (HaGeZi's Threat Intelligence
-// Feeds, mini edition) is a few megabytes, the one place a broad list
-// earns its size. abuse.ch's URLhaus and ThreatFox downloads were built
-// in until 2026-11-01, when they went behind an Auth-Key (HTTP 410).
+// feeds are a few hundred kilobytes at most; the name feed (HaGeZi's
+// Threat Intelligence Feeds, mini edition) is a few megabytes, the one
+// place a broad list earns its size. abuse.ch's URLhaus and ThreatFox
+// downloads were built in until 2026-11-01, when they went behind an
+// Auth-Key (HTTP 410); its SSL Blacklist was deprecated in January 2025.
 func Builtin() []Feed {
 	return []Feed{
 		{ID: "hagezi-tif", Name: "HaGeZi Threat Intelligence (mini)", Kind: KindDomain, URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt", Describes: "a name tied to malware, phishing, scams or botnets"},
-		{ID: "sslbl", Name: "SSL Blacklist (abuse.ch)", Kind: KindIP, URL: "https://sslbl.abuse.ch/blacklist/sslipblacklist.txt", Describes: "a botnet command-and-control server behind a known bad certificate"},
+		{ID: "ipsum", Name: "IPsum (level 3)", Kind: KindIP, URL: "https://raw.githubusercontent.com/stamparm/ipsum/master/levels/3.txt", Describes: "an address on at least three public blacklists for attacks, scanning or malware"},
 		{ID: "feodo", Name: "Feodo Tracker (abuse.ch)", Kind: KindIP, URL: "https://feodotracker.abuse.ch/downloads/ipblocklist.txt", Describes: "a botnet command-and-control server"},
 		{ID: "spamhaus-drop", Name: "Spamhaus DROP", Kind: KindIP, URL: "https://www.spamhaus.org/drop/drop.txt", Describes: "a hijacked or criminal-controlled network"},
 	}
@@ -232,16 +233,32 @@ func Parse(kind Kind, r io.Reader) (parsed, int, error) {
 			}
 			out.domains = append(out.domains, name)
 		case KindIP:
-			if p, err := netip.ParsePrefix(fields[0]); err == nil {
-				if p.Bits() == p.Addr().BitLen() {
-					out.ips = append(out.ips, p.Addr().Unmap())
-				} else {
-					out.prefixes = append(out.prefixes, p.Masked())
-				}
-				continue
+			// A CSV feed (first seen, address, port, as abuse.ch's lists
+			// are laid out) carries the address in a later column, and
+			// its first column may have a space in it.
+			candidates := fields[:1]
+			if strings.Contains(line, ",") {
+				candidates = strings.Split(line, ",")
 			}
-			if a, err := netip.ParseAddr(fields[0]); err == nil {
-				out.ips = append(out.ips, a.Unmap())
+			found := false
+			for _, col := range candidates {
+				col = strings.TrimSpace(col)
+				if p, err := netip.ParsePrefix(col); err == nil {
+					if p.Bits() == p.Addr().BitLen() {
+						out.ips = append(out.ips, p.Addr().Unmap())
+					} else {
+						out.prefixes = append(out.prefixes, p.Masked())
+					}
+					found = true
+					break
+				}
+				if a, err := netip.ParseAddr(col); err == nil {
+					out.ips = append(out.ips, a.Unmap())
+					found = true
+					break
+				}
+			}
+			if found {
 				continue
 			}
 			skipped++

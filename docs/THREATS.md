@@ -28,18 +28,21 @@ by people whose job it is:
 | Feed | Lists | Kind |
 |---|---|---|
 | HaGeZi Threat Intelligence Feeds, mini edition | names tied to malware, phishing, scams and botnets | names |
-| SSL Blacklist (abuse.ch) | botnet command-and-control servers behind known bad certificates | addresses |
+| IPsum, level 3 | addresses on at least three public blacklists for attacks, scanning or malware | addresses |
 | Feodo Tracker (abuse.ch) | botnet command-and-control servers | addresses |
 | Spamhaus DROP | hijacked and criminal-controlled networks | address prefixes |
 
-The address feeds are a few kilobytes each; the name feed is a few megabytes, held in memory as a
-set, which is the one place a broad list earns its size. abuse.ch's URLhaus and ThreatFox host
-files were built in until 2026-11-01, when abuse.ch put its downloads behind an Auth-Key and the
-old addresses began answering HTTP 410; Shepherd fetches feeds without credentials, so they are out
-until a keyed fetch exists.
+The address feeds are a few hundred kilobytes at most; the name feed is a few megabytes, held in
+memory as a set, which is the one place a broad list earns its size. abuse.ch's URLhaus and
+ThreatFox host files were built in until 2026-11-01, when abuse.ch put its downloads behind an
+Auth-Key and the old addresses began answering HTTP 410; Shepherd fetches feeds without
+credentials, so they are out until a keyed fetch exists. Its SSL Blacklist was deprecated in
+January 2025 and is empty. A CSV feed (first seen, address, port) is read by taking the first column
+that parses as an address or prefix, so a custom feed in that layout works.
 
 Each is downloaded in its own format: hosts-file lines (`127.0.0.1 name`), bare names, bare
-addresses, CIDR prefixes with trailing comments. Lines that do not parse are skipped, not fatal. A
+addresses (with a trailing count, as IPsum writes them), CIDR prefixes with trailing comments, and
+CSV rows holding an address in some column. Lines that do not parse are skipped, not fatal. A
 download that fails or comes back empty keeps the previous copy and records the error, which the
 Threat feeds tab shows. Each feed is capped at 16 MiB. Feeds are cached under `<data_dir>/threats/`
 so a restart matches from the moment it starts, before its first refresh.
