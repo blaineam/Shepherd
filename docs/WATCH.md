@@ -312,11 +312,16 @@ runs deliberately. Clearing the flag would cut that off and leave the loop exact
 > burstiness explains the first trial's odd pre-steering baseline, which showed 12,000 packets a
 > second inbound on an interface whose median is 65.
 
-That `-xdp off` result is the most useful thing measured so far and it narrows the search to the
-relay's own kernel fast path. What is still unexplained is the gap inside that path: `examined`
-reached 102,516 packets a second against 73,704 relayed, so roughly 29,000 a second were seen and
-not relayed, and the interface was transmitting far more than the relay claimed at the moment the
-storm began. The next step is to account for that gap frame by frame rather than by rate.
+That `-xdp off` result is the most useful thing measured so far, and it narrows the search to the
+relay's own kernel fast path.
+
+The `examined` figure is not a second clue, though it looks like one. 102,516 examined against
+73,704 relayed leaves about 29,000 frames a second seen and not relayed, with both rule-4 counters
+at zero — but the program bumps `examined` for *every* frame it sees and bumps nothing on the
+`XDP_PASS` paths for "not Shepherd's MAC" and "not from a steered device". So that gap is simply the
+rest of the segment's traffic, and 29,000 a second is this host's measured background. The open
+question is narrower: why a relay that is passing traffic correctly drives the interface into
+mirrored transmit at all.
 
 > An earlier revision of this document blamed a polluted registry record that had merged the gateway
 > into a steerable device, and said the cause was settled. The single-device trial above disproved
@@ -375,6 +380,18 @@ sits between this host's transmit background (about 3,000) and the smallest loop
 > The share is still logged, as evidence. A low figure there now means the brake caught the storm
 > early, not that the relay is innocent. The cost of dropping it, accepted knowingly: any genuinely
 > symmetric load above the floor sustained for three seconds will stop steering.
+
+> **A limit that no version of this brake escapes.** Mirrored receive and transmit is *inherent* to
+> a relay that bounces frames back out the same interface: each relayed frame is counted once
+> arriving and once leaving, so with `R` relayed packets a second the asymmetry is
+> `|bg_rx − bg_tx| / (max(bg_rx, bg_tx) + R)`. On the measured host that is `27,000 / (30,000 + R)`,
+> which falls under 15% once `R` reaches about **150,000 packets a second (~1.8 Gbit/s)**. A single
+> fast wired client pulling that much *through* the relay would therefore trip the brake while
+> working perfectly — and the old share test would have been satisfied too (150,000 of 180,000 is
+> 83%), so this is not a regression but a property of judging a relay by its interface counters.
+> Telling "working hard" from "looping" robustly needs something these counters do not expose:
+> duplicate detection, a TTL check, or relayed bytes measured against what the device could actually
+> receive. Worth knowing before Watch mode is ever enabled on a multi-gigabit client.
 
 ## What it needs
 

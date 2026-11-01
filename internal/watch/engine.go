@@ -1773,6 +1773,15 @@ var _ intercept.Excluder = v6Excluder{}
 // Only two mechanisms are therefore excluded here, not three: kernel IPv4
 // forwarding and same-segment routing.
 //
+// One thing that looks like a clue and is not: examined 102,516 against
+// 73,704 relayed leaves ~29,000 frames a second seen and not relayed, with
+// not_for_shepherd and for_shepherd_itself both zero. That is expected.
+// The XDP program bumps `examined` for every frame it sees and bumps no
+// counter at all on the XDP_PASS paths for "not Shepherd's MAC" and "not
+// from a steered device"; only rule 4 has a counter. So the gap is the
+// rest of the segment's traffic, and ~29,000/s matches this host's
+// measured background almost exactly.
+//
 // So whatever put ~24,500 frames a second onto that interface is
 // accounted for by neither Shepherd's relay nor the kernel's IP stack. It
 // is not this function's premise either, which is why the explanation that

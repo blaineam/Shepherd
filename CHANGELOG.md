@@ -41,7 +41,17 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   been at 90 MB/s for several seconds; a separate run had the interface already mirrored at 27,000
   against 24,500 at 3.5 seconds while the relay still reported 8 pkt/s. Gating on the share buys
   nothing and costs the only seconds in which stopping is cheap. It is still logged as evidence, and
-  a low figure now means the brake caught the storm early rather than that the relay is innocent. The symmetry threshold moved from 10% to
+  a low figure now means the brake caught the storm early rather than that the relay is innocent.
+  **A limit no version of this brake escapes, recorded so it is not rediscovered as a bug:** mirrored
+  receive and transmit is inherent to a relay that bounces frames back out the same interface, since
+  each relayed frame is counted once arriving and once leaving. With `R` relayed packets a second the
+  asymmetry is `|bg_rx - bg_tx| / (max(bg_rx, bg_tx) + R)`, which on the measured host is
+  `27,000 / (30,000 + R)` and falls under 15% once `R` reaches about 150,000 a second (~1.8 Gbit/s).
+  A single fast wired client pulling that much through the relay would trip the brake while working
+  correctly; the old share test would have been satisfied there too (83%), so this is a property of
+  judging a relay by interface counters rather than a regression. Separating "working hard" from
+  "looping" robustly needs duplicate detection, a TTL check, or relayed bytes against what the device
+  could actually receive. The symmetry threshold moved from 10% to
   15% in the same change, because the 10.1%-apart loop was excluded by six hundredths of a percent,
   and a threshold that only just misses a real incident is the wrong threshold. Accepted cost: any
   genuinely symmetric load above the floor sustained for three seconds now stops steering.
@@ -92,7 +102,11 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   the leading candidate, not an excluded one, and the same run says why: with the XDP program off
   the device was steered for the same duration with `examined` holding at 16,000 to 28,000 pkt/s and
   no storm at all. The kernel fast path appears necessary for it. Two mechanisms are excluded, not
-  three.
+  three. One apparent clue is not one: examined 102,516 against 73,704 relayed leaves ~29,000 frames
+  a second seen and not relayed with both rule-4 counters at zero, but the program bumps `examined`
+  for every frame it sees and bumps nothing on the `XDP_PASS` paths for "not Shepherd's MAC" and
+  "not from a steered device", so that gap is the rest of the segment's traffic -- and ~29,000/s is
+  this host's measured background.
   What survives is the other half of the condition, and it is the one structural feature common to
   every incident: the host has **two interfaces on one segment**, and the steered device is
   `REACHABLE` through both at once. That makes the IPv4-forwarding half of the test look like it is
