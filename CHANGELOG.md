@@ -73,6 +73,10 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   it is attributed to the registry's device for the suspect MAC. Roadmap step 10 is done.
 
 ### Fixed
+- **Code-scanning hardening.** The trusted-device, session and lock cookies are now `Secure` whenever the
+  request arrived over HTTPS (direct TLS or `X-Forwarded-Proto: https`); plain-HTTP LAN access keeps working. The
+  DNS-over-HTTPS client re-checks the upstream scheme right before it sends, the IPv6 route metric is parsed with
+  bounds that cannot overflow `int`, and the portfolio-notify workflow runs with no token permissions.
 - **The loop brake was stopping uploads, and Watch mode is reinstated as opt-in.** The three
   storms that retired Watch mode earlier on 2026-11-01 were read from sampled frames that shared
   one IP identification field and one TTL, which the sampler's verdict called "the same frame
