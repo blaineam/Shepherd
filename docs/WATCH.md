@@ -344,6 +344,22 @@ Something on the segment re-delivers a steered device's frames once the relay st
 retransmitting them. Which part of the network does that has not been identified, and identifying
 it needs a capture on the router rather than on this host.
 
+One structural feature is worth writing down for whoever picks that up, because it was only
+noticed at the end. The device behind the worst storms is **itself dual-homed on this segment**,
+exactly like the host: a wired interface and a wireless one, each with its own address on the same
+`/24`, each with its own default route to the same router, and the two holding *different* MAC
+addresses for that router -- the steered interface has the gateway cached at Shepherd's MAC while
+the other has it cached at the router's own (documentation addresses below).
+
+```
+eth0  192.0.2.86   gateway 192.0.2.1 at Shepherd's MAC    (steered)
+wlan0 192.0.2.122  gateway 192.0.2.1 at the router's MAC  (not steered)
+```
+
+That is not a proven mechanism and it is not enough on its own -- a single-homed phone produced a
+storm too -- so it is recorded as the next thing to test, not as an answer. The test is cheap:
+steer one single-homed wired device on its own and see whether the duplicate count stays at zero.
+
 That is why the refusal below is kept as the default, and why it is only a default.
 
 ## The dual-homed refusal, and the knob that lifts it
