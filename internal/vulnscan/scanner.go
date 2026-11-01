@@ -109,6 +109,11 @@ type Scanner struct {
 
 	mu      sync.Mutex
 	history map[string]*DeviceFindings
+	// feed is the current set of feed-supplied signatures (feed.go),
+	// replaced wholesale by SetFeedSignatures. A feed signature with the
+	// same ID as a built-in one replaces it, so the published feed can
+	// correct a built-in's version range without a Shepherd release.
+	feed []Signature
 }
 
 // New creates a Scanner from opts.
@@ -150,6 +155,7 @@ func (s *Scanner) Scan(ctx context.Context, targets []Target) []DeviceFindings {
 	defer s.scanMu.Unlock()
 
 	now := time.Now()
+	sigs := s.Signatures()
 	probed := make([][]portProbe, len(targets))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, s.concurrency)
@@ -172,7 +178,7 @@ func (s *Scanner) Scan(ctx context.Context, targets []Target) []DeviceFindings {
 				defer wg.Done()
 				defer func() { <-sem }()
 				p := probePort(ctx, s.dial, s.tlsConnect, s.timeout, ip, port)
-				matches := Evaluate(p)
+				matches := EvaluateWith(p, sigs)
 				mu.Lock()
 				probed[i] = append(probed[i], portProbe{port: port, matches: matches})
 				mu.Unlock()
@@ -270,6 +276,44 @@ func (s *Scanner) recordDevice(id, ip string, probed []portProbe, now time.Time)
 	})
 	ds.Findings = next
 	return cloneDeviceFindings(*ds), resolved
+}
+
+// SetFeedSignatures replaces the feed-supplied signatures (feed.go) the
+// next Scan evaluates alongside the built-ins. nil clears them.
+func (s *Scanner) SetFeedSignatures(sigs []Signature) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.feed = append([]Signature(nil), sigs...)
+}
+
+// Signatures returns the full set a scan evaluates right now: every
+// built-in, plus every feed signature, with a feed signature replacing a
+// built-in of the same ID. Built-ins keep their table order; feed
+// signatures follow, sorted by ID.
+func (s *Scanner) Signatures() []Signature {
+	s.mu.Lock()
+	feed := append([]Signature(nil), s.feed...)
+	s.mu.Unlock()
+
+	override := map[string]Signature{}
+	for _, f := range feed {
+		override[f.ID] = f
+	}
+	out := make([]Signature, 0, len(allSignatures)+len(feed))
+	for _, b := range allSignatures {
+		if f, ok := override[b.ID]; ok {
+			out = append(out, f)
+			delete(override, b.ID)
+			continue
+		}
+		out = append(out, b)
+	}
+	rest := make([]Signature, 0, len(override))
+	for _, f := range override {
+		rest = append(rest, f)
+	}
+	sort.Slice(rest, func(i, j int) bool { return rest[i].ID < rest[j].ID })
+	return append(out, rest...)
 }
 
 // Results returns every device's current finding state, sorted by device ID.

@@ -433,6 +433,21 @@ func TestVulnscanOverridesAndValidation(t *testing.T) {
 	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "at least 300") {
 		t.Errorf("too-short interval: %v", err)
 	}
+	os.WriteFile(path, []byte("[vulnscan]\nfeed_refresh_seconds = 60\n"), 0o600)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "feed_refresh_seconds") {
+		t.Errorf("too-short feed refresh: %v", err)
+	}
+	// An empty feed_url turns the feed off, and then its interval is moot.
+	os.WriteFile(path, []byte("[vulnscan]\nfeed_url = \"\"\nfeed_refresh_seconds = 60\n"), 0o600)
+	cfg, err = Load(path)
+	if err != nil || cfg.Vulnscan.FeedURL != "" {
+		t.Errorf("feed off: %+v %v", cfg.Vulnscan, err)
+	}
+	os.WriteFile(path, []byte("[vulnscan]\nfeed_url = \"file:///srv/feed.json\"\nfeed_refresh_seconds = 900\n"), 0o600)
+	cfg, err = Load(path)
+	if err != nil || cfg.Vulnscan.FeedURL != "file:///srv/feed.json" || cfg.Vulnscan.FeedRefreshSeconds != 900 {
+		t.Errorf("feed overrides: %+v %v", cfg.Vulnscan, err)
+	}
 }
 
 func TestExampleConfigShowsTheVulnscanDefaults(t *testing.T) {

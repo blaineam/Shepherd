@@ -13,18 +13,27 @@ import (
 // "7.4" is less than "7.4.1" but equal to "7.4.0".
 type parsedVersion []int
 
-// parseVersion parses a dotted numeric version, stripping one trailing
-// non-numeric suffix from the last component (OpenSSH's "7.4p1" is "7.4"
-// plus a patch letter Shepherd does not need to compare).
+// parseVersion parses a dotted numeric version. The last component may
+// carry a suffix: a single trailing letter is a real ordering step
+// (OpenSSL's "1.1.1f" < "1.1.1l", ProFTPD's "1.3.5e") and becomes one more
+// numeric component (a=1, b=2, ...), while any other suffix (OpenSSH's
+// "7.4p1", Boa's "0.94.14rc21") is stripped, since Shepherd does not need
+// to order those.
 func parseVersion(s string) (parsedVersion, bool) {
 	if s == "" {
 		return nil, false
 	}
 	parts := strings.Split(s, ".")
-	out := make(parsedVersion, 0, len(parts))
+	out := make(parsedVersion, 0, len(parts)+1)
+	letter := 0
 	for i, p := range parts {
 		if i == len(parts)-1 {
-			p = leadingDigits(p)
+			digits := leadingDigits(p)
+			suffix := p[len(digits):]
+			if len(suffix) == 1 && suffix[0] >= 'a' && suffix[0] <= 'z' {
+				letter = int(suffix[0]-'a') + 1
+			}
+			p = digits
 		}
 		if p == "" {
 			return nil, false
@@ -34,6 +43,9 @@ func parseVersion(s string) (parsedVersion, bool) {
 			return nil, false
 		}
 		out = append(out, n)
+	}
+	if letter > 0 {
+		out = append(out, letter)
 	}
 	return out, true
 }

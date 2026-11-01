@@ -85,6 +85,7 @@ ARP and DHCP only affect IPv4. Shepherd never spoofs NDP or touches RAs.
 | Ads, trackers, categories | Hagezi, OISD, UT1, StevenBlack |
 | Threat intel | abuse.ch (URLhaus, Feodo, ThreatFox), Spamhaus DROP, FireHOL |
 | GeoIP / ASN | DB-IP Lite, iptoasn |
+| Vulnerability signatures | Shepherd's own daily-built feed from the NVD CVE API and CISA KEV ([VULNSCAN.md](VULNSCAN.md)) |
 | Whois | local `whois` + RDAP (IANA bootstrap) |
 | Map | MapLibre + bundled Natural Earth or self-hosted PMTiles |
 | AI | local Ollama |

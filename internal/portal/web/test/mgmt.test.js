@@ -222,6 +222,8 @@ test('vulnscan endpoints', async () => {
   assert.deepEqual([calls[3][0], calls[3][1].method, calls[3][1].body], ['/api/vulnscan/scan', 'POST', '{}']);
   await m.scanVulns('d1');
   assert.equal(calls[4][1].body, '{"device_id":"d1"}');
+  await m.vulnscanFeedRefresh();
+  assert.deepEqual([calls[5][0], calls[5][1].method], ['/api/vulnscan/feed/refresh', 'POST']);
 });
 
 test('nethealth endpoints', async () => {

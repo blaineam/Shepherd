@@ -816,6 +816,10 @@ tr.a-error .h-dom { color: var(--amber); }
 .vs-dev .sub { color: var(--text-2); font-size: 12px; }
 .vs-state { display: flex; flex-direction: column; gap: 2px; text-align: right; }
 .vs-empty { padding: 48px 16px; text-align: center; }
+.vs-feed { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: -8px var(--pad) 12px; }
+.vs-feed.warn { color: var(--amber); }
+.vs-feed.off { color: var(--text-3); }
+.vs-feed button.small { min-height: 28px; padding: 0 10px; font-size: 12.5px; }
 .vs-unavail .vs-thead { display: none; }
 
 /* ======================================================================

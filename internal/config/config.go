@@ -17,6 +17,7 @@ import (
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/ntfy"
 	"shepherd/internal/reverseproxy"
+	"shepherd/internal/vulnscan"
 )
 
 type Config struct {
@@ -295,8 +296,9 @@ type WANExposure struct {
 
 // Vulnscan schedules internal/vulnscan's deeper probe of every open port
 // internal/portscan already found: a banner or minimal protocol exchange,
-// matched against a small, curated, built-in vulnerability signature list
-// (no external CVE API — see docs/VULNSCAN.md). Enabled defaults true, for
+// matched against the built-in vulnerability signature table plus the
+// signature feed Shepherd publishes from the NVD and CISA's Known
+// Exploited Vulnerabilities catalog (docs/VULNSCAN.md). Enabled defaults true, for
 // the same reason Portscan does (the whole value of the feature is the
 // owner learning about exposure they did not expect), weighed again for
 // this feature's own, slightly deeper probing in docs/VULNSCAN.md's "Should
@@ -309,6 +311,15 @@ type Vulnscan struct {
 	// reprobed. Daily by default: this is a deeper, slower probe than
 	// Portscan's own connect scan.
 	IntervalSeconds int `toml:"interval_seconds"`
+	// FeedURL is where the signature feed is fetched from
+	// (vulnscan.DefaultFeedURL by default; a "file://" URL pins a local
+	// copy). Empty disables the feed entirely: only the built-in table is
+	// used and Shepherd makes no request for it.
+	FeedURL string `toml:"feed_url"`
+	// FeedRefreshSeconds is how often the feed is re-fetched (6 hours by
+	// default, minimum 300). The published feed itself is rebuilt daily, and
+	// an unchanged one costs one conditional request.
+	FeedRefreshSeconds int `toml:"feed_refresh_seconds"`
 }
 
 // Update controls the self-update checker (internal/update, docs/UPDATE.md):
@@ -569,7 +580,7 @@ func Default() Config {
 		Alarms:         Alarms{Enabled: true, Push: AlarmsPush{Enabled: true}, Ntfy: AlarmsNtfy{Topic: "shepherd-alarms"}},
 		Accountability: Accountability{Enabled: true, SMTP: AccountabilitySMTP{Port: 587, TLS: "starttls"}},
 		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600, WANExposure: WANExposure{Enabled: true, RefreshIntervalSeconds: 600}},
-		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600},
+		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600, FeedURL: vulnscan.DefaultFeedURL, FeedRefreshSeconds: 6 * 3600},
 		Threats:        Threats{Enabled: true, IntervalHours: 6},
 		Update:         Update{Enabled: true, Channel: "stable", CheckHours: 24},
 		Nethealth:      Nethealth{Enabled: false, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
@@ -692,6 +703,9 @@ func (c Config) Validate() error {
 	}
 	if c.Vulnscan.IntervalSeconds < 300 {
 		return errors.New("vulnscan.interval_seconds must be at least 300")
+	}
+	if c.Vulnscan.FeedURL != "" && c.Vulnscan.FeedRefreshSeconds < 300 {
+		return errors.New("vulnscan.feed_refresh_seconds must be at least 300")
 	}
 	if c.TLS.Enabled {
 		if c.TLS.Hostname == "" {

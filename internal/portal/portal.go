@@ -141,6 +141,11 @@ type Deps struct {
 	// VulnscanEnabled reports whether cmd/shepherd started Vulnscan's
 	// scheduled scan, for the status endpoint.
 	VulnscanEnabled bool
+	// VulnscanFeed keeps Vulnscan supplied with the published signature
+	// feed (docs/VULNSCAN.md's "Signature feed" section). Nil means the
+	// feed is disabled ([vulnscan].feed_url = ""): the status endpoint says
+	// so and the manual refresh endpoint refuses.
+	VulnscanFeed *vulnscan.FeedUpdater
 
 	// Nethealth probes and remembers latency/jitter/loss/reachability and
 	// bufferbloat history (docs/NETHEALTH.md). Nil gives a prober that
@@ -652,6 +657,7 @@ func (s *Server) routes() {
 	h("GET /api/vulnscan/devices", s.listVulnscanDevices)
 	h("GET /api/vulnscan/devices/{id}", s.getVulnscanDevice)
 	h("POST /api/vulnscan/scan", s.vulnscanNow)
+	h("POST /api/vulnscan/feed/refresh", s.vulnscanFeedRefresh)
 
 	h("GET /api/traffic", s.getTraffic)
 	h("GET /api/traffic/series", s.trafficSeries)

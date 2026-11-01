@@ -200,12 +200,18 @@ refresh_interval_seconds = 600   # 10 minutes; the router's NAT table is cached 
 
 [vulnscan]
 # Deepens portscan's open-port findings into named, concrete vulnerability
-# findings: a gentle banner/protocol probe per open port, matched against a
-# small, curated, built-in signature list (docs/VULNSCAN.md). No external CVE
-# API. Needs [portscan] enabled; it probes ports portscan already found open,
-# it never scans for open ports itself.
+# findings: a gentle banner/protocol probe per open port, matched against the
+# built-in signature table plus Shepherd's own signature feed, rebuilt daily
+# from the NVD and CISA's Known Exploited Vulnerabilities catalog
+# (docs/VULNSCAN.md). Needs [portscan] enabled; it probes ports portscan
+# already found open, it never scans for open ports itself.
 enabled = true
-interval_seconds = 86400        # once a day; the signature list itself is built in
+interval_seconds = 86400        # once a day
+# The feed is plain declarative data (products and version ranges), never
+# code. A new feed re-scans right away. Set feed_url = "" to use only the
+# built-in table and make no request at all; a file:// URL pins a local copy.
+feed_url = "https://raw.githubusercontent.com/blaineam/shepherd/main/feeds/vulnscan.json"
+feed_refresh_seconds = 21600    # 6 hours; an unchanged feed costs one conditional request
 
 [nethealth]
 # Latency, jitter, packet loss and reachability, probed every couple of

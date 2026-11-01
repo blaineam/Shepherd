@@ -34,6 +34,10 @@ out="$tmp/out"
 skip_file() {
   case "$1" in
     LICENSE|go.sum|*.png|*.jpg|*.jpeg|*.gif|*.ico|*.icns|*.pdf|*.woff|*.woff2) return 0 ;;
+    # feeds/ is generated from public sources (the NVD and CISA KEV) by
+    # cmd/vulnfeed and holds software version ranges, some of which have
+    # four dotted numbers and read as IP addresses to the pattern below.
+    feeds/*.json) return 0 ;;
   esac
   return 1
 }
@@ -69,6 +73,7 @@ esac
 awk -F'\t' '
   $1 ~ /(^|\/)(LICENSE|go\.sum)$/ { next }
   $1 ~ /\.(png|jpg|jpeg|gif|ico|icns|pdf|woff2?)$/ { next }
+  $1 ~ /^feeds\/.*\.json$/ { next }
   index($0, "leakcheck:allow") { next }
   { print }
 ' "$raw" > "$scan"

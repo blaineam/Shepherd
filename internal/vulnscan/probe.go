@@ -328,22 +328,61 @@ func smb1NegotiateRequest() []byte {
 	return out
 }
 
-// probeSMB1 sends the negotiate request and inspects the raw reply's SMB
-// header: 0xFF 'S' 'M' 'B' means the server answered in SMB1 itself (SMBv1
-// is enabled); anything else (an SMB2 header 0xFE 'S' 'M' 'B', a short
-// reply, or no reply at all) is left unflagged — this probe only reports a
-// positive, confirmed finding, never a guess.
+// smb1NegotiateHeaderLen is the fixed SMB1 header size; the parameter
+// block (WordCount, then the words) starts right after it.
+const smb1NegotiateHeaderLen = 32
+
+// probeSMB1 sends the negotiate request and inspects the raw reply. An
+// SMB1-framed header (0xFF 'S' 'M' 'B') alone is NOT proof that SMBv1 is
+// enabled: a server that has SMBv1 turned off (Samba with
+// "server min protocol = SMB2", which most NAS appliances ship) still
+// answers an SMB1 Negotiate in SMB1 framing, but with a DialectIndex of
+// 0xFFFF — the protocol's own way of saying "I accept none of your
+// dialects" (the SMB_COM_NEGOTIATE response in MS-CIFS). Only a reply that actually selects a
+// dialect (index 0, the one dialect offered) means the server is willing
+// to speak SMBv1. Anything else — an SMB2 header 0xFE 'S' 'M' 'B', a
+// refusal, a short reply, a non-success status, or no reply at all — is
+// left unflagged: this probe only reports a positive, confirmed finding,
+// never a guess.
 func probeSMB1(conn net.Conn, p *Probe) {
 	if _, err := conn.Write(smb1NegotiateRequest()); err != nil {
 		return
 	}
 	buf := make([]byte, 512)
 	n, _ := conn.Read(buf)
-	if n < 8 {
+	if n < 4 {
 		return
 	}
 	body := buf[4:n] // skip the 4-byte direct-TCP length header
-	if len(body) >= 4 && body[0] == 0xFF && body[1] == 'S' && body[2] == 'M' && body[3] == 'B' {
-		p.SMB1Negotiated = true
+	p.SMB1Negotiated = smb1NegotiateAccepted(body)
+}
+
+// smb1NegotiateAccepted reports whether body (an SMB message with the
+// direct-TCP length header already stripped) is an SMB1 Negotiate response
+// that selected a dialect — see probeSMB1 for why framing alone is not
+// enough.
+func smb1NegotiateAccepted(body []byte) bool {
+	// Need the full header, WordCount and at least one word (DialectIndex).
+	if len(body) < smb1NegotiateHeaderLen+3 {
+		return false
 	}
+	if !(body[0] == 0xFF && body[1] == 'S' && body[2] == 'M' && body[3] == 'B') {
+		return false
+	}
+	if body[4] != 0x72 { // SMB_COM_NEGOTIATE
+		return false
+	}
+	// NT status (little-endian, bytes 5..8) must be success; a server that
+	// errors the negotiate out has not agreed to anything.
+	if body[5] != 0 || body[6] != 0 || body[7] != 0 || body[8] != 0 {
+		return false
+	}
+	wordCount := int(body[smb1NegotiateHeaderLen])
+	if wordCount < 1 {
+		return false
+	}
+	dialectIndex := uint16(body[smb1NegotiateHeaderLen+1]) | uint16(body[smb1NegotiateHeaderLen+2])<<8
+	// We offered exactly one dialect, so the only accepting answer is index
+	// 0; 0xFFFF is the explicit "no dialect accepted" refusal.
+	return dialectIndex == 0
 }

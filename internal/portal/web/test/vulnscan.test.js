@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { severityRank, sortFindings, activeFindings, resolvedFindings, findingTooltip, flattenFindings, matchRow, scanSummary } from '../js/vulnscan.js';
+import { severityRank, sortFindings, activeFindings, resolvedFindings, findingTooltip, flattenFindings, matchRow, scanSummary, feedSummary } from '../js/vulnscan.js';
 
 test('severityRank orders the five severities and handles unknowns', () => {
   assert.ok(severityRank('critical') > severityRank('high'));
@@ -87,4 +87,16 @@ test('scanSummary counts devices scanned and active findings', () => {
   assert.equal(scanSummary({ devices: [devA, devB] }), 'Scanned 2 devices — 2 active findings');
   assert.equal(scanSummary({ devices: [devB] }), 'Scanned 1 device — 0 active findings');
   assert.equal(scanSummary(null), 'Scanned 0 devices — 0 active findings');
+});
+
+test('feedSummary explains the signature set and the feed state', () => {
+  const now = Date.parse('2026-11-01T12:00:00Z');
+  assert.deepEqual(feedSummary({ builtin_signatures: 20, feed_signatures: 0, feed: null }, now), { text: '20 built-in signatures · signature feed off', tone: 'off' });
+  assert.deepEqual(feedSummary(null, now), { text: '0 built-in signatures · signature feed off', tone: 'off' });
+  const fine = feedSummary({ builtin_signatures: 19, feed_signatures: 41, feed: { generated_at: '2026-11-01T06:00:00Z', last_checked: '2026-11-01T11:50:00Z' } }, now);
+  assert.deepEqual(fine, { text: '19 built-in signatures + 41 from the feed · feed built 6h ago · checked 10m ago', tone: '' });
+  const failed = feedSummary({ builtin_signatures: 20, feed_signatures: 41, feed: { generated_at: '2026-10-29T06:00:00Z', last_checked: '2026-11-01T11:59:40Z', last_error: 'HTTP 503' } }, now);
+  assert.deepEqual(failed, { text: '20 built-in signatures + 41 from the feed · feed built 3d ago · last check failed just now', tone: 'warn' });
+  const never = feedSummary({ builtin_signatures: 20, feed_signatures: 0, feed: { url: 'x' } }, now);
+  assert.deepEqual(never, { text: '20 built-in signatures + 0 from the feed · not fetched yet', tone: 'warn' });
 });

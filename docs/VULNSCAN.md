@@ -11,12 +11,17 @@ per-device finding history, and raises alarms the same way every other Shepherd 
 This is a **much lighter, self-hosted sibling** of what a tool like Nessus or Firewalla does for a home
 network — not an enterprise vulnerability scanner, not a penetration-testing tool:
 
-- **No external CVE database, no internet call to fetch one.** The signature list
-  (`vulnscan.BuiltinSignatures`) is a small, curated, built-in Go table, checked into the repository and
-  reviewed like any other code. This matches Shepherd's existing convention: the only things this project
-  already reaches the internet for on its own are blocklist downloads and the optional monthly GeoIP
-  database (see [DESIGN.md](DESIGN.md)); there is no paid API anywhere, and there is not going to be one
-  here either.
+- **A reviewed built-in table, plus a signature feed Shepherd publishes itself.** The built-in list
+  (`vulnscan.BuiltinSignatures`) is a small, curated Go table, checked into the repository and reviewed
+  like any other code. On top of it, a running Shepherd fetches **one JSON document** — this repository's
+  own `feeds/vulnscan.json`, rebuilt daily from the NVD and CISA's Known Exploited Vulnerabilities
+  catalog — so a signature for a newly exploited bug reaches every install the same day it is published,
+  with no Shepherd release in between. The feed is **data, never code**: a signature can only say "this
+  product, in these version ranges" or "this text in a banner", over information the probes below already
+  collect. It cannot make Shepherd probe anything new. See "Signature feed" below for exactly how it is
+  built and what it covers. This is one more of the few things this project reaches the internet for on
+  its own (the others: blocklist downloads and the optional monthly GeoIP database, see
+  [DESIGN.md](DESIGN.md)); there is still no paid API anywhere, and `feed_url = ""` turns it off entirely.
 - **No authenticated scanning, no credential guessing, no deep protocol fuzzing.** Every signature fires
   on a single, gentle, protocol-appropriate exchange: read a banner, send one minimal HTTP request, try
   exactly one well-known anonymous FTP login, send one SMBv1 negotiate packet. Nothing here tries a list
@@ -29,9 +34,14 @@ network — not an enterprise vulnerability scanner, not a penetration-testing t
 
 ### What it detects
 
-Every signature is in `vulnscan.BuiltinSignatures()` (`internal/vulnscan/signature.go`), a plain Go slice
-of `Signature` values (ID, name, severity, description, which ports it applies to, and a pure `Match`
-function over already-collected data — no I/O happens inside `Match` itself). As of this writing:
+Two sources, one mechanism. Every built-in signature is in `vulnscan.BuiltinSignatures()`
+(`internal/vulnscan/signature.go`), a plain Go slice of `Signature` values (ID, name, severity,
+description, which ports it applies to, and a pure `Match` function over already-collected data — no I/O
+happens inside `Match` itself). Feed signatures (`internal/vulnscan/feed.go`) are compiled into the very
+same `Signature` shape from declarative JSON, and `Scanner.Signatures()` is the merged set a scan actually
+evaluates: the built-ins in table order, then the feed's, with a feed signature of the **same ID replacing
+the built-in** so the published feed can correct a built-in's version range without a release. The built-in
+table as of this writing:
 
 | Signature | Port(s) | Severity | What it needs to see |
 |---|---|---|---|
@@ -49,7 +59,7 @@ function over already-collected data — no I/O happens inside `Match` itself). 
 | `lighttpd-outdated` | any HTTP port probed | low | a `lighttpd` Server header older than 1.4.50 (no specific CVE cited — see below) |
 | `docker-unauthenticated-api` | 2375 | critical | an unauthenticated `GET /version` answers with Docker's own API shape |
 | `docker-tls-unauthenticated-api` | 2376 | critical | the same, over TLS — the handshake completes with no client certificate, then `GET /version` still answers |
-| `smb1-enabled` | 445 | critical | a raw SMBv1 Negotiate Protocol request gets an SMBv1-framed reply |
+| `smb1-enabled` | 445 | critical | a raw SMBv1 Negotiate Protocol request gets an SMBv1 reply that *selects* the offered dialect (a reply with DialectIndex `0xFFFF`, which is how a server with SMBv1 disabled refuses, does not count) |
 | `tls-weak-protocol` | 443, 8443, 465, 993, 995, 2376 | high | a TLS handshake offering down to TLS 1.0 actually negotiates TLS 1.0 or 1.1 |
 | `tls-weak-cipher-suite` | 443, 8443, 465, 993, 995, 2376 | high | the negotiated cipher suite is one Go's own standard library documents as insecure (RC4, 3DES, or a CBC-mode suite with a padding-oracle weakness) |
 | `tls-cert-expired` | 443, 8443, 465, 993, 995, 2376 | medium | the presented certificate's `NotAfter` is in the past |
@@ -70,10 +80,15 @@ Being honest about the gap matters more here than anywhere else in Shepherd, bec
 job is telling you about exposure — a false sense of "nothing was found, so it's fine" would be worse than
 not having the feature:
 
-- **No OS-level or general CVE database.** This is a curated table of specific, well-known signatures,
-  not a scanner that can tell you about a CVE affecting something not in the table above. A device can
-  have real, serious vulnerabilities this feature says nothing about.
-- **No threat feeds, local or otherwise.** A locally bundled list of known-malicious IPs/domains to flag
+- **Only the products Shepherd can fingerprint, and only what the NVD files under them.** The feed
+  covers exactly the fourteen products a banner or `Server:` header names with a version (see "Signature
+  feed"); a device whose service hides its version, or runs anything else, gets nothing from the feed. A
+  distribution that backports a fix without bumping the version string (Debian's OpenSSH, Ubuntu's
+  Apache) will match a range it has actually patched — the aggregate signatures say so in their text, and
+  the CVE identifiers in the evidence are there precisely so you can check what your vendor shipped.
+  There is still no OS-level or authenticated CVE assessment: a device can have real, serious
+  vulnerabilities this feature says nothing about.
+- **No IP/domain threat-intelligence feeds** (the signature feed above is about software versions, not addresses). A locally bundled list of known-malicious IPs/domains to flag
   against observed traffic is a real, different feature (step 23 on [the roadmap](ROADMAP.md), paired
   with "local AI") — it would need to hook into traffic observation (`internal/dnsengine`/history), not a
   per-port probe, and was out of scope for this pass. Not started, not half-built.
@@ -111,10 +126,99 @@ not having the feature:
 - **Only one OpenSSH version-history signature family.** Non-OpenSSH SSH servers (Dropbear, libssh, ...)
   are not matched against any version-specific signature — only the protocol-version-1 check, which looks
   at the banner's own protocol field rather than a specific vendor's version history, applies to them.
-- **`lighttpd-outdated` cites no specific CVE.** Unlike the Apache and nginx signatures, Shepherd does not
-  assert a specific CVE number for old lighttpd versions here, to avoid stating something not actually
+- **`lighttpd-outdated` cites no specific CVE.** Unlike the Apache and nginx signatures, the built-in does
+  not assert a specific CVE number for old lighttpd versions, to avoid stating something not actually
   verified; the finding is a generic "this is old, check lighttpd's own release notes" rather than a named
-  vulnerability.
+  vulnerability. The feed's `nvd-*-lighttpd` signatures carry the actual CVE identifiers.
+
+## Signature feed
+
+`feeds/vulnscan.json` in this repository is the feed every Shepherd fetches by default
+(`[vulnscan].feed_url`, `vulnscan.DefaultFeedURL`: the file on the `main` branch via
+`raw.githubusercontent.com`). It is **built by `cmd/vulnfeed`** (`internal/vulnfeed`), which the
+`vulnfeed` GitHub Actions workflow runs every day and commits when the data changed, from two public,
+keyless sources:
+
+- **The NVD CVE API 2.0**, queried once per product CPE (`cpe:2.3:a:openbsd:openssh`, ...) for every CVE
+  filed under it, with its CVSS metrics and its affected-configuration version ranges.
+- **CISA's Known Exploited Vulnerabilities (KEV) catalog**, the list of CVEs with confirmed exploitation in
+  the wild.
+
+**What gets in.** A CVE becomes part of the feed when it is **in KEV** (whatever its score), or when the
+NVD's own CVSS 3.x assessment says it is **reachable over the network with no credentials** and rated
+**critical (9.0+)**, or **high (7.0–8.9) with no user interaction either**. Everything else — local bugs,
+ones that need an account, medium and low scores, rejected entries, and any entry whose affected
+configuration is an unbounded wildcard ("every version ever", which is never what a CVE means) — is left
+out on purpose. A home-network scanner that lit up on every medium CVE in an old PHP would train people to
+ignore it; the whole point of the thresholds is that a feed finding is worth a look.
+
+**What it produces.** Three kinds of signature:
+
+| ID | One per | Severity | Fires when |
+|---|---|---|---|
+| `kev-cve-YYYY-NNNN` | KEV CVE | critical | the product's version is in that CVE's affected range; the description is the NVD's text plus the date CISA added it |
+| `nvd-critical-<product>` | product | critical | the version is in the affected range of **any** critical, network-exploitable CVE for that product; the evidence names which (`OpenSSH_8.9p1 — CVE-2023-38408, CVE-2024-6387 (2 CVEs)`) |
+| `nvd-high-<product>` | product | high | the same for the high tier |
+
+The aggregates exist so an old build produces one row that names its CVEs, not fifty rows. Each version
+range inside an aggregate carries the CVE it came from, which is how the evidence can be specific.
+
+**Products.** The feed can only name what `internal/vulnscan` can fingerprint
+(`vulnscan.KnownProducts()`, pinned by `internal/vulnfeed`'s own test so the two can never drift): from an
+SSH/FTP/SMTP banner — OpenSSH, Dropbear, vsftpd, ProFTPD, Exim; from an HTTP `Server:` header, every
+`Product/version` token — Apache httpd, nginx, lighttpd, OpenSSL, PHP, Boa, mini_httpd, GoAhead and
+Microsoft IIS (`Apache/2.4.41 (Ubuntu) OpenSSL/1.1.1f PHP/7.4.3` yields three fingerprints). A feed that
+names a product this build does not know (a newer feed on an older Shepherd) simply has that signature
+skipped, counted in the feed status, never an error.
+
+**The format** (`vulnscan.Feed`, schema 1) is deliberately small:
+
+```json
+{
+  "schema": 1,
+  "generated_at": "2026-11-01T05:41:00Z",
+  "signatures": [
+    {
+      "id": "kev-cve-2024-6387", "name": "OpenSSH: CVE-2024-6387 (actively exploited)",
+      "severity": "critical", "description": "...", "cves": ["CVE-2024-6387"],
+      "match": {"product": "openssh", "versions": [{"gte": "8.5", "lt": "9.8"}]}
+    },
+    {
+      "id": "nvd-high-openssl", "name": "OpenSSL with known high-severity CVEs", "severity": "high",
+      "description": "...",
+      "match": {"product": "openssl", "versions": [{"lt": "1.1.1l", "cve": "CVE-2021-3711"}, {"gte": "3.0.0", "lt": "3.0.7", "cve": "CVE-2022-3602"}]}
+    }
+  ]
+}
+```
+
+A `match` is either `product` + `versions` (ranges with any of `gte`, `gt`, `lte`, `lt`, `eq`; an empty
+list means any version of the product) or `contains` (a case-insensitive substring of the banner or
+`Server:` header). Versions are dotted numbers; a single trailing letter orders releases
+(OpenSSL's `1.1.1f` < `1.1.1l`), any longer suffix (`7.4p1`, `0.94.14rc21`) is ignored. `ParseFeed`
+rejects anything else — a wrong schema, a duplicate or missing ID, an unknown severity, a matcher that
+says both or neither — and a rejected feed never replaces the one in use.
+
+**How a running Shepherd uses it** (`vulnscan.FeedUpdater`, wired in `cmd/shepherd/vulnscan.go`):
+
+- At start, the last good copy is restored from `<data_dir>/vulnscan-feed.json` (mode 0600), so an install
+  with no internet still has its signatures, then the published feed is fetched.
+- Every `feed_refresh_seconds` (6 hours by default) it is fetched again — conditionally, with the ETag,
+  so an unchanged feed is one small 304 — and a **genuinely new feed re-scans every device right away**
+  rather than waiting for the daily scan. That is the point of the feature: a signature published for
+  a bug exploited this week is applied within hours, not whenever `interval_seconds` next comes around.
+  The cached copy restored at start does not trigger a scan (nothing new was learned).
+- A download that fails, or a document that does not parse, is recorded as the feed's `last_error` (the
+  portal shows it) and the previous signatures stay in force.
+- Feed findings alert exactly like built-in ones (see "Alerting"), with the feed signature's own severity,
+  and resolve the same way when a later scan — or a later feed that no longer lists the range — stops
+  matching.
+
+**Trust.** The feed is fetched over HTTPS from this repository, it is validated before use, and it can
+only ever add or change *recognition* of versions in data the fixed set of probes already collects —
+never what is probed, how, or how often. If you would rather not fetch it, `feed_url = ""`; if you want to
+pin a copy you reviewed, `feed_url = "file:///path/to/vulnscan.json"` works the same way. The workflow
+commits with `[skip ci]`, so a feed refresh never triggers a beta build on its own.
 
 ## How a scan works
 
@@ -192,13 +296,15 @@ enabled = true
 
 [vulnscan]
 enabled = true
-interval_seconds = 86400   # once a day; the signature list itself is built in, not configurable yet
+interval_seconds = 86400          # once a day
+feed_url = "https://raw.githubusercontent.com/blaineam/shepherd/main/feeds/vulnscan.json"
+feed_refresh_seconds = 21600      # 6 hours; "" for feed_url disables the feed entirely
 ```
 
 `interval_seconds` must be at least 300 (5 minutes), the same floor `[portscan]` uses, though a daily
 schedule is the sane default: this is a deeper, slower probe than portscan's own connect scan, and there
-is no reason to repeat it constantly. The signature list is `vulnscan.BuiltinSignatures()` and is not yet
-exposed in the configuration file.
+is no reason to repeat it constantly. `feed_refresh_seconds` has the same floor and only matters while
+`feed_url` is set; the built-in signature table itself is not configurable.
 
 **`[vulnscan]` needs `[portscan]` enabled.** This feature deepens portscan's own open-port findings
 rather than scanning for open ports itself (see "What this is, and what it is not"); with portscan
@@ -236,10 +342,11 @@ state-changing portal endpoint.
 
 | Endpoint | Does |
 |---|---|
-| `GET /api/vulnscan` | `{enabled, signatures: [{id, name, severity, description, ports}]}` |
+| `GET /api/vulnscan` | `{enabled, signatures: [{id, name, severity, description, ports, cves, source}], builtin_signatures, feed_signatures, feed}` — `signatures` is the merged set a scan evaluates (`source` is `builtin` or `feed`); `feed` is `{url, signatures, skipped, generated_at, last_checked, last_updated, last_error}` or `null` when the feed is disabled |
 | `GET /api/vulnscan/devices` | every device's last scan: `{devices: [{device_id, name, ip, last_scanned, findings: [...]}]}` |
 | `GET /api/vulnscan/devices/{id}` | one device's last scan, same shape (empty `findings` and no `last_scanned` if never scanned) |
 | `POST /api/vulnscan/scan` | `{}` re-probes every device portscan currently has open ports for; `{"device_id": "..."}` scans just one. Returns the scanned devices in the same shape as the list endpoint |
+| `POST /api/vulnscan/feed/refresh` | fetches the signature feed now, outside its schedule: `{changed, feed}`; a changed feed re-scans in the background. 400 when the feed is disabled, 502 (with the error as the body) when the fetch failed |
 
 A manual scan re-probes whatever `internal/portscan` currently knows is open — it does not itself trigger
 a fresh port scan first, so it stays fast (bounded by a handful of short banner/protocol reads, not a
@@ -252,7 +359,10 @@ History is kept at `<data_dir>/vulnscan.json` (mode 0600) and saved after every 
 
 A dedicated **Vulnerabilities** tab lists every finding across every scanned device in one place, worst
 severity first, filterable by minimum severity, active/resolved and free text, with a "Scan all" button
-(`POST /api/vulnscan/scan` with no `device_id`). Clicking a row opens that device's drawer rather than
+(`POST /api/vulnscan/scan` with no `device_id`). One line under the controls says what the scanner is
+matching against — how many signatures are built in and how many the feed supplies, when the feed was
+built upstream and last checked, in amber when the last check failed — with an "Update feed" button
+(`POST /api/vulnscan/feed/refresh`). Clicking a row opens that device's drawer rather than
 repeating the finding detail a second time. The device drawer itself (Devices screen) still has its own
 smaller Vulnerabilities panel — a quick, per-device summary with its own "Scan now" — for when you are
 already looking at one device and do not need the cross-network view. See

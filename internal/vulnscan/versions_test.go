@@ -11,7 +11,9 @@ func TestParseVersion(t *testing.T) {
 		ok   bool
 	}{
 		{"7.4", []int{7, 4}, true},
-		{"7.4p1", []int{7, 4}, true}, // trailing patch-letter suffix is stripped
+		{"7.4p1", []int{7, 4}, true},            // trailing patch-letter suffix is stripped
+		{"1.1.1f", []int{1, 1, 1, 6}, true},     // a single OpenSSL-style letter orders releases
+		{"0.94.14rc21", []int{0, 94, 14}, true}, // anything longer is stripped
 		{"1.20.1", []int{1, 20, 1}, true},
 		{"2.4.49", []int{2, 4, 49}, true},
 		{"", nil, false},

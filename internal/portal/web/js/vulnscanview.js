@@ -13,14 +13,16 @@ import { el } from './dom.js';
 import { icon, button, segmented, emptyState, unavailableCard, relTime } from './ui.js';
 import { unavailable } from './mgmt.js';
 import { SEVERITIES, severityLabel, severityBadgeClass } from './alarms.js';
-import { flattenFindings, matchRow, scanSummary, findingTooltip } from './vulnscan.js';
+import { flattenFindings, matchRow, scanSummary, findingTooltip, feedSummary } from './vulnscan.js';
 
 const STATES = [['active', 'Active'], ['resolved', 'Resolved']];
 
 export function createVulnscan({ root, mgmt, notify, toaster, onOpenDevice = () => {} }) {
   let filters = { severity: '', state: 'active', text: '' };
   let devices = []; // raw GET /api/vulnscan/devices response
+  let status = null; // raw GET /api/vulnscan response (signature counts, feed state)
   let loadError = null;
+  let refreshingFeed = false;
   let scanning = false;
   let started = false;
   let timer = 0;
@@ -62,6 +64,17 @@ export function createVulnscan({ root, mgmt, notify, toaster, onOpenDevice = () 
   const scanBtn = button('Scan all', 'ghost', () => scanAll(), 'refresh');
   head.append(title, stateSeg.root, sevSel, searchBox, scanBtn);
 
+  // One quiet line under the controls says what the scanner is actually
+  // matching against right now — how many signatures are built in versus
+  // supplied by the feed, when that feed was built upstream and last
+  // checked — with a manual "Update feed" for the impatient. Every string
+  // here is placed with textContent.
+  const feedLine = el('div', 'vs-feed muted small');
+  const feedText = el('span', 'vs-feed-text', '');
+  const feedBtn = button('Update feed', 'ghost small', () => refreshFeed(), 'refresh');
+  feedBtn.hidden = true;
+  feedLine.append(feedText, feedBtn);
+
   const wrap = el('section', 'vs-tablewrap panel-lite');
   const thead = el('div', 'vs-row vs-thead');
   thead.setAttribute('role', 'row');
@@ -76,7 +89,41 @@ export function createVulnscan({ root, mgmt, notify, toaster, onOpenDevice = () 
   emptyEl.hidden = true;
   scroll.append(rowsEl, emptyEl);
   wrap.append(thead, scroll);
-  root.append(head, wrap);
+  root.append(head, feedLine, wrap);
+
+  function paintFeed() {
+    const { text, tone } = feedSummary(status);
+    feedText.textContent = text;
+    feedLine.className = 'vs-feed muted small' + (tone ? ' ' + tone : '');
+    feedBtn.hidden = !(status && status.feed);
+    feedBtn.disabled = refreshingFeed;
+    const label = feedBtn.querySelector('span');
+    if (label) label.textContent = refreshingFeed ? 'Updating…' : 'Update feed';
+  }
+
+  async function refreshFeed() {
+    if (refreshingFeed) return;
+    refreshingFeed = true;
+    paintFeed();
+    try {
+      const r = await mgmt.vulnscanFeedRefresh();
+      toaster.show(r && r.changed ? 'Signature feed updated — rescanning with the new signatures' : 'Signature feed is already current');
+    } catch (e) {
+      notify(unavailable(e) ? 'This Shepherd has no signature feed yet.' : 'Feed update failed: ' + e.message);
+    } finally {
+      refreshingFeed = false;
+      await loadStatus();
+    }
+  }
+
+  async function loadStatus() {
+    try {
+      status = await mgmt.vulnscanStatus();
+    } catch (e) {
+      status = null;
+    }
+    paintFeed();
+  }
 
   // ------------------------------------------------------------- loading
   async function load() {
@@ -89,6 +136,7 @@ export function createVulnscan({ root, mgmt, notify, toaster, onOpenDevice = () 
       devices = [];
     }
     paintRows();
+    await loadStatus();
   }
 
   async function scanAll() {

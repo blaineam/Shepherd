@@ -1,0 +1,40 @@
+# Daily: rebuild feeds/vulnscan.json, the vulnerability signature feed every
+# running Shepherd fetches (docs/VULNSCAN.md, "Signature feed"), from the NVD
+# CVE API and CISA's Known Exploited Vulnerabilities catalog, and commit it
+# when it changed. NVD_API_KEY is an optional repository secret that only
+# raises the NVD rate limit; without it the build takes a few minutes longer.
+name: Vulnerability feed
+on:
+  schedule:
+    - cron: '41 5 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: vulnfeed
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build the feed
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: go run ./cmd/vulnfeed -o feeds/vulnscan.json
+      - name: Commit when it changed
+        run: |
+          # Only generated_at moved? Then nothing a Shepherd would act on changed.
+          if git diff --quiet -I'"generated_at"' -I'"source"' -- feeds/vulnscan.json; then
+            echo "feed unchanged"
+            git checkout -- feeds/vulnscan.json
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add feeds/vulnscan.json
+          git commit -m "Refresh the vulnerability signature feed [skip ci]"
+          git push
