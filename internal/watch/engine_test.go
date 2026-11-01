@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1268,6 +1269,17 @@ func TestTheKillSwitchDoesNotEraseTheLearnedDriverList(t *testing.T) {
 // interface counters show exactly that traffic mirrored: received and
 // transmitted the same, with the relay accounting for all of it. That is
 // the shape both live incidents had.
+// loopTickUnrelayed moves the interface counters without feeding the relay,
+// which is the shape measured on real hardware: 54,000 packets a second
+// received against 49,000 transmitted while the relay reported 8 pkt/s. The
+// brake must trip on this, and the version keyed on the relay's share could
+// not see it at all.
+func (te *testEngine) loopTickUnrelayed(t *testing.T, plat *fakePlatform, rx, tx uint64) {
+	t.Helper()
+	plat.addCounters(rx*42, rx, tx*42, tx)
+	te.clock.Advance(time.Second)
+}
+
 func (te *testEngine) loopTick(t *testing.T, plat *fakePlatform, n uint64, mirrored bool) {
 	t.Helper()
 	te.mu.Lock()
@@ -1307,7 +1319,7 @@ func TestTheLoopBrakeStopsARelayCarryingItsOwnOutput(t *testing.T) {
 	if snap.Armed {
 		t.Fatal("the brake should have disarmed steering")
 	}
-	if !strings.Contains(snap.Reason, "its own output") {
+	if !strings.Contains(snap.Reason, "mirroring traffic") {
 		t.Fatalf("reason = %q, want it to say what happened", snap.Reason)
 	}
 	if te.isSteered(phoneMAC) {
@@ -1374,6 +1386,105 @@ func TestTheLoopBrakeHasAFloor(t *testing.T) {
 	}
 }
 
+// The loop measured on real hardware put almost nothing through the relay's
+// own counter -- 8 pkt/s against 54,000 received -- so a brake that asked
+// the relay how much it was carrying watched the whole thing happen. This
+// is that shape, to the ratio: mirrored within 9.3%, over the floor, relay
+// silent.
+func TestTheLoopBrakeStopsALoopTheRelayIsNotCarrying(t *testing.T) {
+	statePath := t.TempDir() + "/watch.json"
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, func(c *Config) { c.StatePath = statePath })
+	// The *production* floor, not a test one: the point of this test is that
+	// loopFloorPPS is low enough for the loop actually measured on hardware.
+	// It was 50,000 once, which is above this loop, so the brake would have
+	// watched it happen.
+	te.loopFloor = loopFloorPPS
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	// The measured rates, verbatim: 26,994 received against 24,492
+	// transmitted in one second, 9.27% apart, relay reporting nothing. One
+	// tick per poll, because FakeClock drops a tick fired before the engine
+	// has registered its next waiter, and a dropped tick is silent.
+	waitFor(t, "the loop brake to trip with the relay silent", func() bool {
+		te.loopTickUnrelayed(t, plat, 26994, 24492)
+		return !te.Snapshot().Armed
+	})
+
+	if te.isSteered(phoneMAC) {
+		t.Fatal("nothing should still be steered")
+	}
+	st, err := loadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Killed {
+		t.Fatal("the stop must persist")
+	}
+	// The share is still reported, because it is the evidence that the loop
+	// is not the relay's own output.
+	var saidShare bool
+	for _, l := range te.logs.all() {
+		if strings.Contains(l, "loop brake evidence:") && strings.Contains(l, "the relay reported 0") {
+			saidShare = true
+		}
+	}
+	if !saidShare {
+		t.Fatalf("the brake must report the relay's share as evidence; got %v", te.logs.all())
+	}
+}
+
+// The earlier single-device run was about 465,000 packets a second received
+// against 517,000 transmitted: 10.06% apart, which the original 0.10
+// symmetry threshold excluded by six hundredths of a percent. A threshold
+// that only just misses a real incident is the wrong threshold.
+func TestTheLoopBrakeCatchesATenPercentAsymmetricLoop(t *testing.T) {
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, nil)
+	te.loopFloor = loopFloorPPS
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	waitFor(t, "the loop brake to trip on a 10.06% asymmetric loop", func() bool {
+		te.loopTickUnrelayed(t, plat, 465000, 517000)
+		return !te.Snapshot().Armed
+	})
+}
+
+// Healthy but genuinely busy stays untouched even above the floor: the live
+// host transmitted 800 to 1000 Mbit/s against 600 received, 25 to 40% apart,
+// which is well outside loopSymmetry. The floor alone would not have saved
+// it -- that run reached roughly 83,000 packets a second.
+func TestTheLoopBrakeLeavesBusyLopsidedTrafficAloneAboveTheFloor(t *testing.T) {
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, nil)
+	te.loopFloor = loopFloorPPS
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	// The live host's own background with nothing steered, measured in clean
+	// two-second samples: receive far above the floor, transmit a tenth of
+	// it, 90% apart. The brake has to sit beside this every second of every
+	// day without firing, which is why the floor cannot be the test.
+	for i := 0; i < (loopHits+4)*4; i++ {
+		te.loopTickUnrelayed(t, plat, 39521, 3008)
+		time.Sleep(2 * time.Millisecond)
+	}
+	if !te.Snapshot().Armed {
+		t.Fatal("the brake tripped on heavy lopsided traffic above the floor")
+	}
+	if !te.isSteered(phoneMAC) {
+		t.Fatal("steering should be untouched")
+	}
+}
+
 // This host's own Docker containers arrive in the registry looking like
 // ordinary LAN devices: a 172.x address from the host's neighbour table and
 // several MACs each. They are not on the relay interface's segment, so an
@@ -1412,10 +1523,11 @@ func TestAnUnknownSegmentRefusesNothing(t *testing.T) {
 }
 
 // A host that both forwards IPv4 and has a second interface on the relay's
-// own subnet is routing the segment Watch mode would steer. That is the
-// shape of the maintainer's NAS, which is the only host on which the relay
-// has ever ended up carrying its own output back to itself, so Shepherd
-// refuses rather than relay into it.
+// own subnet is routing the segment Watch mode would steer. On the one host
+// with that shape, steering a single ordinary device took the interface to
+// ~465k packets/s in and ~517k out, mirrored, in about ten seconds -- with
+// the relay accounting for under a tenth of it. So Shepherd refuses rather
+// than relay into it. See routingOwnSegment.
 func TestRefusesToRelayOnAHostRoutingItsOwnSegment(t *testing.T) {
 	plat := newFakePlatform()
 	plat.ipForward = true
@@ -1436,6 +1548,35 @@ func TestRefusesToRelayOnAHostRoutingItsOwnSegment(t *testing.T) {
 	}
 	if x, _ := plat.counts(); x != 0 {
 		t.Fatalf("the relay should never have been attached; attaches = %d", x)
+	}
+}
+
+// Rule 4 of the relay ("not for Shepherd itself") is driven by the
+// local_ips map, and the relay interface's own addresses are not the whole
+// of this host. A second interface on the same segment -- the maintainer's
+// NAS answers DNS on one -- is an address steered devices legitimately
+// talk to, and those frames must reach the stack, not the gateway. The
+// gateway's own address must stay out: it is not this host's.
+func TestLocalIPsCoverEveryHostAddressButNotTheGateway(t *testing.T) {
+	plat := newFakePlatform()
+	second := netip.MustParseAddr("192.0.2.77")
+	plat.extraIPs = []netip.Addr{second}
+	te := newTestEngine(t, plat, nil)
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+
+	plat.mu.Lock()
+	got := append([]netip.Addr(nil), plat.xdpLocalIPs...)
+	plat.mu.Unlock()
+	if !slices.Contains(got, second) {
+		t.Errorf("local_ips = %v, want it to include this host's other address %v", got, second)
+	}
+	if !slices.Contains(got, shepherdIP) {
+		t.Errorf("local_ips = %v, want it to include the relay interface's own %v", got, shepherdIP)
+	}
+	if slices.Contains(got, gwIP) {
+		t.Errorf("local_ips = %v, must not include the gateway %v", got, gwIP)
 	}
 }
 

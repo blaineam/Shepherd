@@ -178,9 +178,32 @@ const (
 	// genuinely busy: receive 600 Mbit/s against transmit 800 to 1000, so
 	// 25 to 40% apart, with the relay reporting well under half the
 	// interface's packets.
-	loopSymmetry = 0.10   // |tx-rx| / max(tx,rx) at or below this is mirrored
-	loopShare    = 0.80   // relayed packets as a share of received packets
-	loopFloorPPS = 50_000 // below this, a home network is not looping
+	// loopSymmetry is the whole test now, so it is placed from measurement
+	// rather than taste. Loops observed: 0.03% apart (the two original
+	// incidents), 9.3% (the instrumented single-device run, about 26,994
+	// received against 24,492 transmitted) and 10.1% (the earlier
+	// single-device run, about 465,000 against 517,000). Busy but healthy
+	// on the same host sits far outside that: six clean samples with
+	// nothing steered ran 89 to 92% apart. 0.15 leaves wide margin on both
+	// sides; the old 0.10 would have excluded the 10.1% run, which is
+	// exactly the kind of threshold that only just misses a real incident.
+	//
+	// The ratio is the one thing the sampling artefact described on
+	// checkForLoop does not disturb: the driver publishes rx and tx in the
+	// same lump, so a bucket's rx:tx is right even when its duration is not.
+	loopSymmetry = 0.15
+	// loopFloorPPS keeps a quiet network from tripping it, and that is all
+	// it does: symmetry is what separates looping from busy. Measured on
+	// the live host with nothing steered, six clean two-second samples ran
+	// rx 12,325 to 39,521 a second against tx 1,324 to 3,008 -- so max(rx,
+	// tx) routinely reaches 40,000 while sitting 89 to 92% apart. A floor
+	// alone could not tell that from a loop; the symmetry test can.
+	//
+	// 15,000 sits between this host's transmit background (about 3,000) and
+	// the smallest loop measured (max(rx, tx) about 27,000), with roughly
+	// 1.8x of margin either way. It was 50,000 until the measurement below
+	// was corrected, which would have missed that loop outright.
+	loopFloorPPS = 15_000
 	// loopHits is how many consecutive one-second samples must agree
 	// before the brake trips, so a burst cannot cause one.
 	loopHits = 3
@@ -756,6 +779,45 @@ func (e *Engine) learnIfNativeFlapped(ctx context.Context, iface, driver string,
 	}
 }
 
+// localRelayIPs is every address of this host, for the relay's "not for
+// Shepherd itself" rule (xdp_relay.c rule 4, Relay.HandleFrame's local
+// check). The relay interface's own addresses are not enough: a host with
+// a second interface on the same segment, or with container bridges, has
+// addresses a steered device can legitimately talk to, and a frame for one
+// of those must be passed up to the stack rather than relayed to the
+// gateway. The maintainer's NAS answers DNS on a second address on the
+// very segment it steers, so this is the normal case, not a corner.
+//
+// The gateway is deliberately not in this set, even though own() includes
+// it for policy: traffic to the gateway's own address belongs to the
+// gateway, not to this host, and passing it up would strand it.
+func (e *Engine) localRelayIPs(link Link) (v4, v6 []netip.Addr) {
+	seen := map[netip.Addr]bool{}
+	add := func(ip netip.Addr) {
+		if !ip.IsValid() || seen[ip] {
+			return
+		}
+		seen[ip] = true
+		if ip.Is4() {
+			v4 = append(v4, ip)
+			return
+		}
+		v6 = append(v6, ip)
+	}
+	for _, ip := range link.IPv4s {
+		add(ip)
+	}
+	for _, ip := range link.IPv6s {
+		add(ip)
+	}
+	if _, ips, err := e.plat.LocalAddrs(); err == nil {
+		for _, ip := range ips {
+			add(ip)
+		}
+	}
+	return v4, v6
+}
+
 func (e *Engine) startXDP(ctx context.Context, ctrl *intercept.Controller, link Link) (string, <-chan error, func(), error) {
 	mode, driver := e.xdpModeFor(link.Name)
 	var before uint64
@@ -768,10 +830,12 @@ func (e *Engine) startXDP(ctx context.Context, ctrl *intercept.Controller, link 
 	rctx, cancel := context.WithCancel(ctx)
 	attached := make(chan intercept.XDPMode, 1)
 	done := make(chan error, 1)
+	v4, v6 := e.localRelayIPs(link)
 	go func() {
 		done <- e.plat.AttachXDP(rctx, ctrl, link.Name, intercept.XDPOptions{
 			Mode:       mode,
-			LocalIPs:   link.IPv4s,
+			LocalIPs:   v4,
+			LocalIPs6:  v6,
 			OnAttached: func(m intercept.XDPMode) { attached <- m },
 		})
 	}()
@@ -1053,11 +1117,59 @@ func (e *Engine) sample(now time.Time) {
 // established -- and both times it ran for minutes because a person had to
 // notice. This notices in three seconds.
 //
-// The signature it looks for is the one that identified both incidents by
-// hand: the interface receives and transmits the same amount, and the relay
-// accounts for almost all of it. Legitimate heavy traffic fails the first
-// test, because downloads and the host's own traffic make receive and
-// transmit diverge, and a quiet network fails the floor.
+// The signature is mirrored traffic -- the interface receiving and
+// transmitting the same amount -- above a rate a home network does not
+// reach, for loopHits consecutive seconds. Legitimate heavy traffic fails
+// the symmetry test, because downloads and the host's own traffic make
+// receive and transmit diverge by 25 to 40%, and a quiet network fails the
+// floor.
+//
+// It deliberately does **not** test the relay's own share of the traffic,
+// and an earlier version of this brake did: the relay had to report at
+// least 80% of the interface's receive rate, and at least loopFloorPPS
+// itself. The reason for dropping it is not that the relay carries little
+// of a loop -- it carries most of one -- but that **its counter lags the
+// storm by seconds**, and those are the seconds that matter.
+//
+// Measured on one device, sampled every two seconds from the moment
+// steering began:
+//
+//	t+2s   examined  17,952/s   relayed      0/s
+//	t+4s   examined  62,756/s   relayed 27,587/s   (34 MB/s)
+//	t+6s   examined  89,336/s   relayed 45,516/s   (56 MB/s)
+//	t+8s   examined 102,516/s   relayed 73,704/s   (90 MB/s)
+//
+// A separate run of the same shape had the interface already mirrored at
+// about 27,000 packets a second received against 24,500 transmitted 3.5
+// seconds in, while the relay still reported 8 pkt/s. So at the instant a
+// stop is worth making, the share is near zero; by the time the share
+// passes 80% the card has been at 90 MB/s for several seconds. Gating on
+// it buys nothing and costs the only seconds in which stopping is cheap.
+//
+// The share is therefore evidence, not a trigger, and a low reading early
+// in a storm is expected. The earlier single-device run fits the same
+// curve: 41,116 relayed against 465,000 received at the moment it was
+// sampled.
+//
+// So the share is logged as evidence and ignored as a trigger. The cost,
+// accepted knowingly: genuinely symmetric traffic above loopFloorPPS
+// sustained for loopHits seconds now stops steering. On the measured host
+// nothing legitimate came close to symmetric -- its heavy traffic runs 89
+// to 92% lopsided -- but this is a safety stop that now fires on less
+// evidence than before, which is the right trade only because the thing it
+// guards against melts a home network in a few seconds.
+//
+// MEASURING THIS CORRECTLY, because getting it wrong set the floor above
+// the very loop it was meant to catch. This brake samples once a second,
+// which is fine. Anything sampling /sys/class/net/<if>/statistics faster
+// is not: the atlantic driver publishes those counters in one lump roughly
+// once a second, so 100ms sampling reads "0 0 0 0 0 24073 0 0 0 0" and a
+// half-second bucket that catches a lump holds a whole second of packets.
+// Doubling such a bucket to get a rate overstates it twofold, which is how
+// the instrumented loop was first written up as 54,000 packets a second
+// instead of 27,000, and why loopFloorPPS was 50,000. Ip:InReceives in
+// /proc/net/snmp updates continuously and may be sampled as fast as you
+// like; the interface counters may not.
 //
 // When it trips it panic-stops, which unsteers every device with its
 // corrective reply, and latches like the kill switch so a restart does not
@@ -1080,8 +1192,7 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 	tx := float64(cur.TxPackets - prev.TxPackets)
 	hi := math.Max(rx, tx)
 	mirrored := hi > 0 && math.Abs(tx-rx)/hi <= loopSymmetry
-	dominant := rx > 0 && relayedPPS >= loopShare*rx
-	looping := mirrored && dominant && relayedPPS >= e.loopFloor && hi >= e.loopFloor
+	looping := mirrored && hi >= e.loopFloor
 	if !looping {
 		e.loopStreak = 0
 		e.mu.Unlock()
@@ -1095,15 +1206,23 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 	}
 	e.killed = true
 	e.state.Killed = true
-	e.reason = "stopped automatically: the relay was carrying its own output back to itself"
+	e.reason = "stopped automatically: the relay interface was mirroring traffic at a rate a home network does not reach"
 	saveErr := saveState(e.cfg.StatePath, e.state)
 	e.loopStreak = 0
 	e.mu.Unlock()
 
 	ctrl.PanicStop()
-	e.logf("watch: LOOP BRAKE: the relay was carrying its own output back to itself, so all steering has been stopped and will stay stopped until it is re-armed")
-	e.logf("watch: loop brake evidence: interface received %.0f and transmitted %.0f packets in the last second (%.2f%% apart), of which the relay reported %.0f (%.0f%%)",
-		rx, tx, math.Abs(tx-rx)/hi*100, relayedPPS, relayedPPS/rx*100)
+	e.logf("watch: LOOP BRAKE: the relay interface is mirroring traffic at a rate a home network does not reach, so all steering has been stopped and will stay stopped until it is re-armed")
+	share := 0.0
+	if rx > 0 {
+		share = relayedPPS / rx * 100
+	}
+	e.logf("watch: loop brake evidence: interface received %.0f and transmitted %.0f packets in the last second (%.2f%% apart), of which the relay reported %.0f (%.1f%%)",
+		rx, tx, math.Abs(tx-rx)/hi*100, relayedPPS, share)
+	// The share is evidence, not a trigger. It lags the storm by seconds --
+	// 0 pkt/s at t+2, 73,704 by t+8 on one measured device -- so a low
+	// figure here means the brake caught it early, not that the relay is
+	// innocent.
 	e.logLoopSuspects(status)
 	if saveErr != nil {
 		e.logf("watch: WARNING: could not persist the loop stop (%v), so a restart may resume it", saveErr)
@@ -1615,23 +1734,117 @@ func familyNames(f intercept.Family) []string {
 var _ intercept.Excluder = v6Excluder{}
 
 // routingOwnSegment reports whether this host is routing the very subnet
-// the relay runs on, which Watch mode cannot safely steer.
+// the relay runs on, which Watch mode will not steer into: IPv4
+// forwarding is on and a second interface sits in the relay interface's
+// own prefix.
 //
-// One-sided ARP steering assumes Shepherd is a passive Layer 2 relay on a
-// segment: a steered device hands it a frame, it rewrites both MAC
-// addresses and puts it back on the wire. A host that also *routes* that
-// subnet breaks the assumption, because the kernel has its own opinion
-// about where the frame should go and, with two link routes for one
-// subnet, that can be straight back out onto the same segment.
+// The condition correlates with every loop ever seen, but **the mechanism
+// is not forwarding**, and three candidates are now excluded by direct
+// measurement rather than argument.
 //
-// This is a precaution, not a proven mechanism. The maintainer's NAS has
-// exactly this shape -- IPv4 forwarding on, a wired and a wireless
-// interface both on the same /24, and Tailscale advertising that subnet
-// while acting as an exit node -- and it is the host on which the relay
-// twice ended up
-// carrying its own output back to itself at line rate. The second of those
-// was not explained by anything else, so Shepherd refuses the combination
-// rather than relay into it. The loop brake stays as the backstop.
+// Measured on the maintainer's NAS (forwarding on, eth0 and wlan0 both on
+// one /24), steering a *single ordinary device* -- one phone, by explicit
+// MAC, nothing to do with the registry or the gateway -- loops every time.
+// The instrumented run took the interface to roughly 27,000 packets a
+// second in and 24,500 out, mirrored, 3.5 seconds after steering began,
+// while counters sampled in the same bucket said:
+//
+//	ForwDatagrams          1 datagram    -- not kernel IPv4 forwarding
+//	hairpin drops (in eth0, out eth0)
+//	                       0 packets     -- not same-segment routing
+//	relay's own relayed    8 pkt/s       -- see below; NOT an exclusion
+//
+// That is about 27,000 packets a second received against 24,500
+// transmitted. An earlier revision of this comment said 54,000 against
+// 49,000, having doubled a half-second bucket from a driver that publishes
+// its counters once a second; checkForLoop's comment has the detail.
+//
+// The third line was read as excluding the relay, and that was wrong. A
+// later run let the same storm develop instead of stopping it at 3.5
+// seconds, and the relay's own counter went 0, then 27,587, then 45,516,
+// then 73,704 pkt/s at 90 MB/s by eight seconds in -- 72% of what the
+// program examined. The 8 pkt/s reading was the first instant of a ramp,
+// not a steady state. So the relay is not excluded; it is the leading
+// candidate. A comparison run with the XDP program off (-xdp off)
+// produced no storm, examined holding at 16,000 to 28,000 pkt/s -- but
+// that is weaker evidence than it first looked, because -xdp off does not
+// mean "no relay". The trial then relays in userspace across four workers,
+// and in one run it managed only 88 pkt/s and 107 kB/s. So "no storm
+// without XDP" may mean no more than "a userspace relay is too slow to
+// make one". The fast path is a suspect, not a conclusion.
+//
+// Only two mechanisms are therefore excluded here, not three: kernel IPv4
+// forwarding and same-segment routing.
+//
+// One thing that looks like a clue and is not: examined 102,516 against
+// 73,704 relayed leaves ~29,000 frames a second seen and not relayed, with
+// not_for_shepherd and for_shepherd_itself both zero. That is expected.
+// The XDP program bumps `examined` for every frame it sees and bumps no
+// counter at all on the XDP_PASS paths for "not Shepherd's MAC" and "not
+// from a steered device"; only rule 4 has a counter. So the gap is the
+// rest of the segment's traffic, and ~29,000/s matches this host's
+// measured background almost exactly.
+//
+// So whatever put ~24,500 frames a second onto that interface is
+// accounted for by neither Shepherd's relay nor the kernel's IP stack. It
+// is not this function's premise either, which is why the explanation that
+// used to sit here -- the router learning the client at Shepherd's MAC and
+// the kernel routing its downloads back onto the segment -- is gone. One
+// forwarded datagram during a 24,500-packet-a-second storm refutes it.
+//
+// What survives is the other half of the condition, and it is worth
+// stating because it is the one structural feature present in every
+// incident: this host has **two interfaces on one segment**, and the
+// steered device is REACHABLE through both of them at once:
+//
+//	192.0.2.37 dev eth0  lladdr 02:00:5e:00:00:37 REACHABLE
+//	192.0.2.37 dev wlan0 lladdr 02:00:5e:00:00:37 REACHABLE
+//
+// That makes the IPv4-forwarding half of this test look like it is doing
+// no work. Dropping it would make the refusal narrower and more honest,
+// not broader -- but not before the mechanism is actually identified,
+// because the last two times a mechanism was asserted here it was wrong.
+//
+// Two explanations have been asserted here and then refuted by trial, in
+// this order, and both are recorded so a third is not reached for lightly.
+// First: a polluted registry record that had merged the gateway into a
+// steerable device. Disproved by steering one phone by explicit MAC with
+// no registry involved -- same loop. That record is a real problem and
+// Decide() refuses it by address now, but it is not this. Second: kernel
+// forwarding, as above. Disproved by counting it: one datagram.
+//
+// So the refusal stands on correlation alone, which is a weaker footing
+// than it had when it was first written, not a stronger one. It is kept
+// because the loop is real, immediate and severe -- 3.5 seconds from
+// steering to tens of thousands of packets a second -- and being
+// unavailable on a dual-homed host is much better than melting its
+// network.
+//
+// For a while it was also carrying more weight than intended, because the
+// loop brake as first written would not have caught this loop: it required
+// the relay to report at least 80% of the interface's receive rate, and the
+// measured loop had it reporting 8 pkt/s against 27,000 received. That has
+// since been fixed -- checkForLoop now trips on mirrored traffic above its
+// floor and ignores the relay's share -- so the two guards are independent
+// again, which is how this refusal was always meant to be backed.
+//
+// One thing clearing net.ipv4.ip_forward would not do is help, and anyone
+// reading this should not try it. That host's forwarding is bursty and
+// load-bearing: over a minute with Watch mode off, ForwDatagrams had a
+// median of 34 a second, a p90 of 5,759 and a peak of 8,607, totalling
+// 80,521, and every burst is the relay interface's inbound traffic routed
+// to a container bridge for a service its owner runs on purpose. (Two
+// five-second samples taken earlier both landed inside bursts and were
+// written up here as a steady ~4,000 a second. They also explain the first
+// trial's odd pre-steering baseline of 12,000 packets a second on an
+// interface whose median is 65.)
+//
+// The next measurement has to find what is transmitting, since neither the
+// relay nor the IP stack claims it. Two cheap discriminators, in order:
+// re-run with the relay's XDP program off, which separates the kernel
+// fast-path from the userspace ARP sender; and compare the interface's
+// rx_packets against Ip:InReceives during a storm, which separates IP
+// traffic from a flood of ARP.
 func (e *Engine) routingOwnSegment(link Link, own Own) (bool, string) {
 	fwd, err := e.plat.IPForwarding()
 	if err != nil || !fwd {
