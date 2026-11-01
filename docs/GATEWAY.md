@@ -110,8 +110,10 @@ the internet service does.
 
 In dependency order, each item being something that can be finished and verified on its own.
 
-1. **A DHCP server.** Today Shepherd deliberately avoids this. It is a prerequisite and, usefully,
-   it can be run and proven on the live network long before any traffic path changes.
+1. **A DHCP server.** Today Shepherd deliberately avoids this. It is a hard prerequisite: a bridged
+   eero stops handing out leases, so Shepherd must serve them from the moment of cutover. Since the
+   eero keeps DHCP until that day, this gets its only real test on the parallel segment at Stage 1,
+   which is why that stage's device list matters more than it looks.
 2. **A WAN client: DHCP** (decided, 2026-11-01 — not PPPoE). That is the simpler end of this item
    and removes a few things from the list: no PPP session to keep up, no credentials to store, and
    no 1492-byte MTU, so no MSS clamping is needed by default. What it still needs is a DHCP client
@@ -131,36 +133,51 @@ In dependency order, each item being something that can be finished and verified
 
 ## Staged migration
 
-The staging exists so that the risky step is last and short, and so each stage proves something the
-next one depends on.
+Decided 2026-11-01: **the eero keeps DHCP until cutover.** That is a reasonable call -- it leaves
+the live network alone until the day it has to change -- and it has a consequence worth being
+explicit about, because it moves a risk rather than removing one.
 
-**Stage 0 — rehearse off the live network.** Second NIC installed. A spare switch and one
-throwaway device. Prove the accounting story end to end *before* anything else: enable conntrack
-accounting, read it over ctnetlink, and confirm the numbers for one device and one destination match
-what the device actually transferred. If that does not work, nothing later is worth building.
+Shepherd must still serve DHCP *from the moment of cutover*, since a bridged eero stops handing out
+leases. So the DHCP implementation still has to be built; what changes is that it is no longer
+proven gradually against every real device in the house with no outage risk. It gets proven on a
+parallel segment and then meets the whole household at once. The mitigations below exist for exactly
+that, and the first two are the ones that make the cutover survivable.
 
-**Stage 1 — DHCP on the live network, nothing else.** Shepherd serves DHCP; the eero stays the
-gateway and keeps routing. No traffic path change, fully reversible by turning the eero's DHCP back
-on. This proves the DHCP implementation against every real device in the house, including the
-awkward ones, with no outage risk.
+**Stage 0 — rehearse off the live network.** Second NIC installed. A spare switch and one throwaway
+device. Prove the accounting story end to end *before* anything else: enable conntrack accounting,
+read it over ctnetlink, and confirm the numbers for one device and one destination match what the
+device actually transferred. If that does not work, nothing later is worth building.
 
-**Stage 2 — Gateway on a parallel segment.** The second NIC, the spare switch and a handful of
-volunteer devices behind Shepherd, with the eero still serving everyone else. NAT, WAN handling and
-accounting all exercised for real while the household is unaffected.
+**Stage 1 — Gateway on a parallel segment, with the awkward devices on purpose.** The second NIC, a
+spare switch, and devices behind Shepherd while the eero still serves everyone else. NAT, the WAN
+DHCP client and accounting all exercised for real with the household unaffected.
 
-**Stage 3 — cutover.** The eero to bridge/AP mode, Shepherd inline. Short, rehearsed, and with the
-rollback timed beforehand: re-plugging the eero as the router is a few minutes' work and should be
-practised at Stage 2, not discovered at Stage 3.
+Because this is now the *only* place DHCP gets tested before the whole house depends on it, the
+devices here should be chosen for being difficult rather than for being convenient: a Thread or
+Matter device, a printer, a TV, and whatever in the house has historically been fussy about
+addressing. A stage that only proves a laptop works has not proved anything that matters.
 
-One cutover risk belongs to the DHCP WAN specifically, and it is the kind that turns a ten-minute
-job into an evening. **Many ISPs tie the lease to the MAC address that currently holds it**, which
-is the eero's WAN port. Presenting a different MAC can mean a refused lease, or a wait measured in
-hours rather than seconds, and discovering that halfway through a cutover is miserable. So: read and
-record the eero's WAN MAC before touching anything, and **clone it onto Shepherd's WAN interface**
-rather than hoping. It also makes the rollback symmetric, since the eero gets its own MAC back when
-it is re-plugged.
+**Stage 2 — cutover.** Short, rehearsed, and with the rollback timed beforehand: re-plugging the
+eero as the router is a few minutes' work and should be practised at Stage 1, not discovered here.
+Three things to do before the day, each of which removes a way for this to go badly.
 
-**Stage 4 — the features.** Per-device and per-destination bandwidth in the portal, then pause and
+*Take the eero's LAN address.* Shepherd's LAN leg should become the address the eero had, so every
+device's existing lease -- its default gateway, its DNS server -- stays correct, and ARP re-resolves
+to Shepherd's MAC by itself. Without this, every device holds a lease pointing at a gateway that no
+longer exists and the cutover is only as fast as the slowest renewal.
+
+*Shorten the eero's lease time well in advance.* Hours or days of remaining lease is hours or days
+of devices ignoring the new arrangement. Dropping the lease to minutes a day or two beforehand costs
+nothing and means the network converges in minutes instead.
+
+*Clone the eero's WAN MAC.* This one belongs to the DHCP WAN specifically and turns a ten-minute job
+into an evening if missed: **many ISPs tie the lease to the MAC address that currently holds it**,
+which is the eero's WAN port. A different MAC can mean a refused lease, or a wait measured in hours.
+Read and record that MAC before touching anything and clone it onto Shepherd's WAN interface rather
+than hoping. It makes the rollback symmetric too, since the eero takes its own MAC back when it is
+re-plugged.
+
+**Stage 3 — the features.** Per-device and per-destination bandwidth in the portal, then pause and
 rate limits.
 
 ## Risks, and the guard rails that answer them
@@ -215,9 +232,10 @@ delegates a prefix at all.**
 
 1. ~~**What does the WAN need?**~~ **Answered: DHCP** (2026-11-01). Consequences folded into item 2
    of the build list and into the Stage 3 MAC-cloning note above.
-2. **Who serves DHCP during and after the transition?** Stage 1 assumes Shepherd takes it over
-   early, because it de-risks the hardest compatibility work. Keeping it on the eero until Stage 3
-   is defensible and shortens Stage 1 to nothing.
+2. ~~**Who serves DHCP during and after the transition?**~~ **Answered: the eero keeps it until
+   cutover** (2026-11-01). The staging above is rewritten around that, including the three
+   pre-cutover steps it makes necessary and the reason the parallel segment now has to include the
+   difficult devices rather than the convenient ones.
 3. **What happens to traffic when Shepherd's process is not running?** Keep forwarding (the kernel's
    rules persist, the house stays online, protection is off) or stop it (fail closed). Guard mode's
    precedent is to fail open.

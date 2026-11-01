@@ -45,8 +45,16 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   route today**, being unique-local only, so the IPv6 requirement through stage 3 is "do not break
   unique-local, Thread, Matter and mDNS" rather than "provide IPv6 internet", and the rescope of
   hard rules 1 and 5 only truly bites once global IPv6 is wanted. That needs one fact nobody has
-  checked: whether the ISP delegates a prefix at all. The remaining four decisions include whether
-  forwarding should fail open when Shepherd is not running.
+  checked: whether the ISP delegates a prefix at all. The second is answered too: **the eero keeps DHCP
+  until cutover**, which leaves the live network alone until the day it has to change and moves a
+  risk rather than removing one. Shepherd must still serve leases from the moment of cutover, since
+  a bridged eero stops, so DHCP now gets its only real test on the parallel segment and then meets
+  the whole household at once. The staging is rewritten around that: the parallel stage must include
+  the **difficult** devices on purpose (a Thread or Matter device, a printer, a TV) rather than a
+  convenient laptop, and three things must happen before cutover day -- Shepherd takes the eero's
+  LAN address so every existing lease stays correct, the eero's lease time is shortened in advance so
+  the network converges in minutes rather than days, and the eero's WAN MAC is cloned. The remaining
+  three decisions include whether forwarding should fail open when Shepherd is not running.
 - **The relay loop has a mechanism, a measurement and a fix, and Watch mode runs on the
   maintainer's NAS again.** Three times the relay carried traffic round in a circle at line rate
   and each time the cause was argued rather than measured, because the one thing nobody could see
