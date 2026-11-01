@@ -9,7 +9,20 @@ services:
     network_mode: host            # DNS on the LAN address, same as the bare binary
     restart: unless-stopped
     cap_drop: [ALL]
-    cap_add: [NET_BIND_SERVICE, NET_RAW]   # NET_BIND_SERVICE: port 53; NET_RAW: passive ARP monitor (read-only)
+    # NET_BIND_SERVICE: port 53. NET_RAW: the passive ARP monitor (read-only)
+    # and Watch mode's raw frame sends. The other three are Watch mode's
+    # in-kernel XDP relay: NET_ADMIN attaches it to the interface and toggles
+    # GRO for the userspace relay, BPF loads the program, and PERFMON is the
+    # one that is easy to miss -- the kernel gates the pointer arithmetic the
+    # program does on perfmon_capable(), so with BPF alone the verifier
+    # refuses it outright ("pointer -= pointer prohibited") and Watch mode
+    # falls back to the userspace relay. That fallback works, but it is the
+    # difference between relaying inside the NIC driver and copying every
+    # frame through userspace. CAP_SYS_ADMIN would cover it too and is far
+    # broader. Drop NET_ADMIN, BPF and PERFMON to run DNS filtering and the
+    # ARP monitor without Watch mode: it then reports itself unavailable in
+    # the portal and nothing else changes. See docs/WATCH.md.
+    cap_add: [NET_BIND_SERVICE, NET_RAW, NET_ADMIN, BPF, PERFMON]
     security_opt: ["no-new-privileges:true"]
     read_only: true
     tmpfs: [/tmp]

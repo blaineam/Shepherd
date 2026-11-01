@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -602,4 +603,232 @@ func TestFilterCountsAndListRemoval(t *testing.T) {
 	if f.Check("pol.example").Blocked {
 		t.Error("a disabled policy must not block")
 	}
+}
+
+// The outage this option exists for: one address of several is no longer on
+// this host, and the resolver has to keep serving the rest rather than
+// refuse to start and take DNS down for everyone.
+func TestServeToleratesAnAddressThisHostDoesNotHave(t *testing.T) {
+	h := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		_ = w.WriteMsg(m)
+	})
+	good := freeAddr(t)
+	// 192.0.2.1 is a documentation address this host does not hold, so
+	// binding it fails exactly the way a vanished interface's address does.
+	const gone = "192.0.2.1:53"
+
+	var mu sync.Mutex
+	var reported []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, []string{gone, good}, h, TolerateMissingAddresses(func(addr string, err error) {
+			mu.Lock()
+			defer mu.Unlock()
+			reported = append(reported, addr)
+		}))
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	var answered bool
+	for time.Now().Before(deadline) && !answered {
+		c := new(dns.Client)
+		q := new(dns.Msg)
+		q.SetQuestion("example.com.", dns.TypeA)
+		if _, _, err := c.Exchange(q, good); err == nil {
+			answered = true
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !answered {
+		t.Fatal("the address this host does have should still be serving")
+	}
+	mu.Lock()
+	got := append([]string(nil), reported...)
+	mu.Unlock()
+	if len(got) != 1 || got[0] != gone {
+		t.Fatalf("reported = %v, want just %s", got, gone)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Serve = %v, want nil on a clean shutdown", err)
+	}
+}
+
+// Tolerance is not silence: if nothing at all can be bound, that is still a
+// startup failure.
+func TestServeFailsWhenNothingBinds(t *testing.T) {
+	h := dns.HandlerFunc(func(dns.ResponseWriter, *dns.Msg) {})
+	var n int
+	err := Serve(context.Background(), []string{"192.0.2.1:53", "192.0.2.2:53"}, h,
+		TolerateMissingAddresses(func(string, error) { n++ }))
+	if err == nil || !strings.Contains(err.Error(), "not listening on any") {
+		t.Fatalf("err = %v, want a failure naming that nothing was bound", err)
+	}
+	if n != 2 {
+		t.Fatalf("reported %d addresses, want 2", n)
+	}
+}
+
+// The distinction the option turns on, and the reason it is not simply
+// "ignore bind errors": a port another process holds is still fatal, even
+// with tolerance on, because something else is answering for it and starting
+// anyway would hide that. cmd/shepherd's TestRunFailsFastOnBusyPorts is the
+// end-to-end half of this.
+func TestServeStillFailsOnAnAddressSomethingElseHolds(t *testing.T) {
+	h := dns.HandlerFunc(func(dns.ResponseWriter, *dns.Msg) {})
+	taken, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	busy := taken.LocalAddr().String()
+
+	var reported []string
+	err = Serve(context.Background(), []string{busy, freeAddr(t)}, h,
+		TolerateMissingAddresses(func(addr string, e error) { reported = append(reported, addr) }))
+	if err == nil || !strings.Contains(err.Error(), "listening udp") {
+		t.Fatalf("err = %v, want a failure naming the busy address", err)
+	}
+	if len(reported) != 0 {
+		t.Fatalf("a busy address must not be reported as merely missing: %v", reported)
+	}
+
+	// The same for a taken TCP half, and the address is never left serving
+	// over UDP only.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	busyTCP := ln.Addr().String()
+	err = Serve(context.Background(), []string{busyTCP}, h,
+		TolerateMissingAddresses(func(string, error) {}))
+	if err == nil || !strings.Contains(err.Error(), "listening tcp") {
+		t.Fatalf("err = %v, want a failure naming the busy TCP address", err)
+	}
+	pc, perr := net.ListenPacket("udp", busyTCP)
+	if perr != nil {
+		t.Fatalf("the refused address left its UDP socket open: %v", perr)
+	}
+	pc.Close()
+}
+
+// Without the option the strict behaviour stands, and a refused start
+// releases every socket it had already taken so a retry can have them.
+func TestServeWithoutToleranceRefusesAMissingAddress(t *testing.T) {
+	h := dns.HandlerFunc(func(dns.ResponseWriter, *dns.Msg) {})
+	good := freeAddr(t)
+	for i := 0; i < 2; i++ {
+		if err := Serve(context.Background(), []string{good, "192.0.2.1:53"}, h); err == nil {
+			t.Fatal("strict Serve must refuse an address it cannot bind")
+		}
+	}
+}
+
+// freeAddr returns a loopback host:port nothing is listening on.
+func freeAddr(t *testing.T) string {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := pc.LocalAddr().String()
+	pc.Close()
+	return addr
+}
+
+// A loopback listener Shepherd added itself must never be able to stop it
+// from starting: on a NAS the system resolver commonly owns 127.0.0.1:53
+// already. The owner's own addresses stay strict, which is the distinction
+// Optional draws and the reason it is not just a wider errno list.
+func TestServeSkipsAnOptionalAddressSomethingElseHolds(t *testing.T) {
+	h := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		_ = w.WriteMsg(m)
+	})
+	taken, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	busy := taken.LocalAddr().String()
+	good := freeAddr(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var skipped []string
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, []string{good, busy}, h,
+			Optional([]string{busy}, func(addr string, e error) { skipped = append(skipped, addr) }))
+	}()
+	waitServing(t, good)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("a busy optional address must be skipped, not fatal: %v", err)
+	}
+	if len(skipped) != 1 || skipped[0] != busy {
+		t.Fatalf("skipped = %v, want just %s reported", skipped, busy)
+	}
+}
+
+// Optional only covers the addresses it is given. The same busy address
+// stays fatal when it is one the owner configured.
+func TestServeOptionalDoesNotRelaxTheConfiguredAddresses(t *testing.T) {
+	h := dns.HandlerFunc(func(dns.ResponseWriter, *dns.Msg) {})
+	taken, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	busy := taken.LocalAddr().String()
+
+	err = Serve(context.Background(), []string{busy, freeAddr(t)}, h,
+		Optional([]string{"127.0.0.1:1"}, func(string, error) {}))
+	if err == nil || !strings.Contains(err.Error(), "listening udp") {
+		t.Fatalf("err = %v, want the configured busy address to stay fatal", err)
+	}
+}
+
+// A taken TCP half of an optional address is skipped too, and does not
+// leave that address serving over UDP alone.
+func TestServeSkipsAnOptionalAddressWithABusyTCPHalf(t *testing.T) {
+	h := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		_ = w.WriteMsg(m)
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	busyTCP := ln.Addr().String()
+	good := freeAddr(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var skipped int
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, []string{good, busyTCP}, h,
+			Optional([]string{busyTCP}, func(string, error) { skipped++ }))
+	}()
+	waitServing(t, good)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("a busy TCP half on an optional address must be skipped: %v", err)
+	}
+	if skipped != 1 {
+		t.Fatalf("skipped = %d, want 1", skipped)
+	}
+	pc, perr := net.ListenPacket("udp", busyTCP)
+	if perr != nil {
+		t.Fatalf("the skipped address left its UDP socket open: %v", perr)
+	}
+	pc.Close()
 }

@@ -103,6 +103,10 @@ export function createMgmt(api) {
     nethealthProbeNow: () => post('/api/nethealth/probe', {}),
     nethealthBufferbloatRun: () => post('/api/nethealth/bufferbloat/run', {}),
 
+    watch: () => api('/api/watch'),
+    killWatch: () => post('/api/watch/kill', {}),
+    rearmWatch: () => post('/api/watch/rearm', {}),
+
     reverseProxy: () => api('/api/reverseproxy'),
     proxyHosts: () => api('/api/reverseproxy/hosts'),
     addProxyHost: (body) => post('/api/reverseproxy/hosts', body),

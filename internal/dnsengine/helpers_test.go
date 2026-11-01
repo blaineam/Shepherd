@@ -6,6 +6,7 @@ import (
 	"net"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/miekg/dns"
 )
@@ -63,4 +64,21 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b[i:])
+}
+
+// waitServing blocks until addr answers a query, so a test can be sure the
+// bind loop finished before it cancels.
+func waitServing(t *testing.T, addr string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		c := new(dns.Client)
+		q := new(dns.Msg)
+		q.SetQuestion("example.com.", dns.TypeA)
+		if _, _, err := c.Exchange(q, addr); err == nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("%s never started serving", addr)
 }

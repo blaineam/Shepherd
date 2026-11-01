@@ -13,8 +13,8 @@ Work ships in tested increments that are deployed to a real network as they land
 | 7 | **Portal:** the globe HUD (arcs weighted by volume, replay, click to control) and the Devices/Blocking/Upstreams/History management screens | done, live on the NAS |
 | 8 | **Device quarantine:** new devices land in a reserved group with their own rules until moved; LAN isolation is out of Shepherd's reach today (see the Watch mode note below) | done, live on the NAS |
 | 9 | **Alarms:** engine with dedupe, severity, mute and snooze, batch actions, Web Push and ntfy fallback | engine, `cmd/shepherd` wiring, portal API and an Alarms tab (list, filters, bulk actions, mute rules) done, live via ntfy; Web Push deferred until the portal has HTTPS (see docs/ALARMS.md) |
-| 10 | **Passive ARP:** a read-only monitor that learns MAC addresses and raises spoofing/exposure alarms | built; wiring into `cmd/shepherd` and the alarm engine in progress |
-| 11 | **Watch mode (ARP interception):** one-sided relay of a device's outbound traffic, with exclusion, health-checked fail-open, trial mode and panic stop | library built and live-trialed, with the maintainer's explicit go-ahead, against a disposable VM and the maintainer's own phone (multiple runs; see docs/INTERCEPT.md). **A real, significant throughput cost while a device is steered is confirmed and still not understood** — not GRO, not single-threaded relay, not per-packet overhead, not Tailscale; a packet capture points at the device's own connections retrying abnormally fast while steered. Treated as a known limitation, not a blocker: DNS-only protection and passive ARP cost the network nothing and ship regardless. Investigation resumed (code-only: audit for duplication/inefficiency, better diagnostics — needs the maintainer's live hardware to actually verify anything found). Not wired into `cmd/shepherd` or the portal yet; wiring it in is the next step once a live trial confirms the throughput fix actually works. See [WATCH-MODE-COMPARISON.md](WATCH-MODE-COMPARISON.md) for exactly what it would add over the baseline. |
+| 10 | **Passive ARP:** a read-only monitor that learns MAC addresses and raises spoofing/exposure alarms | built and wired into `cmd/shepherd`; its `gateway-mac-changed` event is now consumed by Watch mode (which re-reads the kernel's neighbour table rather than trusting the event), and the alarm-engine wiring for the other event types is still open |
+| 11 | **Watch mode (ARP interception):** one-sided relay of each device's outbound traffic | **RETIRED 2026-11-01, off by default.** Retired by measurement, not taste, and [WATCH.md](WATCH.md) keeps the evidence: outbound-only by construction so a device's real traffic volume is always understated; it loops on real hardware, the router returning relayed frames off the wire within tens of microseconds, with four attempted preventions each refuted by measurement and only the loop brake reliably stopping it; and a device the portal reported as steered and healthy had **zero** of a 100 MB transfer relayed. The capability it was reaching for needs the return path, which means [GATEWAY.md](GATEWAY.md). Code removal is a separate piece of work; the configuration is kept so an install that deliberately enables it keeps working. |
 | 12 | **Router importers:** eero (unofficial API, unverified against a live account) and CSV, to bring in existing device names and groups | built and wired into the portal |
 | 13 | **Scheduled access and allowlist mode:** time windows on a policy rule or switch at network, group or device scope (block or allow a category, app or list only during chosen hours/days); and an allowlist mode, settable at the same three scopes, that inverts the default to block everything except what is explicitly allowed, instead of today's block-list default | built and wired into `internal/dnsengine` and the portal (docs/POLICY.md) |
 | 14 | **Geo-IP blocking:** block (or alert on) connections to specific countries, at network, group or device scope, reusing the GeoIP database already used for the globe HUD | in progress |
@@ -31,12 +31,18 @@ Work ships in tested increments that are deployed to a real network as they land
 
 ## Stated future direction: Shepherd as a dual-NIC router
 
+**Designed, not scheduled: [GATEWAY.md](GATEWAY.md)** has the architecture, the staged migration
+with its rollback, the risks, the IPv6 hard rules it forces a rescope of, and the five decisions
+that are the maintainer's rather than anyone else's.
+
 The maintainer wants to eventually run Shepherd as the actual router (a "Gateway" profile), on
 hardware with two 10 Gb NICs, demoting the current Wi-Fi router to a bridge/access-point role. This is
 real intent, not a research idea, but it is a large undertaking that only makes sense once Watch mode
 is proven reliable, and it changes Shepherd's risk profile fundamentally (a router outage is a full
 outage). See [DESIGN.md](DESIGN.md#gateway-shepherd-as-a-dual-nic-router-future-stated-goal). Not scheduled.
 
-Other research items: passive IPv6 observation, in-path IPv6, NAT state sync for seamless failover,
-and full two-sided (peer) ARP isolation for quarantine/LAN-isolation beyond what one-sided Watch mode
-can offer.
+Other research items: passive IPv6 observation, NAT state sync for seamless failover, and full
+two-sided (peer) ARP isolation for quarantine/LAN-isolation beyond what one-sided Watch mode can
+offer. In-path IPv6 is no longer research: unicast-NA steering is built and wired (off by default,
+[IPV6-WATCH.md](IPV6-WATCH.md)), though it has never run against a live global-IPv6 network — the
+maintainer's own LAN is ULA-only, so it idles there by design.

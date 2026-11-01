@@ -20,12 +20,15 @@
 //     CAP_NET_ADMIN as well as CAP_NET_RAW) and always restored on exit, so
 //     a real captured frame is never a kernel-coalesced super-frame larger
 //     than the wire allows — see the comment above the GRO handling below.
+//     (Generic-mode XDP sees GRO-coalesced frames too, so this stays on
+//     with -xdp as well.)
 //
 // Capture and relay run across -workers parallel goroutines via
-// Controller.ParallelRelay (internal/intercept/capture_linux.go), not one:
-// a real, sustained transfer through a single capture/relay goroutine was
-// observed to cut a steered device's throughput to roughly a third, and
-// PACKET_FANOUT-based parallelism is the fix. See docs/INTERCEPT.md.
+// Controller.ParallelRelay (internal/intercept/capture_linux.go), or, with
+// -xdp, entirely in the kernel via Controller.AttachXDP
+// (internal/intercept/xdp_linux.go): an XDP program bounces each steered
+// frame back out of the NIC and only counters reach this process. The
+// XDP path needs CAP_NET_ADMIN and CAP_BPF on top. See docs/INTERCEPT.md.
 package main
 
 import (
@@ -63,8 +66,21 @@ func run() error {
 	targetIPFlag := flag.String("target-ip", "", "IPv4 address of the one device to steer (required)")
 	confirmFlag := flag.String("confirm", "", "must exactly repeat -target-mac, as a typo guard")
 	duration := flag.Duration("duration", 45*time.Second, "trial duration; auto-reverts on its own, capped at 5m")
-	workers := flag.Int("workers", intercept.DefaultParallelism, "parallel capture/relay workers (PACKET_FANOUT); more cores, more throughput")
+	workers := flag.Int("workers", intercept.DefaultParallelism, "parallel capture/relay workers (PACKET_FANOUT); more cores, more throughput; ignored with -xdp")
+	xdpFlag := flag.String("xdp", "off", "relay in the kernel with XDP instead of ParallelRelay: off, auto (native, else generic), native, or generic")
+	ipv6Flag := flag.Bool("ipv6", false, "also steer the device's IPv6 traffic via Neighbor Advertisements (docs/IPV6-WATCH.md); off by default")
+	gatewayLLFlag := flag.String("gateway-ll", "", "the gateway's IPv6 link-local address (required with -ipv6)")
+	targetIP6Flag := flag.String("target-ip6", "", "an IPv6 address of the device to steer, its link-local is the usual choice (required with -ipv6)")
 	flag.Parse()
+
+	useXDP := *xdpFlag != "off"
+	var xdpMode intercept.XDPMode
+	if useXDP {
+		var err error
+		if xdpMode, err = intercept.ParseXDPMode(*xdpFlag); err != nil {
+			return fmt.Errorf("intercept-trial: -xdp: %w", err)
+		}
+	}
 
 	if *gatewayIPFlag == "" || *gatewayMACFlag == "" || *targetMACFlag == "" || *targetIPFlag == "" {
 		return errors.New("intercept-trial: -gateway-ip, -gateway-mac, -target-mac and -target-ip are all required")
@@ -93,6 +109,26 @@ func run() error {
 		return fmt.Errorf("intercept-trial: -target-ip: %w", err)
 	}
 
+	// IPv6 steering is opt-in (docs/IPV6-WATCH.md). When on, it rides
+	// alongside IPv4 as a second family on the same device.
+	fam := intercept.SteerV4
+	var gatewayLL, targetIP6 netip.Addr
+	if *ipv6Flag {
+		fam |= intercept.SteerV6
+		if *gatewayLLFlag == "" || *targetIP6Flag == "" {
+			return errors.New("intercept-trial: -ipv6 requires -gateway-ll and -target-ip6")
+		}
+		if gatewayLL, err = netip.ParseAddr(*gatewayLLFlag); err != nil {
+			return fmt.Errorf("intercept-trial: -gateway-ll: %w", err)
+		}
+		if targetIP6, err = netip.ParseAddr(*targetIP6Flag); err != nil {
+			return fmt.Errorf("intercept-trial: -target-ip6: %w", err)
+		}
+		if !gatewayLL.Is6() || gatewayLL.Is4In6() || !targetIP6.Is6() || targetIP6.Is4In6() {
+			return errors.New("intercept-trial: -gateway-ll and -target-ip6 must be IPv6 addresses")
+		}
+	}
+
 	ifc, err := net.InterfaceByName(*iface)
 	if err != nil {
 		return fmt.Errorf("intercept-trial: interface %q: %w", *iface, err)
@@ -112,14 +148,21 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("intercept-trial: reading addresses on %q: %w", *iface, err)
 	}
-	var shepherdIPs []netip.Addr
+	var shepherdIPs, shepherdIPs6 []netip.Addr
 	for _, a := range addrs {
 		ipNet, ok := a.(*net.IPNet)
 		if !ok {
 			continue
 		}
-		if addr, ok := netip.AddrFromSlice(ipNet.IP); ok && addr.Unmap().Is4() {
+		addr, ok := netip.AddrFromSlice(ipNet.IP)
+		if !ok {
+			continue
+		}
+		switch {
+		case addr.Unmap().Is4():
 			shepherdIPs = append(shepherdIPs, addr.Unmap())
+		case addr.Is6() && !addr.Is4In6():
+			shepherdIPs6 = append(shepherdIPs6, addr)
 		}
 	}
 
@@ -164,11 +207,14 @@ func run() error {
 	}
 
 	ctrl, err := intercept.NewController(intercept.ControllerConfig{
-		Sender:      sender,
-		ShepherdMAC: shepherdMAC,
-		ShepherdIPs: shepherdIPs,
-		GatewayIP:   gatewayIP,
-		GatewayMAC:  gatewayMAC,
+		Sender:              sender,
+		ShepherdMAC:         shepherdMAC,
+		ShepherdIPs:         shepherdIPs,
+		ShepherdIPs6:        shepherdIPs6,
+		GatewayIP:           gatewayIP,
+		GatewayMAC:          gatewayMAC,
+		GatewayLinkLocal:    gatewayLL,
+		IPv6SteeringEnabled: *ipv6Flag,
 		OnUnsteer: func(r intercept.UnsteerRecord) {
 			log.Printf("unsteered %s: %s", r.MAC, r.Reason)
 		},
@@ -180,30 +226,55 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// ParallelRelay opens its own n capture sockets and n Senders (a
-	// PACKET_FANOUT group, one goroutine each), independent of the single
-	// sender above (which only ever carries the Spoofer's low-volume
-	// periodic ARP claims). This is what makes the relay path itself use
-	// more than one core; see internal/intercept/capture_linux.go.
-	go func() {
-		if err := ctrl.ParallelRelay(ctx, *iface, *workers); err != nil && ctx.Err() == nil {
-			log.Printf("ParallelRelay: %v", err)
-		}
-	}()
-
 	log.Printf("shepherd: %s (%s) %v  gateway: %s (%s)", shepherdMAC, *iface, shepherdIPs, gatewayMAC, gatewayIP)
-	log.Printf("relaying across %d parallel workers", *workers)
-	log.Printf("steering %s (%s) for %s, trial mode (auto-revert)", targetMAC, targetIP, *duration)
+	relayFailed := make(chan error, 1)
+	if useXDP {
+		// The relay runs in the kernel: the XDP program bounces a steered
+		// device's frames straight back out of the NIC, and only its
+		// counters cross into this process, once a second. The single
+		// sender above still carries the Spoofer's ARP claims. See
+		// internal/intercept/xdp_linux.go and docs/INTERCEPT.md, "Beyond
+		// userspace".
+		go func() {
+			err := ctrl.AttachXDP(ctx, *iface, intercept.XDPOptions{
+				Mode: xdpMode,
+				OnAttached: func(mode intercept.XDPMode) {
+					log.Printf("relaying in the kernel: XDP attached in %s mode", mode)
+				},
+			})
+			if err != nil && ctx.Err() == nil {
+				relayFailed <- fmt.Errorf("AttachXDP: %w", err)
+			}
+		}()
+	} else {
+		// ParallelRelay opens its own n capture sockets and n Senders (a
+		// PACKET_FANOUT group, one goroutine each), independent of the single
+		// sender above (which only ever carries the Spoofer's low-volume
+		// periodic ARP claims). This is what makes the relay path itself use
+		// more than one core; see internal/intercept/capture_linux.go.
+		go func() {
+			if err := ctrl.ParallelRelay(ctx, *iface, *workers); err != nil && ctx.Err() == nil {
+				relayFailed <- fmt.Errorf("ParallelRelay: %w", err)
+			}
+		}()
+		log.Printf("relaying across %d parallel workers", *workers)
+	}
+	if *ipv6Flag {
+		log.Printf("IPv6 steering ENABLED: gateway-ll=%s target-ip6=%s shepherd-ipv6=%v", gatewayLL, targetIP6, shepherdIPs6)
+		log.Printf("NOTE: on a ULA-only LAN with no global IPv6 route there is nothing off-link to relay; see docs/IPV6-WATCH.md")
+	}
+	log.Printf("steering %s (%s) families=%s for %s, trial mode (auto-revert)", targetMAC, targetIP, fam, *duration)
 
-	if err := ctrl.Steer(intercept.DeviceRef{MAC: targetMAC, IP: targetIP}, intercept.SteerOptions{
+	if err := ctrl.Steer(intercept.DeviceRef{MAC: targetMAC, IP: targetIP, IP6: targetIP6}, intercept.SteerOptions{
 		Trial:    true,
 		Duration: *duration,
+		Family:   fam,
 	}); err != nil {
 		ctrl.Close()
 		return fmt.Errorf("intercept-trial: Steer: %w", err)
 	}
 
-	reportStatus(ctx, ctrl)
+	reportStatus(ctx, ctrl, relayFailed)
 
 	log.Println("shutting down: panic-stop, then close")
 	ctrl.PanicStop()
@@ -222,7 +293,7 @@ func run() error {
 // would have shown a retransmission storm (or a self-capture overhead
 // problem — see not_for_shepherd below) growing in real time, instead of
 // needing a separate packet capture afterward to notice it.
-func reportStatus(ctx context.Context, ctrl *intercept.Controller) {
+func reportStatus(ctx context.Context, ctrl *intercept.Controller, relayFailed <-chan error) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	prevStats := ctrl.Stats()
@@ -231,6 +302,12 @@ func reportStatus(ctx context.Context, ctrl *intercept.Controller) {
 		select {
 		case <-ctx.Done():
 			return
+		case err := <-relayFailed:
+			// A steered device with no relay behind it has no internet
+			// until the health loop fails it open (StartupGrace, 30s).
+			// Do not wait for that: the caller panic-stops right away.
+			log.Printf("relay failed to start, ending the trial now: %v", err)
+			return
 		case now := <-ticker.C:
 			st := ctrl.Status()
 			if len(st) == 0 {
@@ -238,8 +315,8 @@ func reportStatus(ctx context.Context, ctrl *intercept.Controller) {
 				return
 			}
 			for _, d := range st {
-				log.Printf("status: %s healthy=%v bytes_relayed=%d packets_relayed=%d last_verified=%s",
-					d.MAC, d.Healthy, d.BytesRelayed, d.PacketsRelayed, formatSince(d.LastVerified))
+				log.Printf("status: %s families=%s healthy=%v bytes_relayed=%d packets_relayed=%d last_verified=%s",
+					d.MAC, d.Family, d.Healthy, d.BytesRelayed, d.PacketsRelayed, formatSince(d.LastVerified))
 			}
 			curStats := ctrl.Stats()
 			log.Printf("rate: %s", statsRate(prevStats, curStats, now.Sub(prevTime)))
@@ -251,18 +328,22 @@ func reportStatus(ctx context.Context, ctrl *intercept.Controller) {
 // statsRate turns two ControllerStats samples, taken elapsed apart, into a
 // one-line summary: packets and bytes per second actually relayed, the
 // examined rate (everything the capture sockets handed to a Relay, matched
-// or not), not_for_shepherd — the count of frames in that window whose
-// destination was not Shepherd's own MAC (on a non-promiscuous capture
-// socket that is overwhelmingly Shepherd's own transmitted frames looping
-// back; see PACKET_IGNORE_OUTGOING in capture_linux.go and
-// docs/INTERCEPT.md) — and for_shepherd_itself, the count left alone
-// because they were genuinely addressed to the steered device's gateway-
-// spoofed MAC but destined for Shepherd's own IP (a DNS query, a portal
-// connection): see Relay.ShepherdIPs. Every one of those would otherwise
-// have been relayed to the real gateway and silently dropped there,
-// wasting a relay worker's capacity for nothing a live trial's own
-// capture could not have told apart from genuine internet-bound traffic
-// without also decoding the IPv4 destination by hand.
+// or not; with -xdp, everything the program saw on the NIC), not_for_shepherd
+// — the count of frames in that window whose destination was not
+// Shepherd's own MAC — and for_shepherd_itself, the count left alone
+// because they were genuinely addressed to the steered device's
+// gateway-spoofed MAC but destined for Shepherd's own IP (a DNS query, a
+// portal connection): see Relay.ShepherdIPs. Every one of those would
+// otherwise have been relayed to the real gateway and silently dropped.
+//
+// not_for_shepherd should now read zero or nearly so: the capture sockets
+// carry a kernel-side BPF filter that only admits IPv4 frames addressed to
+// Shepherd (capture_filter.go), and the XDP program never counts such
+// frames at all. Anything else means the filter did not attach (an old
+// kernel) and the Relay is paying in userspace for frames the kernel
+// should have dropped. Before that filter existed, a burst here that
+// tracked a transfer was the clue that pointed at the source-MAC problem
+// in docs/INTERCEPT.md.
 func statsRate(prev, cur intercept.ControllerStats, elapsed time.Duration) string {
 	if elapsed <= 0 {
 		return "n/a (no time elapsed)"

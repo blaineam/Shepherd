@@ -10,6 +10,7 @@ import (
 
 	"shepherd/internal/devices"
 	"shepherd/internal/dnsengine"
+	"shepherd/internal/watch"
 )
 
 type deviceNames struct {
@@ -41,6 +42,13 @@ type deviceJSON struct {
 	Wandering      bool       `json:"wandering"`
 	WanderingUntil *time.Time `json:"wandering_until,omitempty"`
 	Notes          string     `json:"notes"`
+	// Watch is the device's own Watch-mode switch: "auto" (the policy
+	// decides), "on" or "off". See docs/WATCH.md.
+	Watch string `json:"watch"`
+	// WatchState is what Watch mode is actually doing with this device,
+	// from the engine. Omitted entirely when Watch mode is not wired in,
+	// so the portal can tell "no Watch mode" from "Watch mode says this".
+	WatchState *watch.DeviceStatus `json:"watch_state,omitempty"`
 }
 
 func toDevice(d devices.Device) deviceJSON {
@@ -60,7 +68,28 @@ func toDevice(d devices.Device) deviceJSON {
 		Vendor: d.Vendor, Type: typ, TypeReason: d.TypeReason, TypeAuto: d.TypeAuto, TypeConfidence: d.TypeConfidence,
 		MACs: orEmpty(d.MACs), IPs: orEmpty(d.IPs), FirstSeen: d.FirstSeen, LastSeen: d.LastSeen,
 		Groups: orEmpty(d.Groups), Tags: orEmpty(d.Tags), Excluded: d.Excluded, Wandering: wandering, WanderingUntil: until, Notes: d.Notes,
+		Watch: d.Watch.String(),
 	}
+}
+
+// watchStates is the per-device Watch state for one request, or nil when
+// Watch mode is not wired in. Read once per request, not once per device.
+func (s *Server) watchStates() map[string]watch.DeviceStatus {
+	if s.Watch == nil {
+		return nil
+	}
+	return s.Watch.DeviceStatuses()
+}
+
+// withWatch attaches the engine's state for d, if there is any.
+func withWatch(j deviceJSON, states map[string]watch.DeviceStatus) deviceJSON {
+	if states == nil {
+		return j
+	}
+	if st, ok := states[j.ID]; ok {
+		j.WatchState = &st
+	}
+	return j
 }
 
 type groupJSON struct {
@@ -106,9 +135,10 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 		limit = 100
 	}
 	page := s.Devices.Search(q.Get("q"), devices.SearchOptions{Sort: sort, Offset: offset, Limit: limit})
+	states := s.watchStates()
 	out := make([]deviceJSON, len(page.Items))
 	for i, d := range page.Items {
-		out[i] = toDevice(d)
+		out[i] = withWatch(toDevice(d), states)
 	}
 	writeJSON(w, map[string]any{"devices": out, "total": page.Total, "offset": page.Offset, "limit": page.Limit})
 }
@@ -119,7 +149,7 @@ func (s *Server) getDevice(w http.ResponseWriter, r *http.Request) {
 		notFound(w, "unknown device")
 		return
 	}
-	writeJSON(w, toDevice(d))
+	writeJSON(w, withWatch(toDevice(d), s.watchStates()))
 }
 
 func validTags(tags []string) bool {
@@ -144,6 +174,7 @@ func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
 		Tags             *[]string `json:"tags"`
 		Wandering        *bool     `json:"wandering"`
 		WanderingMinutes int       `json:"wandering_minutes"`
+		Watch            *string   `json:"watch"`
 	}
 	if !decode(w, r, &b, smallBody) {
 		return
@@ -169,6 +200,15 @@ func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
 		bad(w, "wandering_minutes must be between 0 (until turned off) and 43200 (30 days)")
 		return
 	}
+	var watchMode devices.WatchMode
+	if b.Watch != nil {
+		m, ok := devices.ParseWatchMode(*b.Watch)
+		if !ok {
+			bad(w, `watch must be "auto", "on" or "off"`)
+			return
+		}
+		watchMode = m
+	}
 	var err error
 	if b.Alias != nil {
 		err = s.Devices.Rename(id, *b.Alias)
@@ -187,6 +227,9 @@ func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil && b.Wandering != nil {
 		err = s.Devices.SetWandering(id, *b.Wandering, wanderUntil(*b.Wandering, b.WanderingMinutes))
+	}
+	if err == nil && b.Watch != nil {
+		err = s.Devices.SetWatch(id, watchMode)
 	}
 	if errors.Is(err, devices.ErrNotFound) { // deleted by someone else meanwhile
 		notFound(w, "unknown device")
@@ -242,6 +285,7 @@ func (s *Server) bulkDevices(w http.ResponseWriter, r *http.Request) {
 		RemoveTags       []string `json:"remove_tags"`
 		Wandering        *bool    `json:"wandering"`
 		WanderingMinutes int      `json:"wandering_minutes"`
+		Watch            *string  `json:"watch"`
 	}
 	if !decode(w, r, &b, smallBody) {
 		return
@@ -283,6 +327,17 @@ func (s *Server) bulkDevices(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		res = s.Devices.BulkSetWandering(b.IDs, *b.Wandering, wanderUntil(*b.Wandering, b.WanderingMinutes))
+	case "set_watch":
+		if b.Watch == nil {
+			bad(w, "watch is required")
+			return
+		}
+		m, ok := devices.ParseWatchMode(*b.Watch)
+		if !ok {
+			bad(w, `watch must be "auto", "on" or "off"`)
+			return
+		}
+		res = s.Devices.BulkSetWatch(b.IDs, m)
 	case "set_tags":
 		if len(b.AddTags)+len(b.RemoveTags) == 0 {
 			bad(w, "give add_tags or remove_tags")
@@ -297,7 +352,7 @@ func (s *Server) bulkDevices(w http.ResponseWriter, r *http.Request) {
 		res = s.Devices.BulkDelete(b.IDs)
 		s.forgetDeviceScopes(b.IDs...)
 	default:
-		bad(w, `op must be "assign_group", "remove_group", "set_excluded", "set_wandering", "set_tags" or "delete"`)
+		bad(w, `op must be "assign_group", "remove_group", "set_excluded", "set_wandering", "set_watch", "set_tags" or "delete"`)
 		return
 	}
 	if err != nil {
@@ -329,7 +384,7 @@ func (s *Server) mergeDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	s.forgetDeviceScopes(b.Sources...) // what was configured on a merged-away device goes with it
 	d, _ := s.Devices.Get(b.Target)
-	writeJSON(w, toDevice(d))
+	writeJSON(w, withWatch(toDevice(d), s.watchStates()))
 }
 
 func (s *Server) listGroups(w http.ResponseWriter, r *http.Request) {

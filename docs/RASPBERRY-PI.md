@@ -13,12 +13,18 @@ portal itself are all lightweight enough that a Pi 3 or 4 handles a typical home
 volume without strain. This is the baseline everyone gets, and it costs the network nothing —
 DNS-only protection and the passive ARP monitor never add a hop to anyone's traffic.
 
-Watch mode (one-sided ARP interception, see [INTERCEPT.md](INTERCEPT.md)) is the one piece that is
-genuinely not free: it is a software relay, not a hardware switch, and even on much faster hardware
-there is a real, currently-unresolved throughput cost while a device is steered (see INTERCEPT.md's
-"Throughput" section). On a Pi, expect that cost to be proportionally worse, not better. If you want
-Watch mode at all on a Pi, treat it as an occasional, short trial — not something you run constantly
-— until that investigation lands somewhere more conclusive.
+Watch mode ([WATCH.md](WATCH.md), mechanism in [INTERCEPT.md](INTERCEPT.md)) is the one piece that is
+genuinely not free: it is a software relay, not a hardware switch. On a 12-core x86_64 NAS it relays
+a gigabit device's upload at full speed with no perceivable slowdown (WATCH.md has the measurements),
+and the in-kernel XDP relay it prefers does the work before a packet ever reaches the kernel's network
+stack. A Pi has a fraction of those cores and, on most models, a USB-attached network interface whose
+driver has no XDP support at all — so expect the userspace relay, and expect it to be the limit on how
+much steered traffic the Pi can carry. None of this is measured on a Pi.
+
+Watch mode is on by default, so **if you are running on a Pi and want to be careful, turn it off**
+(`[watch] enabled = false`) or steer a few devices deliberately by switching the rest to "Never
+watch" in the portal. DNS filtering and the passive ARP monitor cost the Pi nothing either way, and
+the kill switch on the Watch screen stops all steering at once if it does not go well.
 
 ## Setup
 
@@ -67,6 +73,7 @@ Watch mode at all on a Pi, treat it as an occasional, short trial — not someth
    WantedBy=multi-user.target
    ```
 
+   `CAP_BPF` belongs in that list too if you want Watch mode's in-kernel relay (`AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_BPF`).
    The two ambient capabilities are only needed if you ever turn on the passive ARP monitor or
    Watch mode (both need `CAP_NET_RAW`; Watch mode's GRO handling also needs `CAP_NET_ADMIN`) —
    leave them off if you only want DNS-level protection, which needs neither.

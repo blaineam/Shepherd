@@ -1,0 +1,2199 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package watch
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"math"
+	"net/netip"
+	"slices"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"shepherd/internal/arp"
+	"shepherd/internal/devices"
+	"shepherd/internal/intercept"
+)
+
+// Mode is the relay the configuration asks for.
+type Mode int
+
+// Relay modes. docs/WATCH.md explains the choice.
+const (
+	// ModeAuto tries XDP in the NIC driver, then XDP in the kernel's
+	// generic path, then the userspace ParallelRelay.
+	ModeAuto Mode = iota
+	// ModeXDP uses XDP only and reports Watch mode unavailable when the
+	// program cannot load or attach.
+	ModeXDP
+	// ModeUserspace never tries XDP.
+	ModeUserspace
+	// ModeOff disables the engine, like Config.Enabled = false.
+	ModeOff
+)
+
+// ParseMode reads "auto", "xdp", "userspace" or "off".
+func ParseMode(s string) (Mode, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "auto":
+		return ModeAuto, nil
+	case "xdp":
+		return ModeXDP, nil
+	case "userspace":
+		return ModeUserspace, nil
+	case "off":
+		return ModeOff, nil
+	}
+	return 0, fmt.Errorf("watch: unknown mode %q (want auto, xdp, userspace or off)", s)
+}
+
+func (m Mode) String() string {
+	switch m {
+	case ModeAuto:
+		return "auto"
+	case ModeXDP:
+		return "xdp"
+	case ModeUserspace:
+		return "userspace"
+	case ModeOff:
+		return "off"
+	}
+	return fmt.Sprintf("Mode(%d)", int(m))
+}
+
+// Relay names, as reported in Snapshot.Relay.
+const (
+	RelayXDPNative  = "xdp-native"
+	RelayXDPGeneric = "xdp-generic"
+	RelayUserspace  = "userspace"
+)
+
+// Engine phases, as reported in Snapshot.Phase.
+const (
+	PhaseDisabled    = "disabled"    // enabled = false or mode = off
+	PhaseStarting    = "starting"    // discovering addresses, attaching the relay
+	PhaseRunning     = "running"     // relay attached; the steered set tracks the policy
+	PhaseUnavailable = "unavailable" // could not start; Reason says why; retried on a backoff
+)
+
+// Config configures an Engine. Registry is required; everything else has a
+// default.
+type Config struct {
+	Enabled bool
+	// Interface to steer on; empty means the default route's interface.
+	Interface string
+	Mode      Mode
+	// Workers for the userspace relay; 0 means intercept.DefaultParallelism.
+	Workers int
+	// IPv6 additionally steers each eligible device's IPv6 traffic, by
+	// unicast Neighbor Advertisements (docs/IPV6-WATCH.md). Off by
+	// default, and even when on it engages only where the network has a
+	// global IPv6 route to steer anything to and the gateway's link-local
+	// address can be found; infrastructure and smart-home devices are
+	// never IPv6-steered whatever their own switch says (DecideV6).
+	IPv6   bool
+	Policy PolicyConfig
+	// Health knobs passed to intercept.ControllerConfig; zero keeps that
+	// package's defaults.
+	HealthInterval, IdleGrace, StartupGrace time.Duration
+
+	// Registry is the device registry the policy reads and the steered set
+	// follows. Required.
+	Registry *devices.Registry
+	// StatePath persists the kill switch (0600). Empty keeps it in memory.
+	StatePath string
+
+	// AllowRoutingHost runs Watch mode even on a host that forwards IPv4
+	// and has a second interface on the relay's own segment, which the
+	// engine otherwise refuses (routingOwnSegment). The refusal stands on
+	// correlation with the relay loops seen on exactly one such host, and
+	// this is the knob for investigating them there: the loop brake stays
+	// armed, and the refusal is logged as a warning instead of enforced.
+	AllowRoutingHost bool
+	// Diagnostics logs a digest of sampled relayed frames (what the relay
+	// is actually carrying: addresses, ports, TTL and IP ID) every few
+	// seconds while traffic is moving, besides when the brake trips.
+	Diagnostics bool
+
+	Platform Platform        // default RealPlatform{}
+	Clock    intercept.Clock // default the wall clock
+	// Logf receives the engine's log lines; default log.Printf.
+	Logf func(format string, args ...any)
+}
+
+// Sentinel errors.
+var (
+	ErrNoRegistry = errors.New("watch: Registry is required")
+	// driversThatFlapOnNativeAttach are drivers known to drop the link
+	// when a native XDP attach rebuilds their receive rings, so Shepherd
+	// never tries native on them. Generic XDP is used instead: still in
+	// the kernel, still no userspace copy, and it does not reinitialise
+	// the interface.
+	//
+	// atlantic is the Aquantia/Marvell AQC107 10G part common in NAS
+	// boxes. On the maintainer's own machine a native attach took eth0
+	// down, which cost the network its wired DNS listener and twice left
+	// the interface needing to be brought up by hand. Shepherd learns
+	// this for any other driver by watching the carrier counter, but a
+	// seed list means a known-bad driver costs nothing to discover.
+	driversThatFlapOnNativeAttach = []string{"atlantic"}
+
+	errGatewayChanged = errors.New("watch: the gateway's MAC address changed")
+	errRelayStopped   = errors.New("watch: the relay stopped")
+)
+
+// Retry backoff for a device the health loop keeps failing open: first
+// retry after retryBase, doubling per consecutive failure up to retryMax.
+// A device that then relays healthily for retryReset has its count
+// forgiven.
+const (
+	retryBase  = 30 * time.Second
+	retryMax   = 10 * time.Minute
+	retryReset = 2 * time.Minute
+	// idleRecheck is the flat pause after a fail-open that was only the
+	// device having nothing to relay. It deliberately does not widen:
+	// idleness is not a fault, and a device punished for it ends up
+	// unwatched for up to retryMax after it wakes.
+	idleRecheck = 15 * time.Second
+	// awakeWithin is how recently the registry must have seen a device for
+	// a fail-open with no relayed traffic at all to look like steering
+	// failing rather than the device being asleep. While a device relays,
+	// the engine itself reports sightings (observeEvery), but it only does
+	// so when traffic actually moved -- so for a device with no relayed
+	// traffic, LastSeen reflects the passive ARP monitor and DNS alone,
+	// which is exactly the independent evidence this needs.
+	awakeWithin = time.Minute
+	// localAddrsTTL is how long the host's own MAC and IP list is reused
+	// before it is read again. Short, because an interface that appears
+	// mid-session must be excluded from steering promptly.
+	localAddrsTTL = 15 * time.Second
+	// nativeSettle is how long to wait after a native XDP attach before
+	// reading the kernel's carrier counter. The attach rebuilds the
+	// driver's rings; on a driver that drops the link doing it, the
+	// transition shows up within this window.
+	nativeSettle = 3 * time.Second
+	// The loop brake. A relay that is carrying almost everything the
+	// interface receives, while the interface transmits the same amount it
+	// receives, is relaying its own output back to itself. Each condition
+	// alone has innocent explanations; together, at this rate, they do
+	// not.
+	//
+	// Thresholds come from the two live incidents and from the healthy run
+	// in between. Looping: interface receive and transmit within 0.03% of
+	// each other at about 10 Gbit/s and 1.0 to 1.3 million packets a
+	// second, with the relay reporting essentially all of it. Healthy, and
+	// genuinely busy: receive 600 Mbit/s against transmit 800 to 1000, so
+	// 25 to 40% apart, with the relay reporting well under half the
+	// interface's packets.
+	// loopSymmetry is the whole test now, so it is placed from measurement
+	// rather than taste. Loops observed: 0.03% apart (the two original
+	// incidents), 9.3% (the instrumented single-device run, about 26,994
+	// received against 24,492 transmitted) and 10.1% (the earlier
+	// single-device run, about 465,000 against 517,000). Busy but healthy
+	// on the same host sits far outside that: six clean samples with
+	// nothing steered ran 89 to 92% apart. 0.15 leaves wide margin on both
+	// sides; the old 0.10 would have excluded the 10.1% run, which is
+	// exactly the kind of threshold that only just misses a real incident.
+	//
+	// The ratio is the one thing the sampling artefact described on
+	// checkForLoop does not disturb: the driver publishes rx and tx in the
+	// same lump, so a bucket's rx:tx is right even when its duration is not.
+	loopSymmetry = 0.15
+	// loopFloorPPS keeps a quiet network from tripping it, and that is all
+	// it does: symmetry is what separates looping from busy. Measured on
+	// the live host with nothing steered, six clean two-second samples ran
+	// rx 12,325 to 39,521 a second against tx 1,324 to 3,008 -- so max(rx,
+	// tx) routinely reaches 40,000 while sitting 89 to 92% apart. A floor
+	// alone could not tell that from a loop; the symmetry test can.
+	//
+	// 15,000 sits between this host's transmit background (about 3,000) and
+	// the smallest loop measured (max(rx, tx) about 27,000), with roughly
+	// 1.8x of margin either way. It was 50,000 until the measurement below
+	// was corrected, which would have missed that loop outright.
+	loopFloorPPS = 15_000
+	// loopHits is how many consecutive one-second samples must agree
+	// before the brake trips, so a burst cannot cause one.
+	loopHits = 3
+	// The echo warning. A relay whose frames keep coming back is working
+	// but wasting most of its effort, and the network is carrying nearly
+	// twice the relayed traffic. The duplicate brake contains that, so it
+	// is not an emergency and must not stop steering -- but it is not
+	// normal either, and an owner who never turns diagnostics on would
+	// otherwise never learn of it. So it is said out loud, rarely, with the
+	// numbers and the busiest device.
+	//
+	// The thresholds only keep it quiet about nothing: a ratio this high
+	// over this many frames is not a stray duplicate, and a healthy relay
+	// sits at zero for as long as it runs.
+	echoWarnRatio     = 0.25
+	echoWarnMinFrames = 2000
+	echoWarnEvery     = time.Hour
+	// diagnosticsEvery and diagnosticsMinPPS bound the Config.Diagnostics
+	// digest: at most one every few seconds, and only while the relay is
+	// carrying something worth looking at.
+	diagnosticsEvery  = 5 * time.Second
+	diagnosticsMinPPS = 1000
+	// observeEvery bounds how often a steered device's relayed traffic is
+	// reported to the registry as a sighting.
+	observeEvery = time.Minute
+	// gatewayRecheck is how often the gateway's MAC is re-read from the
+	// neighbour table while running, besides on an ARP monitor prompt.
+	gatewayRecheck = time.Minute
+	// restartBackoffMin/Max bound how long the engine waits before trying to
+	// start again after it could not.
+	restartBackoffMin = 15 * time.Second
+	restartBackoffMax = 5 * time.Minute
+	historyCap        = 256
+)
+
+// HistoryRecord is one unsteer, with the device's registry identity
+// attached to the Controller's own record.
+type HistoryRecord struct {
+	Time     time.Time `json:"time"`
+	MAC      string    `json:"mac"`
+	DeviceID string    `json:"device_id,omitempty"`
+	Name     string    `json:"name,omitempty"`
+	Reason   string    `json:"reason"`
+}
+
+// DeviceStatus is one registry device's Watch state.
+type DeviceStatus struct {
+	DeviceID string `json:"device_id"`
+	Name     string `json:"name"`
+	// State is one of the State* constants; Reason explains a state other
+	// than steered.
+	State  string `json:"state"`
+	Reason string `json:"reason,omitempty"`
+	// Steered lists the (MAC, IP) pairs currently steered for this device
+	// (a device the registry merged from several MACs can have several).
+	Steered []SteeredEntry `json:"steered,omitempty"`
+	// Families are the address families actually being steered, "ipv4"
+	// and/or "ipv6". Empty when nothing is steered.
+	Families []string `json:"families,omitempty"`
+	// IPv6Reason explains why a device steered for IPv4 is not also
+	// steered for IPv6, when IPv6 steering is otherwise in effect.
+	IPv6Reason string `json:"ipv6_reason,omitempty"`
+	// Healthy is true when every steered entry has relayed within grace.
+	Healthy bool `json:"healthy"`
+	// Totals across the device's steered entries since they were steered.
+	BytesRelayed   uint64 `json:"bytes_relayed"`
+	PacketsRelayed uint64 `json:"packets_relayed"`
+	// Live rates over the last sampling interval.
+	BytesPerSecond   float64 `json:"bytes_per_second"`
+	PacketsPerSecond float64 `json:"packets_per_second"`
+	// NextRetry is when a device on a health-failure backoff is tried
+	// again; zero otherwise.
+	NextRetry time.Time `json:"next_retry,omitempty"`
+	// DuplicatesSuppressed is this device's share of the frames the relay
+	// refused because it had already relayed the same frame moments
+	// earlier. Zero on a healthy network; a figure here names the device
+	// whose frames are coming back.
+	DuplicatesSuppressed uint64 `json:"duplicates_suppressed"`
+	// Failures is how many times in a row the health loop failed it open.
+	Failures int `json:"failures,omitempty"`
+}
+
+// SteeredEntry is one steered (MAC, IP) pair.
+type SteeredEntry struct {
+	MAC string `json:"mac"`
+	IP  string `json:"ip"`
+	// Families is which of "ipv4"/"ipv6" this entry is steered for.
+	Families     []string  `json:"families"`
+	Since        time.Time `json:"since"`
+	Healthy      bool      `json:"healthy"`
+	LastVerified time.Time `json:"last_verified,omitempty"`
+}
+
+// Snapshot is the engine's whole state for the portal and the API.
+type Snapshot struct {
+	Enabled bool   `json:"enabled"`
+	Phase   string `json:"phase"`
+	Reason  string `json:"reason,omitempty"`
+	// Relay is the relay in effect while running: RelayXDPNative,
+	// RelayXDPGeneric or RelayUserspace.
+	Relay string `json:"relay,omitempty"`
+	// Armed is false after the kill switch, until Rearm.
+	Armed     bool   `json:"armed"`
+	Interface string `json:"interface,omitempty"`
+	// LastLoopStop is what the loop brake measured when it last stopped
+	// steering, surviving a restart and a container rebuild. Nil when it
+	// has never tripped here.
+	LastLoopStop *LoopStop `json:"last_loop_stop,omitempty"`
+	// IPv6 is true while IPv6 steering is actually in effect. IPv6Wanted
+	// says whether the configuration asked for it, and IPv6Reason says why
+	// it is not in effect when it was asked for (no IPv6 router, no global
+	// route to steer to, no link-local next hop).
+	IPv6             bool            `json:"ipv6"`
+	IPv6Wanted       bool            `json:"ipv6_wanted"`
+	IPv6Reason       string          `json:"ipv6_reason,omitempty"`
+	GatewayLinkLocal string          `json:"gateway_link_local,omitempty"`
+	GatewayIP        string          `json:"gateway_ip,omitempty"`
+	GatewayMAC       string          `json:"gateway_mac,omitempty"`
+	ShepherdMAC      string          `json:"shepherd_mac,omitempty"`
+	ShepherdIPs      []string        `json:"shepherd_ips,omitempty"`
+	Since            time.Time       `json:"since,omitempty"`
+	Stats            RelayStats      `json:"stats"`
+	Steered          int             `json:"steered"`
+	Devices          []DeviceStatus  `json:"devices"`
+	History          []HistoryRecord `json:"history"`
+}
+
+// RelayStats is intercept.ControllerStats plus the live rates derived from
+// consecutive samples of it.
+type RelayStats struct {
+	FramesExamined          uint64 `json:"frames_examined"`
+	FramesRelayed           uint64 `json:"frames_relayed"`
+	BytesRelayed            uint64 `json:"bytes_relayed"`
+	FramesForShepherdItself uint64 `json:"frames_for_shepherd_itself"`
+	FramesNotForShepherd    uint64 `json:"frames_not_for_shepherd"`
+	// DuplicatesSuppressed is frames the relay refused to relay because it
+	// had already relayed the same frame moments earlier: the same frame
+	// coming round, which is what a relay loop is made of. A healthy relay
+	// reports zero for as long as it runs, so any sustained figure here is
+	// something to look at even though the relay is containing it.
+	DuplicatesSuppressed uint64  `json:"duplicates_suppressed"`
+	PacketsPerSecond     float64 `json:"packets_per_second"`
+	BytesPerSecond       float64 `json:"bytes_per_second"`
+}
+
+type retryState struct {
+	failures int
+	until    time.Time
+	// healthySince is when the device was last seen steered and verified,
+	// for forgiving failures after retryReset of good behaviour.
+	healthySince time.Time
+	// idle marks a fail-open that was the device having nothing to relay
+	// rather than steering failing. It is not counted as a failure, and
+	// the device is not steered again until the registry has seen it
+	// later than seenAt. Without this a sleeping device is re-steered
+	// every few seconds for as long as it sleeps, flipping its ARP entry
+	// back and forth each time for no traffic at all -- and because every
+	// one of those fail-opens counted as a failure, the widening backoff
+	// left it unwatched for up to retryMax once it finally woke.
+	idle   bool
+	seenAt time.Time
+}
+
+// retryGate is one device's backoff as reconcile needs it: when it may be
+// steered again, and whether it must be seen again first.
+type retryGate struct {
+	until  time.Time
+	idle   bool
+	seenAt time.Time
+}
+
+type rateSample struct {
+	packets, bytes uint64
+	at             time.Time
+	pps, bps       float64
+}
+
+// Engine runs Watch mode. Build one with New, run it with Run, and read it
+// with Snapshot; Kill and Rearm are the kill switch.
+type Engine struct {
+	cfg   Config
+	plat  Platform
+	clock intercept.Clock
+	logf  func(string, ...any)
+	reg   *devices.Registry
+
+	mu sync.Mutex
+	// Lifecycle, written by the session.
+	phase   string
+	reason  string
+	relay   string
+	link    Link
+	gateway netip.Addr
+	gwMAC   arp.MAC
+	gwLL    netip.Addr // the gateway's link-local address, for IPv6 steering
+	// pinnedIface is the interface a session last ran on, kept so a moving
+	// default route does not drag a working relay onto another interface.
+	pinnedIface string
+	v6          bool   // IPv6 steering is in effect this session
+	v6Why       string // why it is not, when it was asked for
+	since       time.Time
+	ctrl        *intercept.Controller
+	killed      bool
+	// state is everything persisted in StatePath. The engine keeps all of
+	// it so saving one field cannot drop another: Kill used to write a
+	// fresh persisted{} and would have erased the learned driver list.
+	state persisted
+	// Per-MAC bookkeeping.
+	retry       map[arp.MAC]*retryState
+	refused     map[arp.MAC]string // last Steer refusal, for the pending state's reason
+	v6Refused   map[arp.MAC]string // why a steered device is IPv4-only
+	selfUnsteer map[arp.MAC]bool   // Unsteer calls the engine itself made
+	// believed is what the engine last asked the Controller to steer. The
+	// Controller drops a device from Status() and records its history
+	// entry atomically, but calls OnUnsteer a moment later (after the
+	// spoofer's corrective reply has been attempted). In that window a
+	// reconcile would see "not steered, no backoff armed" and steer the
+	// device straight back, which is exactly what the fail-open backoff
+	// exists to prevent. A MAC that is believed steered but is not in
+	// Status() has an unsteer in flight, so reconcile leaves it alone for
+	// that pass and picks it up once onUnsteer has said why.
+	believed map[arp.MAC]bool
+	rates    map[arp.MAC]*rateSample
+	observed map[arp.MAC]time.Time
+	// relayed records that a MAC's steering demonstrably worked at least
+	// once this attempt: frames really were relayed for it. A later
+	// fail-open on silence is then the device going quiet, not steering
+	// having failed, which is the difference between a flat recheck and a
+	// widening backoff. Only onUnsteer clears it, never sample: the
+	// Controller drops a device from Status() before it says why, and a
+	// sample landing in that window would erase the evidence just as
+	// onUnsteer is about to need it.
+	relayed map[arp.MAC]bool
+	// localAddrs is the memoised answer from Platform.LocalAddrs, with the
+	// time it was read; see own().
+	localAddrs   Own
+	localAddrsAt time.Time
+	// lastDiag is when the Diagnostics digest was last logged, and
+	// lastDupSeen the duplicate count as of then, so the digest can fire on
+	// duplicates appearing rather than only on a high relayed rate.
+	lastDiag    time.Time
+	lastDupSeen uint64
+	// echoWindow is the start of the interval the echo warning measures
+	// over, with the relayed and duplicate counts as they were then.
+	echoWindow               time.Time
+	echoRelayedAt, echoDupAt uint64
+	// ifaceCounters is the previous reading of the interface's own
+	// counters, and loopStreak how many consecutive samples have looked
+	// like a relay loop. See the loop brake constants.
+	ifaceCounters Counters
+	haveIfaceCnt  bool
+	loopStreak    int
+	global        rateSample
+	history       []HistoryRecord
+	lastLog       string
+
+	kick    chan struct{} // reconcile now
+	gwCheck chan struct{} // re-read the gateway MAC now
+
+	// Test seams: how long to wait for a relay to come up, and the loop
+	// brake's packets-per-second floor (loopFloorPPS in production; a test
+	// cannot push a million packets a second through a fake).
+	attachTimeout time.Duration
+	relayGrace    time.Duration
+	loopFloor     float64
+}
+
+// New builds an Engine. It loads the persisted kill switch but starts
+// nothing; call Run.
+func New(cfg Config) (*Engine, error) {
+	if cfg.Registry == nil {
+		return nil, ErrNoRegistry
+	}
+	if cfg.Platform == nil {
+		cfg.Platform = RealPlatform{}
+	}
+	if cfg.Clock == nil {
+		cfg.Clock = wallClock{}
+	}
+	if cfg.Logf == nil {
+		cfg.Logf = log.Printf
+	}
+	st, err := loadState(cfg.StatePath)
+	if err != nil {
+		return nil, err
+	}
+	e := &Engine{
+		cfg: cfg, plat: cfg.Platform, clock: cfg.Clock, logf: cfg.Logf, reg: cfg.Registry,
+		phase:  PhaseDisabled,
+		killed: st.Killed,
+		state:  st,
+		retry:  map[arp.MAC]*retryState{}, refused: map[arp.MAC]string{}, v6Refused: map[arp.MAC]string{},
+		selfUnsteer: map[arp.MAC]bool{},
+		believed:    map[arp.MAC]bool{},
+		rates:       map[arp.MAC]*rateSample{}, observed: map[arp.MAC]time.Time{},
+		relayed: map[arp.MAC]bool{},
+		kick:    make(chan struct{}, 1), gwCheck: make(chan struct{}, 1),
+		attachTimeout: 30 * time.Second, relayGrace: time.Second, loopFloor: loopFloorPPS,
+	}
+	if cfg.Enabled && cfg.Mode != ModeOff {
+		e.phase, e.reason = PhaseStarting, "starting"
+	}
+	return e, nil
+}
+
+type wallClock struct{}
+
+func (wallClock) Now() time.Time                         { return time.Now() }
+func (wallClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+
+func (e *Engine) enabled() bool { return e.cfg.Enabled && e.cfg.Mode != ModeOff }
+
+// Run runs the engine until ctx ends. A disabled engine returns at once.
+// Anything that stops a session short of ctx ending (no capability, the
+// relay dying, the gateway's MAC changing) is logged, reported in the
+// Snapshot and retried on a backoff; Run itself never returns an error
+// for it, so Watch mode can never take the rest of Shepherd down.
+func (e *Engine) Run(ctx context.Context) error {
+	if !e.enabled() {
+		e.setPhase(PhaseDisabled, "Watch mode is turned off in the configuration")
+		return nil
+	}
+	backoff := restartBackoffMin
+	for {
+		err := e.session(ctx)
+		if ctx.Err() != nil {
+			e.setPhase(PhaseUnavailable, "Shepherd is shutting down")
+			return nil
+		}
+		wait := backoff
+		if errors.Is(err, errGatewayChanged) {
+			wait = 2 * time.Second // nothing is wrong: start again with the new MAC
+		} else {
+			backoff = min(backoff*2, restartBackoffMax)
+		}
+		e.setPhase(PhaseUnavailable, err.Error())
+		e.logOnce("watch: not running: %v (retrying in %s)", err, wait)
+		select {
+		case <-ctx.Done():
+			e.setPhase(PhaseUnavailable, "Shepherd is shutting down")
+			return nil
+		case <-e.clock.After(wait):
+		}
+	}
+}
+
+// logOnce logs a line unless it is the same as the previous one, so an
+// install that can never run Watch mode says so once per distinct reason,
+// not every retry.
+func (e *Engine) logOnce(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	e.mu.Lock()
+	same := msg == e.lastLog
+	e.lastLog = msg
+	e.mu.Unlock()
+	if !same {
+		e.logf("%s", msg)
+	}
+}
+
+func (e *Engine) setPhase(phase, reason string) {
+	e.mu.Lock()
+	e.phase, e.reason = phase, reason
+	if phase != PhaseRunning {
+		e.relay, e.ctrl, e.since = "", nil, time.Time{}
+		e.v6, e.gwLL = false, netip.Addr{}
+	}
+	e.mu.Unlock()
+}
+
+// session is one attempt to run Watch mode: discover, build, attach, then
+// track the policy until ctx ends or something forces a restart. It always
+// leaves the network as it found it: every steered device gets its
+// corrective ARP reply through Controller.Close, the relay detaches and GRO
+// is restored.
+func (e *Engine) session(ctx context.Context) error {
+	e.setPhase(PhaseStarting, "finding the interface and the gateway")
+	iface, gw, err := e.plat.DefaultRoute()
+	if err != nil {
+		return fmt.Errorf("default route: %w", err)
+	}
+	switch {
+	case e.cfg.Interface != "":
+		iface = e.cfg.Interface
+	default:
+		// Stay on the interface an earlier session settled on, even if the
+		// default route has since moved. A host with both a wired and a
+		// wireless interface on one subnet can briefly publish a default
+		// route through the wrong one (a Wi-Fi DHCP renew is enough), and
+		// chasing it means tearing down a working relay to re-attach on an
+		// interface whose gateway may not even resolve -- which is exactly
+		// what happened on the live host, where the engine jumped from eth0
+		// to wlan0 for five seconds and refused to steer there at all.
+		// Picking once and keeping it is what an operator would do, and
+		// watch.interface overrides it outright.
+		e.mu.Lock()
+		pinned := e.pinnedIface
+		e.mu.Unlock()
+		if pinned != "" && pinned != iface {
+			if _, err := e.plat.Link(pinned); err == nil {
+				e.logOnce("watch: the default route moved to %s; staying on %s (set watch.interface to choose)", iface, pinned)
+				iface = pinned
+			}
+		}
+	}
+	link, err := e.plat.Link(iface)
+	if err != nil {
+		return err
+	}
+	gwMAC, err := e.plat.GatewayMAC(ctx, iface, gw)
+	if err != nil {
+		return fmt.Errorf("gateway %s: %w", gw, err)
+	}
+	if gwMAC == link.MAC {
+		return fmt.Errorf("the gateway %s has %s's own MAC %s; is Shepherd the gateway?", gw, iface, link.MAC)
+	}
+
+	// IPv6 steering, when it was asked for. Nothing here can fail the
+	// session: a network with no IPv6 router, or a ULA-only one like the
+	// maintainer's, simply runs IPv4-only and says so.
+	gwLL, v6, v6Why := e.discoverV6(iface, link)
+
+	sender, closeSender, err := e.plat.OpenSender(iface)
+	if err != nil {
+		return fmt.Errorf("open raw socket on %s: %w", iface, err)
+	}
+	defer closeSender()
+
+	ctrl, err := intercept.NewController(intercept.ControllerConfig{
+		Sender: sender, Clock: e.clock,
+		ShepherdMAC: link.MAC, ShepherdIPs: link.IPv4s, ShepherdIPs6: link.IPv6s,
+		GatewayIP: gw, GatewayMAC: gwMAC,
+		GatewayLinkLocal:    gwLL,
+		IPv6SteeringEnabled: v6,
+		Excluder:            e,
+		// The stricter IPv6 exclusion, enforced at the call: no Steer with
+		// SteerV6 can reach a device DecideV6 refuses, whatever asked for
+		// it (docs/IPV6-WATCH.md, docs/IPV6.md).
+		V6Excluder:     v6Excluder{e},
+		HealthInterval: e.cfg.HealthInterval, IdleGrace: e.cfg.IdleGrace, StartupGrace: e.cfg.StartupGrace,
+		OnUnsteer: e.onUnsteer,
+	})
+	if err != nil {
+		return err
+	}
+	defer ctrl.Close()
+
+	sctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	e.setPhase(PhaseStarting, "attaching the relay to "+iface)
+	// Refuse before anything is attached or steered if this host is
+	// routing the very segment the relay would work on.
+	if ownNow, ok := e.own(e.clock.Now()); ok {
+		if routing, why := e.routingOwnSegment(link, ownNow); routing {
+			if !e.cfg.AllowRoutingHost {
+				return errors.New(why)
+			}
+			e.logOnce("watch: WARNING: watch.allow_routing_host is set, so steering goes ahead although %s", why)
+		}
+	}
+
+	relay, relayDone, stopRelay, err := e.startRelay(sctx, ctrl, link)
+	if err != nil {
+		return err
+	}
+	defer stopRelay()
+
+	now := e.clock.Now()
+	e.mu.Lock()
+	e.phase, e.reason, e.relay = PhaseRunning, "", relay
+	e.link, e.gateway, e.gwMAC, e.ctrl, e.since = link, gw, gwMAC, ctrl, now
+	e.pinnedIface = iface
+	e.gwLL, e.v6, e.v6Why = gwLL, v6, v6Why
+	e.global = rateSample{at: now}
+	e.rates = map[arp.MAC]*rateSample{}
+	e.believed = map[arp.MAC]bool{}
+	killed := e.killed
+	e.mu.Unlock()
+	if killed {
+		ctrl.PanicStop() // the kill switch is still down: refuse Steer until Rearm
+	}
+	if e.cfg.IPv6 {
+		if v6 {
+			e.logf("watch: IPv6 steering is on; the gateway's link-local address is %s", gwLL)
+		} else {
+			e.logf("watch: IPv6 steering was asked for but is not in effect: %s", v6Why)
+		}
+	}
+	e.logf("watch: running on %s (%s %v), gateway %s (%s), relay %s%s", iface, link.MAC, link.IPv4s, gw, gwMAC, relay,
+		map[bool]string{true: "; kill switch is down, nothing is steered until it is re-armed", false: ""}[killed])
+
+	unsub := e.reg.Subscribe(func(devices.Event) { e.poke(e.kick) })
+	defer unsub()
+
+	e.reconcile(now)
+	tick := e.clock.After(time.Second)
+	nextGW := now.Add(gatewayRecheck)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-relayDone:
+			// A relay that stopped because our own context ended is an
+			// ordinary shutdown, not a failure: Close below unsteers every
+			// device with its corrective reply and the history says so.
+			// Panic-stopping here instead would record every device as
+			// "panic stop" on a clean stop, which is not what happened.
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			ctrl.PanicStop()
+			if err == nil {
+				err = errRelayStopped
+			}
+			return fmt.Errorf("%s relay: %w", relay, err)
+		case <-e.kick:
+			e.reconcile(e.clock.Now())
+		case <-e.gwCheck:
+			if changed := e.gatewayChanged(ctx, iface, gw, gwMAC); changed {
+				return errGatewayChanged
+			}
+		case now := <-tick:
+			tick = e.clock.After(time.Second)
+			e.sample(now)
+			e.reconcile(now)
+			if !now.Before(nextGW) {
+				nextGW = now.Add(gatewayRecheck)
+				if e.gatewayChanged(ctx, iface, gw, gwMAC) {
+					return errGatewayChanged
+				}
+			}
+		}
+	}
+}
+
+// gatewayChanged re-reads the gateway's MAC from the neighbour table and
+// reports whether it differs from the one this session was built with.
+func (e *Engine) gatewayChanged(ctx context.Context, iface string, gw netip.Addr, have arp.MAC) bool {
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	mac, err := e.plat.GatewayMAC(cctx, iface, gw)
+	if err != nil || mac.IsZero() || mac == have {
+		return false
+	}
+	e.logf("watch: gateway %s moved from %s to %s; unsteering everything and starting again", gw, have, mac)
+	return true
+}
+
+// startRelay attaches the data plane the configuration asks for and
+// reports which one is in effect. done receives the relay's exit (an error,
+// or nil when its context ended); stop detaches it and undoes any interface
+// change (GRO) it made.
+func (e *Engine) startRelay(ctx context.Context, ctrl *intercept.Controller, link Link) (relay string, done <-chan error, stop func(), err error) {
+	if e.cfg.Mode == ModeAuto || e.cfg.Mode == ModeXDP {
+		relay, done, stop, err = e.startXDP(ctx, ctrl, link)
+		if err == nil {
+			return relay, done, stop, nil
+		}
+		if e.cfg.Mode == ModeXDP {
+			return "", nil, nil, fmt.Errorf("XDP relay (mode = xdp, no fallback): %w", err)
+		}
+		e.logf("watch: XDP relay unavailable (%v); using the userspace relay", err)
+	}
+	return e.startUserspace(ctx, ctrl, link)
+}
+
+// xdpModeFor decides how to attach on this interface. A driver known to
+// drop the link when its receive rings are rebuilt gets generic XDP
+// outright; anything else gets auto, which prefers native. Either way the
+// relay runs in the kernel and no frame is copied to userspace.
+func (e *Engine) xdpModeFor(iface string) (intercept.XDPMode, string) {
+	driver, err := e.plat.Driver(iface)
+	if err != nil || driver == "" {
+		return intercept.XDPAuto, driver
+	}
+	if slices.Contains(driversThatFlapOnNativeAttach, driver) {
+		e.logOnce("watch: %s uses the %s driver, which drops the link when a native XDP attach rebuilds its rings; attaching generic XDP instead, which does not (docs/WATCH.md)", iface, driver)
+		return intercept.XDPGeneric, driver
+	}
+	e.mu.Lock()
+	known := e.state.hasDriver(driver)
+	e.mu.Unlock()
+	if known {
+		e.logOnce("watch: a native XDP attach dropped the link on the %s driver here before, so attaching generic XDP on %s", driver, iface)
+		return intercept.XDPGeneric, driver
+	}
+	return intercept.XDPAuto, driver
+}
+
+// learnIfNativeFlapped reads the kernel's carrier counter once a native
+// attach has settled. If the link went down and back up, this driver is
+// added to the persisted list, so the next start uses generic and the cost
+// is paid once ever instead of once per restart. This is what covers
+// drivers that are not in the seed list.
+func (e *Engine) learnIfNativeFlapped(ctx context.Context, iface, driver string, before uint64) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-e.clock.After(nativeSettle):
+	}
+	after, err := e.plat.CarrierChanges(iface)
+	if err != nil || after <= before {
+		return
+	}
+	e.mu.Lock()
+	first := !e.state.hasDriver(driver)
+	var saveErr error
+	if first {
+		e.state.FlappyDrivers = append(e.state.FlappyDrivers, driver)
+		saveErr = saveState(e.cfg.StatePath, e.state)
+	}
+	e.mu.Unlock()
+	if !first {
+		return
+	}
+	e.logf("watch: the native XDP attach on %s took the link down and up (%s driver, carrier changes %d to %d); remembering that, and attaching generic XDP from the next start", iface, driver, before, after)
+	if saveErr != nil {
+		e.logf("watch: WARNING: could not remember that the %s driver flaps (%v), so this will be rediscovered next start", driver, saveErr)
+	}
+}
+
+// localRelayIPs is every address of this host, for the relay's "not for
+// Shepherd itself" rule (xdp_relay.c rule 4, Relay.HandleFrame's local
+// check). The relay interface's own addresses are not enough: a host with
+// a second interface on the same segment, or with container bridges, has
+// addresses a steered device can legitimately talk to, and a frame for one
+// of those must be passed up to the stack rather than relayed to the
+// gateway. The maintainer's NAS answers DNS on a second address on the
+// very segment it steers, so this is the normal case, not a corner.
+//
+// The gateway is deliberately not in this set, even though own() includes
+// it for policy: traffic to the gateway's own address belongs to the
+// gateway, not to this host, and passing it up would strand it.
+func (e *Engine) localRelayIPs(link Link) (v4, v6 []netip.Addr) {
+	seen := map[netip.Addr]bool{}
+	add := func(ip netip.Addr) {
+		if !ip.IsValid() || seen[ip] {
+			return
+		}
+		seen[ip] = true
+		if ip.Is4() {
+			v4 = append(v4, ip)
+			return
+		}
+		v6 = append(v6, ip)
+	}
+	for _, ip := range link.IPv4s {
+		add(ip)
+	}
+	for _, ip := range link.IPv6s {
+		add(ip)
+	}
+	if _, ips, err := e.plat.LocalAddrs(); err == nil {
+		for _, ip := range ips {
+			add(ip)
+		}
+	}
+	return v4, v6
+}
+
+func (e *Engine) startXDP(ctx context.Context, ctrl *intercept.Controller, link Link) (string, <-chan error, func(), error) {
+	mode, driver := e.xdpModeFor(link.Name)
+	var before uint64
+	haveCarrier := false
+	if mode != intercept.XDPGeneric {
+		if n, err := e.plat.CarrierChanges(link.Name); err == nil {
+			before, haveCarrier = n, true
+		}
+	}
+	// A relay already known to loop on this interface is not attached at
+	// all, and not re-tested: running the test costs a short burst of
+	// looping frames, and the answer does not change.
+	for _, name := range relayNamesFor(mode) {
+		if key := link.Name + "/" + name; e.knownLooping(key) {
+			return "", nil, nil, fmt.Errorf("%w: the %s relay is already known to loop on %s (recorded in watch.json)", intercept.ErrRelayLoops, name, link.Name)
+		}
+	}
+	rctx, cancel := context.WithCancel(ctx)
+	attached := make(chan intercept.XDPMode, 1)
+	done := make(chan error, 1)
+	v4, v6 := e.localRelayIPs(link)
+	go func() {
+		done <- e.plat.AttachXDP(rctx, ctrl, link.Name, intercept.XDPOptions{
+			Mode:      mode,
+			LocalIPs:  v4,
+			LocalIPs6: v6,
+			SelfTest:  true,
+			OnSelfTestInconclusive: func(err error) {
+				e.logOnce("watch: the relay self-test on %s could not reach a verdict (%v); carrying on with the loop brake as the backstop", link.Name, err)
+			},
+			OnAttached: func(m intercept.XDPMode) { attached <- m },
+		})
+	}()
+	select {
+	case m := <-attached:
+		name := RelayXDPGeneric
+		if m == intercept.XDPNative {
+			name = RelayXDPNative
+			if haveCarrier && driver != "" {
+				go e.learnIfNativeFlapped(rctx, link.Name, driver, before)
+			}
+		}
+		return name, done, cancel, nil
+	case err := <-done:
+		cancel()
+		if err == nil {
+			err = errRelayStopped
+		}
+		if errors.Is(err, intercept.ErrRelayLoops) {
+			for _, name := range relayNamesFor(mode) {
+				e.rememberLooping(link.Name + "/" + name)
+			}
+			e.logf("watch: the relay self-test on %s found a loop and nothing was steered: %v", link.Name, err)
+		}
+		return "", nil, nil, err
+	case <-time.After(e.attachTimeout):
+		cancel()
+		return "", nil, nil, errors.New("XDP attach timed out")
+	}
+}
+
+// relayNamesFor names the relays an attach in this mode could end up
+// using, for the per-interface "known to loop" record. XDPAuto can land on
+// either, and a loop found under one says nothing about the other, so auto
+// records only the mode it actually attached in -- which is why the lookup
+// side checks both and the record side is given the attached name.
+func relayNamesFor(mode intercept.XDPMode) []string {
+	switch mode {
+	case intercept.XDPNative:
+		return []string{RelayXDPNative}
+	case intercept.XDPGeneric:
+		return []string{RelayXDPGeneric}
+	}
+	return []string{RelayXDPNative, RelayXDPGeneric}
+}
+
+// knownLooping reports whether a relay is already recorded as looping here.
+func (e *Engine) knownLooping(key string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.state.hasLoopingRelay(key)
+}
+
+// rememberLooping records a relay as looping on this interface, so it is
+// never attached again here, and persists it.
+func (e *Engine) rememberLooping(key string) {
+	e.mu.Lock()
+	if e.state.hasLoopingRelay(key) {
+		e.mu.Unlock()
+		return
+	}
+	e.state.LoopingRelays = append(e.state.LoopingRelays, key)
+	err := saveState(e.cfg.StatePath, e.state)
+	e.mu.Unlock()
+	if err != nil {
+		e.logf("watch: WARNING: could not remember that %s loops (%v), so it will be tested again next start", key, err)
+	}
+}
+
+func (e *Engine) startUserspace(ctx context.Context, ctrl *intercept.Controller, link Link) (string, <-chan error, func(), error) {
+	restore := func() {}
+	on, err := e.plat.GRO(link.Name)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("userspace relay needs GRO off on %s: %w", link.Name, err)
+	}
+	if on {
+		if err := e.plat.SetGRO(link.Name, false); err != nil {
+			return "", nil, nil, fmt.Errorf("userspace relay needs GRO off on %s: %w", link.Name, err)
+		}
+		e.logf("watch: turned GRO off on %s for the userspace relay; it is restored on exit", link.Name)
+		restore = func() {
+			if err := e.plat.SetGRO(link.Name, true); err != nil {
+				e.logf("watch: WARNING: could not restore GRO on %s: %v (run `ethtool -K %s gro on`)", link.Name, err, link.Name)
+				return
+			}
+			e.logf("watch: restored GRO on %s", link.Name)
+		}
+	}
+	rctx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- e.plat.ParallelRelay(rctx, ctrl, link.Name, e.cfg.Workers) }()
+	// ParallelRelay has no "attached" callback: it opens its sockets and
+	// blocks. A capability problem surfaces as an immediate error, so a
+	// short grace with no error means it is capturing.
+	select {
+	case err := <-done:
+		cancel()
+		restore()
+		if err == nil {
+			err = errRelayStopped
+		}
+		return "", nil, nil, fmt.Errorf("userspace relay: %w", err)
+	case <-time.After(e.relayGrace):
+	}
+	stop := func() { cancel(); restore() }
+	return RelayUserspace, done, stop, nil
+}
+
+func (e *Engine) poke(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
+// GatewayChanged tells the engine the passive ARP monitor saw the gateway
+// IP claimed by another MAC. The engine re-reads the kernel's neighbour
+// table and, only if that too has moved, unsteers everything and starts
+// again with the new MAC. The event's own MAC is never taken on trust.
+func (e *Engine) GatewayChanged() { e.poke(e.gwCheck) }
+
+// Excluded implements intercept.Excluder for the Controller: the policy's
+// standing refusals, enforced at Steer time as well as by reconcile, plus
+// "never steer a MAC the registry does not know".
+func (e *Engine) Excluded(mac arp.MAC) bool {
+	d, ok := e.reg.FindByMAC(mac.String())
+	if !ok {
+		return true
+	}
+	ownNow, _ := e.own(e.clock.Now())
+	dec := Decide(&d, e.cfg.Policy, ownNow, e.clock.Now())
+	return dec.Policy
+}
+
+// own is everything Watch mode must never steer: every MAC and IP on this
+// host, plus the gateway. The host's other interfaces are the dangerous
+// part -- see watch.Own for why -- so this asks the platform for all of
+// them rather than assuming the relay's own interface is the only one.
+//
+// The platform call is memoised for localAddrsTTL, because reconcile runs
+// every second and enumerating interfaces every pass is pointless; the TTL
+// is short because an interface appearing mid-session must be excluded
+// quickly, not at the next restart.
+//
+// If the platform cannot be read, the last good answer is reused, and if
+// there has never been one, ok is false and the caller must steer nothing
+// new. Refusing to steer costs visibility; steering the host costs the
+// network.
+func (e *Engine) own(now time.Time) (Own, bool) {
+	e.mu.Lock()
+	link, gw := e.link, e.gwMAC
+	cached, at := e.localAddrs, e.localAddrsAt
+	e.mu.Unlock()
+
+	o := Own{}
+	fresh := !at.IsZero() && now.Sub(at) < localAddrsTTL
+	if !fresh {
+		macs, ips, err := e.plat.LocalAddrs()
+		if err == nil {
+			cached = Own{MACs: macs, IPs: ips}
+			e.mu.Lock()
+			e.localAddrs, e.localAddrsAt = cached, now
+			e.mu.Unlock()
+		} else if at.IsZero() {
+			// logOnce: reconcile runs every second, and a host that
+			// cannot answer this will not answer it next second either.
+			e.logOnce("watch: cannot read this host's own addresses (%v); steering nothing until it can be read", err)
+			return o, false
+		}
+	}
+	o.MACs = append(o.MACs, cached.MACs...)
+	o.IPs = append(o.IPs, cached.IPs...)
+	// The relay's own interface and the gateway, in case the enumeration
+	// missed either.
+	if !link.MAC.IsZero() {
+		o.MACs = append(o.MACs, link.MAC)
+	}
+	if !gw.IsZero() {
+		o.MACs = append(o.MACs, gw)
+	}
+	for _, ip := range link.IPv4s {
+		o.IPs = append(o.IPs, ip)
+	}
+	for _, ip := range link.IPv6s {
+		o.IPs = append(o.IPs, ip)
+	}
+	o.Nets = append(o.Nets, link.IPv4Nets...)
+	e.mu.Lock()
+	if e.gateway.IsValid() {
+		o.IPs = append(o.IPs, e.gateway)
+	}
+	e.mu.Unlock()
+	return o, true
+}
+
+// onUnsteer is the Controller's OnUnsteer hook. It records history with the
+// device's name attached and, for a health failure, arms the retry backoff
+// so the device is not re-steered at once only to fail open again.
+func (e *Engine) onUnsteer(r intercept.UnsteerRecord) {
+	rec := HistoryRecord{Time: r.Time, MAC: r.MAC.String(), Reason: r.Reason}
+	var lastSeen time.Time
+	if d, ok := e.reg.FindByMAC(r.MAC.String()); ok {
+		rec.DeviceID, rec.Name = d.ID, d.DisplayName()
+		lastSeen = d.LastSeen
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.history = append(e.history, rec)
+	if len(e.history) > historyCap {
+		e.history = e.history[len(e.history)-historyCap:]
+	}
+	relayedEver := e.relayed[r.MAC]
+	delete(e.relayed, r.MAC)
+	delete(e.rates, r.MAC)
+	delete(e.believed, r.MAC)
+	if e.selfUnsteer[r.MAC] {
+		delete(e.selfUnsteer, r.MAC)
+		return
+	}
+	if r.Reason == "panic stop" || r.Reason == "controller closed" {
+		return
+	}
+	rs := e.retry[r.MAC]
+	if rs == nil {
+		rs = &retryState{}
+		e.retry[r.MAC] = rs
+	}
+	rs.healthySince = time.Time{}
+	// Two things look identical to the interception library's health loop
+	// -- a device with nothing to relay and a device whose steering never
+	// took -- and it fails both open, correctly, because it cannot tell
+	// them apart and silence might mean a device cut off. The engine can
+	// tell them apart, from its own two pieces of evidence: whether frames
+	// were ever relayed for this MAC (steering provably worked, so this
+	// silence is the device), and whether anything other than the relay
+	// has seen the device lately (it is awake, so silence is suspicious).
+	if relayedEver || r.Time.Sub(lastSeen) > awakeWithin {
+		rs.idle = true
+		rs.seenAt = lastSeen
+		rs.until = r.Time.Add(idleRecheck)
+		return
+	}
+	rs.idle, rs.seenAt = false, time.Time{}
+	rs.failures++
+	rs.until = r.Time.Add(backoffFor(rs.failures))
+}
+
+func backoffFor(failures int) time.Duration {
+	d := retryBase
+	for i := 1; i < failures && d < retryMax; i++ {
+		d *= 2
+	}
+	return min(d, retryMax)
+}
+
+// sample reads the Controller's counters once a second: live rates for the
+// Snapshot, forgiveness of old failures for devices relaying healthily, and
+// a registry sighting for each device whose traffic moved.
+func (e *Engine) sample(now time.Time) {
+	e.mu.Lock()
+	ctrl := e.ctrl
+	e.mu.Unlock()
+	if ctrl == nil {
+		return
+	}
+	st := ctrl.Stats()
+	status := ctrl.Status()
+	var observe []intercept.SteeredDevice
+
+	e.mu.Lock()
+	elapsed := now.Sub(e.global.at).Seconds()
+	if elapsed > 0 {
+		e.global.pps = float64(st.FramesRelayed-e.global.packets) / elapsed
+		e.global.bps = float64(st.BytesRelayed-e.global.bytes) / elapsed
+	}
+	relayedPPS := e.global.pps
+	e.global.packets, e.global.bytes, e.global.at = st.FramesRelayed, st.BytesRelayed, now
+	live := map[arp.MAC]bool{}
+	for _, d := range status {
+		live[d.MAC] = true
+		rs := e.rates[d.MAC]
+		if rs == nil {
+			rs = &rateSample{at: d.Since}
+			e.rates[d.MAC] = rs
+		}
+		if el := now.Sub(rs.at).Seconds(); el > 0 {
+			rs.pps = float64(d.PacketsRelayed-rs.packets) / el
+			rs.bps = float64(d.BytesRelayed-rs.bytes) / el
+		}
+		moved := d.PacketsRelayed > rs.packets
+		if d.PacketsRelayed > 0 {
+			e.relayed[d.MAC] = true
+		}
+		rs.packets, rs.bytes, rs.at = d.PacketsRelayed, d.BytesRelayed, now
+		if moved && now.Sub(e.observed[d.MAC]) >= observeEvery {
+			e.observed[d.MAC] = now
+			observe = append(observe, d)
+		}
+		if r := e.retry[d.MAC]; r != nil && d.Healthy && !d.LastVerified.IsZero() {
+			if r.healthySince.IsZero() {
+				r.healthySince = now
+			} else if now.Sub(r.healthySince) >= retryReset {
+				delete(e.retry, d.MAC)
+			}
+		}
+	}
+	for mac := range e.rates {
+		if !live[mac] {
+			delete(e.rates, mac)
+		}
+	}
+	e.mu.Unlock()
+
+	for _, d := range observe {
+		e.reg.Observe(devices.Observation{Source: devices.SourceARP, MAC: d.MAC.String(), IP: d.IP.String(), Time: now})
+	}
+	// The digest fires on either of two signals, and the second matters
+	// more: a high relayed rate, or the duplicate brake actually dropping
+	// frames. Gating on rate alone was a mistake -- on the live host the
+	// brake suppresses frames steadily at 30 to 60 relayed packets a
+	// second, far below any sensible rate threshold, so the evidence for
+	// what is coming back was never logged at all.
+	if e.cfg.Diagnostics && now.Sub(e.lastDiag) >= diagnosticsEvery {
+		dup := ctrl.DuplicatesSuppressed()
+		switch {
+		case dup > e.lastDupSeen:
+			e.lastDiag = now
+			e.logSamples(ctrl, fmt.Sprintf("diagnostics: %d frames suppressed as duplicates since the last digest", dup-e.lastDupSeen))
+		case relayedPPS >= diagnosticsMinPPS:
+			e.lastDiag = now
+			e.logSamples(ctrl, fmt.Sprintf("diagnostics at %.0f relayed pkt/s", relayedPPS))
+		}
+		e.lastDupSeen = dup
+	}
+	e.warnIfEchoing(now, ctrl)
+	e.checkForLoop(now, relayedPPS, status)
+}
+
+// echoing reports whether, over one window, enough of what the relay
+// relayed came straight back to be worth saying out loud. Separated from
+// the logging so the thresholds -- the part a mistake would live in -- can
+// be tested without an in-kernel relay, which is the only data plane that
+// counts duplicates at all.
+func echoing(relayed, dups uint64) bool {
+	if relayed < echoWarnMinFrames {
+		return false // too little traffic to conclude anything
+	}
+	return float64(dups) >= echoWarnRatio*float64(relayed)
+}
+
+// warnIfEchoing says once an hour, at most, that most of what the relay
+// relays is coming straight back to it. The duplicate brake is dropping
+// those copies, so nothing is broken and steering continues; but a relay
+// doing twice the work for the same traffic is worth knowing about, and
+// without this it is visible only to someone who turned diagnostics on.
+func (e *Engine) warnIfEchoing(now time.Time, ctrl *intercept.Controller) {
+	st := ctrl.Stats()
+	dup := ctrl.DuplicatesSuppressed()
+
+	e.mu.Lock()
+	if e.echoWindow.IsZero() {
+		e.echoWindow, e.echoRelayedAt, e.echoDupAt = now, st.FramesRelayed, dup
+		e.mu.Unlock()
+		return
+	}
+	if now.Sub(e.echoWindow) < echoWarnEvery {
+		e.mu.Unlock()
+		return
+	}
+	relayed := st.FramesRelayed - e.echoRelayedAt
+	dups := dup - e.echoDupAt
+	e.echoWindow, e.echoRelayedAt, e.echoDupAt = now, st.FramesRelayed, dup
+	e.mu.Unlock()
+
+	if !echoing(relayed, dups) {
+		return
+	}
+	e.logf("watch: %d of the last %d relayed frames came straight back and were dropped (%.0f%%). Steering is working and nothing is broken -- the relay drops the copies -- but something on this network re-delivers the frames it relays, so the segment carries nearly twice the traffic it needs to. See docs/WATCH.md.",
+		dups, relayed, float64(dups)/float64(relayed)*100)
+	if ed := ctrl.EchoDelays(); ed.Total() > 0 {
+		e.logf("watch: how long they took to come back -- %s", ed)
+		if v := ed.Verdict(); v != "" {
+			e.logf("watch: %s", v)
+		}
+	}
+	if byDev := ctrl.DuplicatesByDevice(); len(byDev) > 0 {
+		var worst arp.MAC
+		var worstN uint64
+		for mac, n := range byDev {
+			if n > worstN {
+				worst, worstN = mac, n
+			}
+		}
+		name := worst.String()
+		if d, ok := e.reg.FindByMAC(worst.String()); ok {
+			name = d.DisplayName() + " (" + worst.String() + ")"
+		}
+		e.logf("watch: most of those were %s's, %d frames in all", name, worstN)
+	}
+}
+
+// logSamples drains the relay's frame samples and logs their digest: the
+// busiest flows, each with its TTL range and distinct IP IDs, which is what
+// tells a loop from traffic (intercept.SummarizeSamples). Only the
+// in-kernel relay samples; the userspace relay yields nothing here.
+func (e *Engine) logSamples(ctrl *intercept.Controller, why string) {
+	r := relayEvidence{
+		Echo:       ctrl.EchoDelays(),
+		Duplicates: ctrl.DuplicatesSuppressed(),
+		ByDevice:   ctrl.DuplicatesByDevice(),
+		Flows:      intercept.SummarizeSamples(ctrl.FrameSamples()),
+		Interface:  e.ifaceName(),
+	}
+	r.OursReturning, r.ToGateway = ctrl.ReturnPathCounts()
+	for _, line := range r.lines(e.deviceName) {
+		e.logf("watch: %s: %s", why, line)
+	}
+}
+
+// deviceName is a device's display name with its MAC, or just the MAC when
+// the registry does not know it.
+func (e *Engine) deviceName(mac arp.MAC) string {
+	if d, ok := e.reg.FindByMAC(mac.String()); ok {
+		return d.DisplayName() + " (" + mac.String() + ")"
+	}
+	return mac.String()
+}
+
+// relayEvidence is everything the in-kernel relay can say about frames
+// coming back to it. Gathering it needs that relay; turning it into lines
+// does not, which is why the two are separate: the wording and the choice
+// of what to report is the part worth testing, and no test can attach an
+// XDP program.
+type relayEvidence struct {
+	Echo          intercept.EchoDelays
+	Duplicates    uint64
+	OursReturning uint64
+	ToGateway     uint64
+	ByDevice      map[arp.MAC]uint64
+	Flows         []string
+	Interface     string
+}
+
+// lines renders the evidence, busiest devices first, naming each with the
+// given function. Everything that has nothing to say is left out, so a
+// healthy relay produces one line rather than a screen of zeroes.
+func (r relayEvidence) lines(name func(arp.MAC) string) []string {
+	var out []string
+	if r.Echo.Total() > 0 {
+		out = append(out, "how long the echoed frames took to come back -- "+r.Echo.String())
+		if v := r.Echo.Verdict(); v != "" {
+			out = append(out, v)
+		}
+	}
+	if r.Duplicates > 0 {
+		out = append(out, fmt.Sprintf("%d frames were not relayed because the relay had already relayed the same frame moments earlier -- the same frame coming round, which is what a loop is made of", r.Duplicates))
+	}
+	if r.OursReturning > 0 || r.ToGateway > 0 {
+		out = append(out, fmt.Sprintf("%d frames arrived with Shepherd's own source MAC and %d addressed to the gateway's -- Shepherd's relayed output coming back to %s",
+			r.OursReturning, r.ToGateway, r.Interface))
+	}
+	type pair struct {
+		mac arp.MAC
+		n   uint64
+	}
+	var ds []pair
+	for mac, n := range r.ByDevice {
+		ds = append(ds, pair{mac, n})
+	}
+	slices.SortFunc(ds, func(a, b pair) int {
+		switch {
+		case a.n > b.n:
+			return -1
+		case a.n < b.n:
+			return 1
+		}
+		// Equal counts sort by MAC, so the lines do not reorder between
+		// one digest and the next for no reason.
+		return strings.Compare(a.mac.String(), b.mac.String())
+	})
+	for i, d := range ds {
+		if i == 3 {
+			break
+		}
+		out = append(out, fmt.Sprintf("%d of %s's frames came back and were dropped", d.n, name(d.mac)))
+	}
+	if len(r.Flows) == 0 {
+		out = append(out, "no relayed-frame samples available")
+		return out
+	}
+	return append(out, r.Flows...)
+}
+
+// checkForLoop is the loop brake. Twice on real hardware the relay ended up
+// carrying its own output back to itself at line rate -- once because it
+// steered one of this host's own interfaces, once for a cause not yet
+// established -- and both times it ran for minutes because a person had to
+// notice. This notices in three seconds.
+//
+// The signature is mirrored traffic -- the interface receiving and
+// transmitting the same amount -- above a rate a home network does not
+// reach, for loopHits consecutive seconds. Legitimate heavy traffic fails
+// the symmetry test, because downloads and the host's own traffic make
+// receive and transmit diverge by 25 to 40%, and a quiet network fails the
+// floor.
+//
+// It deliberately does **not** test the relay's own share of the traffic,
+// and an earlier version of this brake did: the relay had to report at
+// least 80% of the interface's receive rate, and at least loopFloorPPS
+// itself. The reason for dropping it is not that the relay carries little
+// of a loop -- it carries most of one -- but that **its counter lags the
+// storm by seconds**, and those are the seconds that matter.
+//
+// Measured on one device, sampled every two seconds from the moment
+// steering began:
+//
+//	t+2s   examined  17,952/s   relayed      0/s
+//	t+4s   examined  62,756/s   relayed 27,587/s   (34 MB/s)
+//	t+6s   examined  89,336/s   relayed 45,516/s   (56 MB/s)
+//	t+8s   examined 102,516/s   relayed 73,704/s   (90 MB/s)
+//
+// A separate run of the same shape had the interface already mirrored at
+// about 27,000 packets a second received against 24,500 transmitted 3.5
+// seconds in, while the relay still reported 8 pkt/s. So at the instant a
+// stop is worth making, the share is near zero; by the time the share
+// passes 80% the card has been at 90 MB/s for several seconds. Gating on
+// it buys nothing and costs the only seconds in which stopping is cheap.
+//
+// The share is therefore evidence, not a trigger, and a low reading early
+// in a storm is expected. The earlier single-device run fits the same
+// curve: 41,116 relayed against 465,000 received at the moment it was
+// sampled.
+//
+// So the share is logged as evidence and ignored as a trigger. The cost,
+// accepted knowingly: genuinely symmetric traffic above loopFloorPPS
+// sustained for loopHits seconds now stops steering. On the measured host
+// nothing legitimate came close to symmetric -- its heavy traffic runs 89
+// to 92% lopsided -- but this is a safety stop that now fires on less
+// evidence than before, which is the right trade only because the thing it
+// guards against melts a home network in a few seconds.
+//
+// MEASURING THIS CORRECTLY, because getting it wrong set the floor above
+// the very loop it was meant to catch. This brake samples once a second,
+// which is fine. Anything sampling /sys/class/net/<if>/statistics faster
+// is not: the atlantic driver publishes those counters in one lump roughly
+// once a second, so 100ms sampling reads "0 0 0 0 0 24073 0 0 0 0" and a
+// half-second bucket that catches a lump holds a whole second of packets.
+// Doubling such a bucket to get a rate overstates it twofold, which is how
+// the instrumented loop was first written up as 54,000 packets a second
+// instead of 27,000, and why loopFloorPPS was 50,000. Ip:InReceives in
+// /proc/net/snmp updates continuously and may be sampled as fast as you
+// like; the interface counters may not.
+//
+// When it trips it panic-stops, which unsteers every device with its
+// corrective reply, and latches like the kill switch so a restart does not
+// resume the loop. It also records what was relaying, because that is the
+// evidence the cause is still missing.
+func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []intercept.SteeredDevice) {
+	cur, err := e.plat.InterfaceCounters(e.ifaceName())
+	if err != nil {
+		return
+	}
+	e.mu.Lock()
+	prev, had := e.ifaceCounters, e.haveIfaceCnt
+	e.ifaceCounters, e.haveIfaceCnt = cur, true
+	if !had || cur.RxPackets < prev.RxPackets || cur.TxPackets < prev.TxPackets {
+		e.loopStreak = 0 // first reading, or the counters wrapped
+		e.mu.Unlock()
+		return
+	}
+	rx := float64(cur.RxPackets - prev.RxPackets)
+	tx := float64(cur.TxPackets - prev.TxPackets)
+	hi := math.Max(rx, tx)
+	mirrored := hi > 0 && math.Abs(tx-rx)/hi <= loopSymmetry
+	looping := mirrored && hi >= e.loopFloor
+	if !looping {
+		e.loopStreak = 0
+		e.mu.Unlock()
+		return
+	}
+	e.loopStreak++
+	hits, ctrl := e.loopStreak, e.ctrl
+	if hits < loopHits || ctrl == nil || e.killed {
+		e.mu.Unlock()
+		return
+	}
+	e.mu.Unlock()
+	// Read the relay's own evidence before latching, since PanicStop
+	// empties the steered set and with it the per-device counters.
+	suppressed := ctrl.DuplicatesSuppressed()
+	flows := intercept.SummarizeSamples(ctrl.FrameSamples())
+	e.mu.Lock()
+	if e.killed { // another goroutine latched it while the lock was free
+		e.mu.Unlock()
+		return
+	}
+	e.killed = true
+	e.state.Killed = true
+	e.reason = "stopped automatically: the relay interface was mirroring traffic at a rate a home network does not reach"
+	share := 0.0
+	if rx > 0 {
+		share = relayedPPS / rx * 100
+	}
+	// Persist what was measured, not just log it. A container rebuild takes
+	// the logs with it, which has already destroyed this evidence twice.
+	e.state.LastLoopStop = &LoopStop{
+		At: now, RxPackets: rx, TxPackets: tx, ApartPercent: math.Abs(tx-rx) / hi * 100,
+		RelayedPPS: relayedPPS, SharePercent: share,
+		Suppressed: suppressed,
+		Devices:    loopSuspects(status, e.reg),
+		Flows:      flows,
+	}
+	saveErr := saveState(e.cfg.StatePath, e.state)
+	e.loopStreak = 0
+	e.mu.Unlock()
+
+	ctrl.PanicStop()
+	e.logf("watch: LOOP BRAKE: the relay interface is mirroring traffic at a rate a home network does not reach, so all steering has been stopped and will stay stopped until it is re-armed")
+	e.logf("watch: loop brake evidence: interface received %.0f and transmitted %.0f packets in the last second (%.2f%% apart), of which the relay reported %.0f (%.1f%%); the duplicate brake had suppressed %d frames",
+		rx, tx, math.Abs(tx-rx)/hi*100, relayedPPS, share, suppressed)
+	e.logf("watch: loop brake: this is also recorded in %s as last_loop_stop, because a container rebuild discards the log", e.cfg.StatePath)
+	// The share is evidence, not a trigger. It lags the storm by seconds --
+	// 0 pkt/s at t+2, 73,704 by t+8 on one measured device -- so a low
+	// figure here means the brake caught it early, not that the relay is
+	// innocent.
+	e.logLoopSuspects(status)
+	e.logSamples(ctrl, "loop brake")
+	if saveErr != nil {
+		e.logf("watch: WARNING: could not persist the loop stop (%v), so a restart may resume it", saveErr)
+	}
+}
+
+// logLoopSuspects names the devices that were relaying most when the brake
+// tripped. The cause of the second incident was never established because
+// nobody had this list at the moment it mattered.
+func (e *Engine) logLoopSuspects(status []intercept.SteeredDevice) {
+	lines := loopSuspects(status, e.reg)
+	if len(lines) == 0 {
+		e.logf("watch: loop brake: no device was steered at the time, so the relay was not carrying a steered device's traffic")
+		return
+	}
+	for _, l := range lines {
+		e.logf("watch: loop brake: %s", l)
+	}
+}
+
+// loopSuspects describes the devices that were relaying most, busiest
+// first, for both the log and the persisted record.
+func loopSuspects(status []intercept.SteeredDevice, reg *devices.Registry) []string {
+	if len(status) == 0 {
+		return nil
+	}
+	byBytes := append([]intercept.SteeredDevice(nil), status...)
+	slices.SortFunc(byBytes, func(a, b intercept.SteeredDevice) int {
+		switch {
+		case a.BytesRelayed > b.BytesRelayed:
+			return -1
+		case a.BytesRelayed < b.BytesRelayed:
+			return 1
+		}
+		return 0
+	})
+	var out []string
+	for i, d := range byBytes {
+		if i == 3 {
+			break
+		}
+		name := d.MAC.String()
+		if dev, ok := reg.FindByMAC(d.MAC.String()); ok {
+			name = dev.DisplayName() + " (" + d.MAC.String() + ")"
+		}
+		out = append(out, fmt.Sprintf("%s had relayed %d frames and %d bytes, address %s",
+			name, d.PacketsRelayed, d.BytesRelayed, d.IP))
+	}
+	return out
+}
+
+// ifaceName is the interface the relay is attached to, or "".
+func (e *Engine) ifaceName() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.link.Name
+}
+
+// reconcile makes the Controller's steered set match the policy: steer
+// every eligible (MAC, IP) pair that is not on a backoff, re-steer one
+// whose address changed, unsteer anything no longer eligible or no longer
+// in the registry.
+func (e *Engine) reconcile(now time.Time) {
+	e.mu.Lock()
+	ctrl, killed := e.ctrl, e.killed
+	e.mu.Unlock()
+	if ctrl == nil || killed {
+		return
+	}
+	steered := map[arp.MAC]intercept.SteeredDevice{}
+	for _, d := range ctrl.Status() {
+		steered[d.MAC] = d
+	}
+	own, ok := e.own(now)
+	if !ok {
+		// Without knowing which addresses are this host's, steering
+		// anything risks steering Shepherd itself.
+		return
+	}
+	e.mu.Lock()
+	v6 := e.v6
+	e.mu.Unlock()
+	var neighbors map[netip.Addr]arp.MAC
+	loadNeighbors := func() map[netip.Addr]arp.MAC {
+		if neighbors != nil {
+			return neighbors
+		}
+		neighbors = map[netip.Addr]arp.MAC{}
+		e.mu.Lock()
+		iface := e.link.Name
+		e.mu.Unlock()
+		if ns, err := e.plat.Neighbors(iface); err == nil {
+			for _, n := range ns {
+				neighbors[n.IP] = n.MAC
+			}
+		}
+		return neighbors
+	}
+
+	want := map[arp.MAC]target{}
+	wantFam := map[arp.MAC]intercept.Family{}
+	refused := map[arp.MAC]string{}
+	v6Why := map[arp.MAC]string{}
+	// seen is each eligible MAC's registry LastSeen, the evidence a device
+	// that went quiet is awake again. It must come from this pass, not
+	// from when the device was unsteered.
+	seen := map[arp.MAC]time.Time{}
+	for _, d := range e.reg.List() {
+		d := d
+		dec := Decide(&d, e.cfg.Policy, own, now)
+		if !dec.Eligible {
+			for _, mac := range deviceMACs(&d) {
+				if _, on := steered[mac]; on {
+					e.unsteer(ctrl, mac, dec.Reason)
+					delete(steered, mac)
+				}
+			}
+			continue
+		}
+		var nb map[netip.Addr]arp.MAC
+		if len(d.MACs) > 1 {
+			nb = loadNeighbors()
+		}
+		ts, skipped := targets(&d, nb)
+		if skipped != "" {
+			for _, mac := range deviceMACs(&d) {
+				refused[mac] = skipped
+			}
+		}
+		// IPv6, only where the session has it and only for a device the
+		// stricter IPv6 policy allows. A device the registry merged from
+		// several MACs is left IPv4-only: the host's neighbour table that
+		// pairs its addresses with its MACs is IPv4, so which MAC owns its
+		// IPv6 address is a guess, and an advertisement sent to the wrong
+		// one is not something to guess at.
+		fam := intercept.SteerV4
+		ip6 := netip.Addr{}
+		if v6 {
+			switch dec6 := DecideV6(&d, e.cfg.Policy, now); {
+			case !dec6.Eligible:
+				for _, mac := range deviceMACs(&d) {
+					v6Why[mac] = dec6.Reason
+				}
+			case len(deviceMACs(&d)) > 1:
+				for _, mac := range deviceMACs(&d) {
+					v6Why[mac] = "this device has several MACs, so which one holds its IPv6 address is not known"
+				}
+			default:
+				fam |= intercept.SteerV6
+				ip6 = deviceIPv6(&d)
+			}
+		}
+		for _, t := range ts {
+			t.IP6 = ip6
+			want[t.MAC] = t
+			wantFam[t.MAC] = fam
+			seen[t.MAC] = d.LastSeen
+		}
+	}
+	for mac, sd := range steered {
+		t, ok := want[mac]
+		switch {
+		case !ok:
+			e.unsteer(ctrl, mac, "no longer eligible or no longer in the registry")
+			delete(steered, mac)
+		case sd.IP != t.IP:
+			e.unsteer(ctrl, mac, "address changed to "+t.IP.String())
+			delete(steered, mac)
+		case sd.Family != wantFam[mac]:
+			e.unsteer(ctrl, mac, "steering "+wantFam[mac].String()+" instead of "+sd.Family.String())
+			delete(steered, mac)
+		}
+	}
+	e.mu.Lock()
+	retry := make(map[arp.MAC]retryGate, len(e.retry))
+	for mac, rs := range e.retry {
+		retry[mac] = retryGate{until: rs.until, idle: rs.idle, seenAt: rs.seenAt}
+	}
+	inFlight := map[arp.MAC]bool{}
+	for mac := range e.believed {
+		if _, on := steered[mac]; !on {
+			inFlight[mac] = true
+		}
+	}
+	e.mu.Unlock()
+	for mac, t := range want {
+		if _, on := steered[mac]; on {
+			continue
+		}
+		if inFlight[mac] {
+			continue // an unsteer is in flight; wait for its reason
+		}
+		if g, ok := retry[mac]; ok {
+			if now.Before(g.until) {
+				continue
+			}
+			// A device that fell open because it had nothing to relay is
+			// left alone until something other than the relay has seen it
+			// again. Steering it on a timer while it sleeps only flips its
+			// ARP entry to Shepherd and back every few seconds, for no
+			// traffic, across every idle device on the network at once.
+			if g.idle && !seen[mac].After(g.seenAt) {
+				continue
+			}
+		}
+		ref := intercept.DeviceRef{MAC: mac, IP: t.IP, IP6: t.IP6}
+		fam := wantFam[mac]
+		err := ctrl.Steer(ref, intercept.SteerOptions{Family: fam})
+		// An IPv6 refusal must never cost the device its IPv4 steering:
+		// fall back to IPv4 alone and record why IPv6 did not happen.
+		if err != nil && fam.Has(intercept.SteerV6) && !errors.Is(err, intercept.ErrPanicked) && !errors.Is(err, intercept.ErrClosed) {
+			v6Why[mac] = "IPv6 steering was refused: " + err.Error()
+			err = ctrl.Steer(intercept.DeviceRef{MAC: mac, IP: t.IP}, intercept.SteerOptions{Family: intercept.SteerV4})
+		}
+		switch {
+		case err == nil, errors.Is(err, intercept.ErrAlreadySteered):
+			e.mu.Lock()
+			e.believed[mac] = true
+			if rs := e.retry[mac]; rs != nil && rs.idle {
+				// Judge the next fail-open afresh; genuine failures from
+				// before are left on the count.
+				rs.idle, rs.seenAt = false, time.Time{}
+			}
+			e.mu.Unlock()
+		case errors.Is(err, intercept.ErrPanicked), errors.Is(err, intercept.ErrClosed):
+			return
+		default:
+			refused[mac] = err.Error()
+		}
+	}
+	e.mu.Lock()
+	e.refused = refused
+	e.v6Refused = v6Why
+	e.mu.Unlock()
+}
+
+func (e *Engine) unsteer(ctrl *intercept.Controller, mac arp.MAC, reason string) {
+	e.mu.Lock()
+	e.selfUnsteer[mac] = true
+	e.mu.Unlock()
+	if err := ctrl.Unsteer(mac); err != nil {
+		e.mu.Lock()
+		delete(e.selfUnsteer, mac)
+		e.mu.Unlock()
+		return
+	}
+	e.logf("watch: unsteered %s: %s", mac, reason)
+}
+
+// Kill is the kill switch: every steered device is unsteered at once with
+// its corrective ARP reply, nothing is steered again until Rearm, and the
+// state is persisted so a restart does not quietly undo it.
+func (e *Engine) Kill() error {
+	e.mu.Lock()
+	e.killed = true
+	ctrl := e.ctrl
+	e.state.Killed = true
+	err := saveState(e.cfg.StatePath, e.state)
+	e.mu.Unlock()
+	if ctrl != nil {
+		ctrl.PanicStop()
+	}
+	e.logf("watch: KILL SWITCH: all steering stopped; nothing is steered until it is re-armed")
+	return err
+}
+
+// Rearm lifts the kill switch; eligible devices are steered again on the
+// next reconcile.
+func (e *Engine) Rearm() error {
+	e.mu.Lock()
+	e.killed = false
+	ctrl := e.ctrl
+	e.state.Killed = false
+	err := saveState(e.cfg.StatePath, e.state)
+	e.mu.Unlock()
+	if ctrl != nil {
+		ctrl.Rearm()
+	}
+	e.logf("watch: re-armed")
+	e.poke(e.kick)
+	return err
+}
+
+// Armed reports whether the kill switch is up (steering allowed).
+func (e *Engine) Armed() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return !e.killed
+}
+
+// Snapshot reports the engine's state and every registry device's Watch
+// state as of now.
+func (e *Engine) Snapshot() Snapshot {
+	now := e.clock.Now()
+	e.mu.Lock()
+	ctrl := e.ctrl
+	snap := Snapshot{
+		Enabled: e.enabled(), Phase: e.phase, Reason: e.reason, Relay: e.relay, Armed: !e.killed,
+		Interface: e.link.Name, Since: e.since,
+		Stats:   RelayStats{PacketsPerSecond: e.global.pps, BytesPerSecond: e.global.bps},
+		History: append([]HistoryRecord(nil), e.history...),
+	}
+	snap.IPv6, snap.IPv6Wanted, snap.IPv6Reason = e.v6, e.cfg.IPv6, e.v6Why
+	snap.LastLoopStop = e.state.LastLoopStop
+	if e.gwLL.IsValid() {
+		snap.GatewayLinkLocal = e.gwLL.String()
+	}
+	if e.gateway.IsValid() {
+		snap.GatewayIP = e.gateway.String()
+	}
+	if !e.gwMAC.IsZero() {
+		snap.GatewayMAC = e.gwMAC.String()
+	}
+	if !e.link.MAC.IsZero() {
+		snap.ShepherdMAC = e.link.MAC.String()
+	}
+	for _, ip := range e.link.IPv4s {
+		snap.ShepherdIPs = append(snap.ShepherdIPs, ip.String())
+	}
+	e.mu.Unlock()
+	if snap.History == nil {
+		snap.History = []HistoryRecord{}
+	}
+
+	steered := map[arp.MAC]intercept.SteeredDevice{}
+	if ctrl != nil {
+		st := ctrl.Stats()
+		snap.Stats.FramesExamined, snap.Stats.FramesRelayed, snap.Stats.BytesRelayed = st.FramesExamined, st.FramesRelayed, st.BytesRelayed
+		snap.Stats.FramesForShepherdItself, snap.Stats.FramesNotForShepherd = st.FramesForShepherdItself, st.FramesNotForShepherd
+		snap.Stats.DuplicatesSuppressed = ctrl.DuplicatesSuppressed()
+		for _, d := range ctrl.Status() {
+			steered[d.MAC] = d
+		}
+	}
+	snap.Steered = len(steered)
+	snap.Devices = e.deviceStatuses(now, steered, snap.Phase == PhaseRunning && snap.Armed)
+	return snap
+}
+
+// DeviceStatuses is Snapshot().Devices alone, keyed by device ID.
+func (e *Engine) DeviceStatuses() map[string]DeviceStatus {
+	snap := e.Snapshot()
+	out := make(map[string]DeviceStatus, len(snap.Devices))
+	for _, d := range snap.Devices {
+		out[d.DeviceID] = d
+	}
+	return out
+}
+
+func (e *Engine) deviceStatuses(now time.Time, steered map[arp.MAC]intercept.SteeredDevice, running bool) []DeviceStatus {
+	own, _ := e.own(now)
+	e.mu.Lock()
+	ctrl := e.ctrl
+	e.mu.Unlock()
+	var dupByMAC map[arp.MAC]uint64
+	if ctrl != nil {
+		dupByMAC = ctrl.DuplicatesByDevice()
+	}
+	e.mu.Lock()
+	retry := make(map[arp.MAC]retryState, len(e.retry))
+	for mac, rs := range e.retry {
+		retry[mac] = *rs
+	}
+	refused := make(map[arp.MAC]string, len(e.refused))
+	for mac, r := range e.refused {
+		refused[mac] = r
+	}
+	v6Why := make(map[arp.MAC]string, len(e.v6Refused))
+	for mac, r := range e.v6Refused {
+		v6Why[mac] = r
+	}
+	v6On := e.v6
+	rates := make(map[arp.MAC]rateSample, len(e.rates))
+	for mac, rs := range e.rates {
+		rates[mac] = *rs
+	}
+	e.mu.Unlock()
+
+	list := e.reg.List()
+	out := make([]DeviceStatus, 0, len(list))
+	for _, d := range list {
+		d := d
+		ds := DeviceStatus{DeviceID: d.ID, Name: d.DisplayName(), Healthy: true}
+		var fams intercept.Family
+		dec := Decide(&d, e.cfg.Policy, own, now)
+		for _, mac := range deviceMACs(&d) {
+			sd, on := steered[mac]
+			if !on {
+				continue
+			}
+			ds.Steered = append(ds.Steered, SteeredEntry{MAC: mac.String(), IP: sd.IP.String(), Families: familyNames(sd.Family),
+				Since: sd.Since, Healthy: sd.Healthy, LastVerified: sd.LastVerified})
+			fams = fams | sd.Family
+			if v6On && !sd.Family.Has(intercept.SteerV6) && ds.IPv6Reason == "" {
+				ds.IPv6Reason = v6Why[mac]
+			}
+			ds.Healthy = ds.Healthy && sd.Healthy
+			ds.BytesRelayed += sd.BytesRelayed
+			ds.PacketsRelayed += sd.PacketsRelayed
+			ds.DuplicatesSuppressed += dupByMAC[mac]
+			if rs, ok := rates[mac]; ok {
+				ds.BytesPerSecond += rs.bps
+				ds.PacketsPerSecond += rs.pps
+			}
+		}
+		ds.Families = familyNames(fams)
+		switch {
+		case len(ds.Steered) > 0:
+			ds.State = StateSteered
+		case !dec.Eligible:
+			ds.State, ds.Reason = dec.State, dec.Reason
+		case !running:
+			ds.State, ds.Reason = StateUnavailable, "Watch mode is not running"
+		default:
+			ds.State, ds.Reason = StatePending, "waiting to be steered"
+			for _, mac := range deviceMACs(&d) {
+				if rs, ok := retry[mac]; ok && now.Before(rs.until) {
+					ds.NextRetry, ds.Failures = rs.until, rs.failures
+					ds.Reason = "failed open " + plural(rs.failures, "time") + "; retrying in " + roundAge(rs.until.Sub(now), now)
+				} else if why, ok := refused[mac]; ok {
+					ds.Reason = why
+				}
+			}
+		}
+		if ds.State != StateSteered {
+			ds.Healthy = false
+		}
+		out = append(out, ds)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].State != out[j].State {
+			return stateRank(out[i].State) < stateRank(out[j].State)
+		}
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out
+}
+
+func stateRank(s string) int {
+	switch s {
+	case StateSteered:
+		return 0
+	case StatePending:
+		return 1
+	case StateUnavailable:
+		return 2
+	case StateIdle:
+		return 3
+	}
+	return 4
+}
+
+func plural(n int, word string) string {
+	if n == 1 {
+		return "1 " + word
+	}
+	return fmt.Sprintf("%d %ss", n, word)
+}
+
+var _ intercept.Excluder = (*Engine)(nil)
+
+// discoverV6 works out whether IPv6 steering can run on this network, and
+// says plainly why not when it cannot. Three things have to hold, and all
+// three are properties of the network rather than of Shepherd:
+//
+//  1. an IPv6 default route exists — otherwise there is no IPv6 router and
+//     nothing for a device to send off-link;
+//  2. its next hop is a link-local address — that is the address a device's
+//     own default route resolves, and the only one an advertisement may
+//     claim (docs/IPV6-WATCH.md);
+//  3. the interface holds a global (2000::/3) address — a ULA-only network
+//     has no off-link IPv6 traffic to steer at all, so steering it would
+//     take the risk and relay nothing. This is the maintainer's own LAN,
+//     and the reason IPv6 steering idles there rather than engaging.
+func (e *Engine) discoverV6(iface string, link Link) (netip.Addr, bool, string) {
+	if !e.cfg.IPv6 {
+		return netip.Addr{}, false, "IPv6 steering is turned off in the configuration"
+	}
+	r, err := e.plat.DefaultRoute6()
+	if err != nil {
+		return netip.Addr{}, false, "this network has no IPv6 default route, so there is no IPv6 traffic to steer"
+	}
+	if r.Iface != "" && r.Iface != iface {
+		return netip.Addr{}, false, fmt.Sprintf("the IPv6 default route leaves through %s, not %s", r.Iface, iface)
+	}
+	if !r.NextHop.IsLinkLocalUnicast() {
+		return netip.Addr{}, false, fmt.Sprintf("the IPv6 default route's next hop (%s) is not a link-local address", r.NextHop)
+	}
+	global := false
+	for _, a := range link.IPv6s {
+		if isGlobalV6(a) {
+			global = true
+			break
+		}
+	}
+	if !global {
+		return netip.Addr{}, false, "this network has no global IPv6 route (unique-local addresses only), so there is no off-link IPv6 traffic to steer"
+	}
+	return r.NextHop, true, ""
+}
+
+// v6Excluder is the Controller's V6Excluder: the stricter IPv6 refusal,
+// enforced at the Steer call itself so an IPv6 steer can never reach a
+// device DecideV6 refuses, even if something asks for it.
+type v6Excluder struct{ e *Engine }
+
+func (x v6Excluder) Excluded(mac arp.MAC) bool {
+	d, ok := x.e.reg.FindByMAC(mac.String())
+	if !ok {
+		return true
+	}
+	now := x.e.clock.Now()
+	ownNow, _ := x.e.own(now)
+	if dec := Decide(&d, x.e.cfg.Policy, ownNow, now); dec.Policy {
+		return true
+	}
+	return DecideV6(&d, x.e.cfg.Policy, now).Policy
+}
+
+// familyNames renders an intercept.Family as the JSON-facing names the
+// portal shows.
+func familyNames(f intercept.Family) []string {
+	var out []string
+	if f.Has(intercept.SteerV4) {
+		out = append(out, "ipv4")
+	}
+	if f.Has(intercept.SteerV6) {
+		out = append(out, "ipv6")
+	}
+	return out
+}
+
+var _ intercept.Excluder = v6Excluder{}
+
+// routingOwnSegment reports whether this host is routing the very subnet
+// the relay runs on, which Watch mode will not steer into: IPv4
+// forwarding is on and a second interface sits in the relay interface's
+// own prefix.
+//
+// The condition correlates with every loop ever seen, but **the mechanism
+// is not forwarding**, and three candidates are now excluded by direct
+// measurement rather than argument.
+//
+// Measured on the maintainer's NAS (forwarding on, eth0 and wlan0 both on
+// one /24), steering a *single ordinary device* -- one phone, by explicit
+// MAC, nothing to do with the registry or the gateway -- loops every time.
+// The instrumented run took the interface to roughly 27,000 packets a
+// second in and 24,500 out, mirrored, 3.5 seconds after steering began,
+// while counters sampled in the same bucket said:
+//
+//	ForwDatagrams          1 datagram    -- not kernel IPv4 forwarding
+//	hairpin drops (in eth0, out eth0)
+//	                       0 packets     -- not same-segment routing
+//	relay's own relayed    8 pkt/s       -- see below; NOT an exclusion
+//
+// That is about 27,000 packets a second received against 24,500
+// transmitted. An earlier revision of this comment said 54,000 against
+// 49,000, having doubled a half-second bucket from a driver that publishes
+// its counters once a second; checkForLoop's comment has the detail.
+//
+// The third line was read as excluding the relay, and that was wrong. A
+// later run let the same storm develop instead of stopping it at 3.5
+// seconds, and the relay's own counter went 0, then 27,587, then 45,516,
+// then 73,704 pkt/s at 90 MB/s by eight seconds in -- 72% of what the
+// program examined. The 8 pkt/s reading was the first instant of a ramp,
+// not a steady state. So the relay is not excluded; it is the leading
+// candidate. A comparison run with the XDP program off (-xdp off)
+// produced no storm, examined holding at 16,000 to 28,000 pkt/s -- but
+// that is weaker evidence than it first looked, because -xdp off does not
+// mean "no relay". The trial then relays in userspace across four workers,
+// and in one run it managed only 88 pkt/s and 107 kB/s. So "no storm
+// without XDP" may mean no more than "a userspace relay is too slow to
+// make one". The fast path is a suspect, not a conclusion.
+//
+// Only two mechanisms are therefore excluded here, not three: kernel IPv4
+// forwarding and same-segment routing.
+//
+// One thing that looks like a clue and is not: examined 102,516 against
+// 73,704 relayed leaves ~29,000 frames a second seen and not relayed, with
+// not_for_shepherd and for_shepherd_itself both zero. That is expected.
+// The XDP program bumps `examined` for every frame it sees and bumps no
+// counter at all on the XDP_PASS paths for "not Shepherd's MAC" and "not
+// from a steered device"; only rule 4 has a counter. So the gap is the
+// rest of the segment's traffic, and ~29,000/s matches this host's
+// measured background almost exactly.
+//
+// So whatever put ~24,500 frames a second onto that interface is
+// accounted for by neither Shepherd's relay nor the kernel's IP stack. It
+// is not this function's premise either, which is why the explanation that
+// used to sit here -- the router learning the client at Shepherd's MAC and
+// the kernel routing its downloads back onto the segment -- is gone. One
+// forwarded datagram during a 24,500-packet-a-second storm refutes it.
+//
+// What survives is the other half of the condition, and it is worth
+// stating because it is the one structural feature present in every
+// incident: this host has **two interfaces on one segment**, and the
+// steered device is REACHABLE through both of them at once:
+//
+//	192.0.2.37 dev eth0  lladdr 02:00:5e:00:00:37 REACHABLE
+//	192.0.2.37 dev wlan0 lladdr 02:00:5e:00:00:37 REACHABLE
+//
+// That makes the IPv4-forwarding half of this test look like it is doing
+// no work. Dropping it would make the refusal narrower and more honest,
+// not broader -- but not before the mechanism is actually identified,
+// because the last two times a mechanism was asserted here it was wrong.
+//
+// Two explanations have been asserted here and then refuted by trial, in
+// this order, and both are recorded so a third is not reached for lightly.
+// First: a polluted registry record that had merged the gateway into a
+// steerable device. Disproved by steering one phone by explicit MAC with
+// no registry involved -- same loop. That record is a real problem and
+// Decide() refuses it by address now, but it is not this. Second: kernel
+// forwarding, as above. Disproved by counting it: one datagram.
+//
+// So the refusal stands on correlation alone, which is a weaker footing
+// than it had when it was first written, not a stronger one. It is kept
+// because the loop is real, immediate and severe -- 3.5 seconds from
+// steering to tens of thousands of packets a second -- and being
+// unavailable on a dual-homed host is much better than melting its
+// network.
+//
+// For a while it was also carrying more weight than intended, because the
+// loop brake as first written would not have caught this loop: it required
+// the relay to report at least 80% of the interface's receive rate, and the
+// measured loop had it reporting 8 pkt/s against 27,000 received. That has
+// since been fixed -- checkForLoop now trips on mirrored traffic above its
+// floor and ignores the relay's share -- so the two guards are independent
+// again, which is how this refusal was always meant to be backed.
+//
+// One thing clearing net.ipv4.ip_forward would not do is help, and anyone
+// reading this should not try it. That host's forwarding is bursty and
+// load-bearing: over a minute with Watch mode off, ForwDatagrams had a
+// median of 34 a second, a p90 of 5,759 and a peak of 8,607, totalling
+// 80,521, and every burst is the relay interface's inbound traffic routed
+// to a container bridge for a service its owner runs on purpose. (Two
+// five-second samples taken earlier both landed inside bursts and were
+// written up here as a steady ~4,000 a second. They also explain the first
+// trial's odd pre-steering baseline of 12,000 packets a second on an
+// interface whose median is 65.)
+//
+// The next measurement has to find what is transmitting, since neither the
+// relay nor the IP stack claims it. Two cheap discriminators, in order:
+// re-run with the relay's XDP program off, which separates the kernel
+// fast-path from the userspace ARP sender; and compare the interface's
+// rx_packets against Ip:InReceives during a storm, which separates IP
+// traffic from a flood of ARP.
+func (e *Engine) routingOwnSegment(link Link, own Own) (bool, string) {
+	fwd, err := e.plat.IPForwarding()
+	if err != nil || !fwd {
+		return false, ""
+	}
+	// A second address of this host inside the relay interface's own
+	// prefix means another interface is on the same segment.
+	for _, ip := range own.IPs {
+		if !ip.Is4() || slices.Contains(link.IPv4s, ip) {
+			continue
+		}
+		for _, n := range link.IPv4Nets {
+			if n.Contains(ip) {
+				return true, fmt.Sprintf("this host forwards IPv4 and has another interface on %s as well as %s, so it is routing the segment Watch mode would steer; one-sided ARP steering and routing the same subnet do not mix (docs/WATCH.md)", n, link.Name)
+			}
+		}
+	}
+	return false, ""
+}

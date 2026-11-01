@@ -15,6 +15,7 @@ export function applyBulkLocal(d, req) {
     case 'remove_group': n.groups = (d.groups || []).filter((g) => g !== req.group_id); break;
     case 'set_excluded': n.excluded = !!req.excluded; if (n.excluded) { n.wandering = false; delete n.wandering_until; } break;
     case 'set_wandering': return applyModeLocal(d, { wandering: !!req.wandering, wandering_minutes: req.wandering_minutes });
+    case 'set_watch': n.watch = req.watch; break;
     case 'set_tags': {
       const rm = new Set((req.remove_tags || []).map(normTag));
       const tags = (d.tags || []).filter((t) => !rm.has(t));
@@ -51,6 +52,14 @@ export function planUndo(req, before) {
       push({ op: 'set_excluded', excluded: true }, ex.filter(() => !!req.wandering).map((d) => d.id));
       break;
     }
+    case 'set_watch': {
+      // One request per distinct previous position, so an undo puts every
+      // device back where it was rather than on one shared value.
+      for (const was of ['auto', 'on', 'off']) {
+        push({ op: 'set_watch', watch: was }, idsWhere((d) => (d.watch || 'auto') === was && was !== req.watch));
+      }
+      break;
+    }
     case 'set_tags': {
       for (const t of req.add_tags || []) {
         const nt = normTag(t);
@@ -74,6 +83,7 @@ export function describeBulk(req, n, groupName = (id) => id) {
     case 'remove_group': return `Removed ${w} from ${groupName(req.group_id)}`;
     case 'set_excluded': return `${req.excluded ? 'Excluded' : 'Included'} ${w}`;
     case 'set_tags': return `Updated tags on ${w}`;
+    case 'set_watch': return req.watch === 'off' ? `Watch mode off for ${w}` : req.watch === 'on' ? `${w} always watched` : `${w} back to automatic watching`;
     case 'set_wandering': return req.wandering ? `${w} set to wandering` + (req.wandering_minutes > 0 ? ' for ' + (req.wandering_minutes >= 60 ? req.wandering_minutes / 60 + ' h' : req.wandering_minutes + ' min') : '') : `${w} back to protected`;
     case 'delete': return `Deleted ${w}`;
     default: return 'Done';

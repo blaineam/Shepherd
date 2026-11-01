@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"shepherd/internal/arp"
 	"shepherd/internal/config"
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/geo"
@@ -173,10 +174,35 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		}
 	}
 
-	// onEvent is nil for now: nothing consumes arp.Event itself yet (the
-	// alarm engine above is wired to upstream DNS health, not the ARP
-	// layer), so startARP just logs each one.
-	arpMon, err := startARP(ctx, cfg, registry, nil)
+	// ---- Watch mode (docs/WATCH.md) -------------------------------------
+	// One self-contained block: the engine owns everything about steering,
+	// so nothing else in run() has to know about it. It is on by default
+	// and refuses cleanly (logged, visible in the portal, DNS untouched) on
+	// a host that cannot run it.
+	watchEngine, err := startWatch(ctx, cfg, registry)
+	if err != nil {
+		return err
+	}
+	if watchEngine != nil { // avoid a non-nil interface over a nil *watch.Engine
+		deps.Watch = watchEngine
+	}
+	// The passive ARP monitor's gateway-mac-changed event is the one ARP
+	// event something now consumes: it tells Watch mode to re-read the
+	// kernel's neighbour table, since every relayed frame is addressed to
+	// the gateway's MAC and a stale one would send traffic nowhere. The
+	// event's own MAC is never taken on trust; the engine re-reads the
+	// table itself and only acts if that moved too. Every other event is
+	// still just logged.
+	var onARPEvent func(arp.Event)
+	if watchEngine != nil {
+		onARPEvent = func(e arp.Event) {
+			log.Printf("arp: %s (%s): %s", e.Type, e.Severity, e.Summary)
+			if e.Type == arp.EventGatewayMACChanged {
+				watchEngine.GatewayChanged()
+			}
+		}
+	}
+	arpMon, err := startARP(ctx, cfg, registry, onARPEvent)
 	if err != nil {
 		return err
 	}
@@ -322,9 +348,24 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		log.Printf("shepherd %s: portal also on https://%s (%s)", version, cfg.TLS.Listen, cfg.TLS.Hostname)
 	}
 
-	log.Printf("shepherd %s: dns on %v, portal on http://%s", version, cfg.DNS.Listen, cfg.Portal.Listen)
+	log.Printf("shepherd %s: dns on %v, portal on http://%s", version, cfg.DNS.ListenAddrs(), cfg.Portal.Listen)
 	log.Printf("portal token is in %s (or run with -print-token)", filepath.Join(cfg.DataDir, "portal-token"))
-	if err := dnsengine.Serve(ctx, cfg.DNS.Listen, engine); err != nil {
+	// An address this host no longer has is a warning, not a reason to
+	// refuse to start: a cable pulled or an interface down should not cost
+	// the network a resolver that works on its other addresses. A port
+	// another process holds is still fatal (see TolerateMissingAddresses),
+	// and so is binding nothing at all.
+	if err := dnsengine.Serve(ctx, cfg.DNS.ListenAddrs(), engine,
+		dnsengine.TolerateMissingAddresses(func(addr string, err error) {
+			log.Printf("dns: WARNING: not listening on %s: %v (this host does not have that address)", addr, err)
+		}),
+		// The loopback listeners are Shepherd's own idea, not the owner's,
+		// so anything at all can go wrong with one without stopping
+		// startup -- including the port already being taken, which on a NAS
+		// whose system resolver owns 127.0.0.1:53 is the normal case.
+		dnsengine.Optional(cfg.DNS.AddedLoopbackAddrs(), func(addr string, err error) {
+			log.Printf("dns: not listening on %s: %v (dns.listen_loopback; something else on this host already answers there)", addr, err)
+		})); err != nil {
 		return err
 	}
 	select {

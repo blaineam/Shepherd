@@ -591,6 +591,11 @@ func (r *Registry) mergeLocked(dst, src *Device, now time.Time) {
 	}
 	// An explicit opt-out survives a merge.
 	dst.Excluded = dst.Excluded || src.Excluded
+	// The more cautious Watch switch wins: an explicit "off" on either side
+	// sticks, and an explicit "on" only carries over into an "auto".
+	if src.Watch == WatchOff || (dst.Watch == WatchAuto && src.Watch == WatchOn) {
+		dst.Watch = src.Watch
+	}
 	// Wandering survives a merge, and for the longest time either side asked for;
 	// an open-ended one wins over a timed one.
 	if src.Wandering {

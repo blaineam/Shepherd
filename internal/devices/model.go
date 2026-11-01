@@ -83,6 +83,37 @@ func normType(s string) string {
 	return strings.NewReplacer(" ", "", "_", "", "-", "", "/", "").Replace(s)
 }
 
+// WatchMode is a device's Watch-mode switch. See Device.Watch.
+type WatchMode string
+
+// Watch switch positions.
+const (
+	WatchAuto WatchMode = ""    // the engine's policy decides (the default)
+	WatchOn   WatchMode = "on"  // steer, even a device the policy would skip
+	WatchOff  WatchMode = "off" // never steer
+)
+
+// ParseWatchMode reads "auto", "on" or "off".
+func ParseWatchMode(s string) (WatchMode, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "auto":
+		return WatchAuto, true
+	case "on":
+		return WatchOn, true
+	case "off":
+		return WatchOff, true
+	}
+	return "", false
+}
+
+// String returns "auto", "on" or "off".
+func (m WatchMode) String() string {
+	if m == WatchAuto {
+		return "auto"
+	}
+	return string(m)
+}
+
 // HLC is a hybrid logical clock stamp: wall-clock milliseconds plus a counter
 // that orders events within the same millisecond.
 type HLC struct {
@@ -137,6 +168,12 @@ type Device struct {
 	Groups   []string `json:"groups,omitempty"`
 	Tags     []string `json:"tags,omitempty"`
 	Excluded bool     `json:"excluded,omitempty"` // opted out of protection and traffic steering
+	// Watch is the device's own Watch-mode switch (docs/WATCH.md): WatchAuto
+	// (the empty string, the default) lets the engine's policy decide, which
+	// steers ordinary devices and leaves infrastructure alone; WatchOn
+	// steers it even when the policy would not (never an Excluded device);
+	// WatchOff never steers it.
+	Watch WatchMode `json:"watch,omitempty"`
 	// Wandering devices are not filtered at all, but every request they make is
 	// still logged and watched. WanderingUntil ends it automatically; zero means
 	// until it is turned off.

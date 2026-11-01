@@ -80,18 +80,17 @@ Shepherd is early and built in public. This is real, tested and running on a rea
 - [x] **Configurable upstreams** over plain DNS, DNS over TLS and DNS over HTTPS, with bootstrap, verified presets and a test before you add one ([UPSTREAMS.md](docs/UPSTREAMS.md)).
 - [x] **Management screens** for all of the above (Devices, Blocking, Upstreams, History) alongside the HUD.
 - [x] **Tailscale integration** for private remote access, validated on a live exit node and subnet router.
-- [x] **Thread, Matter and IPv6 safe by design**, written down as hard rules ([IPV6.md](docs/IPV6.md)).
+- [ ] **Watch mode is retired** ([WATCH.md](docs/WATCH.md)). It steered a device's outbound traffic through Shepherd by one-sided ARP, to show what a device connects to even when it bypasses your DNS. It is off by default and nothing new is built on it, because measurement retired it rather than taste: it is outbound-only by construction, so a device's real traffic volume is always understated; on a real network it loops, with the router returning relayed frames off the wire within tens of microseconds; and a device the portal reported as steered and healthy had **none** of a 100 MB transfer relayed. What it was reaching for needs the return path, which means [Gateway mode](docs/GATEWAY.md).
+- [x] **Thread, Matter and IPv6 safe by design**, written down as hard rules ([IPV6.md](docs/IPV6.md)). IPv6 steering exists (unicast Neighbor Advertisements only, never Router Advertisements) but is off by default and never touches Thread or Matter gear ([IPV6-WATCH.md](docs/IPV6-WATCH.md)).
 - [x] **97% test coverage** with the race detector, enforced by a floor that only rises.
 
-Built and tested, not yet wired in or deployed: a **passive ARP monitor** that learns real MAC addresses and
-raises spoofing alerts ([ARP.md](docs/ARP.md)); an **ARP interception engine** for Watch mode, with mandatory
-device exclusion, automatic fail-open and a panic stop, awaiting a controlled trial on real hardware before
-anything runs against a live network ([INTERCEPT.md](docs/INTERCEPT.md)); an **alarm engine** with Web Push and
-ntfy delivery, mute rules and batch actions ([ALARMS.md](docs/ALARMS.md)); and **router importers** for eero
-and CSV ([IMPORT.md](docs/IMPORT.md)). Coming next: device quarantine for newly discovered devices, port and
-exposure management, a reverse proxy with certificates and tunnels, portal locking (demo data until unlocked,
-PIN, passkeys; passkeys are now built, see [PASSKEYS.md](docs/PASSKEYS.md)), inbound protection, the mesh, signed self-updates, the local AI and one-click installers. A
-dual-NIC router profile is a stated future direction, not yet scheduled. See the [roadmap](docs/ROADMAP.md).
+Also built: a **passive ARP monitor** that learns real MAC addresses and raises spoofing alerts
+([ARP.md](docs/ARP.md)), whose gateway-changed event Watch mode listens to; an **alarm engine** with Web Push
+and ntfy delivery, mute rules and batch actions ([ALARMS.md](docs/ALARMS.md)); **router importers** for eero
+and CSV ([IMPORT.md](docs/IMPORT.md)); and **passkey unlock** for the portal
+([PASSKEYS.md](docs/PASSKEYS.md)). Coming next: inbound protection, the mesh, signed self-updates, the local
+AI and one-click installers. A dual-NIC router profile is a stated future direction, not yet scheduled. See the
+[roadmap](docs/ROADMAP.md).
 
 ## How it fits together
 
@@ -117,8 +116,11 @@ flowchart LR
 ```
 
 - **Guard**: your router hands out Shepherd as DNS, so every device is filtered the moment setup finishes. It cannot take your internet down.
-- **Watch** (on by default once enabled, opt out per device): Shepherd steers devices through itself for bytes, flows,
-  geo-blocking and real pause. IPv4 only, never touching IPv6, Thread or Matter. Infrastructure is excluded automatically.
+- **Watch** (on by default, opt out per device): Shepherd steers each eligible device's outbound traffic through
+  itself, for the destinations and byte rates DNS alone cannot show. Outbound only — it never sees downloads — and it
+  blocks nothing. IPv4 by default; IPv6 steering is opt-in and never touches Thread or Matter. Your router, Shepherd
+  itself, excluded devices and all network and smart-home infrastructure are never steered, and one button stops
+  everything ([WATCH.md](docs/WATCH.md)).
 - Works with routers that offer nothing, like eero, because it needs no router integration.
 
 ## Principles

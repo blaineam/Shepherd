@@ -1,10 +1,11 @@
 import { normType } from './devtypes.js';
 import { isWandering } from './wander.js';
+import { watchSwitchOf } from './watch.js';
 
 // Device search syntax: free text plus key:value filters, "-" negates.
 // Pure and shared by the toolbar (chips), the demo backend and the tests.
 
-export const FILTER_KEYS = ['group', 'vendor', 'type', 'ip', 'seen', 'excluded', 'unnamed', 'tag', 'wandering'];
+export const FILTER_KEYS = ['group', 'vendor', 'type', 'ip', 'seen', 'excluded', 'unnamed', 'tag', 'wandering', 'watch'];
 
 export const FILTER_HELP = [
   { key: 'group', example: 'group:kids', text: 'Devices in a group' },
@@ -16,6 +17,7 @@ export const FILTER_HELP = [
   { key: 'unnamed', example: 'unnamed:true', text: 'No friendly name yet' },
   { key: 'tag', example: 'tag:guest', text: 'Has a tag' },
   { key: 'wandering', example: 'wandering:true', text: 'Wandering: not filtered, still watched' },
+  { key: 'watch', example: 'watch:off', text: 'Watch switch: auto, on or off' },
 ];
 
 // Splits on whitespace, honouring double quotes (quotes are dropped).
@@ -104,6 +106,10 @@ export function matchDevice(d, q, { now = Date.now(), groupName = (id) => id } =
       case 'excluded': ok = !!d.excluded === truthy(v); break;
       case 'unnamed': { const n = d.names || {}; ok = (!d.alias && !n.mdns && !n.hostname) === truthy(v); break; }
       case 'wandering': ok = isWandering(d, now) === truthy(v); break;
+      // The Watch switch, not what Watch mode is currently doing: the
+      // switch is the owner's own setting, so it is what a saved filter
+      // should keep matching.
+      case 'watch': ok = ['auto', 'on', 'off'].includes(v) && watchSwitchOf(d) === v; break;
       case 'tag': ok = (d.tags || []).some((t) => t.toLowerCase() === v); break;
       default: ok = true;
     }

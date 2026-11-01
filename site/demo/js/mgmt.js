@@ -71,6 +71,10 @@ export function createMgmt(api) {
     createAlarmRule: (body) => post('/api/alarms/rules', body),
     deleteAlarmRule: (id) => api('/api/alarms/rules/' + encodeURIComponent(id), { method: 'DELETE' }),
 
+    watch: () => api('/api/watch'),
+    killWatch: () => post('/api/watch/kill', {}),
+    rearmWatch: () => post('/api/watch/rearm', {}),
+
     portscanStatus: () => api('/api/portscan'),
     portscanDevices: () => api('/api/portscan/devices'),
     portscanDevice: (id) => api('/api/portscan/devices/' + encodeURIComponent(id)),

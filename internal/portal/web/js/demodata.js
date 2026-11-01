@@ -111,6 +111,10 @@ export function buildDevices(count = 38, now = Date.now()) {
       groups: named ? [...named[3]] : rng() < 0.2 ? [DEMO_GROUPS[(rng() * 5) | 0].id] : [],
       tags: named && i < 9 ? (i === 6 ? ['guest'] : i === 3 ? ['outdoor'] : []) : rng() < 0.08 ? ['travel'] : [],
       excluded: i === 8 || (!named && rng() < 0.03),
+      // A device's own Watch switch. One is switched off by hand so the
+      // "Watch off" state is visible in a demo; everything else is left
+      // on automatic, as a real install would be.
+      watch: i === 11 ? 'off' : i === 25 ? 'on' : 'auto',
       notes: i === 3 ? 'Mounted above the garage door. Firmware updates are manual.' : '',
     };
     d.name = fallbackName(d);

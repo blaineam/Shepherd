@@ -39,6 +39,8 @@ const P = {
   users: ['M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', 'M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6', 'M16 5a3 3 0 0 1 0 6M18 14c2 .7 3 2.6 3 6'],
   import: ['M12 3v11', 'M8 10l4 4 4-4', 'M4 21h16'],
   archive: ['M3 5h18v4H3z', 'M5 9v10h14V9', 'M10 13h4'],
+  // Watch mode. Not the wristwatch above (that is a device type).
+  eye: ['M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z', 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z'],
 };
 
 export function icon(name, size = 16, cls = '') {

@@ -36,6 +36,7 @@ import (
 	"shepherd/internal/secrets"
 	"shepherd/internal/settings"
 	"shepherd/internal/vulnscan"
+	"shepherd/internal/watch"
 )
 
 // Only what the browser needs is embedded: the page, its modules and vendored
@@ -182,6 +183,29 @@ type Deps struct {
 	// hostname, passkeys are unavailable and the portal says why.
 	TLSHostname string
 	TLSListen   string
+	// Watch is Watch mode's engine (docs/WATCH.md): the per-device steering
+	// state, the live relayed rates and the kill switch. Nil means
+	// cmd/shepherd did not wire it in (switched off, or a build without
+	// it), in which case /api/watch answers "not enabled" and the Devices
+	// screen shows no Watch column instead of failing.
+	Watch WatchEngine
+}
+
+// WatchEngine is what the portal needs from Watch mode's engine
+// (*watch.Engine). An interface so the API is testable without an engine
+// attached to a real interface, and so a switched-off Watch mode is simply
+// a nil Deps.Watch.
+type WatchEngine interface {
+	// Snapshot is the whole state: phase, relay, rates, every device and
+	// the recent unsteer history.
+	Snapshot() watch.Snapshot
+	// DeviceStatuses is the per-device state keyed by device ID, for
+	// decorating the device list.
+	DeviceStatuses() map[string]watch.DeviceStatus
+	// Kill unsteers everything and refuses to steer until Rearm; it
+	// survives a restart.
+	Kill() error
+	Rearm() error
 }
 
 type Server struct {
@@ -524,6 +548,9 @@ func (s *Server) routes() {
 	h("PATCH /api/devices/{id}", s.patchDevice)
 	h("DELETE /api/devices/{id}", s.deleteDevice)
 	h("GET /api/arp/stats", s.arpStats)
+	h("GET /api/watch", s.getWatch)
+	h("POST /api/watch/kill", s.killWatch)
+	h("POST /api/watch/rearm", s.rearmWatch)
 	h("GET /api/groups", s.listGroups)
 	h("POST /api/groups", s.createGroup)
 	h("PATCH /api/groups/{id}", s.patchGroup)

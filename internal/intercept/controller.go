@@ -36,6 +36,17 @@ var (
 	ErrPanicked            = errors.New("intercept: panic stop is active; call Rearm to resume")
 	ErrTrialDuration       = errors.New("intercept: Trial requires a positive Duration")
 	ErrClosed              = errors.New("intercept: controller is closed")
+
+	// ErrIPv6Disabled is returned by Steer for an IPv6 steer when the
+	// Controller was not built with IPv6SteeringEnabled. IPv6 steering is
+	// off by default and this is the master switch (docs/IPV6-WATCH.md).
+	ErrIPv6Disabled = errors.New("intercept: IPv6 steering is disabled (IPv6SteeringEnabled is false)")
+	// ErrNoGatewayLinkLocal is returned by Steer for an IPv6 steer when
+	// the Controller has no gateway link-local address to advertise.
+	ErrNoGatewayLinkLocal = errors.New("intercept: IPv6 steering needs the gateway's link-local address (GatewayLinkLocal)")
+	// ErrInvalidV6Device is returned by Steer for an IPv6 steer whose
+	// device has no usable unicast IPv6 address to send advertisements to.
+	ErrInvalidV6Device = errors.New("intercept: device has no usable unicast IPv6 address (DeviceRef.IP6)")
 )
 
 // Excluder reports whether a device must never be steered. The caller
@@ -46,10 +57,15 @@ type Excluder interface {
 	Excluded(mac arp.MAC) bool
 }
 
-// DeviceRef identifies a device to steer.
+// DeviceRef identifies a device to steer. IP is the device's IPv4 address
+// (required for IPv4 steering). IP6 is a unicast IPv6 address the device
+// holds — its link-local is the natural choice — to which Neighbor
+// Advertisements are sent; it is required only when SteerOptions.Family
+// includes SteerV6, and ignored otherwise.
 type DeviceRef struct {
 	MAC arp.MAC
 	IP  netip.Addr
+	IP6 netip.Addr
 }
 
 // SteerOptions configures one Steer call.
@@ -58,12 +74,22 @@ type SteerOptions struct {
 	// nothing else calls Unsteer first. Duration must be positive.
 	Trial    bool
 	Duration time.Duration
+
+	// Family is the set of address families to steer. The zero value is
+	// treated as SteerV4, so existing callers are unchanged. SteerV6 (on
+	// its own or with SteerV4) additionally requires IPv6SteeringEnabled,
+	// a GatewayLinkLocal, and a usable DeviceRef.IP6; see docs/IPV6-WATCH.md.
+	Family Family
 }
 
 // SteeredDevice is a snapshot of one currently steered device.
+// BytesRelayed/PacketsRelayed/LastVerified are summed across the device's
+// active families; Family says which families those are, and Healthy is
+// true only when every active family is healthy.
 type SteeredDevice struct {
 	MAC            arp.MAC
 	IP             netip.Addr
+	Family         Family
 	Since          time.Time
 	Healthy        bool
 	BytesRelayed   uint64
@@ -81,10 +107,13 @@ type SteeredDevice struct {
 // cmd/intercept-trial does) and diff consecutive snapshots to get
 // frames/bytes per second. See docs/INTERCEPT.md's "Throughput" section.
 type ControllerStats struct {
-	FramesExamined          uint64 // every frame HandleFrame was ever given, matched or not
-	BytesExamined           uint64 // their total wire length
-	FramesNotForShepherd    uint64 // subset discarded because dst != ShepherdMAC (see OnFrameNotForShepherd)
-	FramesForShepherdItself uint64 // subset left alone because they were for Shepherd's own IP (see Relay.ShepherdIPs)
+	FramesExamined       uint64 // every frame HandleFrame was ever given, matched or not
+	BytesExamined        uint64 // their total wire length
+	FramesNotForShepherd uint64 // subset discarded because dst != ShepherdMAC (see OnFrameNotForShepherd)
+	// FramesForShepherdItself is the subset left alone because they were for
+	// Shepherd's own IP (see Relay.ShepherdIPs). The XDP relay reports the
+	// same thing from its own counters.
+	FramesForShepherdItself uint64
 	FramesRelayed           uint64 // subset actually relayed
 	BytesRelayed            uint64 // their total wire length
 }
@@ -109,18 +138,45 @@ type ControllerConfig struct {
 	ShepherdMAC arp.MAC
 	GatewayIP   netip.Addr
 	GatewayMAC  arp.MAC
+	// GatewayLinkLocal is the gateway's IPv6 link-local address — the next
+	// hop a device's IPv6 default route points at, and the address IPv6
+	// steering claims for Shepherd's MAC. Required only for IPv6 steering;
+	// the gateway's real MAC is GatewayMAC, reused for the IPv6 corrective.
+	GatewayLinkLocal netip.Addr
 	// ShepherdIPs are this host's own IPv4 addresses on the interface
 	// being relayed on, passed straight through to every Relay (see
 	// Relay.ShepherdIPs for why this matters: without it, traffic a
 	// steered device sends to Shepherd itself — a DNS query, a portal
 	// connection — gets needlessly relayed to the real gateway too,
 	// which just drops it, wasting a relay worker's capacity on every
-	// single locally-destined packet for nothing). Optional but strongly
-	// recommended; empty keeps today's behavior of relaying everything.
+	// single locally-destined packet for nothing). AttachXDP uses them
+	// the same way, and there it is not optional in effect: an XDP_TX
+	// frame never reaches the kernel, so AttachXDP reads the interface's
+	// own addresses itself when this is empty. Optional for the userspace
+	// relay but strongly recommended; empty keeps relaying everything.
 	ShepherdIPs []netip.Addr
+	// ShepherdIPs6 are this host's own IPv6 addresses on the interface:
+	// the IPv6 counterpart of ShepherdIPs, so a steered device's IPv6
+	// traffic to Shepherd itself is passed through, not relayed. Optional.
+	ShepherdIPs6 []netip.Addr
+
+	// IPv6SteeringEnabled is the master switch for IPv6 steering, off by
+	// default. While it is false, any Steer with SteerV6 is rejected with
+	// ErrIPv6Disabled no matter what else is configured — the single flag
+	// docs/IPV6-WATCH.md's safety story turns on. It gates nothing for IPv4.
+	IPv6SteeringEnabled bool
 
 	// Excluder is consulted on every Steer call. Optional.
 	Excluder Excluder
+	// V6Excluder is consulted, in addition to Excluder, only on an IPv6
+	// steer. The caller wires it to a stricter rule than the IPv4 one —
+	// refusing every smart-home / Thread / Matter / router device (the
+	// TypeSmartHome and TypeRouter devices the registry already classifies
+	// from their mDNS services, plus anything seen sourcing a Router
+	// Advertisement) — so IPv6 steering can never be pointed at the gear
+	// docs/IPV6.md exists to protect. Optional, but strongly recommended
+	// whenever IPv6SteeringEnabled is true.
+	V6Excluder Excluder
 	// ExcludedMACs is a static exclusion list (infrastructure devices,
 	// Shepherd host's own other interfaces) checked alongside Excluder.
 	ExcludedMACs []arp.MAC
@@ -171,16 +227,88 @@ func usableDeviceIP(ip netip.Addr) bool {
 	return b[0] != 0 && ip != netip.AddrFrom4([4]byte{255, 255, 255, 255})
 }
 
-type deviceState struct {
-	ip             netip.Addr
-	since          time.Time
-	bytesRelayed   uint64
-	packetsRelayed uint64
-	lastVerified   time.Time
-	healthy        bool
+// usableGatewayV6 reports whether a is a concrete IPv6 address usable as
+// the gateway's link-local target of an advertisement: IPv6, not a 4-in-6
+// mapping, not unspecified, not multicast.
+func usableGatewayV6(a netip.Addr) bool {
+	return a.Is6() && !a.Is4In6() && !a.IsUnspecified() && !a.IsMulticast()
+}
+
+// usableDeviceV6 reports whether a is a unicast IPv6 address an
+// advertisement can be sent to (a device's link-local is the usual one).
+func usableDeviceV6(a netip.Addr) bool {
+	return usableGatewayV6(a)
+}
+
+// famState is one address family's bookkeeping for one steered device.
+// The fields the Relay's hot path writes (bytes, packets, last-verified,
+// healthy) are atomics, updated by every ParallelRelay worker on every
+// relayed frame without taking Controller.mu: at a real transfer's packet
+// rate (tens to hundreds of thousands of frames per second, split across
+// workers) a shared mutex on that path is contention the relay cannot
+// afford, and the health loop and Status read these only occasionally.
+// cancel/done are the family's own spoofer handle, written once under mu
+// when the family is steered, so one family can be unsteered (its spoofer
+// stopped, its corrective sent) without touching the other.
+type famState struct {
+	bytesRelayed   atomic.Uint64
+	packetsRelayed atomic.Uint64
+	// lastVerifiedNanos is the wall-clock UnixNano of the last relayed
+	// frame; everVerified says whether there has been one at all, so a
+	// clock that happens to sit at the Unix epoch is not mistaken for
+	// "never" (and the zero time's UnixNano, which is undefined, is never
+	// stored). lastVerified() turns the pair back into a time.Time.
+	lastVerifiedNanos atomic.Int64
+	everVerified      atomic.Bool
+	healthy           atomic.Bool
 
 	cancel context.CancelFunc
 	done   chan struct{}
+}
+
+func (fs *famState) lastVerified() time.Time {
+	if !fs.everVerified.Load() {
+		return time.Time{}
+	}
+	return time.Unix(0, fs.lastVerifiedNanos.Load())
+}
+
+func (fs *famState) record(n int, now time.Time) {
+	fs.bytesRelayed.Add(uint64(n))
+	fs.packetsRelayed.Add(1)
+	fs.lastVerifiedNanos.Store(now.UnixNano())
+	fs.everVerified.Store(true)
+	fs.healthy.Store(true)
+}
+
+// deviceState is one steered device's bookkeeping, one famState per
+// address family. ip (IPv4) and ip6 (the address IPv6 advertisements are
+// sent to) and since are written once under mu in Steer. fam is the set
+// of currently-active families, read lock-free on the hot path
+// (lookupSteered) and written only under mu, so it is an atomic.
+type deviceState struct {
+	ip    netip.Addr
+	ip6   netip.Addr
+	since time.Time
+	fam   atomic.Uint32 // Family bits currently active
+
+	// cancel is the device-level context cancel, parent of every family's
+	// own. Cancelling it stops all families at once (full unsteer,
+	// PanicStop, Close); a family's own famState.cancel stops just that one.
+	cancel context.CancelFunc
+
+	v4 famState
+	v6 famState
+}
+
+func (ds *deviceState) family() Family { return Family(ds.fam.Load()) }
+
+// fs returns the famState for a single family (SteerV4 or SteerV6).
+func (ds *deviceState) fs(f Family) *famState {
+	if f == SteerV6 {
+		return &ds.v6
+	}
+	return &ds.v4
 }
 
 // Controller is the safety-governed steering authority: the only thing in
@@ -203,12 +331,25 @@ type Controller struct {
 	devices  map[arp.MAC]*deviceState
 	history  []UnsteerRecord
 
-	steered atomic.Pointer[map[arp.MAC]netip.Addr]
+	// steered is the lock-free snapshot of c.devices that every Relay's
+	// hot path reads: Lookup (is this source MAC steered, and to which
+	// IP) and recordRelayed (bump this device's counters) both go through
+	// it and never take mu. It is rebuilt, under mu, on every Steer,
+	// Unsteer and PanicStop (publishSnapshotLocked). A worker that loaded
+	// the snapshot just before an unsteer may bump a deviceState that is
+	// no longer in c.devices; that is harmless, since nothing reads a
+	// removed deviceState's counters again.
+	steered atomic.Pointer[map[arp.MAC]*deviceState]
+
+	// observer, when set, is told (outside mu, after the snapshot above
+	// has been republished) every time the steered set changes, so an
+	// in-kernel data plane (AttachXDP) can mirror it at once instead of
+	// finding out on its next poll. One at a time; nil means none.
+	observer atomic.Pointer[steeredSetObserver]
 
 	// Packet-rate diagnostics (ControllerStats), updated from every Relay's
-	// hot path without taking mu: a lock-free counter bump is cheap enough
-	// to leave on unconditionally, unlike the per-device bookkeeping in
-	// recordRelayed, which needs mu to find the right deviceState anyway.
+	// hot path without taking mu, like the per-device counters in
+	// deviceState: nothing on the relay's per-frame path takes a lock.
 	framesExamined          atomic.Uint64
 	bytesExamined           atomic.Uint64
 	framesNotForShepherd    atomic.Uint64
@@ -246,13 +387,14 @@ func NewController(cfg ControllerConfig) (*Controller, error) {
 		cancel:  cancel,
 		devices: map[arp.MAC]*deviceState{},
 	}
-	empty := map[arp.MAC]netip.Addr{}
+	empty := map[arp.MAC]*deviceState{}
 	c.steered.Store(&empty)
 
 	c.relay = &Relay{
 		Sender:                   cfg.Sender,
 		ShepherdMAC:              cfg.ShepherdMAC,
 		ShepherdIPs:              cfg.ShepherdIPs,
+		ShepherdIPs6:             cfg.ShepherdIPs6,
 		GatewayMAC:               cfg.GatewayMAC,
 		SendTimeout:              cfg.SendTimeout,
 		Lookup:                   c.lookupSteered,
@@ -298,6 +440,7 @@ func (c *Controller) NewRelay(sender Sender) *Relay {
 		Sender:                   sender,
 		ShepherdMAC:              c.cfg.ShepherdMAC,
 		ShepherdIPs:              c.cfg.ShepherdIPs,
+		ShepherdIPs6:             c.cfg.ShepherdIPs6,
 		GatewayMAC:               c.cfg.GatewayMAC,
 		SendTimeout:              c.cfg.SendTimeout,
 		Lookup:                   c.lookupSteered,
@@ -310,33 +453,119 @@ func (c *Controller) NewRelay(sender Sender) *Relay {
 	}
 }
 
-func (c *Controller) lookupSteered(mac arp.MAC) (netip.Addr, bool) {
+func (c *Controller) lookupSteered(mac arp.MAC) (netip.Addr, Family, bool) {
 	m := c.steered.Load()
 	if m == nil {
-		return netip.Addr{}, false
+		return netip.Addr{}, 0, false
 	}
-	ip, ok := (*m)[mac]
-	return ip, ok
+	ds, ok := (*m)[mac]
+	if !ok {
+		return netip.Addr{}, 0, false
+	}
+	return ds.ip, ds.family(), true
 }
 
-func (c *Controller) recordRelayed(mac arp.MAC, n int, now time.Time) {
+// steeredSetObserver mirrors the Controller's steered set somewhere else
+// (the XDP program's map). steeredSetChanged is called outside mu after
+// every Steer, Unsteer, trial expiry, health unsteer, PanicStop and Close,
+// with the complete current set; it must be quick and must not call back
+// into the Controller.
+type steeredSetObserver interface {
+	steeredSetChanged(entries []steeredEntry)
+}
+
+// steeredEntry is one steered device and the families it is steered for,
+// as published to an observer (the XDP data plane).
+type steeredEntry struct {
+	MAC arp.MAC
+	Fam Family
+}
+
+// setObserver installs (or, with nil, removes) the steered-set observer
+// and immediately tells a new one the current set.
+func (c *Controller) setObserver(o steeredSetObserver) {
+	if o == nil {
+		c.observer.Store(nil)
+		return
+	}
+	c.observer.Store(&o)
+	c.notifySteeredChanged()
+}
+
+// steeredEntries returns the currently steered devices and their families
+// from the lock-free snapshot, in no particular order.
+func (c *Controller) steeredEntries() []steeredEntry {
+	m := c.steered.Load()
+	if m == nil {
+		return nil
+	}
+	out := make([]steeredEntry, 0, len(*m))
+	for mac, ds := range *m {
+		out = append(out, steeredEntry{MAC: mac, Fam: ds.family()})
+	}
+	return out
+}
+
+func (c *Controller) notifySteeredChanged() {
+	if o := c.observer.Load(); o != nil {
+		(*o).steeredSetChanged(c.steeredEntries())
+	}
+}
+
+// recordRelayedBatch is recordRelayed for a data plane that counts in bulk
+// (AttachXDP reads the kernel's per-device counters once a second): it
+// credits packets and bytes to mac and marks it verified as of now, which
+// is what the health loop needs. A zero packets is a no-op.
+func (c *Controller) recordRelayedBatch(mac arp.MAC, fam Family, packets, bytes uint64, now time.Time) {
+	if packets == 0 {
+		return
+	}
+	c.framesRelayed.Add(packets)
+	c.bytesRelayedTotal.Add(bytes)
+	m := c.steered.Load()
+	if m == nil {
+		return
+	}
+	if ds, ok := (*m)[mac]; ok {
+		fs := ds.fs(fam)
+		fs.bytesRelayed.Add(bytes)
+		fs.packetsRelayed.Add(packets)
+		fs.lastVerifiedNanos.Store(now.UnixNano())
+		fs.everVerified.Store(true)
+		fs.healthy.Store(true)
+	}
+}
+
+// recordExaminedBatch adds to the examined-frame counters in bulk, for a
+// data plane that counts in the kernel. bytes may be zero when the data
+// plane does not track it; forShepherdItself is how many of the examined
+// frames were a steered device's traffic for Shepherd's own IP.
+func (c *Controller) recordExaminedBatch(frames, bytes, forShepherdItself uint64) {
+	c.framesExamined.Add(frames)
+	c.bytesExamined.Add(bytes)
+	c.framesForShepherdItself.Add(forShepherdItself)
+}
+
+// recordRelayed is the Relay's per-frame hook, and with lookupSteered the
+// whole of what the hot path does on the Controller. Neither takes mu:
+// the global counters are atomics, and the device's own counters live in
+// the deviceState reached through the lock-free snapshot. See deviceState.
+func (c *Controller) recordRelayed(mac arp.MAC, fam Family, n int, now time.Time) {
 	c.framesRelayed.Add(1)
 	c.bytesRelayedTotal.Add(uint64(n))
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if ds, ok := c.devices[mac]; ok {
-		ds.bytesRelayed += uint64(n)
-		ds.packetsRelayed++
-		ds.lastVerified = now
-		ds.healthy = true
+	m := c.steered.Load()
+	if m == nil {
+		return
+	}
+	if ds, ok := (*m)[mac]; ok {
+		ds.fs(fam).record(n, now)
 	}
 }
 
-// recordFrameExamined, recordFrameNotForShepherd and
-// recordFrameForShepherdItself are Relay's OnFrameExamined/
-// OnFrameNotForShepherd/OnFrameForShepherdItself hooks: diagnostics only,
-// so they run lock-free and never touch c.devices. See ControllerStats.
+// recordFrameExamined and recordFrameNotForShepherd are Relay's
+// OnFrameExamined/OnFrameNotForShepherd hooks: diagnostics only, so they
+// run lock-free and never touch c.devices. See ControllerStats.
 func (c *Controller) recordFrameExamined(n int) {
 	c.framesExamined.Add(1)
 	c.bytesExamined.Add(uint64(n))
@@ -351,20 +580,35 @@ func (c *Controller) recordFrameForShepherdItself(int) {
 }
 
 // recordRelayError is the Relay's error hook: a send failure while
-// relaying is an immediate fail-open signal, so the device is unsteered
-// right away rather than waiting for the next health-check tick to
-// notice. It runs synchronously (bounded by SendTimeout), so a Sender
-// that keeps failing cannot be retried against the same device forever.
-func (c *Controller) recordRelayError(mac arp.MAC, err error) {
-	c.unsteer(mac, fmt.Sprintf("relay send failed: %v", err))
+// relaying is an immediate fail-open signal, so that family of the device
+// is unsteered right away rather than waiting for the next health-check
+// tick to notice. Only the failing family is reverted — a broken IPv6
+// send never disturbs a healthy IPv4 steer, and vice versa. It runs
+// synchronously (bounded by SendTimeout), so a Sender that keeps failing
+// cannot be retried against the same device forever.
+func (c *Controller) recordRelayError(mac arp.MAC, fam Family, err error) {
+	c.unsteerFamilies(mac, fam, fmt.Sprintf("%s relay send failed: %v", famName(fam), err))
+}
+
+// famName is a short human label for a family, for history/log messages.
+func famName(f Family) string {
+	switch {
+	case f == SteerV4:
+		return "IPv4"
+	case f == SteerV6:
+		return "IPv6"
+	case f.Has(SteerV4) && f.Has(SteerV6):
+		return "IPv4+IPv6"
+	}
+	return "none"
 }
 
 // publishSnapshotLocked rebuilds the lock-free snapshot the Relay's hot
 // path reads. Callers must hold c.mu.
 func (c *Controller) publishSnapshotLocked() {
-	m := make(map[arp.MAC]netip.Addr, len(c.devices))
+	m := make(map[arp.MAC]*deviceState, len(c.devices))
 	for mac, ds := range c.devices {
-		m[mac] = ds.ip
+		m[mac] = ds
 	}
 	c.steered.Store(&m)
 }
@@ -374,11 +618,34 @@ func (c *Controller) publishSnapshotLocked() {
 // trial-mode safety behaviour.
 func (c *Controller) Steer(dev DeviceRef, opts SteerOptions) error {
 	ip := dev.IP.Unmap()
-	if dev.MAC.IsZero() || dev.MAC.IsMulticast() || !usableDeviceIP(ip) {
+	fam := opts.Family
+	if fam == 0 {
+		fam = SteerV4 // the zero value steers IPv4, so existing callers are unchanged
+	}
+	if dev.MAC.IsZero() || dev.MAC.IsMulticast() {
+		return ErrInvalidDevice
+	}
+	if fam.Has(SteerV4) && !usableDeviceIP(ip) {
 		return ErrInvalidDevice
 	}
 	if opts.Trial && opts.Duration <= 0 {
 		return ErrTrialDuration
+	}
+	// IPv6 prerequisites, all independent of the lock (cfg is immutable
+	// after NewController). The master switch comes first: while it is
+	// off, nothing else about an IPv6 steer even gets considered.
+	var ip6 netip.Addr
+	if fam.Has(SteerV6) {
+		if !c.cfg.IPv6SteeringEnabled {
+			return ErrIPv6Disabled
+		}
+		if !usableGatewayV6(c.cfg.GatewayLinkLocal) {
+			return ErrNoGatewayLinkLocal
+		}
+		ip6 = dev.IP6
+		if !usableDeviceV6(ip6) {
+			return ErrInvalidV6Device
+		}
 	}
 
 	c.mu.Lock()
@@ -390,7 +657,15 @@ func (c *Controller) Steer(dev DeviceRef, opts SteerOptions) error {
 		c.mu.Unlock()
 		return ErrPanicked
 	}
-	if dev.MAC == c.cfg.GatewayMAC || ip == c.cfg.GatewayIP || dev.MAC == c.cfg.ShepherdMAC {
+	if dev.MAC == c.cfg.GatewayMAC || dev.MAC == c.cfg.ShepherdMAC {
+		c.mu.Unlock()
+		return ErrGatewayExcluded
+	}
+	if fam.Has(SteerV4) && ip == c.cfg.GatewayIP {
+		c.mu.Unlock()
+		return ErrGatewayExcluded
+	}
+	if fam.Has(SteerV6) && ip6 == c.cfg.GatewayLinkLocal {
 		c.mu.Unlock()
 		return ErrGatewayExcluded
 	}
@@ -401,6 +676,13 @@ func (c *Controller) Steer(dev DeviceRef, opts SteerOptions) error {
 		}
 	}
 	if c.cfg.Excluder != nil && c.cfg.Excluder.Excluded(dev.MAC) {
+		c.mu.Unlock()
+		return ErrExcluded
+	}
+	// The stricter IPv6 exclusion: smart-home / Thread / Matter / router
+	// devices must never be IPv6-steered (docs/IPV6.md, docs/IPV6-WATCH.md
+	// §3), enforced at the call, not just documented.
+	if fam.Has(SteerV6) && c.cfg.V6Excluder != nil && c.cfg.V6Excluder.Excluded(dev.MAC) {
 		c.mu.Unlock()
 		return ErrExcluded
 	}
@@ -419,31 +701,37 @@ func (c *Controller) Steer(dev DeviceRef, opts SteerOptions) error {
 		trialTimer = c.cfg.Clock.After(opts.Duration)
 	}
 
-	spoofCtx, cancel := context.WithCancel(c.ctx)
-	ds := &deviceState{ip: ip, since: now, cancel: cancel, done: make(chan struct{})}
+	// A device-level context, parent of each family's own. Cancelling it
+	// stops every family at once (full unsteer, PanicStop, Close);
+	// cancelling one family's child context stops only that family.
+	devCtx, devCancel := context.WithCancel(c.ctx)
+	ds := &deviceState{ip: ip, ip6: ip6, since: now, cancel: devCancel}
+	ds.fam.Store(uint32(fam))
+
+	type launch struct {
+		fam Family
+		ctx context.Context
+	}
+	var launches []launch
+	for _, f := range []Family{SteerV4, SteerV6} {
+		if !fam.Has(f) {
+			continue
+		}
+		fctx, fcancel := context.WithCancel(devCtx)
+		fs := ds.fs(f)
+		fs.cancel = fcancel
+		fs.done = make(chan struct{})
+		launches = append(launches, launch{f, fctx})
+	}
+
 	c.devices[dev.MAC] = ds
 	c.publishSnapshotLocked()
 	c.mu.Unlock()
+	c.notifySteeredChanged()
 
-	sp := NewSpoofer(SpooferConfig{
-		Sender:      c.cfg.Sender,
-		Clock:       c.cfg.Clock,
-		Interval:    c.cfg.SpoofInterval,
-		SendTimeout: c.cfg.SendTimeout,
-		ShepherdMAC: c.cfg.ShepherdMAC,
-		GatewayIP:   c.cfg.GatewayIP,
-		GatewayMAC:  c.cfg.GatewayMAC,
-		TargetMAC:   dev.MAC,
-		TargetIP:    ip,
-	})
-
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		defer close(ds.done)
-		defer func() { recover() }()
-		sp.Run(spoofCtx)
-	}()
+	for _, l := range launches {
+		c.runSpoofer(ds, dev, l.fam, l.ctx)
+	}
 
 	if opts.Trial {
 		c.wg.Add(1)
@@ -451,10 +739,10 @@ func (c *Controller) Steer(dev DeviceRef, opts SteerOptions) error {
 			defer c.wg.Done()
 			defer func() { recover() }()
 			select {
-			case <-spoofCtx.Done():
+			case <-devCtx.Done():
 				// Unsteered some other way first; nothing to do.
 			case <-trialTimer:
-				// spoofCtx can be cancelled (by a manual Unsteer, PanicStop,
+				// devCtx can be cancelled (by a manual Unsteer, PanicStop,
 				// or Close) at essentially the same moment trialTimer also
 				// becomes ready -- e.g. a test's FakeClock.Advance landing
 				// right after Unsteer. Go's select does not prefer one ready
@@ -466,7 +754,7 @@ func (c *Controller) Steer(dev DeviceRef, opts SteerOptions) error {
 				// c.unsteer's own presence check can't tell that apart from
 				// the original device and would wrongly unsteer it.
 				select {
-				case <-spoofCtx.Done():
+				case <-devCtx.Done():
 					return
 				default:
 				}
@@ -477,36 +765,107 @@ func (c *Controller) Steer(dev DeviceRef, opts SteerOptions) error {
 	return nil
 }
 
-type unsteerTask struct {
-	mac    arp.MAC
-	reason string
+// runSpoofer launches dev's spoofer for one family on its own goroutine,
+// using the family's own context (fctx) so it can be stopped
+// independently. The family's done channel (set in Steer under mu) is
+// closed when the spoofer's Run returns, which is after its corrective
+// revert has been attempted.
+func (c *Controller) runSpoofer(ds *deviceState, dev DeviceRef, fam Family, fctx context.Context) {
+	done := ds.fs(fam).done
+	var run func(context.Context)
+	switch fam {
+	case SteerV6:
+		sp := newNDPSpoofer(ndpSpooferConfig{
+			Sender:           c.cfg.Sender,
+			Clock:            c.cfg.Clock,
+			Interval:         c.cfg.SpoofInterval,
+			SendTimeout:      c.cfg.SendTimeout,
+			ShepherdMAC:      c.cfg.ShepherdMAC,
+			GatewayMAC:       c.cfg.GatewayMAC,
+			GatewayLinkLocal: c.cfg.GatewayLinkLocal,
+			DeviceMAC:        dev.MAC,
+			DeviceIP6:        ds.ip6,
+		})
+		run = sp.Run
+	default:
+		sp := NewSpoofer(SpooferConfig{
+			Sender:      c.cfg.Sender,
+			Clock:       c.cfg.Clock,
+			Interval:    c.cfg.SpoofInterval,
+			SendTimeout: c.cfg.SendTimeout,
+			ShepherdMAC: c.cfg.ShepherdMAC,
+			GatewayIP:   c.cfg.GatewayIP,
+			GatewayMAC:  c.cfg.GatewayMAC,
+			TargetMAC:   dev.MAC,
+			TargetIP:    ds.ip,
+		})
+		run = sp.Run
+	}
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		defer close(done)
+		defer func() { recover() }()
+		run(fctx)
+	}()
 }
 
-// unsteer removes mac from the steered set, if present, cancels its
-// spoofer (triggering the corrective revert), waits a bounded time for
-// that revert to be attempted, and records why. It is a safe no-op when
-// mac is not steered, so a late-firing trial timer or an overlapping
-// caller never races into an error.
+// unsteer stops every family of mac. See unsteerFamilies.
 func (c *Controller) unsteer(mac arp.MAC, reason string) bool {
+	return c.unsteerFamilies(mac, SteerV4|SteerV6, reason)
+}
+
+// unsteerFamilies stops the given families of mac (intersected with the
+// families actually active), cancelling each one's spoofer to trigger its
+// corrective revert, waiting a bounded time for that revert to be
+// attempted, and recording why. If no family remains active the device is
+// removed from the steered set entirely. It is a safe no-op when mac is
+// not steered for any of fams, so a late-firing trial timer or an
+// overlapping caller never races into an error.
+func (c *Controller) unsteerFamilies(mac arp.MAC, fams Family, reason string) bool {
 	c.mu.Lock()
 	ds, ok := c.devices[mac]
 	if !ok {
 		c.mu.Unlock()
 		return false
 	}
-	delete(c.devices, mac)
+	stop := ds.family() & fams
+	if stop == 0 {
+		c.mu.Unlock()
+		return false
+	}
+	remaining := ds.family() &^ stop
+	ds.fam.Store(uint32(remaining))
+	removed := remaining == 0
+	if removed {
+		delete(c.devices, mac)
+	}
 	c.publishSnapshotLocked()
 	now := c.cfg.Clock.Now()
 	c.recordHistoryLocked(UnsteerRecord{MAC: mac, Reason: reason, Time: now})
 	c.mu.Unlock()
+	c.notifySteeredChanged()
 
-	ds.cancel()
-	select {
-	case <-ds.done:
-	case <-time.After(c.cfg.SendTimeout + time.Second):
-		// Belt and suspenders: Spoofer.Run's own bounded send should have
-		// already finished well within this, but Unsteer must still never
-		// block forever even if that guarantee is somehow broken.
+	for _, f := range []Family{SteerV4, SteerV6} {
+		if !stop.Has(f) {
+			continue
+		}
+		fs := ds.fs(f)
+		if fs.cancel != nil {
+			fs.cancel()
+		}
+		if fs.done != nil {
+			select {
+			case <-fs.done:
+			case <-time.After(c.cfg.SendTimeout + time.Second):
+				// Belt and suspenders: the spoofer's own bounded send should
+				// have finished well within this, but unsteer must never
+				// block forever even if that guarantee is somehow broken.
+			}
+		}
+	}
+	if removed && ds.cancel != nil {
+		ds.cancel() // release the device-level context once nothing uses it
 	}
 
 	if c.cfg.OnUnsteer != nil {
@@ -534,30 +893,66 @@ func (c *Controller) Unsteer(mac arp.MAC) error {
 	return nil
 }
 
-// checkHealth is the periodic health-verification step: a steered device
-// is healthy only while real relayed traffic has been observed recently
-// (IdleGrace) or, for a device that has never once relayed, since it was
-// added (StartupGrace). Anything else is fail-open — unsteered at once,
-// never left in a stuck, half-steered state.
+type famTask struct {
+	mac    arp.MAC
+	fam    Family
+	reason string
+}
+
+// checkHealth is the periodic health-verification step, run per family.
+//
+// IPv4 (the original rule): healthy only while real relayed traffic has
+// been observed recently (IdleGrace), or, before it has ever relayed,
+// within StartupGrace of being added. Anything else is fail-open.
+//
+// IPv6 is deliberately more lenient (docs/IPV6-WATCH.md §5): legitimate
+// IPv6 idle is normal, and on a ULA-only LAN there is nothing off-link to
+// relay at all, so idle silence must NOT flap a working IPv6 steer. The
+// only IPv6 health check is the startup one — did the neighbor-cache flip
+// take? If no IPv6 frame has ever been relayed within StartupGrace, the
+// steer did not take and that family is reverted; once it has relayed even
+// once, idle silence never fails it again (a stuck send fails it through
+// recordRelayError instead). Either way only the unhealthy family is
+// reverted, never the whole device.
 func (c *Controller) checkHealth(now time.Time) {
 	c.mu.Lock()
-	var tasks []unsteerTask
+	var tasks []famTask
 	for mac, ds := range c.devices {
-		baseline, grace := ds.lastVerified, c.cfg.IdleGrace
-		if baseline.IsZero() {
-			baseline, grace = ds.since, c.cfg.StartupGrace
+		fam := ds.family()
+		if fam.Has(SteerV4) {
+			fs := &ds.v4
+			baseline, grace := fs.lastVerified(), c.cfg.IdleGrace
+			if baseline.IsZero() {
+				baseline, grace = ds.since, c.cfg.StartupGrace
+			}
+			age := now.Sub(baseline)
+			healthy := age < grace
+			fs.healthy.Store(healthy)
+			if !healthy {
+				tasks = append(tasks, famTask{mac, SteerV4,
+					fmt.Sprintf("IPv4: no relayed traffic observed for %s (grace %s)", age, grace)})
+			}
 		}
-		age := now.Sub(baseline)
-		healthy := age < grace
-		ds.healthy = healthy
-		if !healthy {
-			tasks = append(tasks, unsteerTask{mac, fmt.Sprintf("no relayed traffic observed for %s (grace %s)", age, grace)})
+		if fam.Has(SteerV6) {
+			fs := &ds.v6
+			if fs.lastVerified().IsZero() {
+				age := now.Sub(ds.since)
+				healthy := age < c.cfg.StartupGrace
+				fs.healthy.Store(healthy)
+				if !healthy {
+					tasks = append(tasks, famTask{mac, SteerV6,
+						fmt.Sprintf("IPv6: no relayed traffic since steering began %s ago (startup grace %s); neighbor-cache flip did not take", age, c.cfg.StartupGrace)})
+				}
+			} else {
+				// Relayed at least once; idle silence is not a failure.
+				fs.healthy.Store(true)
+			}
 		}
 	}
 	c.mu.Unlock()
 
 	for _, t := range tasks {
-		c.unsteer(t.mac, t.reason)
+		c.unsteerFamilies(t.mac, t.fam, t.reason)
 	}
 }
 
@@ -596,6 +991,10 @@ func (c *Controller) PanicStop() {
 		c.recordHistoryLocked(UnsteerRecord{MAC: mac, Reason: "panic stop", Time: now})
 	}
 	c.mu.Unlock()
+	// Before anything else, PanicStop included: an in-kernel data plane
+	// must stop relaying the moment the steered set is emptied, not on its
+	// next poll.
+	c.notifySteeredChanged()
 
 	for mac, ds := range devs {
 		ds.cancel()
@@ -619,10 +1018,27 @@ func (c *Controller) Status() []SteeredDevice {
 	defer c.mu.Unlock()
 	out := make([]SteeredDevice, 0, len(c.devices))
 	for mac, ds := range c.devices {
+		fam := ds.family()
+		var bytes, packets uint64
+		var last time.Time
+		healthy := true
+		for _, f := range []Family{SteerV4, SteerV6} {
+			if !fam.Has(f) {
+				continue
+			}
+			fs := ds.fs(f)
+			bytes += fs.bytesRelayed.Load()
+			packets += fs.packetsRelayed.Load()
+			if lv := fs.lastVerified(); lv.After(last) {
+				last = lv
+			}
+			if !fs.healthy.Load() {
+				healthy = false
+			}
+		}
 		out = append(out, SteeredDevice{
-			MAC: mac, IP: ds.ip, Since: ds.since, Healthy: ds.healthy,
-			BytesRelayed: ds.bytesRelayed, PacketsRelayed: ds.packetsRelayed,
-			LastVerified: ds.lastVerified,
+			MAC: mac, IP: ds.ip, Family: fam, Since: ds.since, Healthy: healthy,
+			BytesRelayed: bytes, PacketsRelayed: packets, LastVerified: last,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].MAC.String() < out[j].MAC.String() })
