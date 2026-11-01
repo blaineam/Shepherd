@@ -1100,6 +1100,27 @@ func (e *Engine) sample(now time.Time) {
 // test, because downloads and the host's own traffic make receive and
 // transmit diverge, and a quiet network fails the floor.
 //
+// KNOWN GAP, measured and not yet fixed: that second condition does not
+// hold for either loop reproduced since, so this brake would not have
+// fired on them. An instrumented single-device run reached 54,000 packets
+// a second received against 49,000 transmitted -- mirrored within 9.3%,
+// well over loopFloorPPS -- while the relay reported **8 pkt/s**. The
+// earlier single-device run was 41,116 relayed against 465,000 received,
+// 8.8% of rx. Both fail `dominant` (relayedPPS >= loopShare*rx) and fail
+// `relayedPPS >= e.loopFloor`, so two of the four conditions veto the stop.
+//
+// The share and the relayed floor were calibrated on the two original
+// incidents, where the relay genuinely did report nearly all of the
+// traffic. The loops seen since put almost nothing through the relay's own
+// counter, so a brake keyed on that counter cannot see them. Dropping
+// `dominant` and the relayed floor -- tripping on mirrored traffic above
+// loopFloorPPS for loopHits consecutive seconds -- would have caught all
+// four, at the cost of firing on any genuinely symmetric load above 50,000
+// packets a second for three seconds running. That is a deliberate
+// loosening of a safety stop, so it is the maintainer's call and not a
+// quiet edit; routingOwnSegment's comment records that it is currently
+// carrying this gap alone.
+//
 // When it trips it panic-stops, which unsteers every device with its
 // corrective reply, and latches like the kill switch so a restart does not
 // resume the loop. It also records what was relaying, because that is the
@@ -1660,56 +1681,87 @@ var _ intercept.Excluder = v6Excluder{}
 // forwarding is on and a second interface sits in the relay interface's
 // own prefix.
 //
-// The mechanism is not fully established, but the correlation is as strong
-// as a single host can make it, and it is the only shape that has ever
-// looped. Measured on the maintainer's NAS (forwarding on, eth0 and wlan0
-// both on one /24), steering a *single ordinary device* -- one phone, by
-// explicit MAC, nothing to do with the registry or the gateway -- took the
-// interface to about 465,000 packets a second in and 517,000 out, mirrored,
-// in roughly ten seconds. The telling number is that the relay itself
-// accounted for only 41,000 packets a second of that, under a tenth: most
-// of the storm was not the relay's own output at all, which is what the
-// kernel forwarding the steered device's return traffic looks like. One
-// -sided steering teaches the router the client's address at Shepherd's
-// MAC, because that is the source address on every relayed frame, so the
-// router starts sending that client's downloads here; with forwarding on,
-// the kernel then routes them back onto the same segment.
+// The condition correlates with every loop ever seen, but **the mechanism
+// is not forwarding**, and three candidates are now excluded by direct
+// measurement rather than argument.
 //
-// An earlier version of this comment blamed a polluted registry record
-// that had merged the gateway in, and a commit went out saying so. The
-// single-device trial above disproved it: no registry, no gateway, same
-// loop. That record is a real problem and Decide() refuses it by address
-// now, but it is not this.
+// Measured on the maintainer's NAS (forwarding on, eth0 and wlan0 both on
+// one /24), steering a *single ordinary device* -- one phone, by explicit
+// MAC, nothing to do with the registry or the gateway -- loops every time.
+// The instrumented run took the interface to roughly 54,000 packets a
+// second in and 49,000 out, mirrored, 3.5 seconds after steering began,
+// while counters sampled in the same half-second said:
 //
-// So the refusal stands until the mechanism is measured and closed, even
-// though the condition is broad -- every Docker host forwards IPv4, and a
-// NAS with wired and wireless on one LAN is ordinary. Being unavailable on
-// such a host is much better than melting its network. The loop brake
-// (checkForLoop) remains the mechanism-independent backstop for everything
-// else.
+//	ForwDatagrams          1 datagram    -- not kernel IPv4 forwarding
+//	hairpin drops (in eth0, out eth0)
+//	                       0 packets     -- not same-segment routing
+//	relay's own relayed    8 pkt/s       -- not the relay relaying
 //
-// Two measurements from that host, taken with Watch mode off and nothing
-// steered, bound what a narrower test may assume.
+// So whatever put ~24,500 frames per half-second onto that interface is
+// accounted for by neither Shepherd's relay nor the kernel's IP stack. It
+// is not this function's premise either, which is why the explanation that
+// used to sit here -- the router learning the client at Shepherd's MAC and
+// the kernel routing its downloads back onto the segment -- is gone. One
+// forwarded datagram during a 49,000-packet-a-second storm refutes it.
 //
-// Its forwarding is bursty, not steady: over a minute, ForwDatagrams in
-// /proc/net/snmp had a median of 34 a second, a p90 of 5,759 and a peak of
-// 8,607, totalling 80,521, and a half-second bucket during a trial hit the
-// equivalent of 24,842 a second. Every burst is the relay interface's
-// inbound traffic routed to a container bridge, for a service its owner
-// runs on purpose. So turning forwarding off is not a remedy anyone can
-// offer. (Two five-second samples taken earlier both landed in bursts and
-// were written up here as a steady ~4,000 a second. They also explain the
-// first trial's odd pre-steering baseline of 12,000 packets a second on an
+// What survives is the other half of the condition, and it is worth
+// stating because it is the one structural feature present in every
+// incident: this host has **two interfaces on one segment**, and the
+// steered device is REACHABLE through both of them at once:
+//
+//	192.0.2.37 dev eth0  lladdr 02:00:5e:00:00:37 REACHABLE
+//	192.0.2.37 dev wlan0 lladdr 02:00:5e:00:00:37 REACHABLE
+//
+// That makes the IPv4-forwarding half of this test look like it is doing
+// no work. Dropping it would make the refusal narrower and more honest,
+// not broader -- but not before the mechanism is actually identified,
+// because the last two times a mechanism was asserted here it was wrong.
+//
+// Two explanations have been asserted here and then refuted by trial, in
+// this order, and both are recorded so a third is not reached for lightly.
+// First: a polluted registry record that had merged the gateway into a
+// steerable device. Disproved by steering one phone by explicit MAC with
+// no registry involved -- same loop. That record is a real problem and
+// Decide() refuses it by address now, but it is not this. Second: kernel
+// forwarding, as above. Disproved by counting it: one datagram.
+//
+// So the refusal stands on correlation alone, which is a weaker footing
+// than it had when it was first written, not a stronger one. It is kept
+// because the loop is real, immediate and severe -- 3.5 seconds from
+// steering to tens of thousands of packets a second -- and being
+// unavailable on a dual-homed host is much better than melting its
+// network.
+//
+// It also has to carry more weight than intended, because **the loop brake
+// below would not have caught this one**. checkForLoop requires relayedPPS
+// >= loopShare*rx and relayedPPS >= loopFloor; the measured loop had the
+// relay reporting 8 pkt/s against 54,000 received, so both conditions veto
+// it and only `mirrored` and `hi >= loopFloor` hold. The same is true of
+// the first single-device trial: 41,116 relayed against 465,000 received is
+// 8.8% of rx, not the 80% the brake asks for. Those conditions were
+// calibrated on the two original incidents, where the relay really did
+// report essentially all of the traffic -- a loop shape that the loops
+// reproduced since do not have. Until that is reconciled, this refusal is
+// not a belt beside a brace; it is the only thing standing between a
+// dual-homed host and the storm.
+//
+// One thing clearing net.ipv4.ip_forward would not do is help, and anyone
+// reading this should not try it. That host's forwarding is bursty and
+// load-bearing: over a minute with Watch mode off, ForwDatagrams had a
+// median of 34 a second, a p90 of 5,759 and a peak of 8,607, totalling
+// 80,521, and every burst is the relay interface's inbound traffic routed
+// to a container bridge for a service its owner runs on purpose. (Two
+// five-second samples taken earlier both landed inside bursts and were
+// written up here as a steady ~4,000 a second. They also explain the first
+// trial's odd pre-steering baseline of 12,000 packets a second on an
 // interface whose median is 65.)
 //
-// And a rule counting hairpin forwarding -- in this interface, out this
-// same interface -- dropped zero packets over 25 seconds that included
-// those bursts. None of the routed traffic goes back onto the relay's own
-// segment. The hazard is therefore narrower than what this function tests:
-// a frame arriving for a *steered* device's address and being routed back
-// out the interface it arrived on. Keying the refusal on that, rather than
-// on the host merely having forwarding plus a second address on the
-// prefix, is what would let Watch mode run on hardware like this.
+// The next measurement has to find what is transmitting, since neither the
+// relay nor the IP stack claims it. Two cheap discriminators, in order:
+// re-run with the relay's XDP program off, which separates the kernel
+// fast-path from the userspace ARP sender; and compare the interface's
+// rx_packets against Ip:InReceives during a storm, which separates IP
+// traffic from a flood of ARP.
 func (e *Engine) routingOwnSegment(link Link, own Own) (bool, string) {
 	fwd, err := e.plat.IPForwarding()
 	if err != nil || !fwd {

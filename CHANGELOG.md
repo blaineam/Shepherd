@@ -28,6 +28,20 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   alone has innocent explanations, hence all three: the healthy live run had the interface receiving
   600 Mbit/s against 800 to 1000 transmitted, 25 to 40% apart, with the relay under half its
   packets; the loop had them within 0.03% of each other.
+  **Known gap, measured and not yet fixed.** The second condition -- the relay accounting for almost
+  all of it -- does not hold for either loop reproduced since, so the brake would not have fired on
+  them. The instrumented single-device run received 54,000 packets a second against 49,000
+  transmitted, mirrored within 9.3% and far above the floor, while the relay reported **8 packets a
+  second**; the earlier single-device run was 41,116 relayed against 465,000 received, 8.8% of
+  receive. Both fail the share test and the relay's own packet floor, so two of the four conditions
+  veto the stop. Those two were calibrated on the original incidents, where the relay really did
+  report nearly all of the traffic -- a shape the loops seen since do not have, and one a brake
+  keyed on the relay's own counter cannot see. Tripping instead on mirrored traffic above the packet
+  floor for three consecutive seconds would have caught all four, at the cost of firing on any
+  genuinely symmetric load above 50,000 packets a second sustained for three seconds. That is a
+  deliberate loosening of a safety stop and is left as a decision rather than made quietly; until it
+  is taken, the forwarding refusal is the only thing standing between a dual-homed host and the
+  storm.
 ### Fixed
 - **Shepherd will not steer a device record that carries one of this host's addresses, or the
   gateway's.** The registry on the live host had merged the gateway, both LAN interfaces and all
@@ -46,30 +60,32 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   of it, because that traffic belongs to the gateway and passing it up would strand it.
 
 ### Changed
-- **The refusal to relay on a host that routes the relay's own segment now has evidence behind it,
-  and stays.** It was introduced as a precaution against an unproven mechanism. A single-device
-  trial on the live host has since measured it: steering **one ordinary phone**, named by explicit
-  MAC with the registry and the gateway out of the picture, took the interface to about **465,000
-  packets a second in and 517,000 out, mirrored, within ten seconds**, with the relay itself
-  accounting for under a tenth of it. Most of the storm was therefore not the relay's own output,
-  which is the shape of the *kernel* forwarding the steered device's return traffic: one-sided
-  steering teaches the router the client's address at Shepherd's MAC, so the router sends that
-  client's downloads to this host, and with forwarding on the kernel routes them back onto the same
-  segment. The condition is broad -- every Docker host forwards IPv4 -- so Watch mode is unavailable
-  on common hardware until this is measured and closed. That is the right trade.
-  An interim commit on this branch claimed the loops were caused by steering the gateway via the
-  merged registry record, and relaxed this refusal to a warning on the strength of it. The trial
-  above disproved that: no registry, no gateway, same loop. The refusal is restored.
-  Further measurement on that host, with Watch mode **off** and nothing steered, sets a bound on
-  what the eventual fix may do. Its IPv4 forwarding is **bursty**: over a minute, a median of 34
-  datagrams a second, a p90 of 5,759, a peak of 8,607 and 80,521 in all, with a half-second bucket
-  during a trial reaching the equivalent of 24,842 a second. Every burst is the relay interface's
-  inbound traffic routed to a container bridge, for a service its owner runs on purpose, so clearing
-  `net.ipv4.ip_forward` is not available as a remedy. Separately, a rule counting hairpin forwarding
-  — in the relay interface, out that same interface — dropped **zero** packets across 25 seconds
-  that included those bursts, so nothing is routed back onto the relay's own segment. The hazard is
-  therefore narrower than the condition being tested, and is specifically a frame arriving for a
-  *steered* device's address and being routed back out the interface it came in on.
+- **The refusal to relay on a host that routes the relay's own segment stays, but on correlation
+  only: forwarding has been excluded as the mechanism.** It went in as a precaution, was then
+  explained twice, and both explanations have now been refuted by measurement on the live host.
+  What is established: steering **one ordinary phone**, named by explicit MAC with the registry and
+  the gateway out of the picture, loops every time. An instrumented run reached about **54,000
+  packets a second in and 49,000 out, mirrored, 3.5 seconds after steering began**, and counters
+  sampled in that same half-second excluded three candidates outright — `ForwDatagrams` moved by
+  **1 datagram** (not kernel IPv4 forwarding), a rule counting hairpin forwarding in and out the
+  relay interface dropped **0 packets** (not same-segment routing), and the relay's own counter
+  reported **8 pkt/s** (not the relay relaying). So roughly 24,500 frames per half-second reached
+  that interface accounted for by neither Shepherd nor the kernel's IP stack, and the explanation
+  previously recorded here — the router learning the client at Shepherd's MAC and the kernel routing
+  its downloads back onto the segment — is withdrawn rather than softened.
+  What survives is the other half of the condition, and it is the one structural feature common to
+  every incident: the host has **two interfaces on one segment**, and the steered device is
+  `REACHABLE` through both at once. That makes the IPv4-forwarding half of the test look like it is
+  doing no work; dropping it would make the refusal narrower and more honest, but not before a
+  mechanism is actually identified, because the last two named were both wrong.
+  Two earlier claims on this branch, for the record. An interim commit blamed the merged registry
+  record and relaxed this refusal to a warning; a single-device trial disproved it. Two five-second
+  samples were read as a steady 3,900 to 4,900 forwarded datagrams a second; both had landed inside
+  bursts, and a minute of one-second samples gives a median of 34, a p90 of 5,759, a peak of 8,607
+  and 80,521 in all. That burstiness also explains the first trial's unexplained pre-steering
+  baseline of 12,000 packets a second inbound. Those bursts are the relay interface's inbound
+  traffic routed to a container bridge for a service the owner runs on purpose, so clearing
+  `net.ipv4.ip_forward` is not available as a remedy and would not help if it were.
   Two earlier five-second samples both landed inside bursts and were written up as a steady 3,900 to
   4,900 a second; the distribution above supersedes that. The same burstiness also explains the
   first trial's unexplained pre-steering baseline of 12,000 packets a second inbound.

@@ -248,44 +248,59 @@ that means `interface = "eth0"`.
 on **and** another of this host's interfaces has an address inside the relay interface's own prefix,
 Watch mode reports itself unavailable with that reason and attaches nothing.
 
-The mechanism is still not fully established, but the evidence is now much stronger than a
-precaution. Measured on the maintainer's NAS — forwarding on, `eth0` and `wlan0` both on one `/24` —
-steering a **single ordinary device**, one phone named by explicit MAC with the registry and the
-gateway out of the picture entirely, took the interface to about **465,000 packets a second in and
-517,000 out, mirrored, within ten seconds**. The telling number is that the relay itself accounted
-for only **41,000 packets a second** of that, under a tenth: most of the storm was not the relay's
-own output. That is the shape of the *kernel* forwarding the steered device's return traffic.
-One-sided steering teaches the router the client's address at Shepherd's MAC, because that is the
-source address on every relayed frame, so the router begins sending that client's downloads to this
-host; with forwarding on, the kernel routes them straight back onto the same segment.
+The condition correlates with every loop ever seen, but **the mechanism is not forwarding**, and
+three candidates are now excluded by direct measurement rather than by argument. Measured on the
+maintainer's NAS — forwarding on, `eth0` and `wlan0` both on one `/24` — steering a **single
+ordinary device**, one phone named by explicit MAC with the registry and the gateway out of the
+picture entirely, loops every time. The instrumented run reached roughly **54,000 packets a second
+in and 49,000 out, mirrored, 3.5 seconds after steering began**, and in the same half-second:
 
-The condition is admittedly broad — every machine running Docker has IPv4 forwarding on, and a NAS
-with wired and wireless on one LAN is ordinary — so this does disable Watch mode on common hardware.
-That is the right trade until the mechanism is measured and closed: unavailable is much better than
-melting the network.
+| counter | reading | what it excludes |
+| --- | --- | --- |
+| `ForwDatagrams` | **1 datagram** | kernel IPv4 forwarding |
+| hairpin drops (in `eth0`, out `eth0`) | **0 packets** | same-segment routing |
+| the relay's own `relayed` | **8 pkt/s** | the relay relaying |
 
-Forwarding on such a host is also not idle plumbing left on by a package manager. Measured over a
-minute on the same NAS with Watch mode **off** and nothing steered, `ForwDatagrams` in
-`/proc/net/snmp` is **bursty**: a median of 34 datagrams a second, a 90th percentile of 5,759, a
-peak of 8,607, and 80,521 forwarded over the minute in all, with about a fifth of its seconds above
-a thousand. A single half-second bucket during a later trial reached the equivalent of 24,842 a
-second. Every burst is the relay interface's inbound traffic being routed to a container bridge, for
-a service the owner runs deliberately. So "sort out the routing" cannot mean clearing
-`net.ipv4.ip_forward` — that would cut off a container that bursts to twenty thousand packets a
-second. Whatever closes this has to be narrower than the host-wide switch.
+So whatever put about 24,500 frames per half-second onto that interface is accounted for by neither
+Shepherd's relay nor the kernel's IP stack. One forwarded datagram during a 49,000-packet-a-second
+storm is not a kernel routing problem, which is why the explanation that used to stand here — the
+router learning the client at Shepherd's MAC, and the kernel routing its downloads back onto the
+segment — has been removed rather than softened.
 
-> Two five-second samples taken before that minute both happened to land inside bursts, and were
-> read here as a steady four thousand a second. The distribution above is the honest shape. The same
+What survives is the *other* half of the condition, and it is the one structural feature present in
+every incident: this host has **two interfaces on one segment**, and the steered device is reachable
+through both at once.
+
+```
+192.0.2.37 dev eth0  lladdr 02:00:5e:00:00:37 REACHABLE
+192.0.2.37 dev wlan0 lladdr 02:00:5e:00:00:37 REACHABLE
+```
+
+That makes the IPv4-forwarding half of the test look like it is doing no work. Dropping it would
+make the refusal narrower and more honest, not broader — but not before the mechanism is actually
+identified, because the last two attempts to name one were both wrong.
+
+So the refusal stands on correlation alone, which is a weaker footing than it had when it was
+written, not a stronger one. It is kept because the loop is real, immediate and severe, and being
+unavailable on a dual-homed host beats melting its network. The loop brake below is meant to be the
+backstop that does not depend on knowing the mechanism — and, as recorded there, it would **not**
+have caught this loop, so this refusal is currently carrying that gap on its own.
+
+One thing that would **not** help is clearing `net.ipv4.ip_forward`, and nobody should try it. That
+host's forwarding is bursty and load-bearing: over a minute with Watch mode off, `ForwDatagrams` had
+a median of 34 a second, a 90th percentile of 5,759, a peak of 8,607 and 80,521 in all, and every
+burst is the relay interface's inbound traffic routed to a container bridge for a service the owner
+runs deliberately. Clearing the flag would cut that off and leave the loop exactly where it is.
+
+> Two five-second samples taken before that minute both landed inside bursts and were written up
+> here as a steady four thousand a second. The distribution above is the honest shape. The same
 > burstiness explains the first trial's odd pre-steering baseline, which showed 12,000 packets a
 > second inbound on an interface whose median is 65.
 
-It is worth being precise about which direction is dangerous, because at rest it is not happening at
-all. A rule counting hairpin forwarding — in the relay interface, out that same interface — dropped
-**zero** packets across a 25-second window that included those bursts. So none of the routed traffic
-goes back out onto the relay's own segment; it all leaves via the bridge. The hazard is specific:
-frames that arrive for a *steered* device's address and get routed back out the interface they came
-in on. A refusal keyed on that, rather than on the host having forwarding plus a second address on
-the prefix, is the shape the fix should take.
+The next measurement has to find what is *transmitting*, since neither the relay nor the IP stack
+claims it. Two cheap discriminators, in order: re-run with the relay's XDP program off, which
+separates the kernel fast path from the userspace ARP sender; and compare the interface's
+`rx_packets` against `Ip:InReceives` during a storm, which separates IP traffic from a flood of ARP.
 
 > An earlier revision of this document blamed a polluted registry record that had merged the gateway
 > into a steerable device, and said the cause was settled. The single-device trial above disproved
@@ -314,6 +329,22 @@ is lopsided: measured on the live host while healthy, the interface received 600
 transmitting 800 to 1000, with the relay well under half its packets. Looping, the same interface
 received and transmitted within 0.03% of each other at about 10 Gbit/s and over a million packets a
 second, with the relay reporting essentially all of it.
+
+> **Known gap, measured and not yet fixed.** That second condition — the relay accounting for almost
+> all of it — does not hold for either loop reproduced since, so the brake would not have fired on
+> them. The instrumented single-device run received 54,000 packets a second against 49,000
+> transmitted, mirrored within 9.3% and far above the floor, while the relay reported **8 packets a
+> second**. The earlier single-device run was 41,116 relayed against 465,000 received, 8.8% of
+> receive. Both fail the share test and both fail the relay's own floor, so two of the four
+> conditions veto the stop.
+>
+> The share and that floor were calibrated on the two original incidents, where the relay really did
+> report nearly all of the traffic. The loops seen since put almost nothing through the relay's own
+> counter, and a brake keyed on that counter cannot see them. Tripping instead on mirrored traffic
+> above the packet floor for three consecutive seconds would have caught all four, at the cost of
+> firing on any genuinely symmetric load above 50,000 packets a second sustained for three seconds.
+> That is a deliberate loosening of a safety stop, so it is left as the maintainer's decision rather
+> than made quietly.
 
 ## What it needs
 
