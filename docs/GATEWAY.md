@@ -112,8 +112,12 @@ In dependency order, each item being something that can be finished and verified
 
 1. **A DHCP server.** Today Shepherd deliberately avoids this. It is a prerequisite and, usefully,
    it can be run and proven on the live network long before any traffic path changes.
-2. **A WAN client.** DHCP, and PPPoE if the service needs it — **an open question** (below). Plus
-   uplink health reporting, which `internal/nethealth` already does in part.
+2. **A WAN client: DHCP** (decided, 2026-11-01 — not PPPoE). That is the simpler end of this item
+   and removes a few things from the list: no PPP session to keep up, no credentials to store, and
+   no 1492-byte MTU, so no MSS clamping is needed by default. What it still needs is a DHCP client
+   that renews properly and survives the lease going away, and the judgement to **ignore the DNS
+   servers the ISP offers** in favour of Shepherd's own configured upstreams. Plus uplink health
+   reporting, which `internal/nethealth` already does in part.
 3. **Forwarding and NAT configuration** through nftables, with the rule set owned and reconciled by
    Shepherd the way it already reconciles the steered set.
 4. **Flow accounting** over ctnetlink, as above, feeding per-device and per-destination byte
@@ -147,6 +151,14 @@ accounting all exercised for real while the household is unaffected.
 **Stage 3 — cutover.** The eero to bridge/AP mode, Shepherd inline. Short, rehearsed, and with the
 rollback timed beforehand: re-plugging the eero as the router is a few minutes' work and should be
 practised at Stage 2, not discovered at Stage 3.
+
+One cutover risk belongs to the DHCP WAN specifically, and it is the kind that turns a ten-minute
+job into an evening. **Many ISPs tie the lease to the MAC address that currently holds it**, which
+is the eero's WAN port. Presenting a different MAC can mean a refused lease, or a wait measured in
+hours rather than seconds, and discovering that halfway through a cutover is miserable. So: read and
+record the eero's WAN MAC before touching anything, and **clone it onto Shepherd's WAN interface**
+rather than hoping. It also makes the rollback symmetric, since the eero gets its own MAC back when
+it is re-plugged.
 
 **Stage 4 — the features.** Per-device and per-destination bandwidth in the portal, then pause and
 rate limits.
@@ -184,10 +196,25 @@ restated there rather than assumed.
 This is called out here because quietly violating a documented hard rule is how the Thread mesh
 gets broken, and because the rules are good ones for the profile they were written for.
 
+## IPv6 scope is smaller than it looks, for now
+
+Worth stating before anyone sizes the IPv6 work. The LAN has **no global IPv6 route today**: the
+addresses on it are unique-local only, which is also why Watch mode's own IPv6 steering sits idle
+there. So IPv6 internet is not in use on this network.
+
+That makes the IPv6 requirement for stages 1 to 3 **"do not break what is there"** — unique-local
+addressing, Thread, Matter and mDNS — rather than "provide IPv6 internet", which is a much smaller
+and much less risky target. Rules 2 and 3 of [IPV6.md](IPV6.md) carry most of it.
+
+Providing global IPv6 would mean a DHCPv6 client with prefix delegation on the WAN and advertising
+that prefix on the LAN, which is where the rescope of hard rules 1 and 5 actually bites. It should
+be a separate, later piece of work, and it needs one fact nobody has checked: **whether the ISP
+delegates a prefix at all.**
+
 ## Open decisions, which are the maintainer's
 
-1. **What does the WAN need?** DHCP from the ISP, or PPPoE? This decides part of item 2 and is not
-   something to guess at.
+1. ~~**What does the WAN need?**~~ **Answered: DHCP** (2026-11-01). Consequences folded into item 2
+   of the build list and into the Stage 3 MAC-cloning note above.
 2. **Who serves DHCP during and after the transition?** Stage 1 assumes Shepherd takes it over
    early, because it de-risks the hardest compatibility work. Keeping it on the eero until Stage 3
    is defensible and shortens Stage 1 to nothing.

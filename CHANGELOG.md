@@ -36,8 +36,17 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   on, and is explicit that **two of [IPV6.md](docs/IPV6.md)'s hard rules forbid what a router must
   do** -- never run a Router Advertisement server, never change a client's IPv6 default gateway --
   so they have to be rescoped to the Guard and Watch profiles rather than quietly broken, which is
-  how a Thread mesh gets broken. Five decisions are left to the maintainer, including what the WAN
-  needs and whether forwarding should fail open when Shepherd is not running.
+  how a Thread mesh gets broken. Five decisions were left to the maintainer, of which the first is
+  now **answered: the WAN is DHCP, not PPPoE**, removing the PPP session, the credentials and the
+  1492-byte MTU with its MSS clamping from the build. It adds one cutover risk worth having in
+  writing, since many ISPs tie the lease to the MAC that holds it: read the eero's WAN MAC first and
+  clone it onto Shepherd's WAN interface rather than hoping, which also makes the rollback
+  symmetric. Alongside it, a scope reduction nobody had noticed -- this LAN has **no global IPv6
+  route today**, being unique-local only, so the IPv6 requirement through stage 3 is "do not break
+  unique-local, Thread, Matter and mDNS" rather than "provide IPv6 internet", and the rescope of
+  hard rules 1 and 5 only truly bites once global IPv6 is wanted. That needs one fact nobody has
+  checked: whether the ISP delegates a prefix at all. The remaining four decisions include whether
+  forwarding should fail open when Shepherd is not running.
 - **The relay loop has a mechanism, a measurement and a fix, and Watch mode runs on the
   maintainer's NAS again.** Three times the relay carried traffic round in a circle at line rate
   and each time the cause was argued rather than measured, because the one thing nobody could see
