@@ -13,6 +13,31 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **A design and staged migration for Gateway mode: [GATEWAY.md](docs/GATEWAY.md).** Written
+  because the night's Watch-mode measurements settled that per-device bandwidth, the thing actually
+  wanted, cannot be had from one-sided ARP steering at all: it is outbound-only by construction, its
+  counters are per device rather than per destination, and on the maintainer's own network a device
+  reported as steered and healthy had **zero** of a 100 MB transfer relayed.
+
+  The document eliminates the cheaper placements one at a time -- steering beside the router, a
+  one-armed router on the flat `/24`, bridging on the LAN side, bridging on the WAN side -- to show
+  that per-device bidirectional accounting requires Shepherd to be the routing and translating
+  point, which is Gateway. Its central decision is that **Shepherd should not write a datapath**:
+  the kernel forwards and translates, `nftables` is configured by Shepherd, and per-device and
+  per-destination bytes come from `nf_conntrack` accounting in both directions, joined with the DNS
+  engine's log for names. Verified against the live host, because both change what must be built:
+  conntrack accounting is **off** by default there and `/proc/net/nf_conntrack` is **absent** on
+  that kernel, so it must be enabled deliberately and read over ctnetlink. It also notes that naive
+  polling undercounts, since a flow can begin and end between two polls, so destroy events are
+  needed as well as periodic dumps.
+
+  It records what the hardware cannot do yet (the NAS has one 10 Gb NIC; Gateway needs two), stages
+  the migration so the risky step is last and short and so each stage proves what the next depends
+  on, and is explicit that **two of [IPV6.md](docs/IPV6.md)'s hard rules forbid what a router must
+  do** -- never run a Router Advertisement server, never change a client's IPv6 default gateway --
+  so they have to be rescoped to the Guard and Watch profiles rather than quietly broken, which is
+  how a Thread mesh gets broken. Five decisions are left to the maintainer, including what the WAN
+  needs and whether forwarding should fail open when Shepherd is not running.
 - **The relay loop has a mechanism, a measurement and a fix, and Watch mode runs on the
   maintainer's NAS again.** Three times the relay carried traffic round in a circle at line rate
   and each time the cause was argued rather than measured, because the one thing nobody could see

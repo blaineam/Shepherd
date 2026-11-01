@@ -42,6 +42,13 @@ This is explicitly **not scheduled**: it is a large undertaking that only makes 
 has been proven reliable on real hardware, and it changes Shepherd's risk profile fundamentally (a
 router outage is a full outage, not "one device loses protection"). See the roadmap's research items.
 
+**There is now a design and a staged migration for it: [GATEWAY.md](GATEWAY.md).** The condition
+above has also been partly answered, in the negative: on the maintainer's own network one-sided ARP
+steering loops (the router returns relayed frames off the wire) and a device reported as steered and
+healthy had none of a 100 MB transfer relayed. So the argument for Gateway is no longer "everything,
+eventually" but that per-device bidirectional accounting cannot be had any other way, which
+GATEWAY.md shows by eliminating the cheaper placements one at a time.
+
 ### Watch interception methods
 
 Watch mode has one interface and swappable methods, tried in this order:

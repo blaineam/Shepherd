@@ -31,6 +31,10 @@ Work ships in tested increments that are deployed to a real network as they land
 
 ## Stated future direction: Shepherd as a dual-NIC router
 
+**Designed, not scheduled: [GATEWAY.md](GATEWAY.md)** has the architecture, the staged migration
+with its rollback, the risks, the IPv6 hard rules it forces a rescope of, and the five decisions
+that are the maintainer's rather than anyone else's.
+
 The maintainer wants to eventually run Shepherd as the actual router (a "Gateway" profile), on
 hardware with two 10 Gb NICs, demoting the current Wi-Fi router to a bridge/access-point role. This is
 real intent, not a research idea, but it is a large undertaking that only makes sense once Watch mode
