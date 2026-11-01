@@ -306,6 +306,10 @@ type Snapshot struct {
 	// Armed is false after the kill switch, until Rearm.
 	Armed     bool   `json:"armed"`
 	Interface string `json:"interface,omitempty"`
+	// LastLoopStop is what the loop brake measured when it last stopped
+	// steering, surviving a restart and a container rebuild. Nil when it
+	// has never tripped here.
+	LastLoopStop *LoopStop `json:"last_loop_stop,omitempty"`
 	// IPv6 is true while IPv6 steering is actually in effect. IPv6Wanted
 	// says whether the configuration asked for it, and IPv6Reason says why
 	// it is not in effect when it was asked for (no IPv6 router, no global
@@ -1365,21 +1369,41 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 		e.mu.Unlock()
 		return
 	}
+	e.mu.Unlock()
+	// Read the relay's own evidence before latching, since PanicStop
+	// empties the steered set and with it the per-device counters.
+	suppressed := ctrl.DuplicatesSuppressed()
+	flows := intercept.SummarizeSamples(ctrl.FrameSamples())
+	e.mu.Lock()
+	if e.killed { // another goroutine latched it while the lock was free
+		e.mu.Unlock()
+		return
+	}
 	e.killed = true
 	e.state.Killed = true
 	e.reason = "stopped automatically: the relay interface was mirroring traffic at a rate a home network does not reach"
+	share := 0.0
+	if rx > 0 {
+		share = relayedPPS / rx * 100
+	}
+	// Persist what was measured, not just log it. A container rebuild takes
+	// the logs with it, which has already destroyed this evidence twice.
+	e.state.LastLoopStop = &LoopStop{
+		At: now, RxPackets: rx, TxPackets: tx, ApartPercent: math.Abs(tx-rx) / hi * 100,
+		RelayedPPS: relayedPPS, SharePercent: share,
+		Suppressed: suppressed,
+		Devices:    loopSuspects(status, e.reg),
+		Flows:      flows,
+	}
 	saveErr := saveState(e.cfg.StatePath, e.state)
 	e.loopStreak = 0
 	e.mu.Unlock()
 
 	ctrl.PanicStop()
 	e.logf("watch: LOOP BRAKE: the relay interface is mirroring traffic at a rate a home network does not reach, so all steering has been stopped and will stay stopped until it is re-armed")
-	share := 0.0
-	if rx > 0 {
-		share = relayedPPS / rx * 100
-	}
-	e.logf("watch: loop brake evidence: interface received %.0f and transmitted %.0f packets in the last second (%.2f%% apart), of which the relay reported %.0f (%.1f%%)",
-		rx, tx, math.Abs(tx-rx)/hi*100, relayedPPS, share)
+	e.logf("watch: loop brake evidence: interface received %.0f and transmitted %.0f packets in the last second (%.2f%% apart), of which the relay reported %.0f (%.1f%%); the duplicate brake had suppressed %d frames",
+		rx, tx, math.Abs(tx-rx)/hi*100, relayedPPS, share, suppressed)
+	e.logf("watch: loop brake: this is also recorded in %s as last_loop_stop, because a container rebuild discards the log", e.cfg.StatePath)
 	// The share is evidence, not a trigger. It lags the storm by seconds --
 	// 0 pkt/s at t+2, 73,704 by t+8 on one measured device -- so a low
 	// figure here means the brake caught it early, not that the relay is
@@ -1395,9 +1419,21 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 // tripped. The cause of the second incident was never established because
 // nobody had this list at the moment it mattered.
 func (e *Engine) logLoopSuspects(status []intercept.SteeredDevice) {
-	if len(status) == 0 {
+	lines := loopSuspects(status, e.reg)
+	if len(lines) == 0 {
 		e.logf("watch: loop brake: no device was steered at the time, so the relay was not carrying a steered device's traffic")
 		return
+	}
+	for _, l := range lines {
+		e.logf("watch: loop brake: %s", l)
+	}
+}
+
+// loopSuspects describes the devices that were relaying most, busiest
+// first, for both the log and the persisted record.
+func loopSuspects(status []intercept.SteeredDevice, reg *devices.Registry) []string {
+	if len(status) == 0 {
+		return nil
 	}
 	byBytes := append([]intercept.SteeredDevice(nil), status...)
 	slices.SortFunc(byBytes, func(a, b intercept.SteeredDevice) int {
@@ -1409,17 +1445,19 @@ func (e *Engine) logLoopSuspects(status []intercept.SteeredDevice) {
 		}
 		return 0
 	})
+	var out []string
 	for i, d := range byBytes {
 		if i == 3 {
 			break
 		}
 		name := d.MAC.String()
-		if dev, ok := e.reg.FindByMAC(d.MAC.String()); ok {
+		if dev, ok := reg.FindByMAC(d.MAC.String()); ok {
 			name = dev.DisplayName() + " (" + d.MAC.String() + ")"
 		}
-		e.logf("watch: loop brake: %s had relayed %d frames and %d bytes, address %s",
-			name, d.PacketsRelayed, d.BytesRelayed, d.IP)
+		out = append(out, fmt.Sprintf("%s had relayed %d frames and %d bytes, address %s",
+			name, d.PacketsRelayed, d.BytesRelayed, d.IP))
 	}
+	return out
 }
 
 // ifaceName is the interface the relay is attached to, or "".
@@ -1674,6 +1712,7 @@ func (e *Engine) Snapshot() Snapshot {
 		History: append([]HistoryRecord(nil), e.history...),
 	}
 	snap.IPv6, snap.IPv6Wanted, snap.IPv6Reason = e.v6, e.cfg.IPv6, e.v6Why
+	snap.LastLoopStop = e.state.LastLoopStop
 	if e.gwLL.IsValid() {
 		snap.GatewayLinkLocal = e.gwLL.String()
 	}

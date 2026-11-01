@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // persisted is what survives a restart: only the kill switch. An owner who
@@ -29,6 +30,37 @@ type persisted struct {
 	// run, so it is run once rather than on every restart, and because a
 	// relay that loops on this hardware will loop again.
 	LoopingRelays []string `json:"looping_relays,omitempty"`
+	// LastLoopStop is what the loop brake measured the last time it
+	// stopped steering, kept because a container rebuild takes the logs
+	// with it. That has now happened twice to this investigation: the
+	// brake logs exactly the evidence the cause needs, a redeploy discards
+	// the container, and the evidence is gone. The kill switch survives a
+	// restart, so the reason for it should too.
+	LastLoopStop *LoopStop `json:"last_loop_stop,omitempty"`
+}
+
+// LoopStop is one loop-brake trip, as measured.
+type LoopStop struct {
+	At time.Time `json:"at"`
+	// RxPackets and TxPackets are the interface's counts in the second
+	// that tripped it, and ApartPercent how far apart they were.
+	RxPackets    float64 `json:"rx_packets"`
+	TxPackets    float64 `json:"tx_packets"`
+	ApartPercent float64 `json:"apart_percent"`
+	// RelayedPPS is what the relay itself reported, and SharePercent that
+	// as a share of received. Both are evidence rather than triggers: the
+	// relay's counter lags a storm by seconds.
+	RelayedPPS   float64 `json:"relayed_pps"`
+	SharePercent float64 `json:"share_percent"`
+	// Suppressed is the duplicate brake's count at the moment of the trip.
+	// A high figure with a trip anyway means a loop the duplicate brake
+	// could not break; a zero means the mirrored traffic was not duplicate
+	// frames at all, which points somewhere else entirely.
+	Suppressed uint64 `json:"duplicates_suppressed"`
+	// Devices names what was relaying most, and Flows the sampled-frame
+	// digest: the lines that say whether the frames were circulating.
+	Devices []string `json:"devices,omitempty"`
+	Flows   []string `json:"flows,omitempty"`
 }
 
 // hasLoopingRelay reports whether the relay named "<iface>/<relay>" is

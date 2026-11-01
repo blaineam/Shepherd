@@ -298,7 +298,15 @@ traffic -- the interface receiving and transmitting the same amount -- at a rate
 does not reach. Three consecutive seconds of that and it panic-stops, unsteering every device with
 its corrective reply, and latches like the kill switch so a restart does not resume it. It logs
 what it measured, the devices that were relaying most, and the sampled-frame digest described
-below.
+below -- and writes the same thing to `watch.json` as `last_loop_stop`, reported on
+`GET /api/watch`.
+
+Persisting it is not tidiness. Those log lines *are* the evidence the first unexplained loop
+lacked, and twice a container rebuild has discarded them, the second time during the very
+investigation that produced this brake. The kill switch survived a restart; its reason should too.
+Read `duplicates_suppressed` in that record first: a trip with a high figure is a loop the
+duplicate brake could not break, while a trip with zero means the mirrored traffic was not
+duplicate frames at all, and the cause is somewhere else.
 
 Symmetry is the whole test; the rate floor only keeps a quiet network from tripping it. Measured on
 the live host with nothing steered, six clean two-second samples ran 12,325 to 39,521 packets a

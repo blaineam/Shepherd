@@ -47,6 +47,17 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   the suppressed count (`duplicates_suppressed` on `GET /api/watch`), and on that host it runs at
   about 80% of relayed frames -- so whatever re-delivers the frames is still doing it, and is now
   contained instead of catastrophic.
+- **The loop brake records what it measured where a restart cannot lose it.** Its log lines are
+  deliberately the evidence the first unexplained incident lacked -- what the interface was doing,
+  which devices were relaying most, and what the sampled frames looked like -- and twice now a
+  `docker compose up --build` has discarded the container and taken them with it, the second time
+  during this very investigation. The kill switch already survived a restart; its reason now does
+  too. A trip is written to `watch.json` as `last_loop_stop` (when, the interface's receive and
+  transmit counts and how far apart they were, what the relay itself reported, **how many frames
+  the duplicate brake had already suppressed**, the busiest relaying devices and the sampled-flow
+  digest), and reported on `GET /api/watch`. The suppressed count is the one to read first: a trip
+  with a high figure is a loop the duplicate brake could not break, while a trip with zero means
+  the mirrored traffic was not duplicate frames at all and the cause is somewhere else entirely.
 - **What the investigation established, by counting rather than arguing.** Three candidate
   mechanisms are now excluded by direct measurement, and two of them had been asserted here
   before: kernel IPv4 forwarding (one datagram during a 24,500-packet-a-second storm),

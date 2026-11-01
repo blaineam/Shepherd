@@ -1593,3 +1593,54 @@ func TestForwardingAloneDoesNotRefuse(t *testing.T) {
 	te.waitRunning(t)
 	te.waitSteered(t, phoneMAC, true)
 }
+
+// The brake's evidence has to survive a restart, because a container
+// rebuild takes the logs with it -- which destroyed this very evidence
+// twice during the investigation that produced the brake.
+func TestTheLoopBrakeRecordsItsEvidenceWhereARestartCannotLoseIt(t *testing.T) {
+	statePath := t.TempDir() + "/watch.json"
+	plat := newFakePlatform()
+	te := newTestEngine(t, plat, func(c *Config) { c.StatePath = statePath })
+	te.loopFloor = loopFloorPPS
+	te.addPhone(t)
+	te.start(t)
+	te.waitRunning(t)
+	te.waitSteered(t, phoneMAC, true)
+
+	waitFor(t, "the loop brake to trip", func() bool {
+		te.loopTickUnrelayed(t, plat, 26994, 24492)
+		return !te.Snapshot().Armed
+	})
+
+	// Read it back from disk, as a restart would.
+	st, err := loadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.LastLoopStop == nil {
+		t.Fatal("the brake tripped and left nothing on disk, so a redeploy loses the evidence again")
+	}
+	ls := st.LastLoopStop
+	if ls.RxPackets != 26994 || ls.TxPackets != 24492 {
+		t.Errorf("recorded rates = rx %.0f tx %.0f, want the measured 26994 and 24492", ls.RxPackets, ls.TxPackets)
+	}
+	if ls.ApartPercent < 9 || ls.ApartPercent > 10 {
+		t.Errorf("recorded apart = %.2f%%, want about 9.3%%", ls.ApartPercent)
+	}
+	if ls.At.IsZero() {
+		t.Error("the record has no timestamp, so it cannot be tied to anything else that happened")
+	}
+	// The devices that were relaying most are the whole point of the
+	// record: that list is what the unexplained incident lacked.
+	if len(ls.Devices) == 0 {
+		t.Error("no device was named, which is the evidence the first unexplained loop was missing")
+	}
+
+	// And the engine reports it, so the portal and the API can show it
+	// without anyone reading a log file.
+	if snap := te.Snapshot(); snap.LastLoopStop == nil {
+		t.Error("Snapshot() does not carry the record, so nothing can display it")
+	} else if snap.LastLoopStop.RxPackets != 26994 {
+		t.Errorf("Snapshot()'s record disagrees with the one on disk: rx %.0f", snap.LastLoopStop.RxPackets)
+	}
+}
