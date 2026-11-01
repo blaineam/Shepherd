@@ -67,6 +67,6 @@ test('matchLine says who reached for what', () => {
   assert.match(matchLine({ device: 'Laptop', name: 'x.bad.example.com', indicator: 'bad.example.com', feed_id: 'urlhaus', action: 'blocked' }).text,
     /Laptop was blocked looking up x\.bad\.example\.com \(under bad\.example\.com\), on the urlhaus feed\./);
   assert.match(matchLine({ client: '192.0.2.5', name: 'cdn.example.org', indicator: '192.0.2.0/24', kind: 'ip', feed_id: 'feodo', action: 'allowed' }).text,
-    /10\.0\.0\.5 looked up cdn\.example\.org which resolved into 192\.0\.2\.0\/24/);
+    /192\.0\.2\.5 looked up cdn\.example\.org which resolved into 192\.0\.2\.0\/24/);
   assert.equal(matchLine(null).who, 'A device');
 });
