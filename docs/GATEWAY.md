@@ -128,8 +128,9 @@ In dependency order, each item being something that can be finished and verified
    bandwidth, per-destination bandwidth, genuine pause, rate limits, and the inbound half of
    anything resembling intrusion detection.
 6. **A rescoped IPv6 design** (see the conflict below).
-7. **Failure behaviour**: a watchdog, config rollback, and an explicit decision about what happens
-   to forwarding when Shepherd's own process dies.
+7. **Failure behaviour: fail closed** (decided, 2026-11-01). When Shepherd is not running, devices
+   do not reach the internet. See "Failing closed needs a dead man's switch" below, because this is
+   the item on this list whose implementation is least like what it sounds like.
 
 ## Staged migration
 
@@ -182,12 +183,13 @@ rate limits.
 
 ## Risks, and the guard rails that answer them
 
-- **A router outage is a total outage.** This is the one that changes Shepherd's character, and
-  [DESIGN.md](DESIGN.md) already says so. The answers are: the kernel forwards, not Shepherd, so
-  Shepherd crashing should not stop traffic; a watchdog; and a physical rollback that has been
+- **A router outage is a total outage**, and with fail-closed chosen, so is a Shepherd outage.
+  [DESIGN.md](DESIGN.md) already names this as the risk that changes Shepherd's character. The
+  remaining answers are a watchdog, config rollback, and a physical rollback that has been
   practised.
-- **Shepherd becomes a single point of failure for the house.** Guard mode's DNS already fails open.
-  The forwarding path needs an equivalent stance decided explicitly rather than inherited.
+- **Shepherd becomes a single point of failure for the house, deliberately.** Guard mode's DNS fails
+  open; Gateway mode is a considered departure from that precedent rather than an inconsistency, and
+  the departure should be stated wherever the principle is.
 - **The Thread border router.** Hard rule 1 exists because two sources of Router Advertisements
   break Thread meshes. In Gateway mode Shepherd is one of those sources by necessity, and the smart
   home has Thread and Matter gear. This needs its own testing and is a good reason for Stage 2 to
@@ -195,6 +197,47 @@ rate limits.
 - **Scope creep into a datapath project.** The temptation will be to handle packets in Shepherd for
   some feature. The line above is the guard rail: if a feature needs per-packet handling, it is a
   separate, separately justified piece of work.
+
+## Failing closed needs a dead man's switch, not a shutdown hook
+
+Fail closed was chosen, and it is the item on the build list least like what it sounds like, because
+of the design decision above: **the kernel forwards, not Shepherd.** If Shepherd exits, the kernel's
+rules are still loaded and traffic keeps flowing. Doing nothing therefore fails *open*, whatever the
+intent.
+
+Hooking process shutdown is not enough either. A handler that installs a drop rule on the way out
+covers a clean stop and misses everything that matters: `SIGKILL`, the out-of-memory killer, a
+kernel panic, a container destroyed from under it, a wedged process that is still technically
+running. Those are the cases fail-closed is *for*.
+
+What does work is to invert it, so that forwarding is permitted only while Shepherd is actively
+saying so. nftables sets support per-element timeouts, which makes the kernel the enforcer:
+
+- forwarding is allowed only while a particular element is present in a set;
+- that element carries a timeout of, say, 30 seconds;
+- Shepherd refreshes it every few seconds while it is healthy.
+
+Stop refreshing for any reason -- crash, kill, panic, hang -- and the element expires on the
+kernel's own schedule and forwarding stops. Nothing depends on Shepherd getting a chance to act,
+which is the whole point.
+
+The timeout is a real trade-off and should be configurable: too short and a garbage-collection
+pause or a slow reconcile drops the house offline for no good reason, too long and "closed" is a
+loose promise. Thirty seconds with a refresh every five is a reasonable starting point, and the
+refresh must be driven by something that proves Shepherd is *working* rather than merely alive.
+
+### One exception, so a bug is still fixable
+
+Failing closed has a cost worth naming: it takes out remote access along with everything else.
+Shepherd's Tailscale path needs the internet, so a Shepherd bug serious enough to stop forwarding
+also removes the means of fixing it from anywhere but the house.
+
+So the dead man's switch should apply to **forwarded traffic** -- the devices -- and not to the
+host's own outbound traffic. Devices are cut off as intended; Shepherd itself, and therefore
+Tailscale and the portal, stay reachable. Local access survives either way, since LAN-to-LAN traffic
+is not forwarded through the WAN path, but local access means being in the house.
+
+That split is the difference between a fail-closed router and a brick.
 
 ## The IPv6 hard rules have to be rescoped, explicitly
 
@@ -236,9 +279,9 @@ delegates a prefix at all.**
    cutover** (2026-11-01). The staging above is rewritten around that, including the three
    pre-cutover steps it makes necessary and the reason the parallel segment now has to include the
    difficult devices rather than the convenient ones.
-3. **What happens to traffic when Shepherd's process is not running?** Keep forwarding (the kernel's
-   rules persist, the house stays online, protection is off) or stop it (fail closed). Guard mode's
-   precedent is to fail open.
+3. ~~**What happens to traffic when Shepherd's process is not running?**~~ **Answered: fail closed**
+   (2026-11-01), a considered departure from Guard mode's fail-open precedent. The mechanism it
+   requires, and the one exception that keeps a bug remotely fixable, are above.
 4. **Is Watch mode retired, kept, or left off?** It is off on the NAS now. Its one capability that
    Gateway mode does not subsume is nothing — a router sees everything it sees and more — so the
    honest options are to keep it for installs that cannot be the router, or to retire it.

@@ -53,8 +53,20 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   the **difficult** devices on purpose (a Thread or Matter device, a printer, a TV) rather than a
   convenient laptop, and three things must happen before cutover day -- Shepherd takes the eero's
   LAN address so every existing lease stays correct, the eero's lease time is shortened in advance so
-  the network converges in minutes rather than days, and the eero's WAN MAC is cloned. The remaining
-  three decisions include whether forwarding should fail open when Shepherd is not running.
+  the network converges in minutes rather than days, and the eero's WAN MAC is cloned. The third is answered as well:
+  **fail closed**, a considered departure from Guard mode's fail-open precedent. That turns out to be
+  the item least like what it sounds like, because the kernel forwards and Shepherd does not: if
+  Shepherd exits, the rules are still loaded and traffic keeps flowing, so doing nothing fails
+  *open*. A shutdown hook does not fix it either -- it covers a clean stop and misses `SIGKILL`, the
+  OOM killer, a panic, a destroyed container and a wedged process, which are the cases fail-closed
+  exists for. So the design inverts it into a **dead man's switch**: forwarding is permitted only
+  while an nftables set element with a short timeout is present, Shepherd refreshes it while
+  healthy, and the kernel expires it on its own schedule if Shepherd stops for any reason. One
+  exception is carved out, because failing closed otherwise takes out the means of repair along with
+  everything else: the switch governs **forwarded** traffic only, so devices are cut off as intended
+  while Shepherd's own outbound traffic, and therefore Tailscale and remote access, survives. The
+  remaining two decisions are whether Watch mode is retired and whether the eero stays as an access
+  point.
 - **The relay loop has a mechanism, a measurement and a fix, and Watch mode runs on the
   maintainer's NAS again.** Three times the relay carried traffic round in a circle at line rate
   and each time the cause was argued rather than measured, because the one thing nobody could see
