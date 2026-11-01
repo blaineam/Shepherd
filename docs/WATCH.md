@@ -277,11 +277,25 @@ being one flow with one IP identification field and one TTL -- a single frame go
 brake's effectiveness collapses as the rate rises, which is the opposite of what a safety mechanism
 should do, and the loop brake is still what stops a storm.
 
-The likely reason is in `is_duplicate`: it reads a slot, compares, and writes it back with no
-atomicity, so at tens of thousands of frames a second across a dozen cores two copies routinely
-both read "not seen" and both get relayed. A per-CPU table would remove the race. That is a
-hypothesis and is written as one, because the three explanations offered here before it were each
-refuted by measurement.
+The first explanation offered was a race: `is_duplicate` reads a slot, compares and writes it back
+with no atomicity, so at tens of thousands of frames a second across a dozen cores two copies might
+both read "not seen" and both be relayed. The table was made per CPU, which removes that race
+entirely. **It changed nothing.** The next trip, with the per-CPU table live, suppressed 8,259
+frames out of 347,963 relayed -- 2.4%, against 2.8% before. Both trips sampled 128 frames and found
+a single flow with a single IP identification field and an undecremented TTL, which is one frame
+going round, and in both the brake saw almost none of it.
+
+So why one frame can be relayed hundreds of thousands of times while a fingerprint table that
+contains it suppresses two per cent of the passes is **not known**. That is the fourth explanation
+offered in this file and refuted by measurement, after the polluted registry record, kernel
+forwarding, and the dual-homed device. The honest summary is that the duplicate brake helps at rest
+and does not work when it matters, and the loop brake -- which stops the storm in about three
+seconds and now leaves its evidence behind -- is the only thing standing between this feature and a
+melted network.
+
+**Watch mode is therefore off on the maintainer's NAS**, with `allow_routing_host` back to false so
+the dual-homed refusal applies independently. DNS filtering, the device registry and the passive ARP
+monitor are unaffected and continue as before.
 
 `GET /api/watch` reports the count as `duplicates_suppressed`, overall and per device, and the
 diagnostics digest names the devices whose frames came back. Per device matters: the overall
