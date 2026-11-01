@@ -389,6 +389,18 @@ func TestStartVulnscanAppliesTheFeedAndRescansOnChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The vulnerability scanner's first, immediate scan probes whatever
+	// portscan has found so far, and its schedule here is an hour, so wait
+	// for portscan's own first scan to land before starting it: on a slow
+	// CI runner it otherwise scans an empty target list and the device
+	// never gets a first scan to compare the feed-triggered one against.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && len(ps.Results()) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(ps.Results()) == 0 {
+		t.Fatal("portscan never produced a result to deepen")
+	}
 	vs, feed, err := startVulnscan(ctx, cfg, reg, ps, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -405,7 +417,7 @@ func TestStartVulnscanAppliesTheFeedAndRescansOnChange(t *testing.T) {
 		}
 		return false
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline = time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) && !hasMarker(vulnscan.SeverityLow) {
 		time.Sleep(10 * time.Millisecond)
 	}
