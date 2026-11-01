@@ -4,11 +4,13 @@ package reverseproxy
 
 import (
 	"bufio"
+	"crypto/tls"
 	"crypto/x509"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -396,4 +398,107 @@ func splitTestAddr(t *testing.T, addr string) (string, int) {
 		t.Fatal(err)
 	}
 	return host, port
+}
+
+func TestProxyEnforcesAllowListsAndLogsRefusalsOncePerMinute(t *testing.T) {
+	store := newTestStore(t,
+		Host{Domain: "lan.example.com", TargetScheme: "http", TargetHost: "127.0.0.1", TargetPort: 8096, Enabled: true, Allow: []string{"local", "203.0.113.0/24"}},
+		Host{Domain: "open.example.com", TargetScheme: "http", TargetHost: "127.0.0.1", TargetPort: 8097, Enabled: true},
+	)
+	var refused []string
+	var mu sync.Mutex
+	local := func() []netip.Prefix { return []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24")} }
+	p := New(Options{Hosts: store, Transport: &recordingTransport{name: "verify"}, InsecureTransport: &recordingTransport{name: "insecure"},
+		LocalPrefixes: local, OnRefused: func(r *http.Request, c netip.Addr) {
+			mu.Lock()
+			refused = append(refused, r.Host+" "+c.String())
+			mu.Unlock()
+		}})
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	p.now = func() time.Time { return now }
+
+	get := func(host, remote string) int {
+		req := httptest.NewRequest("GET", "http://placeholder/", nil)
+		req.Host = host
+		req.RemoteAddr = remote
+		rec := httptest.NewRecorder()
+		p.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if c := get("lan.example.com", "10.0.0.5:4000"); c != 200 {
+		t.Fatalf("a local client got %d", c)
+	}
+	if c := get("lan.example.com", "203.0.113.9:4000"); c != 200 {
+		t.Fatalf("a client in an allowed prefix got %d", c)
+	}
+	if c := get("lan.example.com", "198.51.100.9:4000"); c != 403 {
+		t.Fatalf("a client outside the list got %d, want 403", c)
+	}
+	if c := get("lan.example.com", "not-an-address"); c != 403 {
+		t.Fatalf("an unparseable client address got %d, want 403", c)
+	}
+	if c := get("open.example.com", "198.51.100.9:4000"); c != 200 {
+		t.Fatalf("an open host refused a client: %d", c)
+	}
+	// Refusals are reported once per client per minute.
+	get("lan.example.com", "198.51.100.9:4001")
+	get("lan.example.com", "198.51.100.9:4002")
+	now = now.Add(refusalLogEvery)
+	get("lan.example.com", "198.51.100.9:4003")
+	mu.Lock()
+	got := append([]string(nil), refused...)
+	mu.Unlock()
+	if len(got) != 3 || got[0] != "lan.example.com 198.51.100.9" || got[1] != "lan.example.com invalid IP" || got[2] != "lan.example.com 198.51.100.9" {
+		t.Fatalf("refusals reported = %v", got)
+	}
+	// A full table is reset rather than grown without bound.
+	p.refusedMu.Lock()
+	for i := 0; i < refusedTableMax; i++ {
+		p.refusedAt[netip.AddrFrom4([4]byte{10, 9, byte(i >> 8), byte(i)})] = now
+	}
+	p.refusedMu.Unlock()
+	get("lan.example.com", "198.51.100.10:1")
+	p.refusedMu.Lock()
+	n := len(p.refusedAt)
+	p.refusedMu.Unlock()
+	if n != 1 {
+		t.Fatalf("table after overflow = %d entries, want 1", n)
+	}
+	// No OnRefused is fine.
+	q := New(Options{Hosts: store, Transport: &recordingTransport{name: "verify"}, InsecureTransport: &recordingTransport{name: "insecure"}})
+	req := httptest.NewRequest("GET", "http://placeholder/", nil)
+	req.Host = "lan.example.com"
+	req.RemoteAddr = "198.51.100.9:1"
+	rec := httptest.NewRecorder()
+	q.ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Fatalf("without a logger: %d", rec.Code)
+	}
+}
+
+func TestProxyAddsHSTSOnlyOverTLSAndOnlyWhenAsked(t *testing.T) {
+	store := newTestStore(t,
+		Host{Domain: "strict.example.com", TargetScheme: "http", TargetHost: "127.0.0.1", TargetPort: 8096, Enabled: true, HSTS: true},
+		Host{Domain: "plain.example.com", TargetScheme: "http", TargetHost: "127.0.0.1", TargetPort: 8097, Enabled: true},
+	)
+	p := New(Options{Hosts: store, Transport: &recordingTransport{name: "verify"}, InsecureTransport: &recordingTransport{name: "insecure"}})
+	serve := func(host string, tlsOn bool) http.Header {
+		req := httptest.NewRequest("GET", "http://placeholder/", nil)
+		req.Host = host
+		if tlsOn {
+			req.TLS = &tls.ConnectionState{}
+		}
+		rec := httptest.NewRecorder()
+		p.ServeHTTP(rec, req)
+		return rec.Header()
+	}
+	if got := serve("strict.example.com", true).Get("Strict-Transport-Security"); got != "max-age="+strconv.Itoa(HSTSMaxAge) {
+		t.Fatalf("HSTS over TLS = %q", got)
+	}
+	if got := serve("strict.example.com", false).Get("Strict-Transport-Security"); got != "" {
+		t.Fatalf("HSTS over plain http = %q, want none", got)
+	}
+	if got := serve("plain.example.com", true).Get("Strict-Transport-Security"); got != "" {
+		t.Fatalf("HSTS on a host that did not ask = %q, want none", got)
+	}
 }

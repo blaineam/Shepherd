@@ -181,3 +181,19 @@ func selfSignedForTest(t *testing.T, name string, notAfter time.Time) tls.Certif
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}
 }
+
+func TestReverseProxyHostsCarryAllowListsAndHSTS(t *testing.T) {
+	h := newHarness(t)
+	h.withReverseProxy()
+	created := h.ok("POST", "/api/reverseproxy/hosts", `{"domain":"lan.example.com","target_scheme":"http","target_host":"127.0.0.1","target_port":8096,"allow":["Local","192.0.2.7"],"hsts":true}`, 200)
+	allow := created["allow"].([]any)
+	if len(allow) != 2 || allow[0] != "local" || allow[1] != "192.0.2.7/32" || created["hsts"] != true {
+		t.Fatalf("created = %v", created)
+	}
+	id := created["id"].(string)
+	updated := h.ok("PUT", "/api/reverseproxy/hosts/"+id, `{"domain":"lan.example.com","target_scheme":"http","target_host":"127.0.0.1","target_port":8096,"allow":[],"hsts":false}`, 200)
+	if _, has := updated["allow"]; has || updated["hsts"] != false {
+		t.Fatalf("updated = %v, want an open host without HSTS", updated)
+	}
+	h.expect("PUT", "/api/reverseproxy/hosts/"+id, `{"domain":"lan.example.com","target_scheme":"http","target_host":"127.0.0.1","target_port":8096,"allow":["nope"]}`, 400)
+}

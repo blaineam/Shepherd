@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  validateDomain, parseTarget, formatTarget, covers, sortHosts, filterHosts, certSummary, hostBody, hostWarnings, publicURL,
+  validateDomain, parseTarget, formatTarget, covers, sortHosts, filterHosts, certSummary, hostBody, hostWarnings, hostBadges, parseAllow, formatAllow, publicURL,
 } from '../js/reverseproxy.js';
 
 test('validateDomain accepts real multi-label names and normalizes them', () => {
@@ -114,15 +114,38 @@ test('certSummary covers off, pending, healthy, renewing-soon and expired', () =
   assert.match(gone.text, /expired/i);
 });
 
+test('parseAllow reads addresses, prefixes and local, and refuses the rest', () => {
+  assert.deepEqual(parseAllow(''), { ok: true, allow: [] });
+  assert.deepEqual(parseAllow(' anyone '), { ok: true, allow: [] });
+  assert.deepEqual(parseAllow('Local, 192.0.2.0/24 2001:db8::1 local'), { ok: true, allow: ['local', '192.0.2.0/24', '2001:db8::1'] });
+  for (const bad of ['nope', '192.0.2.0/33', '2001:db8::1/129', '192.0.2.4/8/9']) {
+    const r = parseAllow(bad);
+    assert.equal(r.ok, false, bad);
+    assert.ok(r.error, bad);
+  }
+  assert.equal(formatAllow(['local', '192.0.2.0/24']), 'local, 192.0.2.0/24');
+  assert.equal(formatAllow(undefined), '');
+});
+
+test('hostBadges says who may reach a host and whether it pins HTTPS', () => {
+  assert.deepEqual(hostBadges({}), []);
+  assert.deepEqual(hostBadges({ allow: ['local'] }).map((b) => b.label), ['Local only']);
+  assert.deepEqual(hostBadges({ allow: ['local', '192.0.2.0/24'], hsts: true }).map((b) => b.label), ['Restricted', 'HSTS']);
+  for (const b of hostBadges({ allow: ['192.0.2.1/32'], hsts: true })) assert.ok(b.title);
+});
+
 test('hostBody turns the form into exactly what the API accepts', () => {
   assert.deepEqual(hostBody({ domain: ' Jellyfin.Example.com ', target: 'http://127.0.0.1:8096', skipVerify: true }), {
-    ok: true, body: { domain: 'jellyfin.example.com', target_scheme: 'http', target_host: '127.0.0.1', target_port: 8096, skip_tls_verify: false },
+    ok: true, body: { domain: 'jellyfin.example.com', target_scheme: 'http', target_host: '127.0.0.1', target_port: 8096, skip_tls_verify: false, allow: [], hsts: false },
   });
-  assert.deepEqual(hostBody({ domain: 'nas.example.com', target: 'https://192.0.2.5:5001', skipVerify: true, enabled: false }), {
-    ok: true, body: { domain: 'nas.example.com', target_scheme: 'https', target_host: '192.0.2.5', target_port: 5001, skip_tls_verify: true, enabled: false },
+  assert.deepEqual(hostBody({ domain: 'nas.example.com', target: 'https://192.0.2.5:5001', skipVerify: true, allow: 'local', hsts: true, enabled: false }), {
+    ok: true, body: { domain: 'nas.example.com', target_scheme: 'https', target_host: '192.0.2.5', target_port: 5001, skip_tls_verify: true, allow: ['local'], hsts: true, enabled: false },
   });
   const badDomain = hostBody({ domain: 'nope', target: 'http://127.0.0.1:80' });
   assert.deepEqual([badDomain.ok, badDomain.field], [false, 'domain']);
+  const badAllow = hostBody({ domain: 'a.example.com', target: 'http://127.0.0.1:80', allow: 'nope' });
+  assert.equal(badAllow.ok, false);
+  assert.equal(badAllow.field, 'allow');
   const badTarget = hostBody({ domain: 'a.example.com', target: '127.0.0.1' });
   assert.deepEqual([badTarget.ok, badTarget.field], [false, 'target']);
 });

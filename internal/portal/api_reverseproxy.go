@@ -67,14 +67,19 @@ type proxyHostBody struct {
 	TargetHost    string `json:"target_host"`
 	TargetPort    int    `json:"target_port"`
 	SkipTLSVerify bool   `json:"skip_tls_verify"`
-	Enabled       *bool  `json:"enabled"`
+	// Allow is the host's access list (addresses, prefixes, "local");
+	// empty or absent means open to anyone. HSTS adds the header.
+	Allow   []string `json:"allow"`
+	HSTS    bool     `json:"hsts"`
+	Enabled *bool    `json:"enabled"`
 }
 
 func (b proxyHostBody) host(enabled bool) reverseproxy.Host {
 	if b.Enabled != nil {
 		enabled = *b.Enabled
 	}
-	return reverseproxy.Host{Domain: b.Domain, TargetScheme: b.TargetScheme, TargetHost: b.TargetHost, TargetPort: b.TargetPort, SkipTLSVerify: b.SkipTLSVerify, Enabled: enabled}
+	return reverseproxy.Host{Domain: b.Domain, TargetScheme: b.TargetScheme, TargetHost: b.TargetHost, TargetPort: b.TargetPort,
+		SkipTLSVerify: b.SkipTLSVerify, Allow: b.Allow, HSTS: b.HSTS, Enabled: enabled}
 }
 
 func (s *Server) listProxyHosts(w http.ResponseWriter, r *http.Request) {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -37,8 +38,28 @@ type Host struct {
 	// manager never verified them at all; this makes that trade-off explicit
 	// and per host instead of silent and global. Ignored for http.
 	SkipTLSVerify bool `json:"skip_tls_verify"`
-	Enabled       bool `json:"enabled"`
+	// Allow restricts who may reach this host: each entry is an IP, a
+	// CIDR prefix, or the word "local", which stands for every network
+	// this host has an address on plus Tailscale's own range. Empty means
+	// anyone who reaches the listener, which is what a reverse-proxy
+	// manager does by default too. A refused request gets a plain 403.
+	Allow []string `json:"allow,omitempty"`
+	// HSTS adds a Strict-Transport-Security header (30 days, this name
+	// only, no preload) to every response served over HTTPS, so a browser
+	// that has seen it once refuses plain http for the name afterwards.
+	// Off by default: it is a promise the owner makes for a month.
+	HSTS    bool `json:"hsts"`
+	Enabled bool `json:"enabled"`
 }
+
+// AllowLocal is the Allow entry that stands for this host's own networks
+// and Tailscale's range.
+const AllowLocal = "local"
+
+// HSTSMaxAge is the Strict-Transport-Security max-age Host.HSTS sends:
+// long enough to matter, short enough that turning it off again is not a
+// year-long regret.
+const HSTSMaxAge = 30 * 24 * 60 * 60
 
 // Normalize validates h and returns it in canonical form (lowercase names,
 // a default "http" scheme, brackets stripped from an IPv6 backend), so the
@@ -70,7 +91,77 @@ func (h Host) Normalize() (Host, error) {
 	if h.TargetPort < 1 || h.TargetPort > 65535 {
 		return Host{}, invalid("target_port must be between 1 and 65535, got %d", h.TargetPort)
 	}
+	allow, err := normalizeAllow(h.Allow)
+	if err != nil {
+		return Host{}, err
+	}
+	h.Allow = allow
 	return h, nil
+}
+
+// normalizeAllow canonicalises an allow list: "local" lowercased, a bare
+// address as a single-address prefix, every prefix in its masked form, and
+// duplicates dropped. nil for an empty list, so "open to anyone" has one
+// spelling in the store.
+func normalizeAllow(in []string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, raw := range in {
+		e := strings.ToLower(strings.TrimSpace(raw))
+		if e == "" {
+			continue
+		}
+		if e != AllowLocal {
+			p, err := parseAllowPrefix(e)
+			if err != nil {
+				return nil, invalid("allow: %q is not an address, a prefix like 192.0.2.0/24, or %q", raw, AllowLocal)
+			}
+			e = p.String()
+		}
+		if !seen[e] {
+			seen[e] = true
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+func parseAllowPrefix(s string) (netip.Prefix, error) {
+	if p, err := netip.ParsePrefix(s); err == nil {
+		return p.Masked(), nil
+	}
+	a, err := netip.ParseAddr(s)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	return netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen()), nil
+}
+
+// Allowed reports whether client may reach h: true for an empty list,
+// else when any entry covers the address. local supplies what "local"
+// stands for.
+func (h Host) Allowed(client netip.Addr, local func() []netip.Prefix) bool {
+	if len(h.Allow) == 0 {
+		return true
+	}
+	client = client.Unmap()
+	for _, e := range h.Allow {
+		if e == AllowLocal {
+			if local == nil {
+				continue
+			}
+			for _, p := range local() {
+				if p.Contains(client) {
+					return true
+				}
+			}
+			continue
+		}
+		if p, err := netip.ParsePrefix(e); err == nil && p.Contains(client) {
+			return true
+		}
+	}
+	return false
 }
 
 // Target is the backend URL a request for h is forwarded to.

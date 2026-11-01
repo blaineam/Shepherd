@@ -45,7 +45,7 @@ Any `X-Forwarded-*` header the client sent is dropped before these are set.
 [reverseproxy]
 enabled = false
 listen = ":8443"                # binding 443 is your call, not a default
-redirect_listen = ""            # e.g. ":80" once your deployment can bind it; 302s to https:// when set
+redirect_listen = ""            # e.g. ":80" once your deployment can bind it; 301s to https:// when set
 domain = ""                     # e.g. "example.com" -> certificate for *.example.com
 email = ""                      # optional; Let's Encrypt expiry-notice contact
 cloudflare_api_token = ""       # read-once seed: the token lives in the portal (below)
@@ -198,23 +198,42 @@ connection cannot carry a classic upgrade), and the listener does **not** advert
 CONNECT, so browsers open WebSockets over HTTP/1.1 while ordinary requests still use HTTP/2. Go keeps
 extended CONNECT off by default; do not run Shepherd with `GODEBUG=http2xconnect=1`.
 
+## Per-host access: who may reach a name
+
+Each host has an optional **allow list**, set in the Proxy tab's "Who may reach it" field or as
+`allow` on the host's API body: addresses, prefixes like `192.0.2.0/24`, and the word `local`,
+which stands for every network this machine has an address on plus loopback and Tailscale's own
+IPv4 and IPv6 ranges, read fresh on every check so a new interface address counts at once. Entries are canonicalised on save (`192.0.2.7` becomes `192.0.2.7/32`,
+prefixes are masked, duplicates dropped). An empty list means anyone who reaches the listener,
+which is what a reverse-proxy manager does by default and what every existing host keeps.
+
+A request from outside the list gets a plain **403** from Shepherd itself, before anything is
+forwarded, and the server log records the host name and the client address, **at most once per
+client per minute** so a scan does not flood it. The check is by the connection's own source
+address, never by an `X-Forwarded-For` header, because this listener is the edge.
+
+`hsts` on a host adds `Strict-Transport-Security: max-age=2592000` (30 days, this name only, no
+`includeSubDomains`, no preload) to every response served over HTTPS, so a browser that has seen
+the name once refuses plain http for it afterwards. Off by default: it is a promise the owner makes
+for a month, and a name moved back to plain http before then is unreachable from those browsers.
+
 ## Limits: what this does not do yet
 
 A straight migration from a reverse-proxy manager **may lose per-host features that manager had**. This
 proxies a name to one backend, and that is all. Not built:
 
-- **No access control of any kind per host**: no access lists, IP allowlists or denylists, HTTP basic
-  auth, client-certificate auth, or single sign-on. Anyone who can reach the listener can reach every
-  enabled host.
+- **Access control is by source address only** (the per-host allow list below): no HTTP basic auth,
+  client-certificate auth or single sign-on, and no denylists.
 - **No custom per-host configuration**: no extra headers, no custom locations (sending one path to a
   different backend), no rewrites, no "advanced" free-form server config, no caching, no "block common
   exploits"-style filtering, no per-host body size limits or timeouts.
 - **`redirect_listen` only redirects; it does not terminate anything on port 80, and it is off by
   default** — like `listen` itself, which defaults to `:8443` and never `:443`, binding a port below
   1024 needs a capability (`CAP_NET_BIND_SERVICE`, or root) a fresh install does not have, so nothing
-  tries to bind one until the owner says so. When set, it answers every request with a 302 to the same
-  host and path over https (no per-host matching — unknown names get redirected too, same as nginx's
-  typical catch-all). No HSTS is added on the https side.
+  tries to bind one until the owner says so. When set, it answers every request with a permanent
+  redirect to the same host and path over https: 301 for GET and HEAD, 308 for anything else so the
+  method and body survive (no per-host matching — unknown names get redirected too, same as nginx's
+  typical catch-all). HSTS is per host and off by default (below).
 - **No per-host certificates, no custom (uploaded) certificates, no second zone.**
 - **No TCP/UDP stream forwarding, redirection hosts or dead-host pages**: HTTP(S) proxy hosts only.
 - **No access log.** Backend failures are logged by host name only (never the path or query, which can
@@ -296,5 +315,5 @@ hostnames afterward.
 is the same call live issuance already makes, but the check itself has only met a fake); throughput or latency under real sustained load compared to the proxy it
 replaced; a real backend's self-signed certificate with `skip_tls_verify`; the handful of services that
 were already stopped at cutover time (their routes are configured and should work the same way once
-they are running again, but that is a claim, not yet a check); and `redirect_listen`'s 302 against a
+they are running again, but that is a claim, not yet a check); and `redirect_listen`'s 301 against a
 real browser rather than a direct HTTP client.

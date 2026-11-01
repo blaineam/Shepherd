@@ -13,6 +13,14 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Reverse proxy: per-host access lists, a permanent HTTP-to-HTTPS redirect and HSTS.** Each
+  proxied host can name who may reach it: addresses, prefixes like `192.0.2.0/24`, and `local`,
+  which stands for every network this machine is on plus loopback and Tailscale's ranges. Anyone
+  else gets a 403 from Shepherd itself, logged with the client address at most once per client per
+  minute. `redirect_listen` now answers with a 301 (308 for anything but GET and HEAD, so the method
+  and body survive) instead of a 302, and a per-host `hsts` switch adds a 30-day
+  `Strict-Transport-Security` header over HTTPS, off by default. The Proxy tab has both controls and
+  shows "Local only", "Restricted" and "HSTS" badges. See docs/REVERSEPROXY.md.
 - **The passive ARP monitor's findings are alarms.** Every event type in docs/ARP.md now maps to
   an alarm (`arp-gateway-changed`, `arp-spoofing`, `arp-ip-moved`, `arp-duplicate-ip`,
   `arp-many-ips`, `arp-flood`, `arp-reply-storm`) or deliberately to none: a new MAC is the

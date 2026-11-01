@@ -52,7 +52,7 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
   let proxyHosts = [
     { id: 'rp-1', domain: 'media.example.com', target_scheme: 'http', target_host: '192.0.2.20', target_port: 8096, skip_tls_verify: false, enabled: true },
     { id: 'rp-2', domain: 'photos.example.com', target_scheme: 'http', target_host: '192.0.2.21', target_port: 2283, skip_tls_verify: false, enabled: true },
-    { id: 'rp-3', domain: 'nas.example.com', target_scheme: 'https', target_host: '192.0.2.22', target_port: 5001, skip_tls_verify: true, enabled: true },
+    { id: 'rp-3', domain: 'nas.example.com', target_scheme: 'https', target_host: '192.0.2.22', target_port: 5001, skip_tls_verify: true, allow: ['local'], hsts: true, enabled: true },
     { id: 'rp-4', domain: 'old.wiki.example.com', target_scheme: 'http', target_host: '192.0.2.23', target_port: 3000, skip_tls_verify: false, enabled: false },
   ];
   let nextProxyId = 5;
