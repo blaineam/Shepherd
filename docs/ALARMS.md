@@ -247,7 +247,7 @@ alarm is recorded at medium severity on all channels, so a typo never loses an a
 | `private-relay-attempt` | info | portal | no |
 | `port-opened` (ports feature, future) | high | all | yes (install and device) |
 | `new-inbound-exposure` (future) | critical | all | no |
-| `threat-match` (future) | critical | all | no |
+| `threat-match` (internal/threats) | critical | all | no |
 | `self-update` (future) | low | all | no |
 | `vulnerability-found` (internal/vulnscan) | high (the finding's own severity overrides this per event) | all | no |
 | `arp-gateway-changed` (internal/arp) | high | all | no |

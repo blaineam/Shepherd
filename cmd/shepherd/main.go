@@ -232,6 +232,15 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	deps.DNSProviderUsers = dnsProviderUsers(cfg)
 	deps.OnSecretsChanged = secretsChanged(sec, acctRelay, kicker)
 
+	// ---- Threat feeds (docs/THREATS.md) ---------------------------------
+	threatEngine, err := startThreats(ctx, cfg, engine, registry, deps.Alarms)
+	if err != nil {
+		return err
+	}
+	if threatEngine != nil { // avoid a non-nil interface over a nil *threats.Engine
+		deps.Threats, deps.ThreatsEnabled = threatEngine, true
+	}
+
 	if cfg.Portscan.Enabled {
 		scanner, err := startPortscan(ctx, cfg, registry)
 		if err != nil {

@@ -11,7 +11,7 @@ import { Selection } from './selection.js';
 import { pushSupport, permissionLine, urlBase64ToUint8Array, subscribeBody, defaultDeviceName, deviceLine, isThisBrowser } from './push.js';
 import {
   SEVERITIES, STATES, severityLabel, severityBadgeClass, stateLabel,
-  MUTE_PRESETS, MUTE_SCOPES, bulkSummary, ruleMatchSummary,
+  MUTE_PRESETS, MUTE_SCOPES, bulkSummary, ruleMatchSummary, feedLine, matchLine,
 } from './alarms.js';
 
 const PAGE_SIZE = 50;
@@ -46,12 +46,13 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
   const countEl = title.lastChild;
 
   const viewSeg = segmented(
-    [{ id: 'alarms', label: 'Alarms' }, { id: 'rules', label: 'Rules' }, { id: 'push', label: 'Notifications' }], view,
+    [{ id: 'alarms', label: 'Alarms' }, { id: 'rules', label: 'Rules' }, { id: 'push', label: 'Notifications' }, { id: 'threats', label: 'Threat feeds' }], view,
     (id) => {
       view = id;
       paintAll();
       if (id === 'rules') loadRules();
       else if (id === 'push') loadPush();
+      else if (id === 'threats') loadThreats();
       else load(true);
     }, 'Alarms view',
   );
@@ -133,7 +134,9 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
   rulesWrap.hidden = true;
   const pushWrap = el('section', 'al-rules-wrap panel-lite');
   pushWrap.hidden = true;
-  main.append(wrap, rulesWrap, pushWrap);
+  const threatsWrap = el('section', 'al-rules-wrap panel-lite');
+  threatsWrap.hidden = true;
+  main.append(wrap, rulesWrap, pushWrap, threatsWrap);
   root.append(head, main);
 
   // ------------------------------------------------------------- loading
@@ -562,11 +565,93 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
     pushWrap.append(el('p', 'muted small', 'On an iPhone or iPad, Shepherd must be added to the Home Screen and opened from there. A phone in Lockdown Mode never shows Web Push; use ntfy there.'));
   }
 
+  // ------------------------------------------------------------- threat feeds
+  let threats = null;
+  let threatsError = null;
+  let refreshingFeeds = false;
+
+  async function loadThreats() {
+    try {
+      threats = await mgmt.threats();
+      threatsError = null;
+    } catch (e) { threatsError = e; }
+    paintThreats();
+  }
+
+  async function refreshFeeds() {
+    refreshingFeeds = true;
+    paintThreats();
+    try {
+      await mgmt.refreshThreats();
+      notify('Threat feeds refreshed');
+    } catch (e) { notify('Could not refresh the feeds: ' + e.message); }
+    refreshingFeeds = false;
+    await loadThreats();
+  }
+
+  function paintThreats() {
+    threatsWrap.replaceChildren();
+    const h = el('div', 'card-h');
+    h.append(el('h3', 'card-t', 'Threat feeds'));
+    if (threats && threats.enabled) {
+      const b = button(refreshingFeeds ? 'Refreshing…' : 'Refresh now', 'ghost', refreshFeeds);
+      b.disabled = refreshingFeeds;
+      h.append(b);
+    }
+    threatsWrap.append(h);
+    if (threatsError) {
+      threatsWrap.append(unavailable(threatsError) ? unavailableCard('Threat feeds') : emptyState('Could not load the threat feeds', threatsError.message, button('Try again', 'ghost', loadThreats)));
+      return;
+    }
+    if (!threats) return;
+    if (!threats.enabled) {
+      threatsWrap.append(el('p', 'al-push-line muted', 'Threat feeds are turned off in shepherd.toml ([threats]).'));
+      return;
+    }
+    threatsWrap.append(el('p', 'muted small', 'Every lookup, blocked or not, is checked against these lists of malware hosts, botnet controllers and hijacked networks. A match raises a threat-match alarm naming the device. ' + Number(threats.loaded || 0).toLocaleString() + ' indicators loaded.'));
+    const feeds = el('div', 'al-push-devs list-rows');
+    for (const f of threats.feeds || []) {
+      const line = feedLine(f);
+      const row = el('div', 'list-row');
+      const main = el('div', 'lr-main');
+      main.append(el('div', 'lr-name', f.name || f.id));
+      main.append(el('p', 'lr-desc muted small', (f.describes ? 'Lists ' + f.describes + '. ' : '') + line.text));
+      const meta = el('div', 'lr-meta');
+      meta.append(el('span', 'badge ' + (line.tone === 'warn' ? 'warn' : line.tone === 'good' ? 'good' : 'muted'), f.kind === 'ip' ? 'addresses' : 'names'));
+      main.append(meta);
+      row.append(main);
+      feeds.append(row);
+    }
+    threatsWrap.append(feeds);
+
+    const matches = threats.matches || [];
+    const mh = el('div', 'card-h');
+    mh.append(el('h3', 'card-t', 'Recent matches' + (matches.length ? ' (' + matches.length + ')' : '')));
+    threatsWrap.append(mh);
+    if (!matches.length) {
+      threatsWrap.append(emptyState('No device has reached for anything on these feeds', 'That is the good outcome. Matches also appear as alarms.'));
+      return;
+    }
+    const list = el('div', 'al-push-devs list-rows');
+    for (const m of matches) {
+      const line = matchLine(m);
+      const row = el('div', 'list-row');
+      const main = el('div', 'lr-main');
+      main.append(el('div', 'lr-name', line.who));
+      main.append(el('p', 'lr-desc', line.text));
+      main.append(el('p', 'lr-desc muted small', m.time ? relTime(m.time) : ''));
+      row.append(main);
+      list.append(row);
+    }
+    threatsWrap.append(list);
+  }
+
   // ------------------------------------------------------------- view switching
   function paintAll() {
     wrap.hidden = view !== 'alarms';
     rulesWrap.hidden = view !== 'rules';
     pushWrap.hidden = view !== 'push';
+    threatsWrap.hidden = view !== 'threats';
     sevSel.hidden = stateSel.hidden = searchBox.hidden = archToggle.hidden = view !== 'alarms';
   }
 

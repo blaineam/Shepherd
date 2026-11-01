@@ -33,7 +33,7 @@ const (
 	TypePrivateRelay       = "private-relay-attempt"
 	TypePortOpened         = "port-opened"          // for the ports feature
 	TypeNewInboundExposure = "new-inbound-exposure" // for the ports feature
-	TypeThreatMatch        = "threat-match"         // for threat intelligence
+	TypeThreatMatch        = "threat-match"         // internal/threats
 	TypeSelfUpdate         = "self-update"          // for self-update
 	TypeVulnerabilityFound = "vulnerability-found"  // internal/vulnscan
 	TypeNetworkDegraded    = "network-degraded"     // internal/nethealth

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   SEVERITIES, STATES, severityLabel, severityBadgeClass, stateLabel,
   MUTE_PRESETS, MUTE_SCOPES, alarmQuery, bulkSummary, ruleMatchSummary,
+  feedLine, matchLine,
 } from '../js/alarms.js';
 
 test('severity and state presentation', () => {
@@ -49,4 +50,23 @@ test('ruleMatchSummary lists every non-empty field', () => {
   assert.equal(ruleMatchSummary({ types: ['new-device'], device_ids: ['d1', 'd2'] }), 'type: new-device; device: d1, d2');
   assert.equal(ruleMatchSummary({ domains: ['ads.example'], key_prefixes: ['k|'] }), 'domain: ads.example; key: k|');
   assert.equal(ruleMatchSummary({ group_ids: ['g1'] }), 'group: g1');
+});
+
+test('feedLine words a feed that is fresh, stale, failed or missing', () => {
+  const now = Date.parse('2026-11-01T12:00:00Z');
+  assert.equal(feedLine({}).tone, 'muted');
+  assert.match(feedLine({ count: 1200, updated: '2026-11-01T11:50:00Z' }, now).text, /1,200 entries, updated under an hour ago/);
+  assert.match(feedLine({ count: 5, updated: '2026-11-01T06:00:00Z' }, now).text, /6 h ago/);
+  const bad = feedLine({ count: 5, error: 'HTTP 503' });
+  assert.equal(bad.tone, 'warn');
+  assert.match(bad.text, /keeping 5 entries/);
+  assert.equal(feedLine(null).tone, 'muted');
+});
+
+test('matchLine says who reached for what', () => {
+  assert.match(matchLine({ device: 'Laptop', name: 'x.bad.example.com', indicator: 'bad.example.com', feed_id: 'urlhaus', action: 'blocked' }).text,
+    /Laptop was blocked looking up x\.bad\.example\.com \(under bad\.example\.com\), on the urlhaus feed\./);
+  assert.match(matchLine({ client: '192.0.2.5', name: 'cdn.example.org', indicator: '192.0.2.0/24', kind: 'ip', feed_id: 'feodo', action: 'allowed' }).text,
+    /10\.0\.0\.5 looked up cdn\.example\.org which resolved into 192\.0\.2\.0\/24/);
+  assert.equal(matchLine(null).who, 'A device');
 });

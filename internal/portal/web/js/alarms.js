@@ -92,3 +92,24 @@ export function ruleMatchSummary(match) {
   add('key', match.key_prefixes);
   return parts.join('; ');
 }
+
+// ---- Threat feeds (docs/THREATS.md)
+
+// feedLine words one feed's state for the Threats tab.
+export function feedLine(f, now = Date.now()) {
+  const feed = f || {};
+  if (feed.error) return { tone: 'warn', text: 'Could not update: ' + feed.error + (feed.count ? ' (keeping ' + feed.count.toLocaleString() + ' entries from before)' : '') };
+  if (!feed.updated || !feed.count) return { tone: 'muted', text: 'Not downloaded yet' };
+  const age = Math.max(0, now - Date.parse(feed.updated));
+  const h = Math.round(age / 3600000);
+  return { tone: 'good', text: feed.count.toLocaleString() + ' entries, updated ' + (h < 1 ? 'under an hour ago' : h + ' h ago') };
+}
+
+// matchLine words one match: who, what, and what the engine did about it.
+export function matchLine(m) {
+  const x = m || {};
+  const who = x.device || x.client || 'A device';
+  const did = x.action === 'blocked' ? 'was blocked looking up' : 'looked up';
+  const via = x.kind === 'ip' ? ' which resolved into ' + x.indicator : (x.indicator && x.indicator !== x.name ? ' (under ' + x.indicator + ')' : '');
+  return { who, text: who + ' ' + did + ' ' + (x.name || x.indicator || '?') + via + ', on the ' + (x.feed_id || '?') + ' feed.' };
+}

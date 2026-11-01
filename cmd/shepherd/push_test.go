@@ -94,6 +94,13 @@ func TestStartPushKeepsItsKeysAndSubscriptionsAcrossRestarts(t *testing.T) {
 	if err := again.Remove(devs[0].ID); err != nil {
 		t.Fatal(err)
 	}
+	if err := again.Remove(devs[0].ID); err == nil {
+		t.Fatal("removing twice should fail")
+	}
+	sub.Keys.P256dh = "AAAA"
+	if _, err := again.Subscribe(sub, "x", "ua"); err == nil {
+		t.Fatal("a bad key should be refused")
+	}
 	if n := len(again.Devices()); n != 0 {
 		t.Fatalf("devices after remove = %d", n)
 	}

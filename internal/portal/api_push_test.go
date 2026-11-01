@@ -6,6 +6,7 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 
@@ -30,6 +31,17 @@ func (f *fakePush) Subscribe(sub webpush.BrowserSubscription, name, ua string) (
 }
 
 var _ PushService = (*fakePush)(nil)
+
+// brokenPush fails every mutation with an error that is not "not found".
+type brokenPush struct{ fakePush }
+
+func (b *brokenPush) Remove(string) error { return errors.New("disk full") }
+
+func TestPushReportsOtherFailuresAsBadRequests(t *testing.T) {
+	h := newHarness(t)
+	h.srv.Push = &brokenPush{*newFakePush()}
+	h.expect("DELETE", "/api/alarms/push/x", "", 400)
+}
 
 // testP256dh is a real P-256 public point, generated per run, since the
 // store refuses a key that is not one.

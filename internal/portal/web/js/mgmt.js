@@ -70,6 +70,8 @@ export function createMgmt(api) {
     undoAlarms: (handle) => post('/api/alarms/undo', { handle }),
     alarmsSummary: () => api('/api/alarms/summary'),
     alarmTypes: () => api('/api/alarms/types'),
+    threats: () => api('/api/threats'),
+    refreshThreats: () => post('/api/threats/refresh', {}),
     pushStatus: () => api('/api/alarms/push'),
     pushSubscribe: (body) => post('/api/alarms/push/subscribe', body),
     pushTest: () => post('/api/alarms/push/test', {}),

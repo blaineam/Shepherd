@@ -130,6 +130,14 @@ token = ""                 # bearer token, or leave empty and use username/passw
 username = ""
 password = ""
 
+[threats]
+# Threat feeds (docs/THREATS.md): four curated lists of malware hosts, botnet
+# controllers and hijacked networks (abuse.ch and Spamhaus), matched against
+# every lookup's name and answer and raised as threat-match alarms naming the
+# device. A few hundred kilobytes each, refreshed on the interval.
+enabled = true
+interval_hours = 6
+
 [accountability]
 # Accountability-partner email alerts (docs/ACCOUNTABILITY.md): email a
 # trusted contact when a device in a group or scope they chose accesses a

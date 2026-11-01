@@ -39,6 +39,7 @@ type Config struct {
 	Accountability Accountability `toml:"accountability"`
 	Portscan       Portscan       `toml:"portscan"`
 	Vulnscan       Vulnscan       `toml:"vulnscan"`
+	Threats        Threats        `toml:"threats"`
 	TLS            TLS            `toml:"tls"`
 	Nethealth      Nethealth      `toml:"nethealth"`
 	ReverseProxy   ReverseProxy   `toml:"reverseproxy"`
@@ -308,6 +309,18 @@ type Vulnscan struct {
 	IntervalSeconds int `toml:"interval_seconds"`
 }
 
+// Threats controls the threat-intelligence feeds (internal/threats,
+// docs/THREATS.md): curated lists of malware hosts, botnet controllers and
+// hijacked networks, matched against every DNS query's name and answer and
+// raised as alarms. On by default: the feeds are a few hundred kilobytes
+// refreshed every few hours, the same kind of download the blocklists
+// already make, and a match costs a few map lookups.
+type Threats struct {
+	Enabled bool `toml:"enabled"`
+	// IntervalHours is how often the feeds are re-downloaded.
+	IntervalHours int `toml:"interval_hours"`
+}
+
 // TLS obtains and renews a real certificate for the portal's own hostname
 // via the ACME protocol's DNS-01 challenge against Cloudflare DNS
 // (docs/TLS.md) — the first, additive step of roadmap item 18 ("Access").
@@ -529,6 +542,7 @@ func Default() Config {
 		Accountability: Accountability{Enabled: true, SMTP: AccountabilitySMTP{Port: 587, TLS: "starttls"}},
 		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600, WANExposure: WANExposure{Enabled: true, RefreshIntervalSeconds: 600}},
 		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600},
+		Threats:        Threats{Enabled: true, IntervalHours: 6},
 		Nethealth:      Nethealth{Enabled: false, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
 		ReverseProxy:   ReverseProxy{Listen: ":8443"},
 		// Watch mode is opt-in. It was on, under the protect-by-default
@@ -634,6 +648,9 @@ func (c Config) Validate() error {
 	}
 	if c.Portal.IdleLockMinutes < 0 {
 		return errors.New("portal.idle_lock_minutes must not be negative")
+	}
+	if c.Threats.IntervalHours < 1 {
+		return errors.New("threats.interval_hours must be at least 1")
 	}
 	if c.Vulnscan.IntervalSeconds < 300 {
 		return errors.New("vulnscan.interval_seconds must be at least 300")

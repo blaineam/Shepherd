@@ -532,6 +532,27 @@ func TestAlarmsDefaults(t *testing.T) {
 	}
 }
 
+func TestThreatsDefaultsAndValidation(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Threats.Enabled || cfg.Threats.IntervalHours != 6 {
+		t.Errorf("threats defaults = %+v", cfg.Threats)
+	}
+	cfg = writeCfg(t, "[threats]\nenabled = false\ninterval_hours = 24\n")
+	if cfg.Threats.Enabled || cfg.Threats.IntervalHours != 24 {
+		t.Errorf("threats overrides = %+v", cfg.Threats)
+	}
+	path := filepath.Join(t.TempDir(), "c.toml")
+	if err := os.WriteFile(path, []byte("[threats]\ninterval_hours = 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "threats.interval_hours") {
+		t.Errorf("interval 0 should be rejected: %v", err)
+	}
+}
+
 func TestAlarmsOverrides(t *testing.T) {
 	cfg := writeCfg(t, `[alarms]
 enabled = false

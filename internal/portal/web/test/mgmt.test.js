@@ -238,6 +238,14 @@ test('nethealth endpoints', async () => {
   assert.deepEqual([calls[4][0], calls[4][1].method, calls[4][1].body], ['/api/nethealth/bufferbloat/run', 'POST', '{}']);
 });
 
+test('threat feed endpoints', async () => {
+  const { calls, m } = rig();
+  await m.threats();
+  assert.equal(calls[0][0], '/api/threats');
+  await m.refreshThreats();
+  assert.deepEqual([calls[1][0], calls[1][1].method], ['/api/threats/refresh', 'POST']);
+});
+
 test('push endpoints', async () => {
   const { calls, m } = rig();
   await m.pushStatus();

@@ -35,6 +35,7 @@ import (
 	"shepherd/internal/reverseproxy"
 	"shepherd/internal/secrets"
 	"shepherd/internal/settings"
+	"shepherd/internal/threats"
 	"shepherd/internal/traffic"
 	"shepherd/internal/vulnscan"
 	"shepherd/internal/watch"
@@ -101,6 +102,10 @@ type Deps struct {
 	// Push is Web Push's key and subscription store (docs/ALARMS.md). Nil
 	// means Web Push is off; /api/alarms/push says so.
 	Push PushService
+	// Threats is the threat-feed matcher (docs/THREATS.md); nil means it is
+	// off, and ThreatsEnabled says so to the portal.
+	Threats        *threats.Engine
+	ThreatsEnabled bool
 
 	// Accountability manages accountability-partner contacts and
 	// subscriptions (docs/ACCOUNTABILITY.md). Nil means the feature is not
@@ -616,6 +621,8 @@ func (s *Server) routes() {
 	h("GET /api/alarms/rules", s.listAlarmRules)
 	h("POST /api/alarms/rules", s.createAlarmRule)
 	h("DELETE /api/alarms/rules/{id}", s.deleteAlarmRule)
+	h("GET /api/threats", s.getThreats)
+	h("POST /api/threats/refresh", s.refreshThreats)
 	h("GET /api/alarms/push", s.getPush)
 	h("POST /api/alarms/push/subscribe", s.subscribePush)
 	h("POST /api/alarms/push/test", s.testPush)

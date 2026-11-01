@@ -13,6 +13,16 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Threat feeds: which device reached for a known bad name or address.** Four curated feeds
+  (URLhaus, ThreatFox and Feodo Tracker from abuse.ch, and Spamhaus DROP) are downloaded every six
+  hours, cached under the data directory, and matched against every recorded DNS query's name and
+  answer, blocked or not: a name matches itself or a parent, an address matches exactly or by
+  prefix. A hit raises a `threat-match` alarm attributed to the device, keyed by device and
+  indicator so a beacon is one alarm with a rising count, with the name, the indicator, the feed and
+  what the engine did with the query as evidence. The Alarms screen gains a **Threat feeds** tab
+  with each feed's state, a refresh button and the recent matches. `[threats]` is on by default;
+  the cost is a few map lookups per query and a few hundred kilobytes per feed. Local AI is set
+  aside by decision. See docs/THREATS.md.
 - **Web Push delivery, end to end.** `internal/webpush` had the sender, VAPID keys and subscription
   store for months, waiting on HTTPS; the portal has it now through `[tls]`, so `cmd/shepherd` wires
   it in: a VAPID key pair generated once under the data directory, subscriptions saved beside it, and
