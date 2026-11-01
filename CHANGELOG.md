@@ -74,12 +74,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   the live host:
 
   ```
-  <10us: 0    <100us: 13    <1ms: 4    <10ms: 0    >10ms: 0
+  <10us: 9    <100us: 17,093    <1ms: 4,229    <10ms: 6    >10ms: 0
   ```
 
-  **Nothing in the first bucket.** A frame duplicated inside the host -- in the kernel, in the
-  driver, on the way to the XDP hook -- comes back in under ten microseconds. These come back in
-  tens to hundreds, which is a wired round trip. So the frames genuinely leave the interface and the
+  21,331 echoed frames, of which **nine -- 0.04% -- came back fast enough to have stayed inside the
+  machine.** A frame duplicated inside the host, in the kernel or the driver or on the way to the
+  XDP hook, returns in under ten microseconds. Eighty per cent of these returned in tens of
+  microseconds and the rest within a millisecond, which is a wired round trip and nothing else. So the frames genuinely leave the interface and the
   segment hands the device's frame back to Shepherd's port, which agrees with `examined` being 0.972
   of the interface's `rx_packets` and with both return-path counters reading zero: what comes back is
   the device's *original* frame, not Shepherd's rewritten one.
