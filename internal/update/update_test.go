@@ -93,13 +93,18 @@ func TestLatestOnEachChannel(t *testing.T) {
 	if _, err := n.Latest(context.Background(), ChannelStable); err == nil {
 		t.Fatal("a latest without a version should fail")
 	}
-	if _, err := n.Latest(context.Background(), ChannelBeta); err == nil {
-		t.Fatal("no releases should fail")
+	if _, err := n.Latest(context.Background(), ChannelBeta); !errors.Is(err, ErrNoRelease) {
+		t.Fatalf("no releases with a version: %v", err)
 	}
+	// A repository with only betas has no stable release: 404 from GitHub,
+	// which is a state, not a failure.
 	gone := releaseServer(t, `[]`, "")
 	g := Checker{Repo: "o/r", API: gone.URL, Client: gone.Client()}
-	if _, err := g.Latest(context.Background(), ChannelStable); err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+	if _, err := g.Latest(context.Background(), ChannelStable); !errors.Is(err, ErrNoRelease) {
 		t.Fatalf("404: %v", err)
+	}
+	if _, err := g.Latest(context.Background(), ChannelBeta); !errors.Is(err, ErrNoRelease) {
+		t.Fatalf("empty list: %v", err)
 	}
 	if (Checker{}).repo() != DefaultRepo || (Checker{}).api() != "https://api.github.com" || (Checker{}).client() == nil {
 		t.Fatal("defaults")

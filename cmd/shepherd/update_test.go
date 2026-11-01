@@ -105,6 +105,14 @@ func TestStartUpdateChecksRaisesAndReportsStatus(t *testing.T) {
 	if st := u3.Status().(updateStatus); st.LastError == "" {
 		t.Fatalf("a failed check should record its error: %+v", st)
 	}
+	// A channel with no release yet: a state the card explains, not an error.
+	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	t.Cleanup(empty.Close)
+	u5 := &updater{cfg: cfg, current: "1.0.0", exe: u.exe, checker: update.Checker{Repo: "o/r", API: empty.URL, Client: empty.Client()}}
+	u5.version, _ = update.ParseVersion("1.0.0")
+	if st := u5.CheckNow(ctx).(updateStatus); st.LastError != "" || st.Available || !strings.Contains(st.Reason, "no release has been published on the stable channel") {
+		t.Fatalf("no release yet = %+v", st)
+	}
 	// Off in the configuration.
 	cfg.Update.Enabled = false
 	if u, err := startUpdate(ctx, cfg, nil); u != nil || err != nil {

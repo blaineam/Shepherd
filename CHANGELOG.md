@@ -34,7 +34,9 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   preferences, and the Notifications tab's new **Delivery** card sets the severity sent at once,
   whether lower alarms wait for the digest, the digest's interval or time of day, and the time zone.
 - **Threat feeds: which device reached for a known bad name or address.** Four curated feeds
-  (URLhaus, ThreatFox and Feodo Tracker from abuse.ch, and Spamhaus DROP) are downloaded every six
+  (HaGeZi's Threat Intelligence Feeds mini edition, abuse.ch's SSL Blacklist and Feodo Tracker,
+  and Spamhaus DROP; URLhaus and ThreatFox went behind an abuse.ch Auth-Key the same day and were
+  swapped out) are downloaded every six
   hours, cached under the data directory, and matched against every recorded DNS query's name and
   answer, blocked or not: a name matches itself or a parent, an address matches exactly or by
   prefix. A hit raises a `threat-match` alarm attributed to the device, keyed by device and

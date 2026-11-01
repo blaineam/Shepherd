@@ -22,15 +22,21 @@ the name, what matched, which feed, and whether the query was allowed, cached or
 
 ## The feeds
 
-Built in, chosen for being small, plain text, permissively licensed and maintained by people whose
-job it is:
+Built in, chosen for being plain text, permissively licensed, fetched without a key and maintained
+by people whose job it is:
 
 | Feed | Lists | Kind |
 |---|---|---|
-| URLhaus (abuse.ch) | sites distributing malware | names |
-| ThreatFox (abuse.ch) | names tied to malware and botnets | names |
+| HaGeZi Threat Intelligence Feeds, mini edition | names tied to malware, phishing, scams and botnets | names |
+| SSL Blacklist (abuse.ch) | botnet command-and-control servers behind known bad certificates | addresses |
 | Feodo Tracker (abuse.ch) | botnet command-and-control servers | addresses |
 | Spamhaus DROP | hijacked and criminal-controlled networks | address prefixes |
+
+The address feeds are a few kilobytes each; the name feed is a few megabytes, held in memory as a
+set, which is the one place a broad list earns its size. abuse.ch's URLhaus and ThreatFox host
+files were built in until 2026-11-01, when abuse.ch put its downloads behind an Auth-Key and the
+old addresses began answering HTTP 410; Shepherd fetches feeds without credentials, so they are out
+until a keyed fetch exists.
 
 Each is downloaded in its own format: hosts-file lines (`127.0.0.1 name`), bare names, bare
 addresses, CIDR prefixes with trailing comments. Lines that do not parse are skipped, not fatal. A

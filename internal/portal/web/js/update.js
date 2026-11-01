@@ -9,6 +9,7 @@ export function updateLine(u) {
   if (s.applying) return { tone: 'warn', text: 'Installing ' + (s.latest_version || 'the update') + ' and restarting…' };
   if (s.applied) return { tone: 'good', text: s.applied + ' is installed; Shepherd is restarting into it.' };
   if (s.last_error && !s.latest_version) return { tone: 'warn', text: 'Could not check for updates: ' + s.last_error };
+  if (!s.latest_version && s.last_checked && s.reason) return { tone: 'muted', text: s.reason.charAt(0).toUpperCase() + s.reason.slice(1) + ' (this is ' + s.current + ').' };
   if (!s.latest_version) return { tone: 'muted', text: 'Not checked yet.' };
   if (!s.available) return { tone: 'good', text: 'Up to date (' + s.current + ').' };
   return { tone: 'warn', text: s.latest_version + ' is available; this is ' + s.current + '.' };

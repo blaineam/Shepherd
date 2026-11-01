@@ -190,6 +190,11 @@ type ghRelease struct {
 	} `json:"assets"`
 }
 
+// ErrNoRelease says the channel has no release yet: a repository that
+// has only published betas has no "latest" stable release, and GitHub
+// answers 404. It is a state, not a failure.
+var ErrNoRelease = errors.New("update: no release has been published on this channel yet")
+
 func (c Checker) get(ctx context.Context, path string, v any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.api()+path, nil)
 	if err != nil {
@@ -202,6 +207,9 @@ func (c Checker) get(ctx context.Context, path string, v any) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrNoRelease
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("update: GitHub answered HTTP %d", resp.StatusCode)
 	}
@@ -251,7 +259,7 @@ func (c Checker) Latest(ctx context.Context, ch Channel) (Release, error) {
 		}
 	}
 	if !found {
-		return Release{}, errors.New("update: no release found")
+		return Release{}, ErrNoRelease
 	}
 	return best, nil
 }

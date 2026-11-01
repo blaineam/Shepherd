@@ -6,6 +6,7 @@ test('updateLine covers off, unchecked, failed, current, available, applying and
   assert.equal(updateLine(null).tone, 'muted');
   assert.equal(updateLine({ enabled: false }).tone, 'muted');
   assert.match(updateLine({ enabled: true, status: {} }).text, /Not checked/);
+  assert.match(updateLine({ enabled: true, status: { current: '1.0.0', last_checked: '2026-11-01T00:00:00Z', reason: 'no release has been published on the stable channel yet' } }).text, /^No release has been published on the stable channel yet \(this is 1\.0\.0\)\./);
   assert.match(updateLine({ enabled: true, status: { last_error: 'HTTP 503' } }).text, /HTTP 503/);
   assert.equal(updateLine({ enabled: true, status: { current: '1.0.0', latest_version: '1.0.0', available: false } }).tone, 'good');
   const avail = updateLine({ enabled: true, status: { current: '1.0.0', latest_version: '1.1.0', available: true } });

@@ -46,6 +46,7 @@ type updater struct {
 	lastError   string
 	applying    bool
 	applied     string
+	noRelease   bool // the channel has no release yet (update.ErrNoRelease)
 }
 
 // startUpdate wires the update checker: a read of the release list on the
@@ -111,13 +112,18 @@ func (u *updater) Check(ctx context.Context) {
 	rel, err := u.checker.Latest(cctx, u.channel())
 	u.mu.Lock()
 	u.lastChecked = time.Now()
+	if errors.Is(err, update.ErrNoRelease) {
+		u.lastError, u.noRelease, u.latest = "", true, nil
+		u.mu.Unlock()
+		return
+	}
 	if err != nil {
 		u.lastError = err.Error()
 		u.mu.Unlock()
 		log.Printf("update: checking for a newer release: %v", err)
 		return
 	}
-	u.lastError = ""
+	u.lastError, u.noRelease = "", false
 	u.latest = &rel
 	newer := u.newer(rel)
 	u.mu.Unlock()
@@ -182,6 +188,8 @@ func (u *updater) Status() any {
 // canApply says whether "update now" would work here, and why not.
 func (u *updater) canApply() (bool, string) {
 	switch {
+	case u.latest == nil && u.noRelease:
+		return false, "no release has been published on the " + string(u.channel()) + " channel yet"
 	case u.latest == nil:
 		return false, "no release has been checked yet"
 	case !u.newer(*u.latest):

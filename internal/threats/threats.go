@@ -48,13 +48,16 @@ type Feed struct {
 	Describes string `json:"describes"`
 }
 
-// Builtin is the curated set: small, plain-text, permissively licensed
-// and maintained by people whose job it is. Each is a few hundred
-// kilobytes at most.
+// Builtin is the curated set: plain-text, permissively licensed, fetched
+// without a key, and maintained by people whose job it is. The address
+// feeds are a few kilobytes; the name feed (HaGeZi's Threat Intelligence
+// Feeds, mini edition) is a few megabytes, the one place a broad list
+// earns its size. abuse.ch's URLhaus and ThreatFox downloads were built
+// in until 2026-11-01, when they went behind an Auth-Key (HTTP 410).
 func Builtin() []Feed {
 	return []Feed{
-		{ID: "urlhaus", Name: "URLhaus (abuse.ch)", Kind: KindDomain, URL: "https://urlhaus.abuse.ch/downloads/hostfile/", Describes: "a site distributing malware"},
-		{ID: "threatfox", Name: "ThreatFox (abuse.ch)", Kind: KindDomain, URL: "https://threatfox.abuse.ch/downloads/hostfile/", Describes: "a name tied to malware or a botnet"},
+		{ID: "hagezi-tif", Name: "HaGeZi Threat Intelligence (mini)", Kind: KindDomain, URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt", Describes: "a name tied to malware, phishing, scams or botnets"},
+		{ID: "sslbl", Name: "SSL Blacklist (abuse.ch)", Kind: KindIP, URL: "https://sslbl.abuse.ch/blacklist/sslipblacklist.txt", Describes: "a botnet command-and-control server behind a known bad certificate"},
 		{ID: "feodo", Name: "Feodo Tracker (abuse.ch)", Kind: KindIP, URL: "https://feodotracker.abuse.ch/downloads/ipblocklist.txt", Describes: "a botnet command-and-control server"},
 		{ID: "spamhaus-drop", Name: "Spamhaus DROP", Kind: KindIP, URL: "https://www.spamhaus.org/drop/drop.txt", Describes: "a hijacked or criminal-controlled network"},
 	}
