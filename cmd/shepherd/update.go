@@ -158,6 +158,8 @@ type updateStatus struct {
 	State         update.State     `json:"state"`
 	DataDirBytes  int64            `json:"data_dir_bytes"`
 	DataDirParts  map[string]int64 `json:"data_dir_parts"`
+	// BudgetBytes is [retention] max_mb in bytes; 0 means no budget.
+	BudgetBytes int64 `json:"budget_bytes,omitempty"`
 }
 
 // Status implements portal.Updater.
@@ -173,6 +175,7 @@ func (u *updater) Status() any {
 	st.CanApply, st.Reason = u.canApply()
 	st.State, _ = update.LoadState(u.cfg.DataDir)
 	st.DataDirBytes, st.DataDirParts = update.DirSize(u.cfg.DataDir)
+	st.BudgetBytes = int64(u.cfg.Retention.MaxMB) << 20
 	return st
 }
 

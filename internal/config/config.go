@@ -41,6 +41,7 @@ type Config struct {
 	Vulnscan       Vulnscan       `toml:"vulnscan"`
 	Threats        Threats        `toml:"threats"`
 	Update         Update         `toml:"update"`
+	Retention      Retention      `toml:"retention"`
 	TLS            TLS            `toml:"tls"`
 	Nethealth      Nethealth      `toml:"nethealth"`
 	ReverseProxy   ReverseProxy   `toml:"reverseproxy"`
@@ -471,6 +472,19 @@ type History struct {
 	KeyFile       string `toml:"key_file"`       // default <data_dir>/history/history.key
 }
 
+// Retention is the one budget for everything Shepherd keeps on disk
+// (docs/UPDATE.md "Retention"). MaxMB 0, the default, leaves each store to
+// its own cap (history.max_mb; 8 MiB each for bandwidth and network health
+// history). A value caps the data directory as a whole: bandwidth and
+// network health history each get up to 8 MiB, a share is reserved for the
+// small files (devices, alarms, the threat-feed cache), and query history
+// gets the rest, never more than history.max_mb when that is set too. The
+// Overview's Software card shows how much of the budget is in use and a
+// low-severity alarm says when the directory has grown past it anyway.
+type Retention struct {
+	MaxMB int `toml:"max_mb"`
+}
+
 // Map controls the globe's location data, a free GeoIP database downloaded
 // once a month and used entirely on this machine.
 type Map struct {
@@ -624,6 +638,9 @@ func (c Config) Validate() error {
 	}
 	if c.History.RetentionDays < 0 || c.History.MaxMB < 0 {
 		return errors.New("history.retention_days and history.max_mb must not be negative")
+	}
+	if c.Retention.MaxMB < 0 {
+		return errors.New("retention.max_mb must not be negative")
 	}
 	if c.Devices.NeighborIntervalSeconds < 5 || c.Devices.SaveIntervalSeconds < 5 {
 		return errors.New("devices.neighbor_interval_seconds and devices.save_interval_seconds must be at least 5")

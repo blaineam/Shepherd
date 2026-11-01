@@ -249,6 +249,7 @@ alarm is recorded at medium severity on all channels, so a typo never loses an a
 | `new-inbound-exposure` (future) | critical | all | no |
 | `threat-match` (internal/threats) | critical | all | no |
 | `self-update` (internal/update) | low | all | no |
+| `storage-over-budget` (cmd/shepherd, docs/UPDATE.md "Retention") | low | portal | no |
 | `vulnerability-found` (internal/vulnscan) | high (the finding's own severity overrides this per event) | all | no |
 | `arp-gateway-changed` (internal/arp) | high | all | no |
 | `arp-spoofing` (internal/arp) | critical | all | no |
@@ -514,6 +515,8 @@ backs the portal's subscription endpoints:
 | `PATCH /api/alarms/push/{id}` | `{"name": "..."}` |
 | `DELETE /api/alarms/push/{id}` | forgets the browser |
 | `POST /api/alarms/push/test` | raises the bypassing `test` alarm, delivered over every channel |
+| `GET /api/alarms/preferences` | `preferences`: the whole `Preferences` structure (below) |
+| `PUT /api/alarms/preferences` | replaces it with the body; 400 with the reason when `Validate` refuses, and nothing changes |
 
 **In the portal**, the Alarms screen has a **Notifications** tab: whether this browser can subscribe
 (HTTPS, a home-screen web app on iOS, permission), a button that registers the service worker
@@ -596,9 +599,10 @@ constraints it respects.
 - **Web Push against a real push service.** The wiring is complete and tested against loopback
   push services; it has not yet been exercised with a real browser on the HTTPS portal, which is the
   next thing to do on the maintainer's NAS.
-- **Preferences API and UI.** `Engine.Preferences`/`SetPreferences` (channels, digest, quiet hours,
-  learning mode, per-type switches, time zone, portal URL) have no `/api/alarms/preferences` endpoint or
-  settings screen yet; they currently only take the engine's own defaults (`DefaultPreferences`).
+- **The rest of the preferences in the UI.** `GET`/`PUT /api/alarms/preferences` read and write the whole
+  `Preferences`, and the Notifications tab's **Delivery** card edits the delivery part: the severity sent
+  at once, whether the digest is on, its interval or time of day, and the time zone. Channels, quiet
+  hours, learning mode, per-type switches and the portal URL are only reachable over the API so far.
 - **Delivery log and channel status in the portal.** `Router.Log` and `Router.Status` are not exposed over
   the API or shown anywhere in the UI yet, so a failing ntfy delivery is currently only visible in the
   server's own logs.

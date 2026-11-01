@@ -12,6 +12,7 @@ import { pushSupport, permissionLine, urlBase64ToUint8Array, subscribeBody, defa
 import {
   SEVERITIES, STATES, severityLabel, severityBadgeClass, stateLabel,
   MUTE_PRESETS, MUTE_SCOPES, bulkSummary, ruleMatchSummary, feedLine, matchLine,
+  hoursOf, deliveryLine, digestFromForm,
 } from './alarms.js';
 
 const PAGE_SIZE = 50;
@@ -51,7 +52,7 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
       view = id;
       paintAll();
       if (id === 'rules') loadRules();
-      else if (id === 'push') loadPush();
+      else if (id === 'push') { loadPush(); loadPrefs(); }
       else if (id === 'threats') loadThreats();
       else load(true);
     }, 'Alarms view',
@@ -134,9 +135,11 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
   rulesWrap.hidden = true;
   const pushWrap = el('section', 'al-rules-wrap panel-lite');
   pushWrap.hidden = true;
+  const prefsWrap = el('section', 'al-rules-wrap panel-lite');
+  prefsWrap.hidden = true;
   const threatsWrap = el('section', 'al-rules-wrap panel-lite');
   threatsWrap.hidden = true;
-  main.append(wrap, rulesWrap, pushWrap, threatsWrap);
+  main.append(wrap, rulesWrap, pushWrap, prefsWrap, threatsWrap);
   root.append(head, main);
 
   // ------------------------------------------------------------- loading
@@ -419,6 +422,96 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
     rulesWrap.append(list);
   }
 
+  // ------------------------------------------------------------- delivery
+  // The alarm preferences' delivery part (docs/ALARMS.md "When"): which
+  // severities go out at once and when the digest carries the rest. The
+  // whole preferences object is read and written back with just these
+  // fields changed, so nothing else is disturbed.
+  let prefs = null;
+  let prefsError = null;
+
+  async function loadPrefs() {
+    try {
+      prefs = (await mgmt.alarmPrefs()).preferences;
+      prefsError = null;
+    } catch (e) { prefsError = e; }
+    paintPrefs();
+  }
+
+  function paintPrefs() {
+    prefsWrap.replaceChildren();
+    const h = el('div', 'card-h');
+    h.append(el('h3', 'card-t', 'Delivery'));
+    prefsWrap.append(h);
+    if (prefsError) {
+      prefsWrap.append(unavailable(prefsError) ? unavailableCard('Delivery settings') : emptyState('Could not load delivery settings', prefsError.message, button('Try again', 'ghost', loadPrefs)));
+      return;
+    }
+    if (!prefs) return;
+    prefsWrap.append(el('p', 'al-push-line muted', deliveryLine(prefs)));
+
+    const form = el('form', 'al-prefs');
+    const minSel = el('select');
+    for (const sv of SEVERITIES) { const o = el('option', '', severityLabel(sv)); o.value = sv; minSel.append(o); }
+    minSel.value = prefs.immediate_min || 'high';
+    form.append(labelWrap('Send at once from', minSel));
+
+    const d = prefs.digest || {};
+    const onSel = el('select');
+    for (const [v, t] of [['on', 'On: lower alarms are gathered'], ['off', 'Off: everything is sent at once']]) { const o = el('option', '', t); o.value = v; onSel.append(o); }
+    onSel.value = d.enabled ? 'on' : 'off';
+    form.append(labelWrap('Digest', onSel));
+
+    const modeSel = el('select');
+    for (const [v, t] of [['every', 'Every so many hours'], ['at', 'At a time of day']]) { const o = el('option', '', t); o.value = v; modeSel.append(o); }
+    modeSel.value = d.at ? 'at' : 'every';
+    const modeRow = labelWrap('Digest timing', modeSel);
+    form.append(modeRow);
+
+    const hours = el('input');
+    hours.type = 'number'; hours.min = '0.02'; hours.step = '0.5';
+    hours.value = String(hoursOf(d.every) || 6);
+    const hoursRow = labelWrap('Hours between digests', hours);
+    form.append(hoursRow);
+
+    const at = el('input');
+    at.type = 'time'; at.value = d.at || '08:00';
+    const atRow = labelWrap('Digest time', at);
+    form.append(atRow);
+
+    const tz = el('input');
+    tz.type = 'text'; tz.placeholder = 'Server\'s local zone'; tz.value = prefs.timezone || '';
+    tz.setAttribute('autocomplete', 'off');
+    form.append(labelWrap('Time zone (IANA name)', tz));
+
+    const sync = () => {
+      const on = onSel.value === 'on';
+      modeRow.hidden = !on;
+      hoursRow.hidden = !on || modeSel.value !== 'every';
+      atRow.hidden = !on || modeSel.value !== 'at';
+    };
+    onSel.addEventListener('change', sync);
+    modeSel.addEventListener('change', sync);
+    sync();
+
+    const acts = el('div', 'al-push-acts');
+    const savePrefs = async () => {
+      const r = digestFromForm({ enabled: onSel.value === 'on', mode: modeSel.value, hours: hours.value, at: at.value });
+      if (r.error) { notify(r.error); return; }
+      save.disabled = true;
+      try {
+        prefs = (await mgmt.setAlarmPrefs({ ...prefs, immediate_min: minSel.value, digest: r.digest, timezone: tz.value.trim() })).preferences;
+        notify('Delivery settings saved');
+        paintPrefs();
+      } catch (e) { notify('Could not save: ' + e.message); save.disabled = false; }
+    };
+    const save = button('Save delivery settings', 'primary', savePrefs);
+    acts.append(save);
+    form.append(acts);
+    form.addEventListener('submit', (ev) => { ev.preventDefault(); savePrefs(); });
+    prefsWrap.append(form);
+  }
+
   // ------------------------------------------------------------- notifications
   // Web Push for this browser. The server keeps the subscriptions; this
   // browser's own is recognised by the id the server gave it at subscribe
@@ -651,6 +744,7 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
     wrap.hidden = view !== 'alarms';
     rulesWrap.hidden = view !== 'rules';
     pushWrap.hidden = view !== 'push';
+    prefsWrap.hidden = view !== 'push';
     threatsWrap.hidden = view !== 'threats';
     sevSel.hidden = stateSel.hidden = searchBox.hidden = archToggle.hidden = view !== 'alarms';
   }

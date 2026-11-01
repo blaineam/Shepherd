@@ -75,6 +75,8 @@ export function createMgmt(api) {
     applyUpdate: () => post('/api/update/apply', {}),
     threats: () => api('/api/threats'),
     refreshThreats: () => post('/api/threats/refresh', {}),
+    alarmPrefs: () => api('/api/alarms/preferences'),
+    setAlarmPrefs: (prefs) => api('/api/alarms/preferences', { method: 'PUT', body: J(prefs) }),
     pushStatus: () => api('/api/alarms/push'),
     pushSubscribe: (body) => post('/api/alarms/push/subscribe', body),
     pushTest: () => post('/api/alarms/push/test', {}),

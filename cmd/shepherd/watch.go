@@ -20,8 +20,13 @@ import (
 // itself as it records, so nothing else has to remember to.
 func openTraffic(cfg config.Config) *traffic.Store {
 	path := filepath.Join(cfg.DataDir, "traffic.json")
+	ret := traffic.DefaultRetention()
+	if n := capsFor(cfg).Traffic; n > 0 {
+		ret.MaxBytes = n
+	}
 	store := traffic.NewStore(traffic.Options{
 		Path:        path,
+		Retention:   ret,
 		OnSaveError: func(err error) { log.Printf("traffic: saving history: %v", err) },
 	})
 	if err := store.Load(path); err != nil && !os.IsNotExist(err) {

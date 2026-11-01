@@ -35,6 +35,7 @@ const (
 	TypeNewInboundExposure = "new-inbound-exposure" // for the ports feature
 	TypeThreatMatch        = "threat-match"         // internal/threats
 	TypeSelfUpdate         = "self-update"          // for self-update
+	TypeStorageOverBudget  = "storage-over-budget"  // cmd/shepherd's retention budget
 	TypeVulnerabilityFound = "vulnerability-found"  // internal/vulnscan
 	TypeNetworkDegraded    = "network-degraded"     // internal/nethealth
 	// The passive ARP monitor's findings (internal/arp, docs/ARP.md), one
@@ -98,6 +99,7 @@ func BuiltinTypes() []AlarmType {
 		all(TypeNewInboundExposure, "New inbound exposure", "A service became reachable from outside the network.", SeverityCritical, false, false),
 		all(TypeThreatMatch, "Threat match", "A device contacted an address or name on a threat list.", SeverityCritical, false, false),
 		all(TypeSelfUpdate, "Shepherd update", "Shepherd updated itself, or an update needs attention.", SeverityLow, false, false),
+		portal(all(TypeStorageOverBudget, "Storage over budget", "Shepherd's data directory has grown past the retention budget in shepherd.toml.", SeverityLow, false, false)),
 		all(TypeVulnerabilityFound, "Vulnerability found", "internal/vulnscan matched a device's open port against a known vulnerability signature.", SeverityHigh, false, false),
 		all(TypeNetworkDegraded, "Network degraded", "Latency, packet loss or reachability has been sustained bad for several probe cycles in a row.", SeverityMedium, true, false),
 		all(TypeARPGatewayChanged, "Gateway MAC changed", "The router's address is being claimed by a different hardware address: the classic ARP spoofing signature, or a replaced router.", SeverityHigh, false, false),

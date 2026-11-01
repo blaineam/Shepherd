@@ -256,6 +256,14 @@ test('threat feed endpoints', async () => {
   assert.deepEqual([calls[1][0], calls[1][1].method], ['/api/threats/refresh', 'POST']);
 });
 
+test('alarm preference endpoints', async () => {
+  const { calls, m } = rig();
+  await m.alarmPrefs();
+  assert.equal(calls[0][0], '/api/alarms/preferences');
+  await m.setAlarmPrefs({ immediate_min: 'medium' });
+  assert.deepEqual([calls[1][0], calls[1][1].method, calls[1][1].body], ['/api/alarms/preferences', 'PUT', '{"immediate_min":"medium"}']);
+});
+
 test('push endpoints', async () => {
   const { calls, m } = rig();
   await m.pushStatus();

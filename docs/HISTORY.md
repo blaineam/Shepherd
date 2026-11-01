@@ -8,7 +8,7 @@ written to disk. Turn on persistence in `shepherd.toml`:
 [history]
 mode = "encrypted"
 retention_days = 30      # 0 keeps everything
-max_mb = 2048            # 0 means no size cap
+max_mb = 2048            # 0 means no size cap; a [retention] budget can lower it (docs/UPDATE.md)
 key_source = "file"      # or "passphrase"
 key_file = ""            # default <data_dir>/history/history.key
 ```

@@ -25,6 +25,14 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   when the `SHEPHERD_SIGNING_KEY` secret exists (`scripts/sign-release`, `cmd/shepherd-sign`); the
   public half is `update.ReleasePublicKeyB64`, empty until the maintainer generates the pair. The
   card also shows the data directory's size by part. See docs/UPDATE.md.
+- **One retention budget.** `[retention] max_mb` caps the data directory as a whole: it is split
+  into caps for query history, bandwidth history and network-health history (each still enforcing
+  its own), the Software card shows use against it, and a housekeeping check every six hours raises
+  a low `storage-over-budget` alarm, naming the largest part, if the directory outgrows it anyway.
+  0, the default, leaves each store to its own cap (docs/UPDATE.md "Retention").
+- **Delivery settings for alarms.** `GET`/`PUT /api/alarms/preferences` read and write the alarm
+  preferences, and the Notifications tab's new **Delivery** card sets the severity sent at once,
+  whether lower alarms wait for the digest, the digest's interval or time of day, and the time zone.
 - **Threat feeds: which device reached for a known bad name or address.** Four curated feeds
   (URLhaus, ThreatFox and Feodo Tracker from abuse.ch, and Spamhaus DROP) are downloaded every six
   hours, cached under the data directory, and matched against every recorded DNS query's name and

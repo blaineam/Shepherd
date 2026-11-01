@@ -130,6 +130,12 @@ token = ""                 # bearer token, or leave empty and use username/passw
 username = ""
 password = ""
 
+[retention]
+# One budget for everything in data_dir (docs/UPDATE.md "Retention"). 0 leaves each
+# store to its own cap: history.max_mb, and 8 MiB each for bandwidth and network
+# health history. A value is split between them and the Overview shows use against it.
+max_mb = 0
+
 [update]
 # Self-update (docs/UPDATE.md): one request a day to GitHub's releases, an
 # alarm when a newer Shepherd exists, and "Update now" on the Overview screen

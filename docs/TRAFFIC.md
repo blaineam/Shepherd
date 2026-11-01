@@ -66,6 +66,8 @@ unlike [nethealth](NETHEALTH.md)'s averaged rollups every fold is exact.
 | Per hour | 90 days | folded into days |
 | Per day | forever | capped at 8 MiB on disk; the oldest days go first |
 
+A `[retention] max_mb` budget in shepherd.toml can lower that cap (docs/UPDATE.md "Retention").
+
 Watch mode's engine hands the store each device's bytes once a second, keyed by registry device
 ID (a device merged from several MACs is one row). A device that moved nothing leaves no trace. The
 store saves itself to `<data_dir>/traffic.json` (mode 0600) at most once a minute while something

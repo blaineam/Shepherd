@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { updateLine, rollbackLine, dataDirLine } from '../js/update.js';
+import { updateLine, rollbackLine, dataDirLine, overBudget } from '../js/update.js';
 
 test('updateLine covers off, unchecked, failed, current, available, applying and applied', () => {
   assert.equal(updateLine(null).tone, 'muted');
@@ -22,4 +22,14 @@ test('rollbackLine and dataDirLine', () => {
   assert.equal(rollbackLine({ status: { state: { applied: '1.1.0', confirmed: true } } }), '');
   assert.equal(dataDirLine(null), '');
   assert.match(dataDirLine({ status: { data_dir_bytes: 3 * 1048576, data_dir_parts: { history: 2 * 1048576, lists: 1048576, tiny: 10 } } }), /Data on disk: 3\.0 MB \(history 2\.0 MB, lists 1\.0 MB, tiny 10 B\)/);
+});
+
+test('dataDirLine and overBudget against a retention budget', () => {
+  const under = { status: { data_dir_bytes: 3 * 1048576, budget_bytes: 512 * 1048576, data_dir_parts: { history: 3 * 1048576 } } };
+  assert.match(dataDirLine(under), /Data on disk: 3\.0 MB of a 512 MB budget \(history 3\.0 MB\)\./);
+  assert.equal(overBudget(under), false);
+  const over = { status: { data_dir_bytes: 600 * 1048576, budget_bytes: 512 * 1048576 } };
+  assert.match(dataDirLine(over), /600 MB, over the 512 MB budget\./);
+  assert.equal(overBudget(over), true);
+  assert.equal(overBudget(null), false);
 });

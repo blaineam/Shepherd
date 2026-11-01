@@ -113,3 +113,41 @@ export function matchLine(m) {
   const via = x.kind === 'ip' ? ' which resolved into ' + x.indicator : (x.indicator && x.indicator !== x.name ? ' (under ' + x.indicator + ')' : '');
   return { who, text: who + ' ' + did + ' ' + (x.name || x.indicator || '?') + via + ', on the ' + (x.feed_id || '?') + ' feed.' };
 }
+
+// Delivery preferences (docs/ALARMS.md "When"): the part of the alarm
+// preferences the Notifications tab edits. Pure, so the tests need no DOM.
+
+// hoursOf turns a Go duration string ("6h0m0s", "90m") or seconds into hours.
+export function hoursOf(d) {
+  if (typeof d === 'number') return d / 3600;
+  const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?$/.exec(String(d || ''));
+  if (!m || !String(d)) return 0;
+  return (Number(m[1] || 0)) + (Number(m[2] || 0)) / 60 + (Number(m[3] || 0)) / 3600;
+}
+
+// deliveryLine says, in one sentence, what is sent when.
+export function deliveryLine(p) {
+  if (!p) return 'Delivery settings could not be read.';
+  const min = severityLabel(p.immediate_min || 'high');
+  const d = p.digest || {};
+  if (!d.enabled) return min + ' and above are sent at once; everything else is sent at once too, since the digest is off.';
+  const when = d.at ? 'at ' + d.at + ' each day' : 'every ' + trimHours(hoursOf(d.every)) + ' hours';
+  return min + ' and above are sent at once; lower alarms are gathered into one digest ' + when + '.';
+}
+
+function trimHours(h) {
+  return Number.isInteger(h) ? String(h) : h.toFixed(1).replace(/\.0$/, '');
+}
+
+// digestFromForm turns the form's fields into the digest preference, or an
+// error message. mode is 'every' or 'at'.
+export function digestFromForm({ enabled, mode, hours, at }) {
+  if (!enabled) return { digest: { enabled: false, every: '6h' } };
+  if (mode === 'at') {
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(at || ''))) return { error: 'Give the digest time as HH:MM, for example 08:00.' };
+    return { digest: { enabled: true, every: '6h', at } };
+  }
+  const h = Number(hours);
+  if (!(h >= 1 / 60) || !Number.isFinite(h)) return { error: 'The digest interval must be at least one minute.' };
+  return { digest: { enabled: true, every: Math.round(h * 3600) + 's' } };
+}

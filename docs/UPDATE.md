@@ -65,11 +65,29 @@ installed, but older binaries will refuse releases signed with the new one, whic
 
 ## Retention
 
-The data directory's size, by top-level part, is on the Software card so growth is visible. The
-stores that can grow each cap themselves: encrypted history by age and size
-([HISTORY.md](HISTORY.md)), bandwidth history at 8 MiB of daily points ([TRAFFIC.md](TRAFFIC.md)),
-network health at 8 MiB ([NETHEALTH.md](NETHEALTH.md)). A single budget across all of them, and a
-settings screen for the alarm digest, are still open.
+Everything Shepherd keeps on disk lives in the data directory, and the Software card shows its size
+by part so growth is visible. The stores that can grow each cap themselves: encrypted history by age
+and size ([HISTORY.md](HISTORY.md)), bandwidth history at 8 MiB of daily points
+([TRAFFIC.md](TRAFFIC.md)), network health at 8 MiB ([NETHEALTH.md](NETHEALTH.md)).
+
+One number can govern all of them instead:
+
+```toml
+[retention]
+max_mb = 512     # 0 (the default) leaves each store to its own cap
+```
+
+A budget is split, not shared out dynamically, so each store still enforces its own cap and none
+can starve another: bandwidth and network-health history each get the smaller of 8 MiB and an
+eighth of the budget; the smaller of 32 MiB and a quarter is reserved for the small files (devices,
+alarms, lists, the threat-feed cache); query history gets the rest, never more than `history.max_mb`
+when that is set as well, and never less than 1 MiB. The card then says how much of the budget is in
+use, and a housekeeping check, at start and every six hours, raises a low-severity
+`storage-over-budget` alarm if the directory has grown past the budget anyway (something outside the
+capped stores grew), naming the largest part.
+
+The alarm digest's timing and the severity sent at once are set on the Alarms screen's Notifications
+tab, under **Delivery** ([ALARMS.md](ALARMS.md)).
 
 ## Configuration
 
@@ -84,6 +102,6 @@ check_hours = 24      # at least 1; a check downloads nothing
 
 | Endpoint | Does |
 |---|---|
-| `GET /api/update` | `enabled`, and `status`: `current`, `channel`, `latest` (tag, name, page URL, published), `available`, `can_apply` with a `reason` when not, `applying`, `applied`, `last_checked`, `last_error`, the `state` from `update.json`, and `data_dir_bytes` with `data_dir_parts` |
+| `GET /api/update` | `enabled`, and `status`: `current`, `channel`, `latest` (tag, name, page URL, published), `available`, `can_apply` with a `reason` when not, `applying`, `applied`, `last_checked`, `last_error`, the `state` from `update.json`, `data_dir_bytes` with `data_dir_parts`, and `budget_bytes` when `[retention] max_mb` is set |
 | `POST /api/update/check` | checks now and returns the status |
 | `POST /api/update/apply` | applies the latest release and restarts; 409 with the reason when it cannot |

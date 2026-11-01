@@ -251,6 +251,7 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	deps.OnSecretsChanged = secretsChanged(sec, acctRelay, kicker)
 
 	// ---- Self-update (docs/UPDATE.md) -----------------------------------
+	startRetention(ctx, cfg, deps.Alarms)
 	upd, err := startUpdate(ctx, cfg, deps.Alarms)
 	if err != nil {
 		return err
@@ -465,6 +466,6 @@ func openHistory(cfg config.Config) (*history.Store, error) {
 	}
 	return history.Open(history.Options{
 		Dir: filepath.Join(dir, "store"), Keys: keys,
-		RetentionDays: cfg.History.RetentionDays, MaxBytes: int64(cfg.History.MaxMB) << 20,
+		RetentionDays: cfg.History.RetentionDays, MaxBytes: capsFor(cfg).History,
 	})
 }

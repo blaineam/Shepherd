@@ -621,6 +621,8 @@ func (s *Server) routes() {
 	h("GET /api/alarms", s.listAlarms)
 	h("GET /api/alarms/summary", s.alarmsSummary)
 	h("GET /api/alarms/types", s.alarmTypes)
+	h("GET /api/alarms/preferences", s.getAlarmPrefs)
+	h("PUT /api/alarms/preferences", s.putAlarmPrefs)
 	h("GET /api/alarms/rules", s.listAlarmRules)
 	h("POST /api/alarms/rules", s.createAlarmRule)
 	h("DELETE /api/alarms/rules/{id}", s.deleteAlarmRule)

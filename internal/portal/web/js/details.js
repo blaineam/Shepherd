@@ -5,7 +5,7 @@
 // textContent, never innerHTML.
 import { $, el } from './dom.js';
 import { fmtNum, fmtUptime } from './format.js';
-import { updateLine, rollbackLine, dataDirLine } from './update.js';
+import { updateLine, rollbackLine, dataDirLine, overBudget } from './update.js';
 
 export function createDetails({ api, getRows, notify, onRulesChanged = () => {}, names = null }) {
   let filter = '';
@@ -36,6 +36,7 @@ export function createDetails({ api, getRows, notify, onRulesChanged = () => {},
     const dd = $('#sw-data');
     dd.textContent = dataDirLine(u);
     dd.hidden = !dd.textContent;
+    dd.className = overBudget(u) ? 'small warn' : 'muted small';
     $('#sw-apply').hidden = !(s.available && s.can_apply && !s.applying && !s.applied);
     $('#sw-check').hidden = !(u && u.enabled);
   }

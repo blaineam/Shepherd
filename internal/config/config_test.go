@@ -171,6 +171,7 @@ func TestHistoryValidation(t *testing.T) {
 		"[history]\nkey_source = \"cloud\"": "history.key_source",
 		"[history]\nretention_days = -1":    "must not be negative",
 		"[history]\nmax_mb = -5":            "must not be negative",
+		"[retention]\nmax_mb = -1":          "retention.max_mb must not be negative",
 	}
 	for body, want := range cases {
 		path := filepath.Join(t.TempDir(), "c.toml")
