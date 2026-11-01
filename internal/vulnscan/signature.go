@@ -42,7 +42,7 @@ type Probe struct {
 	FTPAnonLogin bool
 
 	// SMB1Negotiated is true when port 445 answered a raw SMBv1 Negotiate
-	// Protocol Request with an SMBv1-framed reply (header 0xFF 'SMB'),
+	// Protocol Request with an SMBv1 reply that actually selects the dialect,
 	// meaning the server still speaks the EternalBlue-era protocol version.
 	SMB1Negotiated bool
 
@@ -99,6 +99,13 @@ type Signature struct {
 	// fired, plus the evidence to record alongside it (the banner, the
 	// parsed version, or a short fixed explanation). Match does no I/O.
 	Match func(Probe) (evidence string, matched bool)
+	// CVEs names the CVE identifiers this signature is about, when it is
+	// about specific ones (feed signatures carry them; built-ins mention
+	// theirs in prose).
+	CVEs []string
+	// Source is SourceBuiltin for the reviewed table in this file and
+	// SourceFeed for a signature that arrived as data (feed.go).
+	Source string
 }
 
 func (sig Signature) appliesToPort(port int) bool {
@@ -120,15 +127,20 @@ type Match struct {
 }
 
 // Evaluate runs every built-in signature against one port's Probe and
-// returns every one that fired. Scanner.Scan is the real caller; it is
-// exported so the signature list can be unit-tested directly, with no
-// network involved at all.
+// returns every one that fired. It is exported so the signature list can
+// be unit-tested directly, with no network involved at all; Scanner.Scan
+// itself uses EvaluateWith over the built-ins plus the current feed.
 func Evaluate(p Probe) []Match {
+	return EvaluateWith(p, allSignatures)
+}
+
+// EvaluateWith runs exactly the given signatures against one port's Probe.
+func EvaluateWith(p Probe, sigs []Signature) []Match {
 	if !p.Connected {
 		return nil
 	}
 	var out []Match
-	for _, sig := range allSignatures {
+	for _, sig := range sigs {
 		if !sig.appliesToPort(p.Port) {
 			continue
 		}
@@ -141,7 +153,13 @@ func Evaluate(p Probe) []Match {
 
 // allSignatures is computed once; BuiltinSignatures returns a copy so a
 // caller can never mutate the package's own table.
-var allSignatures = buildSignatures()
+var allSignatures = func() []Signature {
+	sigs := buildSignatures()
+	for i := range sigs {
+		sigs[i].Source = SourceBuiltin
+	}
+	return sigs
+}()
 
 // BuiltinSignatures returns the full curated signature table.
 func BuiltinSignatures() []Signature {
@@ -266,12 +284,12 @@ func buildSignatures() []Signature {
 		{
 			ID: "smb1-enabled", Name: "SMBv1 enabled", Severity: SeverityCritical, Ports: []int{445},
 			Description: "This server answered an SMBv1 Negotiate Protocol request, the protocol version exploited by " +
-				"EternalBlue, WannaCry and NotPetya. Disable SMBv1 and use SMBv2/3 only.",
+				"EternalBlue, WannaCry and NotPetya, and actually agreed to speak it. Disable SMBv1 and use SMBv2/3 only.",
 			Match: func(p Probe) (string, bool) {
 				if !p.SMB1Negotiated {
 					return "", false
 				}
-				return "answered an SMBv1-framed Negotiate Protocol response", true
+				return "accepted the NT LM 0.12 dialect in its SMBv1 Negotiate Protocol response", true
 			},
 		},
 		{

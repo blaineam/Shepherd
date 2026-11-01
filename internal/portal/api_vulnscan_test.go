@@ -5,7 +5,13 @@ package portal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -189,4 +195,103 @@ func TestVulnscanScanNowDeviceNeverPortscanned(t *testing.T) {
 	h := newHarness(t)
 	id := h.addDevice("02:00:00:00:00:15", "203.0.113.25", "")
 	h.expect("POST", "/api/vulnscan/scan", `{"device_id":"`+id+`"}`, 400)
+}
+
+const testFeedDoc = `{"schema": 1, "generated_at": "2026-11-01T06:00:00Z", "signatures": [
+  {"id": "kev-cve-2024-6387", "name": "OpenSSH regreSSHion", "severity": "critical", "description": "d",
+   "cves": ["CVE-2024-6387"], "ports": [22], "match": {"product": "openssh", "versions": [{"gte": "8.5", "lt": "9.8"}]}},
+  {"id": "telnet-exposed", "name": "Telnet exposed (feed)", "severity": "critical", "description": "d", "ports": [23],
+   "match": {"contains": "login:"}}
+]}`
+
+func TestVulnscanStatusReportsFeedSignaturesAndStatus(t *testing.T) {
+	h := newHarness(t)
+	m := h.ok("GET", "/api/vulnscan", "", 200)
+	if m["feed"] != nil {
+		t.Fatalf("feed = %v, want null when the harness has no feed", m["feed"])
+	}
+	builtin := len(vulnscan.BuiltinSignatures())
+	if m["builtin_signatures"] != float64(builtin) || m["feed_signatures"] != float64(0) {
+		t.Fatalf("counts = %v / %v", m["builtin_signatures"], m["feed_signatures"])
+	}
+	for _, s := range m["signatures"].([]any) {
+		if s.(map[string]any)["source"] != "builtin" {
+			t.Fatalf("every signature should be builtin with no feed: %v", s)
+		}
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, testFeedDoc) }))
+	defer srv.Close()
+	h.srv.VulnscanFeed = &vulnscan.FeedUpdater{URL: srv.URL, OnChange: func(sigs []vulnscan.Signature, _ bool) { h.srv.Vulnscan.SetFeedSignatures(sigs) }}
+
+	m = h.ok("POST", "/api/vulnscan/feed/refresh", "{}", 200)
+	if m["changed"] != true {
+		t.Fatalf("refresh = %v, want changed", m)
+	}
+	feed := m["feed"].(map[string]any)
+	if feed["signatures"] != float64(2) || feed["url"] != srv.URL || feed["last_error"] != nil {
+		t.Fatalf("feed status = %v", feed)
+	}
+
+	m = h.ok("GET", "/api/vulnscan", "", 200)
+	// One feed signature is new, the other overrides telnet-exposed in place.
+	if m["builtin_signatures"] != float64(builtin-1) || m["feed_signatures"] != float64(2) {
+		t.Fatalf("counts after feed = %v / %v", m["builtin_signatures"], m["feed_signatures"])
+	}
+	var kev map[string]any
+	for _, s := range m["signatures"].([]any) {
+		if sm := s.(map[string]any); sm["id"] == "kev-cve-2024-6387" {
+			kev = sm
+		}
+	}
+	if kev == nil || kev["source"] != "feed" || kev["cves"].([]any)[0] != "CVE-2024-6387" {
+		t.Fatalf("feed signature = %v", kev)
+	}
+	if m["feed"].(map[string]any)["generated_at"] == nil {
+		t.Fatalf("feed status missing generated_at: %v", m["feed"])
+	}
+
+	// Unchanged upstream: still 200, just not changed.
+	m = h.ok("POST", "/api/vulnscan/feed/refresh", "{}", 200)
+	if m["changed"] != false {
+		t.Fatalf("second refresh = %v", m)
+	}
+}
+
+func TestVulnscanFeedRefreshFailures(t *testing.T) {
+	h := newHarness(t)
+	h.expect("POST", "/api/vulnscan/feed/refresh", "{}", 400) // feed disabled
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
+	defer srv.Close()
+	h.srv.VulnscanFeed = &vulnscan.FeedUpdater{URL: srv.URL}
+	h.expect("POST", "/api/vulnscan/feed/refresh", "{}", 502)
+	m := h.ok("GET", "/api/vulnscan", "", 200)
+	if le := m["feed"].(map[string]any)["last_error"]; le == nil || !strings.Contains(le.(string), "HTTP 503") {
+		t.Fatalf("last_error = %v", le)
+	}
+}
+
+func TestVulnscanDevicesReportResolvedFindings(t *testing.T) {
+	h := newHarness(t)
+	id := h.addDevice("02:00:00:00:00:14", "203.0.113.24", "attic-cam")
+	path := filepath.Join(t.TempDir(), "vulnscan.json")
+	doc := fmt.Sprintf(`{"devices": {%q: {"device_id": %q, "ip": "203.0.113.24", "last_scanned": "2026-10-30T10:00:00Z", "findings": [
+	  {"signature_id": "telnet-exposed", "name": "Telnet exposed", "description": "d", "severity": "high", "port": 23,
+	   "active": false, "first_seen": "2026-10-01T10:00:00Z", "last_seen": "2026-10-20T10:00:00Z", "resolved_at": "2026-10-30T10:00:00Z"}]}}}`, id, id)
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.srv.Vulnscan.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	m := h.ok("GET", "/api/vulnscan/devices/"+id, "", 200)
+	findings := m["findings"].([]any)
+	if len(findings) != 1 {
+		t.Fatalf("findings = %v", findings)
+	}
+	f := findings[0].(map[string]any)
+	if f["active"] != false || f["resolved_at"] == nil || !strings.HasPrefix(f["resolved_at"].(string), "2026-10-30") {
+		t.Fatalf("resolved finding = %v", f)
+	}
 }

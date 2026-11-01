@@ -197,13 +197,57 @@ func TestProbePortDockerAPIClosedOrUnrelated(t *testing.T) {
 	}
 }
 
+// smb1NegotiateReply builds a direct-TCP-framed SMB1 Negotiate response
+// with the given NT status and DialectIndex, the two fields the probe has
+// to read past the header to decide anything.
+func smb1NegotiateReply(status uint32, dialectIndex uint16) []byte {
+	hdr := make([]byte, 32)
+	hdr[0], hdr[1], hdr[2], hdr[3] = 0xFF, 'S', 'M', 'B'
+	hdr[4] = 0x72
+	hdr[5], hdr[6], hdr[7], hdr[8] = byte(status), byte(status>>8), byte(status>>16), byte(status>>24)
+	hdr[9] = 0x88 // reply flag set
+	msg := append(hdr, 0x01, byte(dialectIndex), byte(dialectIndex>>8), 0x00, 0x00)
+	out := []byte{0x00, 0x00, 0x00, byte(len(msg))}
+	return append(out, msg...)
+}
+
 func TestProbePortSMB1NegotiatedTrue(t *testing.T) {
-	// 4-byte direct-TCP framing + an SMB1-signed response header.
-	resp := append([]byte{0x00, 0x00, 0x00, 0x04}, []byte{0xFF, 'S', 'M', 'B'}...)
-	c := &scriptedConn{script: [][]byte{resp}}
+	// A server that selects the one dialect we offered (index 0) is willing
+	// to speak SMBv1.
+	c := &scriptedConn{script: [][]byte{smb1NegotiateReply(0, 0)}}
 	p := probePort(context.Background(), dialScripted(c, nil), noTLSConnect, time.Second, "192.0.2.1", 445)
 	if !p.SMB1Negotiated {
 		t.Fatalf("probe = %+v, want SMB1Negotiated", p)
+	}
+}
+
+func TestProbePortSMB1RefusedDialectIsNotEnabled(t *testing.T) {
+	// The exact reply a Samba server with "server min protocol = SMB2"
+	// (SMBv1 disabled) sends: SMB1-framed, status success, DialectIndex
+	// 0xFFFF = "none of your dialects". This used to be a false positive.
+	c := &scriptedConn{script: [][]byte{smb1NegotiateReply(0, 0xFFFF)}}
+	p := probePort(context.Background(), dialScripted(c, nil), noTLSConnect, time.Second, "192.0.2.1", 445)
+	if p.SMB1Negotiated {
+		t.Fatal("a DialectIndex 0xFFFF refusal must not report SMB1Negotiated")
+	}
+}
+
+func TestProbePortSMB1ErrorStatusIsNotEnabled(t *testing.T) {
+	c := &scriptedConn{script: [][]byte{smb1NegotiateReply(0xC0000002, 0)}} // STATUS_NOT_IMPLEMENTED
+	p := probePort(context.Background(), dialScripted(c, nil), noTLSConnect, time.Second, "192.0.2.1", 445)
+	if p.SMB1Negotiated {
+		t.Fatal("a non-success NT status must not report SMB1Negotiated")
+	}
+}
+
+func TestProbePortSMB1HeaderOnlyIsNotEnabled(t *testing.T) {
+	// Framing alone, with no parameter block to read a DialectIndex from,
+	// proves nothing.
+	resp := append([]byte{0x00, 0x00, 0x00, 0x04}, []byte{0xFF, 'S', 'M', 'B'}...)
+	c := &scriptedConn{script: [][]byte{resp}}
+	p := probePort(context.Background(), dialScripted(c, nil), noTLSConnect, time.Second, "192.0.2.1", 445)
+	if p.SMB1Negotiated {
+		t.Fatal("a bare SMB1 header with no DialectIndex must not report SMB1Negotiated")
 	}
 }
 
@@ -312,5 +356,31 @@ func TestProbePortTLSOnHTTPSPortNotReachedIfHandshakeFails(t *testing.T) {
 	p := probePort(context.Background(), dialScripted(&scriptedConn{}, nil), dialTLSScripted(nil, errors.New("tls: handshake failure")), time.Second, "192.0.2.1", 8443)
 	if p.HTTPServer != "" || p.TLSNegotiated {
 		t.Fatalf("probe = %+v, want no HTTP probe attempted when the TLS handshake itself failed", p)
+	}
+}
+
+func TestSMB1NegotiateAcceptedRejectsMalformedReplies(t *testing.T) {
+	good := smb1NegotiateReply(0, 0)[4:]
+	if !smb1NegotiateAccepted(good) {
+		t.Fatal("the well-formed accepting reply must be accepted")
+	}
+	short := good[:20]
+	if smb1NegotiateAccepted(short) {
+		t.Fatal("a reply too short for a DialectIndex proves nothing")
+	}
+	notSMB := append([]byte(nil), good...)
+	notSMB[0] = 0xFE
+	if smb1NegotiateAccepted(notSMB) {
+		t.Fatal("an SMB2 header is not SMB1")
+	}
+	otherCmd := append([]byte(nil), good...)
+	otherCmd[4] = 0x73 // SMB_COM_SESSION_SETUP_ANDX
+	if smb1NegotiateAccepted(otherCmd) {
+		t.Fatal("a reply to some other command is not a negotiate response")
+	}
+	noWords := append([]byte(nil), good...)
+	noWords[32] = 0
+	if smb1NegotiateAccepted(noWords) {
+		t.Fatal("WordCount 0 carries no DialectIndex")
 	}
 }
