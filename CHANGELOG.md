@@ -67,7 +67,11 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   (`intercept.ErrRelayLoops`) with nothing steered. A relay found to loop is recorded per
   interface in `watch.json` (`looping_relays`) and never attached there again, the way flapping
   drivers already are, because running the test costs a brief burst of looping frames and the
-  answer does not change.
+  answer does not change. The probe's frame is built in portable code and checked on every
+  platform -- 60 bytes so nothing pads it, a header that checksums to zero, both addresses inside
+  TEST-NET-2 so it goes nowhere if it escapes, and a deterministic result, since the verdict is
+  whether *this exact frame* was seen coming back; only the part that needs a loaded program and a
+  live interface is Linux-only.
 - **`watch.allow_routing_host`** runs Watch mode on a host that forwards IPv4 and has a second
   interface on the relay's own segment, which Shepherd otherwise refuses. The refusal was only ever
   correlation -- it is this host's shape, and this host is the only one that ever looped -- and the

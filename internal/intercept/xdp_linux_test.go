@@ -5,7 +5,6 @@
 package intercept
 
 import (
-	"encoding/binary"
 	"errors"
 	"net/netip"
 	"os"
@@ -393,13 +392,9 @@ func TestTheRelaySelfTestProbeIsAFrameTheRelayRelays(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The frame's construction is checked portably in xdp_probe_test.go.
+	// What only a real kernel can answer is whether the program relays it.
 	frame := probeFrame(shepherdMAC)
-	if len(frame) != 60 {
-		t.Fatalf("probe frame is %d bytes, want 60 (the minimum on the wire)", len(frame))
-	}
-	if sum := ipChecksum(frame[14:34]); sum != 0 {
-		t.Errorf("the probe's IPv4 header checksum does not verify (got %#04x over the whole header, want 0)", sum)
-	}
 	verdict, out := runXDP(t, objs, frame)
 	if verdict != xdpTX {
 		t.Fatalf("verdict = %d, want XDP_TX: the self-test would never see its own probe relayed", verdict)
@@ -424,15 +419,6 @@ func TestTheRelaySelfTestProbeIsAFrameTheRelayRelays(t *testing.T) {
 	// way to check the probe is a frame the relay would in fact relay.
 	if probeLoopThreshold != 1 {
 		t.Fatalf("probeLoopThreshold = %d; this test assumes 1 relayed pass is the loop signal", probeLoopThreshold)
-	}
-	// The probe goes nowhere real: TEST-NET-2 to the discard port. It must
-	// also stay clear of this package's own Shepherd address (192.0.2.2),
-	// or rule 4 would pass it and the self-test would never see it.
-	if frame[30] != 198 || frame[31] != 51 || frame[32] != 100 {
-		t.Errorf("the probe must be addressed inside 198.51.100.0/24 (TEST-NET-2), got %v", frame[30:34])
-	}
-	if binary.BigEndian.Uint16(frame[36:38]) != 9 {
-		t.Errorf("the probe must go to the discard port 9, got %d", binary.BigEndian.Uint16(frame[36:38]))
 	}
 }
 
