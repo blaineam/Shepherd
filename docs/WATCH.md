@@ -259,13 +259,28 @@ in and 24,500 out, mirrored, 3.5 seconds after steering began**, and in the same
 | --- | --- | --- |
 | `ForwDatagrams` | **1 datagram** | kernel IPv4 forwarding |
 | hairpin drops (in `eth0`, out `eth0`) | **0 packets** | same-segment routing |
-| the relay's own `relayed` | **8 pkt/s** | the relay relaying |
+| the relay's own `relayed` | **8 pkt/s** | *nothing* — see below |
 
-So whatever put about 24,500 frames a second onto that interface is accounted for by neither
-Shepherd's relay nor the kernel's IP stack. One forwarded datagram during a 24,500-packet-a-second
-storm is not a kernel routing problem, which is why the explanation that used to stand here — the
-router learning the client at Shepherd's MAC, and the kernel routing its downloads back onto the
-segment — has been removed rather than softened.
+One forwarded datagram during a 24,500-packet-a-second storm is not a kernel routing problem, which
+is why the explanation that used to stand here — the router learning the client at Shepherd's MAC,
+and the kernel routing its downloads back onto the segment — has been removed rather than softened.
+
+**The third row was read as excluding the relay, and that was wrong.** A later run let the same
+storm develop instead of stopping it at 3.5 seconds, and the relay's own counter climbed fast:
+
+```
+t+2s   examined  17,952/s   relayed      0/s
+t+4s   examined  62,756/s   relayed 27,587/s   (34 MB/s)
+t+6s   examined  89,336/s   relayed 45,516/s   (56 MB/s)
+t+8s   examined 102,516/s   relayed 73,704/s   (90 MB/s)
+```
+
+72% of what the program examined, and still rising when it was stopped. The 8 pkt/s figure was the
+first instant of that ramp, not a steady state. So the relay is **not** excluded — it is the leading
+candidate, and the same run says why: with the XDP program off (`-xdp off`) the device was steered
+for the same duration with `examined` holding at 16,000–28,000 packets a second and **no storm at
+all**. The kernel fast path appears to be necessary for it. Two mechanisms are excluded here, not
+three.
 
 What survives is the *other* half of the condition, and it is the one structural feature present in
 every incident: this host has **two interfaces on one segment**, and the steered device is reachable
@@ -297,10 +312,11 @@ runs deliberately. Clearing the flag would cut that off and leave the loop exact
 > burstiness explains the first trial's odd pre-steering baseline, which showed 12,000 packets a
 > second inbound on an interface whose median is 65.
 
-The next measurement has to find what is *transmitting*, since neither the relay nor the IP stack
-claims it. Two cheap discriminators, in order: re-run with the relay's XDP program off, which
-separates the kernel fast path from the userspace ARP sender; and compare the interface's
-`rx_packets` against `Ip:InReceives` during a storm, which separates IP traffic from a flood of ARP.
+That `-xdp off` result is the most useful thing measured so far and it narrows the search to the
+relay's own kernel fast path. What is still unexplained is the gap inside that path: `examined`
+reached 102,516 packets a second against 73,704 relayed, so roughly 29,000 a second were seen and
+not relayed, and the interface was transmitting far more than the relay claimed at the moment the
+storm began. The next step is to account for that gap frame by frame rather than by rate.
 
 > An earlier revision of this document blamed a polluted registry record that had merged the gateway
 > into a steerable device, and said the cause was settled. The single-device trial above disproved
@@ -349,17 +365,16 @@ sits between this host's transmit background (about 3,000) and the smallest loop
 
 > **Why the relay's own share is no longer part of the test.** The brake used to require it: the
 > relay had to report at least 80% of the interface's receive rate, and at least the packet floor
-> itself. That came from the two original incidents, where the relay genuinely did carry the loop.
-> Measurement then showed that neither loop reproduced since has that shape — the instrumented run
-> had the relay reporting **8 packets a second against 27,000 received**, and the earlier one 41,116
-> against 465,000, 8.8% of receive. Both would have been vetoed, so the brake would have watched the
-> whole thing happen. A brake keyed on the relay's counter cannot see a loop the relay is not
-> carrying, and during these loops most of what reaches the interface is accounted for by neither
-> the relay nor the kernel's IP stack.
+> itself. The reason for dropping it is *not* that the relay carries little of a loop — it carries
+> most of one — but that **its counter lags the storm by seconds**, and those are the seconds that
+> matter. On the measured ramp above, the share is 0% at two seconds and only passes 80% after the
+> card has been at 90 MB/s for several seconds. A separate run had the interface already mirrored at
+> 27,000 against 24,500 at 3.5 seconds while the relay still reported 8 pkt/s. Gating on the share
+> buys nothing and costs the only seconds in which stopping is cheap.
 >
-> The share is still logged, as evidence that the storm is *not* the relay's own output. A low
-> figure there is expected now, not reassuring. The cost of dropping it, accepted knowingly: any
-> genuinely symmetric load above the floor sustained for three seconds will stop steering.
+> The share is still logged, as evidence. A low figure there now means the brake caught the storm
+> early, not that the relay is innocent. The cost of dropping it, accepted knowingly: any genuinely
+> symmetric load above the floor sustained for three seconds will stop steering.
 
 ## What it needs
 

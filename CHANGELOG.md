@@ -33,14 +33,15 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   background (about 3,000) and the smallest loop measured (about 27,000).
   **The relay's own share is deliberately not part of the test, and an earlier version of this brake
   required it.** That version asked the relay to report at least 80% of the interface's receive rate
-  and at least the packet floor itself, on the evidence of the two original incidents, where it
-  genuinely did carry the loop. Measurement then showed that neither loop reproduced since has that
-  shape: the instrumented single-device run had the relay reporting **8 packets a second against
-  27,000 received**, and the earlier one 41,116 against 465,000, 8.8% of receive. Both would have
-  been vetoed by the share test and by the relay's own floor, so the brake would have watched the
-  whole thing happen. A brake keyed on the relay's counter cannot see a loop the relay is not
-  carrying. The share is still logged, as evidence that the storm is *not* the relay's output -- a
-  low figure there is now expected rather than reassuring. The symmetry threshold moved from 10% to
+  and at least the packet floor itself. The reason for dropping it is not that the relay carries
+  little of a loop -- it carries most of one -- but that **its counter lags the storm by seconds**,
+  and those are the seconds that matter. Sampled every two seconds from the moment steering began,
+  one device gave examined/relayed of 17,952/0, then 62,756/27,587, then 89,336/45,516, then
+  102,516/73,704 at 90 MB/s. The share is 0% at two seconds and passes 80% only after the card has
+  been at 90 MB/s for several seconds; a separate run had the interface already mirrored at 27,000
+  against 24,500 at 3.5 seconds while the relay still reported 8 pkt/s. Gating on the share buys
+  nothing and costs the only seconds in which stopping is cheap. It is still logged as evidence, and
+  a low figure now means the brake caught the storm early rather than that the relay is innocent. The symmetry threshold moved from 10% to
   15% in the same change, because the 10.1%-apart loop was excluded by six hundredths of a percent,
   and a threshold that only just misses a real incident is the wrong threshold. Accepted cost: any
   genuinely symmetric load above the floor sustained for three seconds now stops steering.
@@ -81,10 +82,17 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   sampled in that same second excluded three candidates outright — `ForwDatagrams` moved by
   **1 datagram** (not kernel IPv4 forwarding), a rule counting hairpin forwarding in and out the
   relay interface dropped **0 packets** (not same-segment routing), and the relay's own counter
-  reported **8 pkt/s** (not the relay relaying). So roughly 24,500 frames a second reached
-  that interface accounted for by neither Shepherd nor the kernel's IP stack, and the explanation
-  previously recorded here — the router learning the client at Shepherd's MAC and the kernel routing
-  its downloads back onto the segment — is withdrawn rather than softened.
+  reported **8 pkt/s**. The explanation previously recorded here — the router learning the client at
+  Shepherd's MAC and the kernel routing its downloads back onto the segment — is withdrawn rather
+  than softened; one forwarded datagram during that storm is not a routing problem.
+  **The relay reading was mis-read as a third exclusion, and it is not one.** A later run let the
+  same storm develop instead of stopping it at 3.5 seconds, and the relay's own counter went 0, then
+  27,587, then 45,516, then 73,704 pkt/s at 90 MB/s by eight seconds in — 72% of what the program
+  examined, still rising when stopped. The 8 pkt/s was the first instant of a ramp. So the relay is
+  the leading candidate, not an excluded one, and the same run says why: with the XDP program off
+  the device was steered for the same duration with `examined` holding at 16,000 to 28,000 pkt/s and
+  no storm at all. The kernel fast path appears necessary for it. Two mechanisms are excluded, not
+  three.
   What survives is the other half of the condition, and it is the one structural feature common to
   every incident: the host has **two interfaces on one segment**, and the steered device is
   `REACHABLE` through both at once. That makes the IPv4-forwarding half of the test look like it is

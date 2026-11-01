@@ -1125,19 +1125,31 @@ func (e *Engine) sample(now time.Time) {
 // floor.
 //
 // It deliberately does **not** test the relay's own share of the traffic,
-// and an earlier version of this brake did. That version required the
-// relay to report at least 80% of the interface's receive rate and at
-// least loopFloorPPS itself, on the evidence of the two original
-// incidents, where it genuinely did report nearly all of it. Measurement
-// then showed that neither loop reproduced since has that shape: an
-// instrumented single-device run received about 27,000 packets a second
-// against 24,500 transmitted while the relay reported 8 pkt/s, and the
-// earlier single-device run reported 41,116 against 465,000 received,
-// 8.8% of rx. Both would have been vetoed by the share test and by the
-// relay's own floor, so the brake would have watched all of it happen. A
-// brake keyed on the relay's counter cannot see a loop the relay is not
-// carrying, and most of what reaches that interface during these loops is
-// accounted for by neither the relay nor the kernel's IP stack.
+// and an earlier version of this brake did: the relay had to report at
+// least 80% of the interface's receive rate, and at least loopFloorPPS
+// itself. The reason for dropping it is not that the relay carries little
+// of a loop -- it carries most of one -- but that **its counter lags the
+// storm by seconds**, and those are the seconds that matter.
+//
+// Measured on one device, sampled every two seconds from the moment
+// steering began:
+//
+//	t+2s   examined  17,952/s   relayed      0/s
+//	t+4s   examined  62,756/s   relayed 27,587/s   (34 MB/s)
+//	t+6s   examined  89,336/s   relayed 45,516/s   (56 MB/s)
+//	t+8s   examined 102,516/s   relayed 73,704/s   (90 MB/s)
+//
+// A separate run of the same shape had the interface already mirrored at
+// about 27,000 packets a second received against 24,500 transmitted 3.5
+// seconds in, while the relay still reported 8 pkt/s. So at the instant a
+// stop is worth making, the share is near zero; by the time the share
+// passes 80% the card has been at 90 MB/s for several seconds. Gating on
+// it buys nothing and costs the only seconds in which stopping is cheap.
+//
+// The share is therefore evidence, not a trigger, and a low reading early
+// in a storm is expected. The earlier single-device run fits the same
+// curve: 41,116 relayed against 465,000 received at the moment it was
+// sampled.
 //
 // So the share is logged as evidence and ignored as a trigger. The cost,
 // accepted knowingly: genuinely symmetric traffic above loopFloorPPS
@@ -1207,9 +1219,10 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 	}
 	e.logf("watch: loop brake evidence: interface received %.0f and transmitted %.0f packets in the last second (%.2f%% apart), of which the relay reported %.0f (%.1f%%)",
 		rx, tx, math.Abs(tx-rx)/hi*100, relayedPPS, share)
-	// The share is evidence, not a trigger. A loop the relay reports almost
-	// none of is the shape measured on real hardware (8 pkt/s against
-	// 27,000 received), so a low figure here is expected, not reassuring.
+	// The share is evidence, not a trigger. It lags the storm by seconds --
+	// 0 pkt/s at t+2, 73,704 by t+8 on one measured device -- so a low
+	// figure here means the brake caught it early, not that the relay is
+	// innocent.
 	e.logLoopSuspects(status)
 	if saveErr != nil {
 		e.logf("watch: WARNING: could not persist the loop stop (%v), so a restart may resume it", saveErr)
@@ -1739,12 +1752,26 @@ var _ intercept.Excluder = v6Excluder{}
 //	ForwDatagrams          1 datagram    -- not kernel IPv4 forwarding
 //	hairpin drops (in eth0, out eth0)
 //	                       0 packets     -- not same-segment routing
-//	relay's own relayed    8 pkt/s       -- not the relay relaying
+//	relay's own relayed    8 pkt/s       -- see below; NOT an exclusion
 //
 // That is about 27,000 packets a second received against 24,500
 // transmitted. An earlier revision of this comment said 54,000 against
 // 49,000, having doubled a half-second bucket from a driver that publishes
 // its counters once a second; checkForLoop's comment has the detail.
+//
+// The third line was read as excluding the relay, and that was wrong. A
+// later run let the same storm develop instead of stopping it at 3.5
+// seconds, and the relay's own counter went 0, then 27,587, then 45,516,
+// then 73,704 pkt/s at 90 MB/s by eight seconds in -- 72% of what the
+// program examined. The 8 pkt/s reading was the first instant of a ramp,
+// not a steady state. So the relay is not excluded; it is the leading
+// candidate, and the same run says why: with the XDP program off
+// (-xdp off) the device was steered for the same duration with examined
+// holding at 16,000 to 28,000 pkt/s and no storm at all. The kernel fast
+// path appears to be necessary for it.
+//
+// Only two mechanisms are therefore excluded here, not three: kernel IPv4
+// forwarding and same-segment routing.
 //
 // So whatever put ~24,500 frames a second onto that interface is
 // accounted for by neither Shepherd's relay nor the kernel's IP stack. It
