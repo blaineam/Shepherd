@@ -1,17 +1,19 @@
-// The Network screen: a top-level view (not a device-drawer panel — there
-// is no "device" here, this is about the network as a whole), mirroring
-// the structure of the Alarms/Upstreams screens. Deliberately simple for a
-// first version: a current-status summary, a time-range picker, one small
-// line chart per metric (latency, jitter, loss), and a bufferbloat card
-// with its own history and a manual "run test now". All server text is
-// placed with textContent; only the SVG chart coordinates (pure numbers
-// from nethealth.js) are set as attributes.
+// The Network health screen: a top-level view (not a device-drawer panel —
+// there is no "device" here, this is about the network as a whole). One
+// header row carries the verdict (a status pill), the time-range picker and
+// "Probe now"; four metric tiles each pair the current reading with its own
+// area chart over the chosen range (latency, jitter, packet loss,
+// reachability); below them sit the bufferbloat card and a short "how this
+// is measured" card. All server text is placed with textContent; only the
+// SVG chart coordinates (pure numbers from nethealth.js) are set as
+// attributes.
 import { el } from './dom.js';
 import { button, segmented, emptyState, unavailableCard } from './ui.js';
 import { unavailable } from './mgmt.js';
 import { fmtDateTime } from './format.js';
 import {
-  gradeClass, gradeLabel, fmtMS, fmtMSValue, fmtLoss, reachabilityText, statusHeadline, chartPath, seriesToPoints, RANGE_PRESETS,
+  gradeClass, gradeLabel, fmtMS, fmtMSValue, fmtLoss, reachabilityText, statusHeadline, statusKind, statusPillLabel,
+  areaPath, axisMax, seriesSpan, seriesToPoints, RANGE_PRESETS,
 } from './nethealth.js';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -21,29 +23,76 @@ function svg(tag, attrs) {
   return e;
 }
 
-// metricChart builds one labeled line-chart card for one metric.
-function metricChart(title, unitFmt) {
-  const card = el('section', 'card nh-chart');
-  const head = el('div', 'card-h');
-  head.append(el('h3', 'card-t', title));
-  const rangeLbl = el('span', 'muted small');
-  head.append(rangeLbl);
-  const chart = svg('svg', { viewBox: '0 0 600 120', class: 'nh-svg', 'aria-hidden': 'true' });
-  const path = svg('path', { d: '', fill: 'none', stroke: 'currentColor', 'stroke-width': '2' });
-  chart.append(path);
-  const empty = el('p', 'muted small nh-chart-empty', 'Not enough data yet.');
+const W = 600, H = 100, PAD = 4;
+
+// fmtWhen is fmtDateTime without the seconds: on an axis or in a history
+// list the seconds are noise, and the extra width crowds a narrow tile.
+const fmtWhen = (ms) => fmtDateTime(ms).replace(/:\d\d$/, '');
+let gradSeq = 0;
+
+// metricTile builds one tile: label, big current value, a min–max subline
+// for the range, and an area chart. `fmt` formats a value for the axis and
+// subline; `fmtNow` formats the headline value (fmtMS's "0 means no
+// reading" convention applies to the live number, not to the axis).
+function metricTile(label, { fmt, fmtNow = fmt }) {
+  const root = el('section', 'card nh-tile');
+  const head = el('div', 'nh-tile-head');
+  head.append(el('span', 'k', label));
+  const range = el('span', 'nh-tile-range mono', '');
+  head.append(range);
+  const value = el('div', 'v', '—');
+  const sub = el('div', 'sub nh-tile-sub', '');
+
   const wrap = el('div', 'nh-chart-wrap');
-  wrap.append(chart, empty);
-  card.append(head, wrap);
+  const chart = svg('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', class: 'nh-svg', 'aria-hidden': 'true' });
+  const gid = 'nh-grad-' + (++gradSeq);
+  const defs = svg('defs', {});
+  const grad = svg('linearGradient', { id: gid, x1: 0, y1: 0, x2: 0, y2: 1 });
+  grad.append(svg('stop', { offset: '0%', 'stop-color': 'currentColor', 'stop-opacity': '.32' }), svg('stop', { offset: '100%', 'stop-color': 'currentColor', 'stop-opacity': '0' }));
+  defs.append(grad);
+  const grid = svg('g', { class: 'nh-grid' });
+  for (const f of [0.25, 0.5, 0.75]) {
+    const y = (PAD + (H - PAD * 2) * f).toFixed(1);
+    grid.append(svg('line', { x1: 0, x2: W, y1: y, y2: y }));
+  }
+  const area = svg('path', { d: '', fill: `url(#${gid})`, stroke: 'none' });
+  const line = svg('path', { d: '', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.6', 'stroke-linejoin': 'round', 'vector-effect': 'non-scaling-stroke' });
+  chart.append(defs, grid, area, line);
+  const yMax = el('span', 'nh-ylab top mono', '');
+  const yMin = el('span', 'nh-ylab bottom mono', '');
+  const empty = el('p', 'muted small nh-chart-empty', 'Not enough data yet.');
+  wrap.append(chart, yMax, yMin, empty);
+
+  const times = el('div', 'nh-times muted');
+  const tFrom = el('span', 'mono', '');
+  const tTo = el('span', 'mono', '');
+  times.append(tFrom, tTo);
+
+  root.append(head, value, sub, wrap, times);
   return {
-    root: card,
-    paint(points, opts) {
-      const { d, min, max } = chartPath(points, { width: 600, height: 120, pad: 6, ...opts });
-      path.setAttribute('d', d);
-      empty.hidden = points.length > 1;
-      chart.hidden = points.length <= 1;
-      rangeLbl.textContent = points.length > 1 ? unitFmt(min) + ' – ' + unitFmt(max) : '';
+    root,
+    setValue(text, subText, tone) {
+      value.textContent = text;
+      sub.textContent = subText || '';
+      root.className = 'card nh-tile' + (tone ? ' ' + tone : '');
     },
+    paint(points, opts) {
+      const r = areaPath(points, { width: W, height: H, pad: PAD, ...opts });
+      area.setAttribute('d', r.area);
+      line.setAttribute('d', r.line);
+      const has = points.length > 1;
+      empty.hidden = has;
+      chart.hidden = !has;
+      yMax.hidden = yMin.hidden = !has;
+      yMax.textContent = has ? fmt(r.max) : '';
+      yMin.textContent = has ? fmt(r.min) : '';
+      range.textContent = has ? fmt(Math.min(...points.map((p) => p.v))) + ' – ' + fmt(Math.max(...points.map((p) => p.v))) : '';
+      const span = seriesSpan(points);
+      tFrom.textContent = span ? fmtWhen(span.from) : '';
+      tTo.textContent = span ? fmtWhen(span.to) : '';
+    },
+    // the chart's own current-value formatter, for callers that want it
+    fmtNow,
   };
 }
 
@@ -51,7 +100,7 @@ export function createNethealth({ root, mgmt, notify }) {
   let range = RANGE_PRESETS[0];
   let status = null;
   let statusError = null;
-  let series = { latency: [], jitter: [], loss: [] };
+  let series = { latency: [], jitter: [], loss: [], reach: [] };
   let bufferbloat = [];
   let bufferbloatError = null;
   let timer = 0;
@@ -59,72 +108,43 @@ export function createNethealth({ root, mgmt, notify }) {
   let runningBufferbloat = false;
 
   root.replaceChildren();
-  const head = el('div', 'pg-head stack');
+
+  // ------------------------------------------------------------- header
+  const head = el('div', 'pg-head nh-head');
   const title = el('h2', 'pg-title');
-  title.append(el('span', '', 'Network'));
-  head.append(title, el('p', 'pg-sub muted', 'Latency, jitter, packet loss and reachability over time, plus an occasional bufferbloat check. Not just "is it up now" — is it reliable over the last few months.'));
+  title.append(el('span', '', 'Network health'));
+  const pill = el('span', 'nh-pill none', 'No probe yet');
+  title.append(pill);
+  const rangeSeg = segmented(RANGE_PRESETS.map((p) => ({ id: p.id, label: p.label })), range.id, (id) => {
+    range = RANGE_PRESETS.find((p) => p.id === id) || RANGE_PRESETS[0];
+    loadSeries();
+  }, 'Time range');
+  const probeBtn = button('Probe now', 'ghost', () => probeNow());
+  const sub = el('p', 'pg-sub muted', 'Latency, jitter, packet loss and reachability to the internet, probed every couple of minutes — not just "is it up now" but whether it has been reliable.');
+  head.append(title, el('span', 'spacer'), rangeSeg.root, probeBtn, sub);
   root.append(head);
 
   const body = el('div', 'nh-body');
   root.append(body);
 
-  // ------------------------------------------------------------- status card
-  const statusCard = el('section', 'card nh-status');
-  const statusHead = el('div', 'card-h');
-  statusHead.append(el('h3', 'card-t', 'Current status'));
-  const probeBtn = button('Probe now', 'ghost', () => probeNow());
-  statusHead.append(probeBtn);
-  const statusLine = el('p', 'nh-status-line');
-  const statusDetail = el('dl', 'nh-kv');
-  statusCard.append(statusHead, statusLine, statusDetail);
-  body.append(statusCard);
+  // Error / unavailable state replaces the whole body.
+  const errorBox = el('div', 'nh-error');
+  errorBox.hidden = true;
+  body.append(errorBox);
 
-  function kv(dt, dd) {
-    const d1 = el('dt', '', dt);
-    const d2 = el('dd', 'mono', dd);
-    return [d1, d2];
-  }
+  // ------------------------------------------------------------- tiles
+  const latencyTile = metricTile('Latency', { fmt: fmtMSValue, fmtNow: fmtMS });
+  const jitterTile = metricTile('Jitter', { fmt: fmtMSValue, fmtNow: fmtMS });
+  const lossTile = metricTile('Packet loss', { fmt: fmtLoss });
+  const reachTile = metricTile('Reachability', { fmt: (v) => String(Math.round(v)) });
+  const tiles = el('div', 'nh-tiles');
+  tiles.append(latencyTile.root, jitterTile.root, lossTile.root, reachTile.root);
+  body.append(tiles);
 
-  function paintStatus() {
-    if (statusError) {
-      statusLine.replaceChildren();
-      statusDetail.replaceChildren();
-      statusLine.append(unavailable(statusError) ? unavailableCard('Network health') : emptyState('Could not load network status', statusError.message, button('Try again', 'ghost', load)));
-      probeBtn.disabled = true;
-      return;
-    }
-    const cur = status && status.current;
-    statusLine.textContent = statusHeadline(cur, !!(status && status.degraded));
-    statusLine.className = 'nh-status-line' + (status && status.degraded ? ' bad' : cur && cur.reachable_targets === 0 ? ' bad' : '');
-    statusDetail.replaceChildren();
-    if (cur) {
-      statusDetail.append(...kv('Latency', fmtMS(cur.latency_ms)));
-      statusDetail.append(...kv('Jitter', fmtMS(cur.jitter_ms)));
-      statusDetail.append(...kv('Loss', fmtLoss(cur.loss_pct)));
-      statusDetail.append(...kv('Reachable', reachabilityText(cur.reachable_targets, cur.total_targets)));
-      statusDetail.append(...kv('Checked', fmtDateTime(Date.parse(cur.time))));
-    }
-    probeBtn.disabled = probing || !(status && status.enabled !== undefined);
-  }
+  // ------------------------------------------------------------- lower row
+  const lower = el('div', 'nh-lower');
+  body.append(lower);
 
-  // ------------------------------------------------------------- range picker
-  const rangeSeg = segmented(RANGE_PRESETS.map((p) => ({ id: p.id, label: p.label })), range.id, (id) => {
-    range = RANGE_PRESETS.find((p) => p.id === id) || RANGE_PRESETS[0];
-    loadSeries();
-  }, 'Time range');
-  const rangeWrap = el('div', 'nh-range');
-  rangeWrap.append(el('span', 'muted small', 'Range'), rangeSeg.root);
-  body.append(rangeWrap);
-
-  // ------------------------------------------------------------- charts
-  const latencyChart = metricChart('Latency', fmtMSValue);
-  const jitterChart = metricChart('Jitter', fmtMSValue);
-  const lossChart = metricChart('Packet loss', fmtLoss);
-  const chartsGrid = el('div', 'nh-charts');
-  chartsGrid.append(latencyChart.root, jitterChart.root, lossChart.root);
-  body.append(chartsGrid);
-
-  // ------------------------------------------------------------- bufferbloat card
   const bbCard = el('section', 'card nh-bufferbloat');
   const bbHead = el('div', 'card-h');
   bbHead.append(el('h3', 'card-t', 'Bufferbloat'));
@@ -133,7 +153,55 @@ export function createNethealth({ root, mgmt, notify }) {
   const bbCurrent = el('div', 'nh-bb-current');
   const bbList = el('ul', 'list nh-bb-list');
   bbCard.append(bbHead, bbCurrent, bbList);
-  body.append(bbCard);
+  lower.append(bbCard);
+
+  const aboutCard = el('section', 'card nh-about');
+  aboutCard.append(el('h3', 'card-t', 'How this is measured'));
+  const aboutTargets = el('div', 'nh-targets');
+  const aboutP1 = el('p', 'muted small', '');
+  aboutCard.append(
+    aboutP1,
+    el('p', 'muted small', 'Latency is the mean round trip to each reachable target, jitter is how much those round trips vary within one cycle, and loss is the share of probes that got no answer. A sustained stretch of loss or high latency raises the network-degraded alarm.'),
+    el('p', 'muted small', 'Bufferbloat compares idle latency with latency under a short download burst: A adds under 30 ms, B under 60, C under 200, D under 400, F more. It generates real load, so it is off unless enabled in [nethealth] or run by hand.'),
+    el('div', 'k nh-targets-k', 'Targets'),
+    aboutTargets,
+  );
+  lower.append(aboutCard);
+
+  function paintStatus() {
+    if (statusError) {
+      errorBox.hidden = false;
+      tiles.hidden = lower.hidden = true;
+      errorBox.replaceChildren(unavailable(statusError) ? unavailableCard('Network health') : emptyState('Could not load network status', statusError.message, button('Try again', 'ghost', load)));
+      probeBtn.disabled = true;
+      pill.className = 'nh-pill none';
+      pill.textContent = 'Unavailable';
+      return;
+    }
+    errorBox.hidden = true;
+    tiles.hidden = lower.hidden = false;
+    const cur = status && status.current;
+    const kind = statusKind(cur, !!(status && status.degraded));
+    pill.className = 'nh-pill ' + kind;
+    pill.textContent = statusPillLabel(kind);
+    pill.title = statusHeadline(cur, !!(status && status.degraded));
+    const tone = kind === 'bad' ? 'bad' : kind === 'warn' ? 'warn' : '';
+    const checked = cur ? 'checked ' + fmtWhen(Date.parse(cur.time)) : 'no probe has run yet';
+    latencyTile.setValue(cur ? fmtMS(cur.latency_ms) : '—', cur ? 'mean round trip · ' + checked : checked, tone);
+    jitterTile.setValue(cur ? fmtMS(cur.jitter_ms) : '—', cur ? 'variation within a cycle' : '', tone);
+    lossTile.setValue(cur ? fmtLoss(cur.loss_pct) : '—', cur ? 'of probes unanswered' : '', cur && cur.loss_pct > 0 ? (tone || 'warn') : tone);
+    reachTile.setValue(cur ? `${cur.reachable_targets}/${cur.total_targets}` : '—', cur ? reachabilityText(cur.reachable_targets, cur.total_targets) : '', tone);
+
+    const targets = (status && status.targets) || [];
+    aboutTargets.replaceChildren();
+    for (const t of targets) aboutTargets.append(el('span', 'nh-target mono', t));
+    if (!targets.length) aboutTargets.append(el('span', 'muted small', 'No targets configured.'));
+    aboutP1.textContent = (status && status.enabled
+      ? 'Every two minutes Shepherd opens a few short connections to each target below and records the result.'
+      : 'The scheduled probe is off; readings here come from manual probes only. Enable it in [nethealth].')
+      + ' Targets are your configured DNS upstreams plus two public resolvers, so an upstream outage is distinguishable from the whole path to the internet being down.';
+    probeBtn.disabled = probing || !(status && status.enabled !== undefined);
+  }
 
   function paintBufferbloat() {
     bbCurrent.replaceChildren();
@@ -146,20 +214,33 @@ export function createNethealth({ root, mgmt, notify }) {
     bbBtn.disabled = runningBufferbloat;
     const latest = bufferbloat[bufferbloat.length - 1];
     if (!latest) {
-      bbCurrent.append(el('p', 'muted small', status && status.bufferbloat_enabled ? 'No check has run yet.' : 'Off by default (generates real load against your own connection). Enabled in [nethealth] or run one manually.'));
+      bbCurrent.append(el('p', 'muted small nh-bb-none', status && status.bufferbloat_enabled ? 'No check has run yet.' : 'Off by default — it generates real load against your own connection. Enable it in [nethealth] or run one manually.'));
     } else {
-      const badge = el('span', gradeClass(latest.grade));
-      badge.textContent = gradeLabel(latest.grade, latest.load_error);
-      const detail = el('span', 'muted small', latest.load_error ? latest.load_error : fmtMSValue(latest.idle_ms) + ' idle, ' + fmtMSValue(latest.loaded_ms) + ' loaded (+' + fmtMSValue(latest.increase_ms) + ')');
-      bbCurrent.append(badge, detail);
+      const badge = el('span', gradeClass(latest.grade) + ' big');
+      badge.textContent = latest.load_error ? '!' : (latest.grade || '—');
+      badge.title = gradeLabel(latest.grade, latest.load_error);
+      const stats = el('div', 'nh-bb-stats');
+      const stat = (k, v) => { const d = el('div', 'nh-bb-stat'); d.append(el('span', 'k', k), el('span', 'nh-bb-v mono', v)); return d; };
+      if (latest.load_error) {
+        stats.append(el('p', 'muted small', latest.load_error));
+      } else {
+        stats.append(stat('Idle', fmtMSValue(latest.idle_ms)), stat('Loaded', fmtMSValue(latest.loaded_ms)), stat('Added', '+' + fmtMSValue(latest.increase_ms)));
+      }
+      const when = el('div', 'muted small nh-bb-when', gradeLabel(latest.grade, latest.load_error) + ' · ' + fmtWhen(Date.parse(latest.time)));
+      const right = el('div', 'nh-bb-main');
+      right.append(stats, when);
+      bbCurrent.append(badge, right);
     }
-    for (const b of [...bufferbloat].reverse().slice(0, 10)) {
+    const prior = [...bufferbloat].reverse().slice(1, 11);
+    for (const b of prior) {
       const li = el('li', '');
-      const l1 = el('span', gradeClass(b.grade), b.load_error ? 'error' : b.grade || '—');
-      const l2 = el('span', 'muted small', fmtDateTime(Date.parse(b.time)) + ' — ' + (b.load_error || fmtMSValue(b.increase_ms) + ' added'));
-      li.append(l1, l2);
+      const l1 = el('span', gradeClass(b.grade), b.load_error ? '!' : b.grade || '—');
+      const l2 = el('span', 'grow small', fmtWhen(Date.parse(b.time)));
+      const l3 = el('span', 'muted small mono', b.load_error ? 'could not run' : '+' + fmtMSValue(b.increase_ms));
+      li.append(l1, l2, l3);
       bbList.append(li);
     }
+    bbList.hidden = prior.length === 0;
   }
 
   // ------------------------------------------------------------- loading
@@ -171,6 +252,7 @@ export function createNethealth({ root, mgmt, notify }) {
       statusError = e;
     }
     paintStatus();
+    if (statusError) return;
     await Promise.all([loadSeries(), loadBufferbloat()]);
   }
 
@@ -179,19 +261,26 @@ export function createNethealth({ root, mgmt, notify }) {
     const from = new Date(to.getTime() - range.hours * 3600 * 1000);
     try {
       const params = { from: from.toISOString(), to: to.toISOString() };
-      const latencyRes = await mgmt.nethealthSeries(params);
-      const pts = latencyRes.points || [];
+      const res = await mgmt.nethealthSeries(params);
+      const pts = res.points || [];
       // Every Point the server returns — raw or rolled up — uses the same
       // avg_latency_ms/avg_jitter_ms/avg_loss_pct fields (internal/nethealth
       // /store.go's Point: a raw sample's own min/avg/max are just that one
       // value, so there is no separate bare-named field for the raw case).
-      series = { latency: seriesToPoints(pts, 'avg_latency_ms'), jitter: seriesToPoints(pts, 'avg_jitter_ms'), loss: seriesToPoints(pts, 'avg_loss_pct') };
+      series = {
+        latency: seriesToPoints(pts, 'avg_latency_ms'),
+        jitter: seriesToPoints(pts, 'avg_jitter_ms'),
+        loss: seriesToPoints(pts, 'avg_loss_pct'),
+        reach: seriesToPoints(pts, 'reachable_targets'),
+      };
     } catch (e) {
-      series = { latency: [], jitter: [], loss: [] };
+      series = { latency: [], jitter: [], loss: [], reach: [] };
     }
-    latencyChart.paint(series.latency);
-    jitterChart.paint(series.jitter);
-    lossChart.paint(series.loss, { min: 0, max: 100 });
+    latencyTile.paint(series.latency, { min: 0 });
+    jitterTile.paint(series.jitter, { min: 0 });
+    lossTile.paint(series.loss, { min: 0, max: axisMax(series.loss, 5) });
+    const total = status && status.current ? status.current.total_targets : 0;
+    reachTile.paint(series.reach, { min: 0, max: Math.max(total, ...series.reach.map((p) => p.v), 1) });
   }
 
   async function loadBufferbloat() {

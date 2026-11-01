@@ -275,6 +275,34 @@ test('history: first-ever unlock creates the passphrase; memory mode explains it
   assert.deepEqual(e.entries, []);
 });
 
+test('network health: status, series at each bucket, bufferbloat history and manual runs', async () => {
+  const { call } = rig();
+  const st = await call('GET', '/api/nethealth');
+  assert.equal(st.enabled, true);
+  assert.equal(st.targets.length, 4);
+  assert.equal(st.current.total_targets, 4);
+  assert.ok(st.current.latency_ms > 0);
+  const iso = (ms) => new Date(ms).toISOString();
+  const day = await call('GET', `/api/nethealth/series?from=${iso(NOW - 86400000)}&to=${iso(NOW)}`);
+  assert.equal(day.bucket, 'raw');
+  assert.ok(day.points.length >= 700 && day.points.length <= 721, String(day.points.length));
+  assert.ok(day.points.every((p) => 'avg_latency_ms' in p && 'avg_loss_pct' in p && 'reachable_targets' in p));
+  const week = await call('GET', `/api/nethealth/series?from=${iso(NOW - 7 * 86400000)}&to=${iso(NOW)}`);
+  assert.equal(week.bucket, 'hour');
+  assert.ok(week.points.some((p) => p.reachable_targets < 4), 'the synthetic outage shows up in the week view');
+  const quarter = await call('GET', `/api/nethealth/series?from=${iso(NOW - 90 * 86400000)}&to=${iso(NOW)}`);
+  assert.equal(quarter.bucket, 'day');
+  assert.ok(quarter.points.length >= 89 && quarter.points.length <= 91);
+  const bb = await call('GET', '/api/nethealth/bufferbloat');
+  assert.equal(bb.points.length, 4);
+  assert.ok(bb.points.every((b) => ['A', 'B', 'C'].includes(b.grade)));
+  const probe = await call('POST', '/api/nethealth/probe');
+  assert.equal(probe.total_targets, 4);
+  const run = await call('POST', '/api/nethealth/bufferbloat/run');
+  assert.ok(['A', 'B'].includes(run.grade));
+  assert.equal((await call('GET', '/api/nethealth/bufferbloat')).points.length, 5);
+});
+
 test('unknown paths fall through and the demo api wires settings and delegation', async () => {
   const { d, call } = rig();
   assert.equal(await call('GET', '/api/nothing'), undefined);

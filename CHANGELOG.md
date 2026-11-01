@@ -13,6 +13,16 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Changed
+- **Network health screen redesigned.** The old page spent most of its width on a near-empty status
+  card, a lonely "Range" row and three small unlabeled charts. It is now one header row (title, a
+  Healthy / Degraded / Outage pill, the range picker and "Probe now"), four metric tiles that each pair
+  the current reading with an area chart of the chosen range (latency, jitter, packet loss, and a new
+  reachability chart that shows an outage as a dip in reachable targets), then the bufferbloat card
+  (grade, idle / loaded / added, compact history) beside a short "how this is measured" card listing
+  the probe targets. Charts have labelled min/max gridlines and start/end times, scale strokes
+  correctly at any width, and the loss chart auto-scales above a 5% floor instead of using a 0–100%
+  axis that hid a 1% blip. Demo mode now has synthetic network-health data, so the page works there
+  too.
 - **Watch mode is retired and off by default.** It was on, under the protect-by-default decision in
   [DESIGN.md](docs/DESIGN.md); measurement retired it, not taste, and the evidence stays in
   [WATCH.md](docs/WATCH.md) because it is the argument. Outbound-only by construction, so a device's
