@@ -128,11 +128,21 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
   So it was a genuine single-frame runaway, and the duplicate brake caught 3% of it rather than the
   80% it manages at rest. Its effectiveness **collapses as the rate rises**, which is the opposite
-  of what a safety mechanism should do. The likely reason is in the brake's own shape: `is_duplicate`
-  reads a slot, compares, and writes it back without atomicity, so at tens of thousands of frames a
-  second across twelve cores two frames routinely both read "not seen" and both get relayed. A
-  per-CPU table would remove the race, and that is the next thing to try -- stated as a hypothesis,
-  because the last three stated here as more than that were wrong.
+  of what a safety mechanism should do. The explanation offered was a race in the brake's
+  own shape: `is_duplicate` reads a slot, compares and writes it back without atomicity, so at tens
+  of thousands of frames a second across twelve cores two copies might both read "not seen" and both
+  be relayed. The table was duly made **per CPU**, removing that race outright, and **it changed
+  nothing**: the next trip suppressed 8,259 of 347,963 relayed frames, 2.4% against 2.8% before, and
+  again sampled a single flow with one IP identification field and an undecremented TTL. So why one
+  frame can be relayed hundreds of thousands of times while a fingerprint table holding it catches
+  two per cent of the passes is **not known**, and that is the fourth explanation offered here and
+  refuted by measurement, after the polluted registry record, kernel forwarding and the dual-homed
+  device. The duplicate brake helps at rest and does not work when it matters; the loop brake is
+  what stands between this feature and a melted network.
+
+  **Watch mode is off on the maintainer's NAS as a result**, with `allow_routing_host` back to false
+  so the dual-homed refusal applies on its own, and the config records why. DNS filtering, the
+  device registry and the passive ARP monitor are untouched and verified working.
 
   What did work is the layer underneath: the loop brake stopped it in three seconds and, for the
   first time, **the reason survived the redeploy** -- the interface counts, the relay's share, the
