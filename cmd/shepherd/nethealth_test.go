@@ -319,9 +319,9 @@ func TestStartNethealthBuildsTargetsAndWorksManuallyWhileFullyDisabled(t *testin
 }
 
 func TestStartNethealthBufferbloatScheduledWhenEnabled(t *testing.T) {
-	var loadCalled bool
+	var loadCalled atomic.Bool
 	load := func(ctx context.Context) error {
-		loadCalled = true
+		loadCalled.Store(true)
 		<-ctx.Done()
 		return nil
 	}
@@ -348,7 +348,7 @@ func TestStartNethealthBufferbloatScheduledWhenEnabled(t *testing.T) {
 	if _, ok := p.LatestBufferbloat(); !ok {
 		t.Fatal("expected a bufferbloat check to have run")
 	}
-	if !loadCalled {
+	if !loadCalled.Load() {
 		t.Error("expected the injected Load to have been called")
 	}
 	cancel()

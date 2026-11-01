@@ -56,7 +56,7 @@ func ParseDefaultRoute6(data []byte) (Route6, error) {
 		dest, destOK := parseHexAddr16(f[0])
 		plen, e1 := strconv.ParseUint(f[1], 16, 32)
 		nextHop, hopOK := parseHexAddr16(f[4])
-		metric, e2 := strconv.ParseUint(f[5], 16, 64)
+		metric, e2 := strconv.ParseUint(f[5], 16, 31) // 31 bits: always fits an int
 		flags, e3 := strconv.ParseUint(f[8], 16, 64)
 		if !destOK || !hopOK || e1 != nil || e2 != nil || e3 != nil {
 			continue
