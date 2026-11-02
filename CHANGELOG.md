@@ -12,6 +12,15 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Fixed
+- **A stalled upstream no longer makes DNS lookups fail.** Upstreams were tried one after another with a
+  two-second timeout each, so one that stalled (a slow DNS-over-TLS connection, or a resolver dropping
+  packets) cost every query two seconds before the next was tried, longer than many clients wait.
+  Shepherd now starts the next upstream after a short hedge delay (3x the first one's round trip,
+  150 to 400 ms) or at once if the first fails, and answers with whichever replies first. An upstream
+  that was hedged out still records its own success or failure, so a chronically slow one still falls
+  down the ranking.
+
 ## [0.1.0] - 2026-11-02
 
 ### Added
