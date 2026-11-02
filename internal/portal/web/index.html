@@ -42,7 +42,6 @@
       <nav class="tabs nav" role="tablist" aria-label="View">
         <div class="nav-h">Monitor</div>
         <button type="button" role="tab" id="tab-hud" aria-selected="true" aria-controls="view-hud"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"/><path d="M3 12h18"/><path d="M12 3c3 3.5 3 14.5 0 18"/><path d="M12 3c-3 3.5-3 14.5 0 18"/></svg><span>Map</span></button>
-        <button type="button" role="tab" id="tab-details" aria-selected="false" aria-controls="view-details"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h7v7H4z"/><path d="M13 4h7v7h-7z"/><path d="M4 13h7v7H4z"/><path d="M13 13h7v7h-7z"/></svg><span>Overview</span></button>
         <button type="button" role="tab" id="tab-history" aria-selected="false" aria-controls="view-history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M4 4v4h4"/><path d="M12 8v4l3 2"/></svg><span>History</span></button>
         <button type="button" role="tab" id="tab-alarms" aria-selected="false" aria-controls="view-alarms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span>Alarms</span></button>
         <button type="button" role="tab" id="tab-vulnscan" aria-selected="false" aria-controls="view-vulnscan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M12 8v4"/><path d="M12 15h.01"/></svg><span>Vulnerabilities</span></button>
@@ -51,12 +50,12 @@
         <div class="nav-h">Protect</div>
         <button type="button" role="tab" id="tab-devices" aria-selected="false" aria-controls="view-devices"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18v11H3z"/><path d="M8 20h8M12 16v4"/></svg><span>Devices</span></button>
         <button type="button" role="tab" id="tab-blocking" aria-selected="false" aria-controls="view-blocking"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"/><path d="M5.6 5.6l12.8 12.8"/></svg><span>Blocking</span></button>
-        <button type="button" role="tab" id="tab-watch" aria-selected="false" aria-controls="view-watch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"/><path d="M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg><span>Watch mode</span></button>
         <div class="nav-h">Settings</div>
         <button type="button" role="tab" id="tab-upstreams" aria-selected="false" aria-controls="view-upstreams"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v5H4z"/><path d="M4 14h16v5H4z"/><path d="M8 7.5h.01M8 16.5h.01"/></svg><span>Upstream DNS</span></button>
         <button type="button" role="tab" id="tab-proxy" aria-selected="false" aria-controls="view-proxy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg><span>Reverse proxy</span></button>
         <button type="button" role="tab" id="tab-accountability" aria-selected="false" aria-controls="view-accountability"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18v12H3z"/><path d="M3 7l9 6 9-6"/></svg><span>Accountability</span></button>
         <button type="button" role="tab" id="tab-locking" aria-selected="false" aria-controls="view-locking"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 11h12v10H6z"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span>Locking</span></button>
+        <button type="button" role="tab" id="tab-details" aria-selected="false" aria-controls="view-details"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><span>System</span></button>
       </nav>
       <div class="nav-foot">
         <span class="mono" id="version"></span>
@@ -169,7 +168,7 @@
 
     <div class="notice" id="no-map" hidden>
       <strong>Map data is not available yet</strong>
-      <span>Queries are arriving, but none carry a location. The Overview has everything meanwhile.</span>
+      <span>Queries are arriving, but none carry a location. Bandwidth, Devices and the other screens work without it.</span>
     </div>
     <div class="notice prompt" id="no-home" hidden>
       <strong>Where is home?</strong>
@@ -178,7 +177,7 @@
     </div>
     <div class="notice" id="no-gl" hidden>
       <strong>The map is not available</strong>
-      <span>The map needs WebGL or canvas, and this browser has neither. The Overview works without it.</span>
+      <span>The map needs WebGL or canvas, and this browser has neither. Every other screen works without it.</span>
     </div>
     <div class="homebanner" id="home-banner" hidden>Click the globe to place home. Esc to cancel.</div>
 
@@ -203,7 +202,6 @@
   <main id="view-blocking" class="page" role="tabpanel" aria-labelledby="tab-blocking" hidden></main>
   <main id="view-alarms" class="page page-fill" role="tabpanel" aria-labelledby="tab-alarms" hidden></main>
   <main id="view-vulnscan" class="page page-fill" role="tabpanel" aria-labelledby="tab-vulnscan" hidden></main>
-  <main id="view-watch" class="page" role="tabpanel" aria-labelledby="tab-watch" hidden></main>
   <main id="view-network" class="page" role="tabpanel" aria-labelledby="tab-network" hidden></main>
   <main id="view-traffic" class="page" role="tabpanel" aria-labelledby="tab-traffic" hidden></main>
   <main id="view-upstreams" class="page" role="tabpanel" aria-labelledby="tab-upstreams" hidden></main>
@@ -214,22 +212,10 @@
 
   <main id="view-details" class="page" role="tabpanel" aria-labelledby="tab-details" hidden>
     <div class="pg-head stack">
-      <h2 class="pg-title">Overview</h2>
-      <p class="pg-sub muted">Totals, the live query list, resolver and blocklist health, and your own rules, all on one screen.</p>
+      <h2 class="pg-title">System</h2>
+      <p class="pg-sub muted">Software updates, blocklist health, your own allow and block rules and the privacy policy.</p>
     </div>
     <p class="banner" id="details-banner" hidden></p>
-    <section class="tiles">
-      <div class="tile"><span class="k">Queries</span><span class="v" id="d-total">0</span></div>
-      <div class="tile"><span class="k">Blocked</span><span class="v" id="d-blocked">0</span><span class="sub" id="d-pct"></span></div>
-      <div class="tile"><span class="k">Cached</span><span class="v" id="d-cached">0</span></div>
-      <div class="tile"><span class="k">Errors</span><span class="v" id="d-errors">0</span></div>
-      <div class="tile"><span class="k">Listed domains</span><span class="v" id="d-listed">0</span></div>
-    </section>
-    <!-- Honest status, not a bug report: Watch mode (ARP interception, internal/intercept)
-         is built but not wired into cmd/shepherd or the portal yet (docs/ROADMAP.md step 11),
-         so there is genuinely nothing live to report either way. -->
-    <p class="muted small watchmode-note">Counts above are DNS lookups. Watch mode adds what devices actually connect to and how much they send.</p>
-
     <section class="card sw-card" id="sw-card">
       <div class="card-h">
         <h2>Software</h2>
@@ -245,24 +231,6 @@
     </section>
 
     <section class="grid">
-      <div class="card wide">
-        <div class="card-h">
-          <h2>Live queries</h2>
-          <input id="filter" type="search" placeholder="Filter by device, domain or action" autocomplete="off">
-        </div>
-        <div class="scroll">
-          <table>
-            <thead><tr><th>Time</th><th>Device</th><th>Domain</th><th>Type</th><th>Result</th><th>Via</th><th>ms</th><th></th></tr></thead>
-            <tbody id="rows"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Upstreams</h2>
-        <ul class="list" id="upstreams"></ul>
-      </div>
-
       <div class="card">
         <div class="card-h"><h2>Blocklists</h2><button id="refresh" class="ghost">Refresh now</button></div>
         <ul class="list" id="lists"></ul>
@@ -284,15 +252,6 @@
         <ul class="list" id="rules"></ul>
       </div>
 
-      <div class="card">
-        <h2>Top devices</h2>
-        <ul class="list" id="top-clients"></ul>
-      </div>
-
-      <div class="card">
-        <h2>Top blocked</h2>
-        <ul class="list" id="top-blocked"></ul>
-      </div>
     </section>
     <p class="muted small attrib-foot">Locations: <a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">IP geolocation by DB-IP</a> (CC BY 4.0). Land: Natural Earth.</p>
   </main>

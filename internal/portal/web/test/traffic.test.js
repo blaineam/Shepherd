@@ -92,3 +92,71 @@ test('liveRows sorts busiest first and the caveat names the blind spots', () => 
   assert.equal(fmtBytes(2048), '2.0 KB');
   assert.equal(fmtBitsPerSecond(125), '1.00 kbit/s');
 });
+
+import { niceCeil, yTicks, lineArea, nearestIndex, pushSample, shareSlices, arcPath, rateStats } from '../js/traffic.js';
+
+test('niceCeil rounds up to 1, 2, 2.5, 5 or 10 times a power of ten', () => {
+  assert.equal(niceCeil(0), 1);
+  assert.equal(niceCeil(-3), 1);
+  assert.equal(niceCeil(1), 1);
+  assert.equal(niceCeil(1.1), 2);
+  assert.equal(niceCeil(2.3), 2.5);
+  assert.equal(niceCeil(4.2), 5);
+  assert.equal(niceCeil(97.9e6), 100e6);
+  assert.equal(niceCeil(310), 500);
+});
+
+test('yTicks spans zero to the nice ceiling in equal steps', () => {
+  assert.deepEqual(yTicks(97, 4), [0, 25, 50, 75, 100]);
+  assert.equal(yTicks(0, 2).length, 3);
+});
+
+test('lineArea scales to a shared ceiling and closes the area on the baseline', () => {
+  assert.deepEqual(lineArea([], 10), { line: '', area: '' });
+  const r = lineArea([0, 10], 10, { width: 100, height: 50, pad: 0 });
+  assert.equal(r.line, 'M0.0,50.0 L100.0,0.0');
+  assert.ok(r.area.startsWith('M0.0,50.0 L0.0,50.0') && r.area.endsWith('L100.0,50.0 Z'));
+  // Above-ceiling values clamp; one point draws centred; a zero ceiling is safe.
+  assert.equal(lineArea([99], 10, { width: 100, height: 50, pad: 0 }).line, 'M50.0,0.0');
+  assert.equal(lineArea([0, 0], 0, { width: 10, height: 10, pad: 0 }).line, 'M0.0,10.0 L10.0,10.0');
+});
+
+test('nearestIndex maps a pointer fraction onto a sample', () => {
+  assert.equal(nearestIndex(0, 5), 0);
+  assert.equal(nearestIndex(1, 5), 4);
+  assert.equal(nearestIndex(0.5, 5), 2);
+  assert.equal(nearestIndex(-1, 5), 0);
+  assert.equal(nearestIndex(9, 5), 4);
+  assert.equal(nearestIndex(0.5, 1), 0);
+});
+
+test('pushSample keeps only the newest samples', () => {
+  let b = null;
+  for (let i = 0; i < 5; i++) b = pushSample(b, i, 3);
+  assert.deepEqual(b, [2, 3, 4]);
+});
+
+test('shareSlices keeps the biggest, folds the rest into Other and sums to one', () => {
+  assert.deepEqual(shareSlices([]), []);
+  assert.deepEqual(shareSlices([{ value: 0 }]), []);
+  const s = shareSlices([{ name: 'a', value: 50 }, { name: 'b', value: 30 }, { name: 'c', value: 15 }, { name: 'd', value: 5 }], 2);
+  assert.deepEqual(s.map((x) => x.item.name), ['a', 'b', 'Other']);
+  assert.ok(s[2].item.other);
+  assert.equal(s[2].value, 20);
+  assert.ok(Math.abs(s.reduce((t, x) => t + x.fraction, 0) - 1) < 1e-9);
+  assert.equal(shareSlices([{ name: 'a', value: 1 }], 5).length, 1);
+});
+
+test('arcPath draws a closed ring segment, even for a whole turn', () => {
+  const half = arcPath(50, 50, 40, 20, 0, 0.5);
+  assert.ok(half.startsWith('M50.00,10.00') && half.endsWith('Z'));
+  assert.match(half, / A40,40 0 0 1 /);
+  const big = arcPath(50, 50, 40, 20, 0, 0.75);
+  assert.match(big, / A40,40 0 1 1 /);
+  assert.ok(arcPath(50, 50, 40, 20, 0, 1).endsWith('Z'));
+});
+
+test('rateStats reports peak and average', () => {
+  assert.deepEqual(rateStats([]), { peak: 0, avg: 0 });
+  assert.deepEqual(rateStats([2, 4, 6, 'x']), { peak: 6, avg: 3 });
+});

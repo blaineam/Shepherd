@@ -151,3 +151,13 @@ func TestTokenFileHandling(t *testing.T) {
 		t.Error("an unwritable data dir must error")
 	}
 }
+
+// The page registers sw.js and links the manifest; both must be embedded or
+// the server answers 404 and push subscription fails with "load failed".
+func TestServiceWorkerAndManifestAreServed(t *testing.T) {
+	for _, name := range []string{"sw.js", "manifest.webmanifest"} {
+		if _, err := webFS.ReadFile("web/" + name); err != nil {
+			t.Errorf("%s is not embedded: %v", name, err)
+		}
+	}
+}

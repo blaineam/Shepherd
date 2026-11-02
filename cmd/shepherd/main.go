@@ -32,6 +32,11 @@ import (
 var version = "dev"
 
 func main() {
+	// Shepherd's own HTTP fetches must not depend on the host's resolv.conf,
+	// which in a host-network container names resolvers that are not there.
+	// Installed here, before anything runs, because it writes a global; run()
+	// then says which servers it asks.
+	dnsengine.InstallHostResolver()
 	os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr))
 }
 
@@ -121,6 +126,7 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	if err != nil {
 		return err
 	}
+	dnsengine.SetHostServers(pool.Bootstrap)
 	// Runtime edits made in the portal live in upstreams.json and, once it
 	// exists, win over dns.upstreams.
 	ups := dnsengine.OpenUpstreamStore(filepath.Join(cfg.DataDir, "upstreams.json"), pool)

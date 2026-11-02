@@ -24,7 +24,7 @@ much steered traffic the Pi can carry. None of this is measured on a Pi.
 Watch mode is on by default, so **if you are running on a Pi and want to be careful, turn it off**
 (`[watch] enabled = false`) or steer a few devices deliberately by switching the rest to "Never
 watch" in the portal. DNS filtering and the passive ARP monitor cost the Pi nothing either way, and
-the kill switch on the Watch screen stops all steering at once if it does not go well.
+the kill switch in the Watch mode section of the Bandwidth screen stops all steering at once if it does not go well.
 
 ## Setup
 

@@ -32,7 +32,7 @@ Step 5 is the hardest part of the whole promise, so it gets its own screen. Shep
 device once the device asks it for DNS. The wizard shows the address to enter in the router's DHCP/DNS
 setting, detects the router model where it can (UPnP, the vendor's own page) and links the matching
 instructions, and offers a test that confirms a phone on the network is really using it. Until that
-test passes the Overview says plainly that nothing is protected yet.
+test passes the System screen says plainly that nothing is protected yet.
 
 ## Targets
 

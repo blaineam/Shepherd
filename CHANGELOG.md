@@ -12,6 +12,15 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Changed
+- **The Overview and Watch mode screens are gone.** The Overview repeated what the Map, History and
+  Bandwidth screens show better, so the portal opens on the Map and what only the Overview had (software
+  updates, blocklist health, your own rules, the Private Relay switch) is the new **System** screen under
+  Settings. Watch mode's status, device list and kill switch are the last section of **Bandwidth**.
+- **Bandwidth is mostly charts now.** A live rolling chart with a bar pair per device, an Over time chart
+  with round-number gridlines and a hover read-out, a share-of-traffic donut with a download against
+  upload bar, and a trend line per busy device.
+
 ### Added
 - **`dns.filter_aaaa`** (`"auto"` by default, or `"on"` / `"off"`). On a network whose devices have no
   IPv6 route to the internet (only private `fd..` or link-local addresses) every AAAA answer is an
@@ -22,6 +31,9 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   row turn them off, and each change is logged. Filtered answers show as `ipv6-filtered` in the log.
 
 ### Fixed
+
+- Update checks, blocklist refreshes and the other feed downloads failed with a DNS timeout when the host's `resolv.conf` named resolvers Shepherd does not listen on (the usual case in a host-network container), so every list showed "Rejected". Shepherd's own fetches now resolve through the bootstrap servers.
+- Subscribing to push notifications failed with "sw.js load failed": the service worker and web manifest were not embedded in the binary.
 - **The portal locked while it was in use.** Idle locking counted only calls that mean a person is
   there, and looking at the map, panning the globe or scrolling made none, so a page in active use
   relocked after the idle window. The page now reports real input (at most once a minute) to

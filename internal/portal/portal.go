@@ -44,7 +44,7 @@ import (
 // Only what the browser needs is embedded: the page, its modules and vendored
 // libraries. The unit tests under web/test stay out of the binary.
 //
-//go:embed web/index.html web/app.js web/style.css web/icon.png web/js web/vendor
+//go:embed web/index.html web/app.js web/style.css web/icon.png web/sw.js web/manifest.webmanifest web/js web/vendor
 var webFS embed.FS
 
 const cookieName = "shepherd_session"
