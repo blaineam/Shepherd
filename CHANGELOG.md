@@ -12,6 +12,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+- **Every loop-brake trip is kept, with its raw evidence.** `last_loop_stop` in `watch.json` now also
+  records the relay's counts over the mirrored seconds, the echo-delay histogram (local, switch or
+  wireless) and the sampled frames as hex, and each trip is appended to `watch-stops.jsonl` beside it
+  so the next trip no longer erases the one before. Aimed at tracing why watch mode stops until it
+  stops no more.
+
 ## [0.1.0] - 2026-11-02
 
 ### Added
