@@ -73,6 +73,10 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   it is attributed to the registry's device for the suspect MAC. Roadmap step 10 is done.
 
 ### Fixed
+- **Flaky watch-mode tests.** Several `internal/watch` engine tests advanced the fake clock once and then
+  waited, so a tick fired before the engine had re-armed its timer was lost and the test timed out under the
+  race detector (and failed `main`'s QA). They now keep ticking until the engine catches up, and no longer
+  read a retry record that the previous round left behind. Test-only; no behaviour change.
 - **Code-scanning hardening.** The trusted-device, session and lock cookies are now `Secure` whenever the
   request arrived over HTTPS (direct TLS or `X-Forwarded-Proto: https`); plain-HTTP LAN access keeps working. The
   DNS-over-HTTPS client re-checks the upstream scheme right before it sends, the IPv6 route metric is parsed with
