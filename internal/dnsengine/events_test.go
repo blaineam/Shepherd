@@ -443,7 +443,7 @@ func TestFilterAAAAAnswersEmptyAndNeverAsksUpstream(t *testing.T) {
 	var hits atomicInt
 	up := fakeUpstreamAnswering(t, "198.51.100.7", &hits)
 	pool, _ := NewPool([]string{up})
-	e := &Engine{Filter: NewFilter(), Pool: pool, Cache: NewCache(10), Log: NewQueryLog(20), Stats: NewStats(), FilterAAAA: true}
+	e := &Engine{Filter: NewFilter(), Pool: pool, Cache: NewCache(10), Log: NewQueryLog(20), Stats: NewStats(), FilterAAAA: func() bool { return true }}
 
 	w := udpWriter()
 	e.ServeDNS(w, query("v6.example.", dns.TypeAAAA))
@@ -462,7 +462,7 @@ func TestFilterAAAAAnswersEmptyAndNeverAsksUpstream(t *testing.T) {
 }
 
 func TestWithoutIPv6HintsStripsOnlyTheHint(t *testing.T) {
-	e := &Engine{FilterAAAA: true}
+	e := &Engine{FilterAAAA: func() bool { return true }}
 	rr := &dns.HTTPS{SVCB: dns.SVCB{Hdr: dns.RR_Header{Name: "a.example.", Rrtype: dns.TypeHTTPS, Class: dns.ClassINET}, Priority: 1, Target: ".",
 		Value: []dns.SVCBKeyValue{&dns.SVCBAlpn{Alpn: []string{"h2"}}, &dns.SVCBIPv6Hint{Hint: []net.IP{net.ParseIP("2001:db8::1")}}}}}
 	in := &dns.Msg{Answer: []dns.RR{rr}}
@@ -476,5 +476,19 @@ func TestWithoutIPv6HintsStripsOnlyTheHint(t *testing.T) {
 	}
 	if (&Engine{}).withoutIPv6Hints(in) != in {
 		t.Error("with the filter off the message must pass through untouched")
+	}
+}
+
+func TestWithoutIPv6HintsHandlesSVCBAndLeavesHintlessAnswersAlone(t *testing.T) {
+	e := &Engine{FilterAAAA: func() bool { return true }}
+	svcb := &dns.SVCB{Hdr: dns.RR_Header{Name: "b.example.", Rrtype: dns.TypeSVCB, Class: dns.ClassINET}, Priority: 1, Target: ".",
+		Value: []dns.SVCBKeyValue{&dns.SVCBIPv6Hint{Hint: []net.IP{net.ParseIP("2001:db8::2")}}}}
+	out := e.withoutIPv6Hints(&dns.Msg{Answer: []dns.RR{svcb}})
+	if got := out.Answer[0].(*dns.SVCB).Value; len(got) != 0 {
+		t.Errorf("SVCB hint not stripped: %v", got)
+	}
+	plain := &dns.Msg{Answer: []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: "c.example.", Rrtype: dns.TypeA, Class: dns.ClassINET}, A: net.ParseIP("192.0.2.1")}}}
+	if e.withoutIPv6Hints(plain) != plain {
+		t.Error("an answer with no IPv6 hint must pass through untouched")
 	}
 }

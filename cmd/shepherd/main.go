@@ -130,12 +130,17 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	engine := &dnsengine.Engine{
 		Filter: filter, Pool: pool, Cache: dnsengine.NewCache(cfg.DNS.CacheSize),
 		Log: dnsengine.NewQueryLog(cfg.DNS.LogSize), Stats: dnsengine.NewStats(),
-		BlockNXDOMAIN: cfg.DNS.BlockMode == "nxdomain", FilterAAAA: cfg.DNS.FilterAAAA,
+		BlockNXDOMAIN: cfg.DNS.BlockMode == "nxdomain",
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go pool.Probe(ctx, time.Duration(cfg.DNS.ProbeIntervalSeconds)*time.Second)
+	filterAAAA, v6 := aaaaFilter(cfg.DNS.FilterAAAA)
+	engine.FilterAAAA = filterAAAA
+	if v6 != nil {
+		go v6.Run(ctx, time.Minute)
+	}
 	go listMgr.Run(ctx, 24*time.Hour)
 
 	registry, stopDevices, err := startDevices(ctx, cfg, engine)
@@ -468,4 +473,26 @@ func openHistory(cfg config.Config) (*history.Store, error) {
 		Dir: filepath.Join(dir, "store"), Keys: keys,
 		RetentionDays: cfg.History.RetentionDays, MaxBytes: capsFor(cfg).History,
 	})
+}
+
+// aaaaFilter builds the engine's AAAA-filtering switch from dns.filter_aaaa:
+// nil for "off", always true for "on", and for "auto" the IPv6 probe's
+// verdict (the probe is returned so the caller can run it).
+func aaaaFilter(mode string) (func() bool, *dnsengine.IPv6Probe) {
+	switch mode {
+	case "on":
+		return func() bool { return true }, nil
+	case "auto":
+		v6 := &dnsengine.IPv6Probe{OnChange: logIPv6Change}
+		return v6.Filtering, v6
+	}
+	return nil, nil
+}
+
+func logIPv6Change(usable bool) {
+	if usable {
+		log.Printf("dns: outbound IPv6 is reachable, so AAAA answers are given out")
+		return
+	}
+	log.Printf("dns: outbound IPv6 is not reachable (dns.filter_aaaa = \"auto\"), so AAAA answers are withheld until it is")
 }

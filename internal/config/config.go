@@ -538,11 +538,13 @@ type DNS struct {
 	ListenLoopback *bool `toml:"listen_loopback"`
 	// BlockMode is "null" (answer 0.0.0.0 / ::) or "nxdomain".
 	BlockMode string `toml:"block_mode"`
-	// FilterAAAA answers AAAA queries with an empty answer and removes IPv6
-	// hints from HTTPS records, for a network with no IPv6 route to the
+	// FilterAAAA is "auto" (default), "on" or "off". Filtering answers AAAA
+	// queries with an empty answer and removes IPv6 hints from HTTPS
+	// records, which is right on a network with no IPv6 route to the
 	// internet (devices hold only private or link-local IPv6 addresses),
-	// where an unreachable IPv6 address is worse than none.
-	FilterAAAA           bool     `toml:"filter_aaaa"`
+	// where an unreachable address is worse than none. "auto" probes
+	// outbound IPv6 and filters only while it is unreachable.
+	FilterAAAA           string   `toml:"filter_aaaa"`
 	ProbeIntervalSeconds int      `toml:"probe_interval_seconds"`
 	CacheSize            int      `toml:"cache_size"`
 	LogSize              int      `toml:"log_size"`
@@ -602,6 +604,7 @@ func Default() Config {
 			Upstreams:            []string{"9.9.9.10", "149.112.112.10", "1.1.1.1"},
 			Bootstrap:            dnsengine.DefaultBootstrapServers(),
 			BlockMode:            "null",
+			FilterAAAA:           "auto",
 			ProbeIntervalSeconds: 15,
 			CacheSize:            20000,
 			LogSize:              20000,
@@ -639,6 +642,11 @@ func (c Config) Validate() error {
 	}
 	if len(c.DNS.Bootstrap) == 0 {
 		return errors.New("dns.bootstrap needs at least one resolver (IP address)")
+	}
+	switch c.DNS.FilterAAAA {
+	case "auto", "on", "off":
+	default:
+		return fmt.Errorf("dns.filter_aaaa must be \"auto\", \"on\" or \"off\", got %q", c.DNS.FilterAAAA)
 	}
 	if c.DNS.BlockMode != "null" && c.DNS.BlockMode != "nxdomain" {
 		return fmt.Errorf("dns.block_mode must be \"null\" or \"nxdomain\", got %q", c.DNS.BlockMode)

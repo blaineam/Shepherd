@@ -13,11 +13,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
-- **`dns.filter_aaaa`** (off by default). Answers AAAA queries with an empty answer and removes IPv6
-  hints from HTTPS records, for a network whose devices have no IPv6 route to the internet (only
-  private `fd..` or link-local addresses). Without a route the addresses cannot be used, and a device
-  that tries them first or handles the failure badly reports a network problem. Logged as
-  `ipv6-filtered`.
+- **`dns.filter_aaaa`** (`"auto"` by default, or `"on"` / `"off"`). On a network whose devices have no
+  IPv6 route to the internet (only private `fd..` or link-local addresses) every AAAA answer is an
+  unreachable address, and a device that tries it first or handles the failure badly reports a network
+  problem. Shepherd now answers AAAA queries with an empty answer, and drops IPv6 hints from HTTPS
+  records, while outbound IPv6 is unreachable. `auto` finds out by trying a TCP connect to three public
+  IPv6 resolvers every minute: one success turns AAAA answers back on at once, two failed rounds in a
+  row turn them off, and each change is logged. Filtered answers show as `ipv6-filtered` in the log.
 
 ### Fixed
 - **The portal locked while it was in use.** Idle locking counted only calls that mean a person is
