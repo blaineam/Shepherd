@@ -23,7 +23,7 @@ export function rangeWindow(preset, now = Date.now()) {
   return { from: new Date(now - p.hours * 3600000).toISOString(), to: new Date(now).toISOString() };
 }
 
-export const BUCKET_SECONDS = { minute: 60, hour: 3600, day: 86400 };
+export const BUCKET_SECONDS = { second: 1, minute: 60, hour: 3600, day: 86400 };
 
 // The scope picker's options: the whole network, then every group, then
 // every device, each as the server's scope string.
@@ -141,4 +141,82 @@ export const DOWNLOAD_CAVEAT = 'Download is an estimate read from each device’
 // only guards against an unsorted fake).
 export function liveRows(status) {
   return [...((status && status.devices) || [])].sort((a, b) => ((Number(b.down_bytes_per_second) || 0) + (Number(b.up_bytes_per_second) || 0)) - ((Number(a.down_bytes_per_second) || 0) + (Number(a.up_bytes_per_second) || 0)));
+}
+
+// ---------------------------------------------------------------- charts
+// A "nice" ceiling for an axis: 1, 2, 2.5, 5 or 10 times a power of ten, so
+// gridlines land on round numbers instead of the data's own maximum.
+export function niceCeil(v) {
+  const x = Number(v) || 0;
+  if (x <= 0) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(x)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (x <= m * p) return m * p;
+  return 10 * p;
+}
+
+// Evenly spaced gridline values from zero to a nice ceiling, in bits/s.
+export function yTicks(max, n = 4) {
+  const top = niceCeil(max);
+  return Array.from({ length: n + 1 }, (_, i) => (top * i) / n);
+}
+
+// A stroke-and-fill path pair for one series scaled to a shared ceiling.
+// values are rates; the area closes along the baseline.
+export function lineArea(values, top, { width = 600, height = 140, pad = 6 } = {}) {
+  const n = (values || []).length;
+  if (!n) return { line: '', area: '' };
+  const t = top > 0 ? top : 1;
+  const xw = width - pad * 2;
+  const yh = height - pad * 2;
+  const x = (i) => pad + (n === 1 ? xw / 2 : (i / (n - 1)) * xw);
+  const y = (v) => pad + yh - Math.min(1, Math.max(0, v / t)) * yh;
+  const pts = values.map((v, i) => x(i).toFixed(1) + ',' + y(Number(v) || 0).toFixed(1));
+  const base = (pad + yh).toFixed(1);
+  return {
+    line: 'M' + pts.join(' L'),
+    area: 'M' + x(0).toFixed(1) + ',' + base + ' L' + pts.join(' L') + ' L' + x(n - 1).toFixed(1) + ',' + base + ' Z',
+  };
+}
+
+// The index of the sample nearest a pointer fraction (0..1) across a series.
+export function nearestIndex(fraction, n) {
+  if (n <= 1) return 0;
+  return Math.min(n - 1, Math.max(0, Math.round(fraction * (n - 1))));
+}
+
+// A rolling window of live samples: append, keep the newest `max`.
+export function pushSample(buf, sample, max = 90) {
+  const out = [...(buf || []), sample];
+  return out.length > max ? out.slice(out.length - max) : out;
+}
+
+// Donut slices from {value} items: the biggest `keep` stay, the rest fold
+// into one "Other". Returns [{item, value, fraction}] summing to 1.
+export function shareSlices(items, keep = 5) {
+  const rows = [...(items || [])].map((it) => ({ item: it, value: Number(it.value) || 0 })).filter((r) => r.value > 0).sort((a, b) => b.value - a.value);
+  const total = rows.reduce((s, r) => s + r.value, 0);
+  if (!total) return [];
+  let shown = rows.slice(0, keep);
+  const rest = rows.slice(keep);
+  if (rest.length) shown = [...shown, { item: { name: 'Other', other: true }, value: rest.reduce((s, r) => s + r.value, 0) }];
+  return shown.map((r) => ({ item: r.item, value: r.value, fraction: r.value / total }));
+}
+
+// The SVG path of one donut ring segment between two fractions of a turn.
+export function arcPath(cx, cy, rOuter, rInner, from, to) {
+  const full = to - from >= 0.9999;
+  const end = full ? from + 0.9999 : to;
+  const a0 = from * Math.PI * 2 - Math.PI / 2;
+  const a1 = end * Math.PI * 2 - Math.PI / 2;
+  const p = (r, a) => (cx + r * Math.cos(a)).toFixed(2) + ',' + (cy + r * Math.sin(a)).toFixed(2);
+  const large = end - from > 0.5 ? 1 : 0;
+  return 'M' + p(rOuter, a0) + ' A' + rOuter + ',' + rOuter + ' 0 ' + large + ' 1 ' + p(rOuter, a1)
+    + ' L' + p(rInner, a1) + ' A' + rInner + ',' + rInner + ' 0 ' + large + ' 0 ' + p(rInner, a0) + ' Z';
+}
+
+// Peak and average of a rate series, for the chart's caption.
+export function rateStats(values) {
+  const v = (values || []).map((x) => Number(x) || 0);
+  if (!v.length) return { peak: 0, avg: 0 };
+  return { peak: Math.max(...v), avg: v.reduce((s, x) => s + x, 0) / v.length };
 }

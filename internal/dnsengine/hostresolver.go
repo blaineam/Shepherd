@@ -33,3 +33,22 @@ func HostResolver(servers func() []string) *net.Resolver {
 		},
 	}
 }
+
+var hostServers atomic.Pointer[func() []string]
+
+// SetHostServers says which servers the resolver installed by
+// InstallHostResolver asks. It is safe to call at any time, from any
+// goroutine.
+func SetHostServers(servers func() []string) { hostServers.Store(&servers) }
+
+// InstallHostResolver makes the process's default resolver HostResolver. It
+// writes a global the net package reads without locking, so call it once,
+// from main, before anything else starts; SetHostServers does the rest.
+func InstallHostResolver() {
+	net.DefaultResolver = HostResolver(func() []string {
+		if f := hostServers.Load(); f != nil {
+			return (*f)()
+		}
+		return nil
+	})
+}

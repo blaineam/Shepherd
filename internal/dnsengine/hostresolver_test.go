@@ -51,3 +51,24 @@ func TestHostResolverAddsPort53AndFallsBackWithoutServers(t *testing.T) {
 	}
 	c.Close()
 }
+
+func TestInstalledResolverFollowsSetHostServers(t *testing.T) {
+	old := net.DefaultResolver
+	t.Cleanup(func() { net.DefaultResolver = old; SetHostServers(nil) })
+	SetHostServers(nil)
+	InstallHostResolver()
+	if !net.DefaultResolver.PreferGo {
+		t.Fatal("default resolver not replaced")
+	}
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	SetHostServers(func() []string { return []string{pc.LocalAddr().String()} })
+	c, err := net.DefaultResolver.Dial(context.Background(), "udp", "ignored:53")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+}
