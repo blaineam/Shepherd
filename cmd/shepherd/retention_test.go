@@ -47,7 +47,7 @@ func TestCapsForSplitsTheBudget(t *testing.T) {
 
 func TestRetentionCheckRaisesWhenOverBudget(t *testing.T) {
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	os.WriteFile(filepath.Join(cfg.DataDir, "traffic.json"), bytes.Repeat([]byte("x"), 3<<20), 0o600)
 	os.MkdirAll(filepath.Join(cfg.DataDir, "history"), 0o700)
 	os.WriteFile(filepath.Join(cfg.DataDir, "history", "seg"), bytes.Repeat([]byte("y"), 1<<20), 0o600)

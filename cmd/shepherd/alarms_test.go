@@ -19,7 +19,7 @@ import (
 
 func TestStartAlarmsBuildsAWorkingEngine(t *testing.T) {
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	pool, err := dnsengine.NewPool([]string{"192.0.2.53"})
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +53,7 @@ func TestStartAlarmsBuildsAWorkingEngine(t *testing.T) {
 
 func TestStartAlarmsFailsIfTheDirCannotBeCreated(t *testing.T) {
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	// A plain file where the alarms directory needs to go, so MkdirAll fails.
 	if err := os.WriteFile(filepath.Join(cfg.DataDir, "alarms"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
@@ -69,7 +69,7 @@ func TestStartAlarmsFailsIfTheDirCannotBeCreated(t *testing.T) {
 
 func TestStartAlarmsFailsOnACorruptDeliveriesFile(t *testing.T) {
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	dir := filepath.Join(cfg.DataDir, "alarms")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)

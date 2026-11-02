@@ -45,13 +45,13 @@ func TestStartUpdateChecksRaisesAndReportsStatus(t *testing.T) {
 	updateChecker = update.Checker{Repo: "o/r", API: srv.URL, Client: srv.Client()}
 	updateEvery = time.Hour
 	version = "1.0.0"
-	exe := filepath.Join(t.TempDir(), "shepherd")
+	exe := filepath.Join(tempDir(t), "shepherd")
 	os.WriteFile(exe, []byte("x"), 0o755)
 	updateExePath = func() (string, error) { return exe, nil }
 	t.Cleanup(func() { updateChecker, updateEvery, version, updateExePath = oldC, oldE, oldV, oldP })
 
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	eng, err := alarms.New(alarms.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestApplyDownloadsSwapsAndRestarts(t *testing.T) {
 	update.ReleasePublicKeyB64 = base64.StdEncoding.EncodeToString(pub)
 	t.Cleanup(func() { update.ReleasePublicKeyB64 = oldKey })
 
-	dir := t.TempDir()
+	dir := tempDir(t)
 	exe := filepath.Join(dir, "shepherd")
 	os.WriteFile(exe, []byte("old"), 0o755)
 	newBin := []byte("new binary")
@@ -235,7 +235,7 @@ func TestApplyDownloadsSwapsAndRestarts(t *testing.T) {
 }
 
 func TestRollbackFlagThroughMain(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	cfgPath := filepath.Join(dir, "shepherd.toml")
 	os.WriteFile(cfgPath, []byte("data_dir = \""+filepath.Join(dir, "data")+"\"\n"), 0o600)
 	var out, errb strings.Builder
@@ -266,7 +266,7 @@ func shaLine(b []byte, name string) string {
 }
 
 func TestUpdateRefusesWhereItCannotWriteAndRollsBackByHand(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	exe := filepath.Join(dir, "shepherd")
 	os.WriteFile(exe, []byte("new"), 0o755)
 	os.WriteFile(exe+".prev", []byte("old"), 0o755)

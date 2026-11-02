@@ -64,7 +64,7 @@ func TestStartClassifyWiresObserveAndASN(t *testing.T) {
 	t.Cleanup(func() { classifyEvery = old })
 
 	engine, reg := testEngineAndRegistry(t)
-	dbPath := filepath.Join(t.TempDir(), "asn.mmdb")
+	dbPath := filepath.Join(tempDir(t), "asn.mmdb")
 	buildASNDB(t, dbPath)
 	var loc geo.ASNLocator
 	if err := loc.Open(dbPath); err != nil {

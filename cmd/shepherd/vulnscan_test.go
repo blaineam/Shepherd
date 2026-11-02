@@ -122,7 +122,7 @@ func TestStartVulnscanProbesPortscanResultsAndRaisesAlarm(t *testing.T) {
 	}
 
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.Vulnscan.FeedURL = "" // never fetch the published feed from a test
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -217,7 +217,7 @@ func TestStartVulnscanResolvesAlarmWhenFindingClears(t *testing.T) {
 	defer eng.Close()
 
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.Vulnscan.FeedURL = "" // never fetch the published feed from a test
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -263,7 +263,7 @@ func TestStartVulnscanWorksWithoutAnAlarmEngine(t *testing.T) {
 	ps := portscan.New(portscan.Options{Dial: fakeScanDial(open), Ports: []int{23}, Concurrency: 2, Timeout: time.Second})
 
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.Vulnscan.FeedURL = "" // never fetch the published feed from a test
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -294,7 +294,7 @@ func TestStartVulnscanUsesTheConfiguredInterval(t *testing.T) {
 	reg := devices.New(devices.Options{NodeID: "t", AllowLoopback: true})
 	ps := portscan.New(portscan.Options{Dial: fakeScanDial(nil)})
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.Vulnscan.FeedURL = "" // never fetch the published feed from a test
 	cfg.Vulnscan.IntervalSeconds = 86400
 	ctx, cancel := context.WithCancel(context.Background())
@@ -320,7 +320,7 @@ func TestStartVulnscanIgnoresUnreadableHistory(t *testing.T) {
 	reg := devices.New(devices.Options{NodeID: "t"})
 	ps := portscan.New(portscan.Options{Dial: fakeScanDial(nil)})
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.Vulnscan.FeedURL = "" // never fetch the published feed from a test
 	if err := os.WriteFile(filepath.Join(cfg.DataDir, "vulnscan.json"), []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
@@ -368,7 +368,7 @@ func TestStartVulnscanAppliesTheFeedAndRescansOnChange(t *testing.T) {
 	reg := devices.New(devices.Options{NodeID: "t", AllowLoopback: true})
 	id := reg.Observe(devices.Observation{Source: devices.SourceNeighbor, MAC: "02:00:00:00:02:03", IP: "203.0.113.62", Time: time.Now()})
 
-	feedPath := filepath.Join(t.TempDir(), "feed.json")
+	feedPath := filepath.Join(tempDir(t), "feed.json")
 	write := func(severity string) {
 		// The fake Telnet conn gives no banner, so this signature never
 		// fires; it only has to be visible in the scanner's set, and its
@@ -381,7 +381,7 @@ func TestStartVulnscanAppliesTheFeedAndRescansOnChange(t *testing.T) {
 	write("low")
 
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.Vulnscan.FeedURL = "file://" + feedPath
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -467,7 +467,7 @@ func TestStartVulnscanWithoutAFeedURLReturnsNoUpdater(t *testing.T) {
 	t.Cleanup(func() { portscanEvery, vulnscanEvery, portscanExposure = oldPSEvery, oldVSEvery, oldExposure })
 	reg := devices.New(devices.Options{NodeID: "t"})
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.Vulnscan.FeedURL = ""
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

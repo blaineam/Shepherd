@@ -51,7 +51,7 @@ func TestStartPortscanScansKnownDevicesAndPersists(t *testing.T) {
 	}
 
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s, err := startPortscan(ctx, cfg, reg)
@@ -101,7 +101,7 @@ func TestStartPortscanUsesTheConfiguredInterval(t *testing.T) {
 
 	reg := devices.New(devices.Options{NodeID: "t", AllowLoopback: true})
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.Portscan.IntervalSeconds = 21600
 	ctx, cancel := context.WithCancel(context.Background())
 	// The long interval means Run's ticker never fires again in this test;
@@ -151,7 +151,7 @@ func TestStartPortscanUsesTheExposureSeam(t *testing.T) {
 	}
 
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	// The seam must win even when the configuration disables the feature:
 	// a test never needs to build a real upnpigd.Checker to exercise this
 	// wiring.
@@ -193,7 +193,7 @@ func TestStartPortscanWANExposureDisabledNeverSetsExposure(t *testing.T) {
 	}
 
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.Portscan.WANExposure.Enabled = false
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -226,7 +226,7 @@ func TestStartPortscanIgnoresUnreadableHistory(t *testing.T) {
 
 	reg := devices.New(devices.Options{NodeID: "t"})
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	if err := os.WriteFile(filepath.Join(cfg.DataDir, "portscan.json"), []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}

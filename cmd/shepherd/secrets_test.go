@@ -166,7 +166,7 @@ func assertNoSecretInLog(t *testing.T, logs string, values ...string) {
 // on the store wins.
 func TestUpgradeKeepsSecretsConfiguredInShepherdToml(t *testing.T) {
 	logs := captureLog(t)
-	dir := t.TempDir()
+	dir := tempDir(t)
 	tokenFile := writeSecretFile(t, dir, "cloudflare-api-token", legacyToken+"\n")
 	passwordFile := writeSecretFile(t, dir, "smtp-password", legacyPassword+"\n")
 	toml := fmt.Sprintf(`[tls]
@@ -270,7 +270,7 @@ func TestUpgradeEndToEndIssuesWithTheImportedToken(t *testing.T) {
 	// rproxyDNS01 stays nil: the real Cloudflare provider is built from the
 	// portal-managed token, pointed at the fake API.
 
-	tokenDir := t.TempDir()
+	tokenDir := tempDir(t)
 	tokenFile := writeSecretFile(t, tokenDir, "cloudflare-api-token", legacyToken+"\n")
 	extra := fmt.Sprintf("[reverseproxy]\nenabled = true\nlisten=\"127.0.0.1:%d\"\ndomain = \"example.com\"\ncloudflare_api_token_file = %q\n", freePort(t), tokenFile)
 	cfgPath := writeConfig(t, freePort(t), freePort(t), extra)
@@ -323,7 +323,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 
 func TestSeedConflictPrefersTLSAndSaysSo(t *testing.T) {
 	logs := captureLog(t)
-	dir := t.TempDir()
+	dir := tempDir(t)
 	cfg := loadConfigText(t, dir, "[tls]\ncloudflare_api_token = \"tls-token\"\n[reverseproxy]\ncloudflare_api_token = \"rp-token\"\n")
 	sec, err := openSecrets(cfg)
 	if err != nil {
@@ -341,7 +341,7 @@ func TestSeedConflictPrefersTLSAndSaysSo(t *testing.T) {
 func TestSeedFromReverseProxyAloneAndDisabledSections(t *testing.T) {
 	// Seeding does not depend on the section being enabled: a token set
 	// for later is kept for later.
-	dir := t.TempDir()
+	dir := tempDir(t)
 	cfg := loadConfigText(t, dir, "[reverseproxy]\ncloudflare_api_token = \"rp-only\"\n")
 	sec, err := openSecrets(cfg)
 	if err != nil {
@@ -354,7 +354,7 @@ func TestSeedFromReverseProxyAloneAndDisabledSections(t *testing.T) {
 
 func TestAnUnreadableSeedIsRetriedNotLost(t *testing.T) {
 	logs := captureLog(t)
-	dir := t.TempDir()
+	dir := tempDir(t)
 	tokenFile := filepath.Join(dir, "not-yet-there")
 	passwordFile := filepath.Join(dir, "also-not-yet")
 	cfg := loadConfigText(t, dir, fmt.Sprintf("[tls]\ncloudflare_api_token_file = %q\n[accountability.smtp]\nhost = \"smtp.example.com\"\nfrom = \"a@example.com\"\npassword_file = %q\nusername = \"u\"\n", tokenFile, passwordFile))
@@ -388,7 +388,7 @@ func TestAnUnreadableSeedIsRetriedNotLost(t *testing.T) {
 
 func TestAnInvalidSeedIsLoggedNotImportedAndNeverFatal(t *testing.T) {
 	logs := captureLog(t)
-	dir := t.TempDir()
+	dir := tempDir(t)
 	cfg := loadConfigText(t, dir, "[tls]\ncloudflare_api_token = \"two words\"\n")
 	// [accountability.smtp] that config.Validate accepts but the store
 	// refuses (a From that is not an address).
@@ -407,7 +407,7 @@ func TestAnInvalidSeedIsLoggedNotImportedAndNeverFatal(t *testing.T) {
 }
 
 func TestAPortalClearIsNotUndoneByShepherdToml(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	cfg := loadConfigText(t, dir, "[tls]\ncloudflare_api_token = \"from-toml\"\n[accountability.smtp]\nhost = \"smtp.example.com\"\nfrom = \"a@example.com\"\n")
 	sec, err := openSecrets(cfg)
 	if err != nil {
@@ -428,7 +428,7 @@ func TestAPortalClearIsNotUndoneByShepherdToml(t *testing.T) {
 }
 
 func TestOpenSecretsErrors(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	cfg := loadConfigText(t, dir, "")
 	os.MkdirAll(cfg.DataDir, 0o750)
 	os.WriteFile(filepath.Join(cfg.DataDir, secrets.FileName), []byte("{broken"), 0o600)
@@ -437,13 +437,13 @@ func TestOpenSecretsErrors(t *testing.T) {
 	}
 
 	// A seed that cannot be saved is an error, not a silent loss.
-	dir2 := t.TempDir()
+	dir2 := tempDir(t)
 	cfg2 := loadConfigText(t, dir2, "[tls]\ncloudflare_api_token = \"t\"\n")
 	os.MkdirAll(filepath.Join(cfg2.DataDir, secrets.FileName+".tmp", "x"), 0o700)
 	if _, err := openSecrets(cfg2); err == nil {
 		t.Error("a DNS provider seed that cannot be saved must be an error")
 	}
-	dir3 := t.TempDir()
+	dir3 := tempDir(t)
 	cfg3 := loadConfigText(t, dir3, "[accountability.smtp]\nhost = \"smtp.example.com\"\nfrom = \"a@example.com\"\n")
 	os.MkdirAll(filepath.Join(cfg3.DataDir, secrets.FileName+".tmp", "x"), 0o700)
 	if _, err := openSecrets(cfg3); err == nil {
@@ -482,7 +482,7 @@ func TestStartTLSIssuesWithThePortalToken(t *testing.T) {
 	tlsACMEClient = newFakeTLSACME("shepherd.example.com")
 	tlsPropagationCheck = func(context.Context, string, string) error { return nil }
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	// The config file holds a different token: only a seed, ignored here.
 	cfg.TLS = config.TLS{Enabled: true, Hostname: "shepherd.example.com", Listen: "127.0.0.1:0", CloudflareAPIToken: legacyToken}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -525,7 +525,7 @@ func TestATokenSavedLaterIsUsedRightAwayWithoutARestart(t *testing.T) {
 	tlsACMEClient = newFakeTLSACME("shepherd.example.com")
 	tlsPropagationCheck = func(context.Context, string, string) error { return nil }
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.TLS = config.TLS{Enabled: true, Hostname: "shepherd.example.com", Listen: "127.0.0.1:0"}
 	sec := storeWithToken(t, "")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -567,7 +567,7 @@ func TestPortalDNS01WithoutAToken(t *testing.T) {
 	if _, err := newDNSProvider(secrets.DNSProvider{Provider: "other", APIToken: "t"}); err == nil {
 		t.Error("an unknown provider must be refused")
 	}
-	if _, err := startCertManager(context.Background(), certSpec{logPrefix: "x", dir: t.TempDir(), hostname: "h.example.com"}); err == nil {
+	if _, err := startCertManager(context.Background(), certSpec{logPrefix: "x", dir: tempDir(t), hostname: "h.example.com"}); err == nil {
 		t.Error("the real DNS-01 provider needs a secrets store")
 	}
 }

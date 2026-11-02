@@ -80,7 +80,7 @@ func TestStartNethealthProbesAndPersists(t *testing.T) {
 	withNethealthSeams(t, 15*time.Millisecond, 0, fakeNethealthDial, nil, noGateway)
 
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.DNS.Upstreams = []string{"9.9.9.10"}
 	cfg.Nethealth.Enabled = true
 	ctx, cancel := context.WithCancel(context.Background())
@@ -134,7 +134,7 @@ func TestStartNethealthIncludesGatewayWhenAvailable(t *testing.T) {
 	withNethealthSeams(t, 0, 0, dial, nil, func() (netip.Addr, error) { return gw, nil })
 
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.DNS.Upstreams = []string{"9.9.9.10"}
 	cfg.Nethealth.Enabled = true
 	ctx, cancel := context.WithCancel(context.Background())
@@ -172,7 +172,7 @@ func TestStartNethealthSkipsGatewayWhenUnavailable(t *testing.T) {
 	withNethealthSeams(t, 0, 0, dial, nil, noGateway)
 
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.DNS.Upstreams = []string{"9.9.9.10"}
 	cfg.Nethealth.Enabled = true
 	ctx, cancel := context.WithCancel(context.Background())
@@ -199,7 +199,7 @@ func TestStartNethealthRaisesAndResolvesDegradedAlarm(t *testing.T) {
 	withNethealthSeams(t, 10*time.Millisecond, 0, td.dial, nil, noGateway)
 
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.DNS.Upstreams = []string{"9.9.9.10"}
 	cfg.Nethealth.Enabled = true
 	ctx, cancel := context.WithCancel(context.Background())
@@ -251,7 +251,7 @@ func TestStartNethealthRaisesAndResolvesDegradedAlarm(t *testing.T) {
 func TestStartNethealthWorksWithoutAnAlarmEngine(t *testing.T) {
 	withNethealthSeams(t, 10*time.Millisecond, 0, failAllNethealthDial, nil, noGateway)
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.DNS.Upstreams = []string{"9.9.9.10"}
 	cfg.Nethealth.Enabled = true
 	ctx, cancel := context.WithCancel(context.Background())
@@ -285,7 +285,7 @@ func TestStartNethealthWorksWithoutAnAlarmEngine(t *testing.T) {
 func TestStartNethealthBuildsTargetsAndWorksManuallyWhileFullyDisabled(t *testing.T) {
 	withNethealthSeams(t, time.Hour, time.Hour, fakeNethealthDial, nil, noGateway)
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.DNS.Upstreams = []string{"9.9.9.10"}
 	// cfg.Nethealth.Enabled and BufferbloatEnabled are left at their
 	// default (false) deliberately.
@@ -328,7 +328,7 @@ func TestStartNethealthBufferbloatScheduledWhenEnabled(t *testing.T) {
 	withNethealthSeams(t, time.Hour, 15*time.Millisecond, fakeNethealthDial, load, noGateway)
 
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.DNS.Upstreams = []string{"9.9.9.10"}
 	cfg.Nethealth.BufferbloatEnabled = true
 	ctx, cancel := context.WithCancel(context.Background())
@@ -358,7 +358,7 @@ func TestStartNethealthBufferbloatScheduledWhenEnabled(t *testing.T) {
 func TestStartNethealthBufferbloatNotScheduledWhenDisabled(t *testing.T) {
 	withNethealthSeams(t, 10*time.Millisecond, 10*time.Millisecond, fakeNethealthDial, nil, noGateway)
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.DNS.Upstreams = []string{"9.9.9.10"}
 	cfg.Nethealth.BufferbloatEnabled = false
 	ctx, cancel := context.WithCancel(context.Background())
@@ -378,7 +378,7 @@ func TestStartNethealthBufferbloatNotScheduledWhenDisabled(t *testing.T) {
 func TestStartNethealthIgnoresUnreadableHistory(t *testing.T) {
 	withNethealthSeams(t, time.Hour, 0, fakeNethealthDial, nil, noGateway)
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.DNS.Upstreams = []string{"9.9.9.10"}
 	cfg.Nethealth.Enabled = true
 	if err := os.WriteFile(filepath.Join(cfg.DataDir, "nethealth.json"), []byte("not json"), 0o600); err != nil {

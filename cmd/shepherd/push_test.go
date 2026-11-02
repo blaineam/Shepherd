@@ -19,7 +19,7 @@ import (
 func pushConfig(t *testing.T) config.Config {
 	t.Helper()
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	return cfg
 }
 
@@ -125,7 +125,7 @@ func TestStartPushKeepsItsKeysAndSubscriptionsAcrossRestarts(t *testing.T) {
 	}
 	// A data directory that cannot be created is an error.
 	cfg.Alarms.Push.Enabled = true
-	cfg.DataDir = filepath.Join(t.TempDir(), "file")
+	cfg.DataDir = filepath.Join(tempDir(t), "file")
 	if err := os.WriteFile(cfg.DataDir, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
