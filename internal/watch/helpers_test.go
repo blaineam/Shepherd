@@ -570,4 +570,3 @@ func (te *testEngine) waitFailOpenAdvancing(t *testing.T, mac arp.MAC, after tim
 	})
 	return snap
 }
-
