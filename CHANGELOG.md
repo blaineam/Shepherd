@@ -13,6 +13,10 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **Packaging plan (roadmap step 24).** [docs/PACKAGING.md](docs/PACKAGING.md) specifies easy installs
+  for non-technical owners: the first-run wizard's questions, every target platform with its installer
+  and service manager, the port 53 and signing constraints, and the order of work. Documentation only;
+  no installer is built yet.
 - **Self-update with rollback.** `[update]` (on by default) checks GitHub's releases once a day on
   the stable or beta channel, raises a `self-update` alarm when a newer Shepherd exists, and the
   Overview's new **Software** card offers "Update now" where the binary can be replaced in place.
