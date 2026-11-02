@@ -54,7 +54,7 @@ func fakeWildcardIssuance(t *testing.T) *fakeTLSDNS01 {
 func reverseProxyConfig(t *testing.T) config.Config {
 	t.Helper()
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.ReverseProxy = config.ReverseProxy{Enabled: true, Listen: "127.0.0.1:0", Domain: "example.com", CloudflareAPIToken: "unused-fake"}
 	return cfg
 }
@@ -89,7 +89,7 @@ func waitForCert(t *testing.T, rp *reverseProxyServer) {
 
 func TestStartReverseProxyDisabledStartsNothing(t *testing.T) {
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	rp, err := startReverseProxy(context.Background(), cfg, openTestStore(t, cfg), nil, nil)
 	if err != nil || rp != nil {
 		t.Fatalf("startReverseProxy(disabled) = %v, %v; want nil, nil", rp, err)

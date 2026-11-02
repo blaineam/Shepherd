@@ -22,7 +22,7 @@ import (
 func TestNodeIDUsesTheHostNameOrAStoredRandomID(t *testing.T) {
 	old := hostname
 	defer func() { hostname = old }()
-	dir := t.TempDir()
+	dir := tempDir(t)
 	hostname = func() (string, error) { return "  shepherd-test  ", nil }
 	if got := nodeID(dir); got != "shepherd-test" {
 		t.Errorf("nodeID = %q", got)
@@ -58,7 +58,7 @@ func TestOnceLoggerLogsEachMessageOnce(t *testing.T) {
 func TestOpenPolicyFreshInstallsAreProtectedAndExistingOnesAreUnchanged(t *testing.T) {
 	items := func(cfg config.Config, existing bool) map[string]bool {
 		t.Helper()
-		cfg.DataDir = t.TempDir()
+		cfg.DataDir = tempDir(t)
 		p, err := openPolicy(cfg, dnsengine.NewFilter(), existing)
 		if err != nil {
 			t.Fatal(err)
@@ -175,7 +175,7 @@ func fakePTR(t *testing.T, names map[string]string) string {
 }
 
 func TestDeviceSourcesNameDevicesAndTheRegistryIsSaved(t *testing.T) {
-	arp := filepath.Join(t.TempDir(), "arp")
+	arp := filepath.Join(tempDir(t), "arp")
 	os.WriteFile(arp, []byte("IP address       HW type     Flags       HW address            Mask     Device\n"+
 		"192.0.2.50       0x1         0x2         02:00:5e:00:00:50     *        eth0\n"+
 		"192.0.2.51       0x1         0x2         02:00:5e:00:00:51     *        eth0\n"), 0o600)
@@ -241,7 +241,7 @@ func TestDeviceSourcesNameDevicesAndTheRegistryIsSaved(t *testing.T) {
 
 func TestReverseDNSWithoutAResolverIsSkipped(t *testing.T) {
 	old := procRoutePath
-	procRoutePath = filepath.Join(t.TempDir(), "no-route-table")
+	procRoutePath = filepath.Join(tempDir(t), "no-route-table")
 	defer func() { procRoutePath = old }()
 	cfg := writeConfig(t, freePort(t), freePort(t), "")
 	body, _ := os.ReadFile(cfg)
@@ -249,7 +249,7 @@ func TestReverseDNSWithoutAResolverIsSkipped(t *testing.T) {
 	r := start(t, cfg)
 	r.stop()
 	// With a route table the gateway becomes the resolver (nothing is asked here: no devices).
-	route := filepath.Join(t.TempDir(), "route")
+	route := filepath.Join(tempDir(t), "route")
 	os.WriteFile(route, []byte("Iface\tDestination\tGateway\tFlags\neth0\t00000000\t010200C0\t0003\n"), 0o600)
 	procRoutePath = route
 	r = start(t, cfg)
@@ -274,7 +274,7 @@ func TestDeviceSourceFailuresAreLoggedNotFatal(t *testing.T) {
 	allowLoopbackDevices(t)
 	oldN, oldM, oldS := neighborSources, runMDNS, saveEvery
 	neighborSources = func() []devices.NeighborSource {
-		return []devices.NeighborSource{devices.FileNeighbors{Path: filepath.Join(t.TempDir(), "missing"), Parse: devices.ParseProcNetARP}}
+		return []devices.NeighborSource{devices.FileNeighbors{Path: filepath.Join(tempDir(t), "missing"), Parse: devices.ParseProcNetARP}}
 	}
 	runMDNS = func(context.Context, *devices.MDNSListener) error {
 		return errors.New("synthetic: no multicast interface")

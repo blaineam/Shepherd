@@ -120,7 +120,7 @@ func resetTLSSeams(t *testing.T) {
 
 func TestStartTLSDisabledReturnsNilManager(t *testing.T) {
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.TLS.Enabled = false
 	mgr, err := startTLS(context.Background(), cfg, nil)
 	if err != nil || mgr != nil {
@@ -138,7 +138,7 @@ func TestStartTLSObtainsACertificateInTheBackground(t *testing.T) {
 	tlsPropagationCheck = func(context.Context, string, string) error { return nil }
 
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.TLS = config.TLS{Enabled: true, Hostname: hostname, Listen: "127.0.0.1:0", CloudflareAPIToken: "unused-fake"}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -182,7 +182,7 @@ func TestStartTLSNeverBlocksStartupWhenUnreachable(t *testing.T) {
 	tlsDNS01 = &fakeTLSDNS01{}
 
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.TLS = config.TLS{Enabled: true, Hostname: "shepherd.example.com", Listen: "127.0.0.1:0", CloudflareAPIToken: "x"}
 
 	ctx, cancel := context.WithCancel(context.Background())

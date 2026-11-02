@@ -260,7 +260,7 @@ func TestEndToEndLegacyMigrationGroupsPolicyAndUpstreams(t *testing.T) {
 
 	// A deployment that predates the policy store: a rules.json with allow, block and
 	// a policy switch the user turned off, and one configured list that is also in the catalog.
-	dir := t.TempDir()
+	dir := tempDir(t)
 	cfg := writeE2EConfig(t, dir, upstream, lists.URL+"/ads.txt", "")
 	os.MkdirAll(filepath.Join(dir, "data"), 0o750)
 	os.WriteFile(filepath.Join(dir, "data", "rules.json"),
@@ -500,7 +500,7 @@ func TestDevicesAreClassifiedAutomaticallyFromRealDNSTraffic(t *testing.T) {
 	classifyEvery = 30 * time.Millisecond
 	t.Cleanup(func() { classifyEvery = 0 })
 
-	c := writeE2EConfig(t, t.TempDir(), answerServer(t), listServer(t).URL+"/ads.txt", "")
+	c := writeE2EConfig(t, tempDir(t), answerServer(t), listServer(t).URL+"/ads.txt", "")
 	r := c.startRun(t)
 	defer r.stop()
 
@@ -547,7 +547,7 @@ func TestDevicesAreClassifiedAutomaticallyFromRealDNSTraffic(t *testing.T) {
 
 func TestNewDevicesAreQuarantinedUntilMovedToARealGroup(t *testing.T) {
 	allowLoopbackDevices(t)
-	c := writeE2EConfig(t, t.TempDir(), answerServer(t), listServer(t).URL+"/ads.txt", "")
+	c := writeE2EConfig(t, tempDir(t), answerServer(t), listServer(t).URL+"/ads.txt", "")
 	r := c.startRun(t)
 	defer r.stop()
 
@@ -585,7 +585,7 @@ func TestNewDevicesAreQuarantinedUntilMovedToARealGroup(t *testing.T) {
 
 func TestQuarantineOnNewDevicesCanBeOptedOut(t *testing.T) {
 	allowLoopbackDevices(t)
-	c := writeE2EConfig(t, t.TempDir(), answerServer(t), listServer(t).URL+"/ads.txt", "")
+	c := writeE2EConfig(t, tempDir(t), answerServer(t), listServer(t).URL+"/ads.txt", "")
 	body, err := os.ReadFile(c.path)
 	if err != nil {
 		t.Fatal(err)

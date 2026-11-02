@@ -35,9 +35,39 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
+// tempDir is t.TempDir for a test that runs the whole daemon. run starts
+// background workers (list manager, upstream probe, update check, history
+// writer) and stops them asynchronously, so one of them can still be writing
+// into the data directory when the test's cleanup runs; t.TempDir's single
+// RemoveAll then fails with "directory not empty" and fails an otherwise
+// passing test. Retry the removal until the workers have gone.
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "shepherd-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			if err := os.RemoveAll(dir); err == nil {
+				if _, serr := os.Stat(dir); os.IsNotExist(serr) {
+					return
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Errorf("could not remove %s", dir)
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+	return dir
+}
+
 func writeConfig(t *testing.T, dnsPort, portalPort int, extra string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := tempDir(t)
 	path := filepath.Join(dir, "shepherd.toml")
 	body := fmt.Sprintf(`data_dir = %q
 no_default_lists = true
@@ -98,7 +128,7 @@ func TestRealMainPrintTokenAndConfigErrors(t *testing.T) {
 		t.Error("token must be stable across runs")
 	}
 
-	bad := filepath.Join(t.TempDir(), "bad.toml")
+	bad := filepath.Join(tempDir(t), "bad.toml")
 	os.WriteFile(bad, []byte("[dns]\nblock_mode = \"nope\"\n"), 0o600)
 	errb.Reset()
 	if code := realMain([]string{"-config", bad}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "block_mode") {
@@ -178,7 +208,7 @@ func TestRunFailsFastOnBusyPorts(t *testing.T) {
 func TestRunRejectsBadSetup(t *testing.T) {
 	cfg := writeConfig(t, freePort(t), freePort(t), "")
 	// data_dir under a regular file cannot be created.
-	file := filepath.Join(t.TempDir(), "file")
+	file := filepath.Join(tempDir(t), "file")
 	os.WriteFile(file, []byte("x"), 0o600)
 	body, _ := os.ReadFile(cfg)
 	broken := strings.Replace(string(body), filepath.Dir(cfg)+"/data", file+"/data", 1)
@@ -283,7 +313,7 @@ func (r *running) api(method, path, body string) (int, string) {
 
 func TestEncryptedHistorySurvivesARestart(t *testing.T) {
 	dns1, portal1 := freePort(t), freePort(t)
-	keyFile := filepath.Join(t.TempDir(), "history.key")
+	keyFile := filepath.Join(tempDir(t), "history.key")
 	cfg := writeConfig(t, dns1, portal1, fmt.Sprintf("[history]\nmode = \"encrypted\"\nkey_file = %q\n", keyFile))
 
 	first := start(t, cfg)
@@ -358,7 +388,7 @@ func TestWrongEnvironmentPassphraseLeavesHistoryLocked(t *testing.T) {
 }
 
 func TestBadHistoryKeyFileStopsStartup(t *testing.T) {
-	keyFile := filepath.Join(t.TempDir(), "bad.key")
+	keyFile := filepath.Join(tempDir(t), "bad.key")
 	os.WriteFile(keyFile, []byte("not a key"), 0o600)
 	cfg := writeConfig(t, freePort(t), freePort(t), fmt.Sprintf("[history]\nmode = \"encrypted\"\nkey_file = %q\n", keyFile))
 	if err := run(context.Background(), cfg, false, os.Stdout); err == nil || !strings.Contains(err.Error(), "key") {

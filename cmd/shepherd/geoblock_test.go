@@ -83,7 +83,7 @@ func buildCityDB(t *testing.T, path string) {
 
 func TestStartGeoBlockMatchesConfiguredCountry(t *testing.T) {
 	engine, reg := testEngineAndRegistry(t)
-	dbPath := filepath.Join(t.TempDir(), "city.mmdb")
+	dbPath := filepath.Join(tempDir(t), "city.mmdb")
 	buildCityDB(t, dbPath)
 	var loc geo.Locator
 	if err := loc.Open(dbPath); err != nil {

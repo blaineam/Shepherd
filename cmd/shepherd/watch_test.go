@@ -56,7 +56,7 @@ func (p refusingPlatform) SetGRO(string, bool) error { return p.err }
 func watchConfig(t *testing.T, w config.Watch) config.Config {
 	t.Helper()
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	cfg.Watch = w
 	return cfg
 }

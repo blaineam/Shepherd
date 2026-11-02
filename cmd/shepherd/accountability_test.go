@@ -41,7 +41,7 @@ func secretsWithRelay(t *testing.T, withRelay bool) *secrets.Store {
 func TestStartAccountabilityIsBuiltButInertWithoutARelay(t *testing.T) {
 	engine, reg := testEngineAndRegistry(t)
 	cfg := config.Default() // Accountability.Enabled is true; no relay anywhere
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	eng, relay, err := startAccountability(ctx, cfg, engine, reg, secretsWithRelay(t, false))
@@ -86,7 +86,7 @@ func TestStartAccountabilityNotWiredWhenDisabled(t *testing.T) {
 func TestStartAccountabilityWiresOnAccessAndRecordsMatchingSubscription(t *testing.T) {
 	engine, reg := testEngineAndRegistry(t)
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -145,7 +145,7 @@ func TestStartAccountabilityWiresOnAccessAndRecordsMatchingSubscription(t *testi
 func TestStartAccountabilityUnknownClientStillRecordsNetworkWideSubscriptions(t *testing.T) {
 	engine, reg := testEngineAndRegistry(t)
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -186,14 +186,14 @@ func TestSMTPPassword(t *testing.T) {
 	if got, err := smtpPassword(config.AccountabilitySMTP{Password: "direct"}); err != nil || got != "direct" {
 		t.Errorf("direct password: %q %v", got, err)
 	}
-	path := filepath.Join(t.TempDir(), "smtp-password")
+	path := filepath.Join(tempDir(t), "smtp-password")
 	if err := os.WriteFile(path, []byte("from-file\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := smtpPassword(config.AccountabilitySMTP{PasswordFile: path}); err != nil || got != "from-file" {
 		t.Errorf("file password: %q %v (must be trimmed)", got, err)
 	}
-	if _, err := smtpPassword(config.AccountabilitySMTP{PasswordFile: filepath.Join(t.TempDir(), "missing")}); err == nil {
+	if _, err := smtpPassword(config.AccountabilitySMTP{PasswordFile: filepath.Join(tempDir(t), "missing")}); err == nil {
 		t.Error("a missing password_file must be an error")
 	}
 }
@@ -201,7 +201,7 @@ func TestSMTPPassword(t *testing.T) {
 func TestARelaySavedInThePortalLaterTakesEffectWithoutARestart(t *testing.T) {
 	engine, reg := testEngineAndRegistry(t)
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	sec := secretsWithRelay(t, false)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -20,7 +20,7 @@ func TestStartThreatsHooksTheEngineAndRaisesAlarms(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("bad.example.com\n")) }))
 	defer srv.Close()
 	cfg := config.Default()
-	cfg.DataDir = t.TempDir()
+	cfg.DataDir = tempDir(t)
 	engine, reg := testEngineAndRegistry(t)
 	id := reg.Observe(devices.Observation{Source: devices.SourceNeighbor, MAC: "02:00:00:00:00:02", IP: "192.0.2.20", Hostname: "laptop"})
 	eng, err := alarms.New(alarms.Options{})
