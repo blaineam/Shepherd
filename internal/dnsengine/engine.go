@@ -21,6 +21,13 @@ type Engine struct {
 	Log           *QueryLog
 	Stats         *Stats
 	BlockNXDOMAIN bool
+	// FilterAAAA answers every AAAA query with an empty (NODATA) answer and
+	// strips IPv6 hints from HTTPS/SVCB records, for a network whose
+	// devices have no IPv6 route to the internet (only private fd.. or
+	// link-local addresses). The addresses are unreachable there, and
+	// devices that try them first, or handle the failure badly, report a
+	// network problem.
+	FilterAAAA bool
 	// Geo places answer addresses on the globe. Nil disables geolocation.
 	Geo Geo
 	// Clients maps a client address to its device and groups for scoped
@@ -337,7 +344,17 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 	entry.Reason = d.Reason // "allowlist" or empty
 
+	if e.FilterAAAA && q.Qtype == dns.TypeAAAA {
+		resp := new(dns.Msg)
+		resp.SetReply(r)
+		resp.RecursionAvailable = true
+		entry.Action, entry.Reason, entry.Rcode = "allowed", "ipv6-filtered", "NOERROR"
+		e.finishAllowed(w, r, q, entry, resp, start)
+		return
+	}
+
 	if resp, ok := e.Cache.Get(r); ok {
+		resp = e.withoutIPv6Hints(resp)
 		entry.Action, entry.Rcode = "cached", dns.RcodeToString[resp.Rcode]
 		e.finishAllowed(w, r, q, entry, resp, start)
 		return
@@ -355,6 +372,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 	e.Cache.Put(r, resp)
+	resp = e.withoutIPv6Hints(resp)
 	entry.Action, entry.Upstream, entry.Rcode = "allowed", up.Addr, dns.RcodeToString[resp.Rcode]
 	e.finishAllowed(w, r, q, entry, resp, start)
 }
@@ -492,4 +510,50 @@ func Serve(ctx context.Context, addrs []string, h dns.Handler, opts ...ServeOpti
 		shutdown()
 		return err
 	}
+}
+
+// withoutIPv6Hints drops the ipv6hint parameter from HTTPS and SVCB answers
+// when FilterAAAA is on, on a copy, so the cached answer stays as the
+// upstream sent it.
+func (e *Engine) withoutIPv6Hints(resp *dns.Msg) *dns.Msg {
+	if !e.FilterAAAA || resp == nil {
+		return resp
+	}
+	has := false
+	for _, rr := range resp.Answer {
+		var kv []dns.SVCBKeyValue
+		switch v := rr.(type) {
+		case *dns.HTTPS:
+			kv = v.Value
+		case *dns.SVCB:
+			kv = v.Value
+		}
+		for _, p := range kv {
+			if p.Key() == dns.SVCB_IPV6HINT {
+				has = true
+			}
+		}
+	}
+	if !has {
+		return resp
+	}
+	out := resp.Copy()
+	for _, rr := range out.Answer {
+		strip := func(kv []dns.SVCBKeyValue) []dns.SVCBKeyValue {
+			keep := kv[:0]
+			for _, p := range kv {
+				if p.Key() != dns.SVCB_IPV6HINT {
+					keep = append(keep, p)
+				}
+			}
+			return keep
+		}
+		switch v := rr.(type) {
+		case *dns.HTTPS:
+			v.Value = strip(v.Value)
+		case *dns.SVCB:
+			v.Value = strip(v.Value)
+		}
+	}
+	return out
 }

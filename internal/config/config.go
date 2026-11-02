@@ -537,7 +537,12 @@ type DNS struct {
 	// logged warning, not a startup failure.
 	ListenLoopback *bool `toml:"listen_loopback"`
 	// BlockMode is "null" (answer 0.0.0.0 / ::) or "nxdomain".
-	BlockMode            string   `toml:"block_mode"`
+	BlockMode string `toml:"block_mode"`
+	// FilterAAAA answers AAAA queries with an empty answer and removes IPv6
+	// hints from HTTPS records, for a network with no IPv6 route to the
+	// internet (devices hold only private or link-local IPv6 addresses),
+	// where an unreachable IPv6 address is worse than none.
+	FilterAAAA           bool     `toml:"filter_aaaa"`
 	ProbeIntervalSeconds int      `toml:"probe_interval_seconds"`
 	CacheSize            int      `toml:"cache_size"`
 	LogSize              int      `toml:"log_size"`
