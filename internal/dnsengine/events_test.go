@@ -478,3 +478,17 @@ func TestWithoutIPv6HintsStripsOnlyTheHint(t *testing.T) {
 		t.Error("with the filter off the message must pass through untouched")
 	}
 }
+
+func TestWithoutIPv6HintsHandlesSVCBAndLeavesHintlessAnswersAlone(t *testing.T) {
+	e := &Engine{FilterAAAA: func() bool { return true }}
+	svcb := &dns.SVCB{Hdr: dns.RR_Header{Name: "b.example.", Rrtype: dns.TypeSVCB, Class: dns.ClassINET}, Priority: 1, Target: ".",
+		Value: []dns.SVCBKeyValue{&dns.SVCBIPv6Hint{Hint: []net.IP{net.ParseIP("2001:db8::2")}}}}
+	out := e.withoutIPv6Hints(&dns.Msg{Answer: []dns.RR{svcb}})
+	if got := out.Answer[0].(*dns.SVCB).Value; len(got) != 0 {
+		t.Errorf("SVCB hint not stripped: %v", got)
+	}
+	plain := &dns.Msg{Answer: []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: "c.example.", Rrtype: dns.TypeA, Class: dns.ClassINET}, A: net.ParseIP("192.0.2.1")}}}
+	if e.withoutIPv6Hints(plain) != plain {
+		t.Error("an answer with no IPv6 hint must pass through untouched")
+	}
+}

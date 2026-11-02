@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 )
 
 func TestIPv6ProbeFiltersOnlyAfterTwoFailedRoundsAndRecoversAtOnce(t *testing.T) {
@@ -55,5 +56,31 @@ func TestIPv6ProbeOneReachableTargetIsEnough(t *testing.T) {
 	p.Check(context.Background())
 	if p.Filtering() {
 		t.Fatal("a reachable target means IPv6 works")
+	}
+}
+
+func TestIPv6ProbeRunChecksRepeatedlyUntilCancelled(t *testing.T) {
+	rounds := make(chan struct{}, 8)
+	p := &IPv6Probe{
+		Timeout: time.Second,
+		Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if network != "tcp6" {
+				t.Errorf("network = %s, want tcp6", network)
+			}
+			rounds <- struct{}{}
+			return nil, errors.New("no route to host")
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { p.Run(ctx, 5*time.Millisecond); close(done) }()
+	// the default targets are tried, three at a time, every round
+	for i := 0; i < 6; i++ {
+		<-rounds
+	}
+	cancel()
+	<-done
+	if !p.Filtering() {
+		t.Error("rounds that all fail should leave the probe filtering")
 	}
 }
