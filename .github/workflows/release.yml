@@ -36,6 +36,13 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           scripts/release-notes "$version" > notes.md
+          # GitHub rejects a release body over 125000 characters; a first release carries the
+          # whole history. Keep the head and point at the full changelog.
+          if [ "$(wc -c < notes.md)" -gt 120000 ]; then
+            head -c 118000 notes.md | sed '$d' > notes.trim
+            printf '\n\n---\nThe notes were cut to fit GitHub'"'"'s limit. The full list is in [CHANGELOG.md](https://github.com/%s/blob/%s/CHANGELOG.md).\n' "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" >> notes.trim
+            mv notes.trim notes.md
+          fi
           gh release create "$GITHUB_REF_NAME" dist/* --latest --title "Shepherd $version" --notes-file notes.md
           gh release list --limit 200 --json tagName,isPrerelease \
             --jq '.[] | select(.isPrerelease) | .tagName' \
