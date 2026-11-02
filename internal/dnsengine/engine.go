@@ -21,13 +21,14 @@ type Engine struct {
 	Log           *QueryLog
 	Stats         *Stats
 	BlockNXDOMAIN bool
-	// FilterAAAA answers every AAAA query with an empty (NODATA) answer and
-	// strips IPv6 hints from HTTPS/SVCB records, for a network whose
-	// devices have no IPv6 route to the internet (only private fd.. or
-	// link-local addresses). The addresses are unreachable there, and
-	// devices that try them first, or handle the failure badly, report a
-	// network problem.
-	FilterAAAA bool
+	// FilterAAAA, when it returns true, makes the engine answer every AAAA
+	// query with an empty (NODATA) answer and strip IPv6 hints from
+	// HTTPS/SVCB records. It is for a network whose devices have no IPv6
+	// route to the internet (only private fd.. or link-local addresses):
+	// the addresses are unreachable there, and devices that try them
+	// first, or handle the failure badly, report a network problem. Nil
+	// means never. IPv6Probe.Filtering is the automatic form.
+	FilterAAAA func() bool
 	// Geo places answer addresses on the globe. Nil disables geolocation.
 	Geo Geo
 	// Clients maps a client address to its device and groups for scoped
@@ -344,7 +345,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 	entry.Reason = d.Reason // "allowlist" or empty
 
-	if e.FilterAAAA && q.Qtype == dns.TypeAAAA {
+	if e.filterAAAA() && q.Qtype == dns.TypeAAAA {
 		resp := new(dns.Msg)
 		resp.SetReply(r)
 		resp.RecursionAvailable = true
@@ -513,10 +514,10 @@ func Serve(ctx context.Context, addrs []string, h dns.Handler, opts ...ServeOpti
 }
 
 // withoutIPv6Hints drops the ipv6hint parameter from HTTPS and SVCB answers
-// when FilterAAAA is on, on a copy, so the cached answer stays as the
+// while AAAA filtering is on, on a copy, so the cached answer stays as the
 // upstream sent it.
 func (e *Engine) withoutIPv6Hints(resp *dns.Msg) *dns.Msg {
-	if !e.FilterAAAA || resp == nil {
+	if !e.filterAAAA() || resp == nil {
 		return resp
 	}
 	has := false
@@ -557,3 +558,5 @@ func (e *Engine) withoutIPv6Hints(resp *dns.Msg) *dns.Msg {
 	}
 	return out
 }
+
+func (e *Engine) filterAAAA() bool { return e.FilterAAAA != nil && e.FilterAAAA() }

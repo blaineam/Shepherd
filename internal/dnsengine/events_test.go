@@ -443,7 +443,7 @@ func TestFilterAAAAAnswersEmptyAndNeverAsksUpstream(t *testing.T) {
 	var hits atomicInt
 	up := fakeUpstreamAnswering(t, "198.51.100.7", &hits)
 	pool, _ := NewPool([]string{up})
-	e := &Engine{Filter: NewFilter(), Pool: pool, Cache: NewCache(10), Log: NewQueryLog(20), Stats: NewStats(), FilterAAAA: true}
+	e := &Engine{Filter: NewFilter(), Pool: pool, Cache: NewCache(10), Log: NewQueryLog(20), Stats: NewStats(), FilterAAAA: func() bool { return true }}
 
 	w := udpWriter()
 	e.ServeDNS(w, query("v6.example.", dns.TypeAAAA))
@@ -462,7 +462,7 @@ func TestFilterAAAAAnswersEmptyAndNeverAsksUpstream(t *testing.T) {
 }
 
 func TestWithoutIPv6HintsStripsOnlyTheHint(t *testing.T) {
-	e := &Engine{FilterAAAA: true}
+	e := &Engine{FilterAAAA: func() bool { return true }}
 	rr := &dns.HTTPS{SVCB: dns.SVCB{Hdr: dns.RR_Header{Name: "a.example.", Rrtype: dns.TypeHTTPS, Class: dns.ClassINET}, Priority: 1, Target: ".",
 		Value: []dns.SVCBKeyValue{&dns.SVCBAlpn{Alpn: []string{"h2"}}, &dns.SVCBIPv6Hint{Hint: []net.IP{net.ParseIP("2001:db8::1")}}}}}
 	in := &dns.Msg{Answer: []dns.RR{rr}}

@@ -130,12 +130,26 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	engine := &dnsengine.Engine{
 		Filter: filter, Pool: pool, Cache: dnsengine.NewCache(cfg.DNS.CacheSize),
 		Log: dnsengine.NewQueryLog(cfg.DNS.LogSize), Stats: dnsengine.NewStats(),
-		BlockNXDOMAIN: cfg.DNS.BlockMode == "nxdomain", FilterAAAA: cfg.DNS.FilterAAAA,
+		BlockNXDOMAIN: cfg.DNS.BlockMode == "nxdomain",
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go pool.Probe(ctx, time.Duration(cfg.DNS.ProbeIntervalSeconds)*time.Second)
+	switch cfg.DNS.FilterAAAA {
+	case "on":
+		engine.FilterAAAA = func() bool { return true }
+	case "auto":
+		v6 := &dnsengine.IPv6Probe{OnChange: func(usable bool) {
+			if usable {
+				log.Printf("dns: outbound IPv6 is reachable, so AAAA answers are given out")
+			} else {
+				log.Printf("dns: outbound IPv6 is not reachable (dns.filter_aaaa = \"auto\"), so AAAA answers are withheld until it is")
+			}
+		}}
+		engine.FilterAAAA = v6.Filtering
+		go v6.Run(ctx, time.Minute)
+	}
 	go listMgr.Run(ctx, 24*time.Hour)
 
 	registry, stopDevices, err := startDevices(ctx, cfg, engine)
