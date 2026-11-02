@@ -452,6 +452,22 @@ func (te *testEngine) waitSteered(t *testing.T, mac arp.MAC, want bool) {
 	})
 }
 
+// waitSteeredAdvancing is waitSteered for a test that has moved the fake clock
+// to the moment a retry is due: the engine may have missed that single tick
+// (a missed tick is not replayed), so keep ticking a second at a time. Time
+// only moves forward, so a retry that is already due stays due.
+func (te *testEngine) waitSteeredAdvancing(t *testing.T, mac arp.MAC, want bool) {
+	t.Helper()
+	waitFor(t, "steered="+sprintf("%v", want)+" for "+mac.String(), func() bool {
+		te.poke(te.kick)
+		if te.isSteered(mac) == want {
+			return true
+		}
+		te.clock.Advance(time.Second)
+		return false
+	})
+}
+
 // waitFailures waits until the device's health-failure count reaches n:
 // the Controller removes a device from Status before OnUnsteer records
 // the failure, so a test that saw it unsteered may be a hair early.
@@ -529,6 +545,30 @@ func (te *testEngine) retryFor(mac arp.MAC) retrySnapshot {
 		return retrySnapshot{}
 	}
 	return retrySnapshot{present: true, failures: rs.failures, idle: rs.idle, until: rs.until}
+}
+
+// waitFailOpenAdvancing is waitFailOpen for a test that has already moved the
+// fake clock past the grace: a single large Advance can fire the health tick
+// before the loop has registered its next timer, so keep ticking a second at
+// a time until the Controller fails the device open. A device already failed
+// open stays failed open, so the extra ticks are harmless.
+//
+// after is the retry deadline of the previous fail-open, or the zero time. A
+// retry record outlives the steering, so on a later round the Controller can
+// have dropped the device before OnUnsteer has replaced that record; only a
+// record with a later deadline is the new one.
+func (te *testEngine) waitFailOpenAdvancing(t *testing.T, mac arp.MAC, after time.Time) retrySnapshot {
+	t.Helper()
+	var snap retrySnapshot
+	waitFor(t, "fail-open for "+mac.String(), func() bool {
+		if te.isSteered(mac) {
+			te.clock.Advance(time.Second)
+			return false
+		}
+		snap = te.retryFor(mac)
+		return snap.present && snap.until.After(after)
+	})
+	return snap
 }
 
 // waitFailOpen waits for the Controller to drop mac, then returns the retry

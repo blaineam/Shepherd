@@ -338,7 +338,7 @@ func TestHealthFailureBacksOffThenRetries(t *testing.T) {
 	te.waitSteered(t, phoneMAC, true)
 	// Nothing ever relays for the phone: StartupGrace fails it open.
 	te.clock.Advance(11 * time.Second)
-	te.waitSteered(t, phoneMAC, false)
+	te.waitSteeredAdvancing(t, phoneMAC, false)
 	te.waitFailures(t, id, 1)
 	ds := te.status(t, id)
 	if ds.State != StatePending || ds.Failures != 1 || ds.NextRetry.IsZero() || !strings.Contains(ds.Reason, "failed open 1 time") {
@@ -353,10 +353,10 @@ func TestHealthFailureBacksOffThenRetries(t *testing.T) {
 	// Keep the device "seen" so it stays eligible, then let the backoff pass.
 	te.reg.Observe(devices.Observation{Source: devices.SourceDNS, MAC: phoneMAC.String(), IP: phoneIP.String()})
 	te.clock.Advance(retryBase)
-	te.waitSteered(t, phoneMAC, true)
+	te.waitSteeredAdvancing(t, phoneMAC, true)
 	// A second failure doubles the backoff.
 	te.clock.Advance(11 * time.Second)
-	te.waitSteered(t, phoneMAC, false)
+	te.waitSteeredAdvancing(t, phoneMAC, false)
 	te.waitFailures(t, id, 2)
 	if ds := te.status(t, id); ds.Failures != 2 || ds.NextRetry.Sub(te.clock.Now()) > 2*retryBase || ds.NextRetry.Sub(te.clock.Now()) <= retryBase {
 		t.Fatalf("device = %+v now=%s", ds, te.clock.Now())
@@ -578,6 +578,8 @@ func TestMultiMACDeviceSteersThePairTheNeighbourTableKnows(t *testing.T) {
 	if te.isSteered(phoneMAC) {
 		t.Fatal("the MAC with no current address must not be steered")
 	}
+	// The Controller steers before the engine publishes the device's status.
+	waitFor(t, "the device to report steered", func() bool { return te.status(t, id).State == StateSteered })
 	ds := te.status(t, id)
 	if len(ds.Steered) != 1 || ds.State != StateSteered || ds.Steered[0].MAC != other.String() || ds.Steered[0].IP != otherIP.String() {
 		t.Fatalf("device = %+v", ds)
@@ -1013,11 +1015,13 @@ func TestRepeatedIdlenessDoesNotWidenThePause(t *testing.T) {
 	te.start(t)
 	te.waitRunning(t)
 
+	var prevUntil time.Time
 	for round := 0; round < 3; round++ {
-		te.waitSteered(t, phoneMAC, true)
+		te.waitSteeredAdvancing(t, phoneMAC, true)
 		te.relayFor(t, id, 5)
 		te.clock.Advance(11 * time.Second)
-		rs := te.waitFailOpen(t, phoneMAC)
+		rs := te.waitFailOpenAdvancing(t, phoneMAC, prevUntil)
+		prevUntil = rs.until
 		if rs.failures != 0 {
 			t.Fatalf("round %d: failures = %d, want 0", round, rs.failures)
 		}
@@ -1364,7 +1368,15 @@ func TestTheLoopBrakeStopsARelayCarryingItsOwnOutput(t *testing.T) {
 	for i := 0; i < loopHits+2; i++ {
 		te.loopTick(t, plat, 200, true)
 	}
-	waitFor(t, "the loop brake to trip", func() bool { return !te.Snapshot().Armed })
+	// Keep feeding ticks while waiting: one fake-clock tick can fire before
+	// the engine's sampler has re-armed its timer, and a missed tick is not
+	// replayed, so a fixed number of ticks is not enough on a loaded runner.
+	waitFor(t, "the loop brake to trip", func() bool {
+		if te.Snapshot().Armed {
+			te.loopTick(t, plat, 200, true)
+		}
+		return !te.Snapshot().Armed
+	})
 
 	snap := te.Snapshot()
 	if snap.Armed {
