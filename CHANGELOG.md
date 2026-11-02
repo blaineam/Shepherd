@@ -12,6 +12,15 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+- **Bandwidth on the device card.** The device panel now shows that device's last 24 hours of download
+  and upload, from the same traffic history as the Bandwidth page.
+
+### Fixed
+- **The device panel's close button was hidden under the top bar.** The panel started at the very top of
+  the window, behind the LIVE bar, so its header and close button could not be clicked. It now starts
+  below the bar.
+
 ### Fixed
 - **A stalled upstream no longer makes DNS lookups fail.** Upstreams were tried one after another with a
   two-second timeout each, so one that stalled (a slow DNS-over-TLS connection, or a resolver dropping

@@ -9,6 +9,7 @@ import { applyBulkLocal, planUndo, describeBulk, parseTags, normTag } from './bu
 import { TYPES, typeLabel, typeIcon, GROUP_COLORS } from './devtypes.js';
 import { icon, iconButton, button, chip, segmented, emptyState, openPopover, openMenu, confirmDialog, relTime, unavailableCard, debounce } from './ui.js';
 import { unavailable } from './mgmt.js';
+import { rangeWindow, fillSeries, sumPoints, areaPaths, axisLabels, timeLabels, fmtBytes } from './traffic.js';
 import { TIMER_CHOICES, MODES, deviceMode, countdown, countdownShort, modePatch, applyModeLocal } from './wander.js';
 import { createImportModal } from './importview.js';
 import { severityLabel, severityBadgeClass } from './alarms.js';
@@ -873,6 +874,50 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     unknown: 'WAN exposure unknown: the router did not answer the UPnP port-mapping check',
   };
 
+  // renderBandwidth paints one device's last 24 hours of traffic into
+  // holder: the same two-area chart as the Bandwidth page, scoped to this
+  // device. Like renderPorts it repaints only while the drawer still shows
+  // this device. Traffic is only measured while watch mode is steering the
+  // device, so an empty chart says that instead of looking broken.
+  function renderBandwidth(holder, id) {
+    if (!mgmt.trafficSeries) return;
+    const NS = 'http://www.w3.org/2000/svg';
+    const w = rangeWindow('24h');
+    holder.replaceChildren(el('p', 'muted small', 'Loading…'));
+    mgmt.trafficSeries({ from: w.from, to: w.to, scope: 'device:' + id }).then((s) => {
+      if (drawerId !== id || !holder.isConnected) return;
+      const bucket = s.bucket || 'minute';
+      const filled = fillSeries(s.points || [], s.from || w.from, s.to || w.to, bucket);
+      const any = filled.some((p) => p.up > 0 || p.down > 0);
+      holder.replaceChildren();
+      if (!any) {
+        holder.append(el('p', 'muted small', 'No traffic measured in the last 24 hours. It is measured while Watch mode is on for this device.'));
+        return;
+      }
+      const paths = areaPaths(filled, bucket);
+      const svg = document.createElementNS(NS, 'svg');
+      svg.setAttribute('viewBox', '0 0 600 140');
+      svg.setAttribute('preserveAspectRatio', 'none');
+      svg.setAttribute('class', 'tf-svg');
+      svg.setAttribute('role', 'img');
+      svg.setAttribute('aria-label', 'Bandwidth over the last 24 hours');
+      for (const [cls, d] of [['tf-down', paths.down], ['tf-up', paths.up]]) {
+        const path = document.createElementNS(NS, 'path');
+        path.setAttribute('class', cls);
+        path.setAttribute('d', d);
+        svg.append(path);
+      }
+      const t = sumPoints(filled);
+      const totals = el('div', 'dr-bw-totals small');
+      totals.append(el('span', 'tf-key tf-key-down', 'Download ' + fmtBytes(t.down) + ' (estimated)'), el('span', 'tf-key tf-key-up', 'Upload ' + fmtBytes(t.up)));
+      const axis = el('p', 'muted small', 'Peak ' + axisLabels(paths.max)[0] + ' · ' + timeLabels(filled, bucket).join(' → '));
+      holder.append(svg, totals, axis);
+    }).catch((e) => {
+      if (drawerId !== id || !holder.isConnected) return;
+      holder.replaceChildren(unavailable(e) ? el('p', 'muted small', 'Bandwidth history is not available on this version.') : el('p', 'err small', e.message));
+    });
+  }
+
   // renderPorts fetches and paints one device's port-scan panel into holder,
   // with a manual "Scan now" button. It guards every repaint on the drawer
   // still showing this same device, since its own fetch and scan calls are
@@ -1053,6 +1098,13 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     sNet.append(field('First seen', d.first_seen ? new Date(d.first_seen).toLocaleString() : 'Unknown'));
     sNet.append(field('Last seen', d.last_seen ? new Date(d.last_seen).toLocaleString() + '  (' + relTime(d.last_seen) + ')' : 'Unknown'));
     drawer.append(sNet);
+
+    // Bandwidth over the last 24 hours
+    const sBw = section('Bandwidth');
+    const bwHolder = el('div', 'dr-bw');
+    sBw.append(bwHolder);
+    drawer.append(sBw);
+    renderBandwidth(bwHolder, d.id);
 
     // Ports and exposure
     const sPorts = section('Ports');
