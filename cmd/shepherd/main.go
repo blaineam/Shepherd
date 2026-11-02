@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -121,6 +122,10 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	if err != nil {
 		return err
 	}
+	// Shepherd's own HTTP fetches (updates, blocklists, feeds) must not depend
+	// on the host's resolv.conf, which in a host-network container names
+	// resolvers that are not there.
+	net.DefaultResolver = dnsengine.HostResolver(pool.Bootstrap)
 	// Runtime edits made in the portal live in upstreams.json and, once it
 	// exists, win over dns.upstreams.
 	ups := dnsengine.OpenUpstreamStore(filepath.Join(cfg.DataDir, "upstreams.json"), pool)
