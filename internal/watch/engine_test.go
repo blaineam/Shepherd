@@ -919,7 +919,7 @@ func TestADeviceThatGoesQuietAfterRelayingIsIdleNotFailing(t *testing.T) {
 
 	// Now it goes quiet for longer than IdleGrace.
 	te.clock.Advance(11 * time.Second)
-	rs := te.waitFailOpen(t, phoneMAC)
+	rs := te.waitFailOpenAdvancing(t, phoneMAC, time.Time{})
 	if rs.failures != 0 {
 		t.Fatalf("idleness must not count as a failure: %+v", rs)
 	}

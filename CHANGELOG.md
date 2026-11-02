@@ -77,6 +77,10 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   waited, so a tick fired before the engine had re-armed its timer was lost and the test timed out under the
   race detector (and failed `main`'s QA). They now keep ticking until the engine catches up, and no longer
   read a retry record that the previous round left behind. Test-only; no behaviour change.
+- **Flaky wandering and excluded-device e2e tests.** On a slow runner the list-load polls were answered
+  by the upstream and cached before the list loaded, so the later query was logged as `cached`, not
+  `allowed`, and the tests either matched an early un-annotated entry or timed out. They now accept both
+  actions and wait for the entry carrying the expected reason. Test-only.
 - **Code-scanning hardening.** The trusted-device, session and lock cookies are now `Secure` whenever the
   request arrived over HTTPS (direct TLS or `X-Forwarded-Proto: https`); plain-HTTP LAN access keeps working. The
   DNS-over-HTTPS client re-checks the upstream scheme right before it sends, the IPv6 route metric is parsed with

@@ -570,18 +570,3 @@ func (te *testEngine) waitFailOpenAdvancing(t *testing.T, mac arp.MAC, after tim
 	})
 	return snap
 }
-
-// waitFailOpen waits for the Controller to drop mac, then returns the retry
-// state as it stood at that moment.
-func (te *testEngine) waitFailOpen(t *testing.T, mac arp.MAC) retrySnapshot {
-	t.Helper()
-	var snap retrySnapshot
-	waitFor(t, "fail-open for "+mac.String(), func() bool {
-		if te.isSteered(mac) {
-			return false
-		}
-		snap = te.retryFor(mac)
-		return snap.present
-	})
-	return snap
-}
