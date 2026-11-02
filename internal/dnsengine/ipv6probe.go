@@ -35,7 +35,7 @@ type IPv6Probe struct {
 }
 
 // DefaultIPv6Targets are Cloudflare, Google and Quad9's public IPv6 addresses.
-var DefaultIPv6Targets = []string{"[2606:4700:4700::1111]:443", "[2001:4860:4860::8888]:443", "[2620:fe::fe]:443"}
+var DefaultIPv6Targets = []string{"[2606:4700:4700::1111]:443", "[2001:4860:4860::8888]:443", "[2620:fe::fe]:443"} // leakcheck:allow public resolvers
 
 // Filtering reports whether AAAA answers should be withheld: true only
 // once IPv6 has been found unusable.
