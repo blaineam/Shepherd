@@ -12,6 +12,8 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-02
+
 ### Added
 - **Packaging plan (roadmap step 24).** [docs/PACKAGING.md](docs/PACKAGING.md) specifies easy installs
   for non-technical owners: the first-run wizard's questions, every target platform with its installer
