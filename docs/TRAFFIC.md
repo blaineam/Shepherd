@@ -97,7 +97,7 @@ The **Bandwidth** screen, under Monitor:
 - **Who used the most:** devices and groups ranked by bytes moved in the range, with each one's
   share of the network's total.
 
-The Watch screen's traffic tiles and each device's drawer show the live download estimate too.
+The Bandwidth screen's live tiles and each device's drawer show the live download estimate too.
 
 ## API
 
