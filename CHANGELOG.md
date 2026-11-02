@@ -77,6 +77,9 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   waited, so a tick fired before the engine had re-armed its timer was lost and the test timed out under the
   race detector (and failed `main`'s QA). They now keep ticking until the engine catches up, and no longer
   read a retry record that the previous round left behind. Test-only; no behaviour change.
+- **Flaky wandering e2e test.** `TestWanderingDevice...` could match an early, un-annotated allowed query
+  (logged before the list finished loading) instead of the wandering one and fail CI. It now waits for the
+  entry that carries the wandering reason and shadow result. Test-only.
 - **Code-scanning hardening.** The trusted-device, session and lock cookies are now `Secure` whenever the
   request arrived over HTTPS (direct TLS or `X-Forwarded-Proto: https`); plain-HTTP LAN access keeps working. The
   DNS-over-HTTPS client re-checks the upstream scheme right before it sends, the IPv6 route metric is parsed with

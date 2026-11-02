@@ -475,7 +475,9 @@ func TestWanderingDeviceIsWatchedButNotFiltered(t *testing.T) {
 	var found map[string]any
 	waitUntil(t, "the allowed query to be logged", func() bool {
 		for _, e := range r.json("GET", "/api/queries?limit=50", "", 200)["entries"].([]any) {
-			if em := e.(map[string]any); em["name"] == "x.ads.example" && em["action"] == "allowed" {
+			// Wait for the annotated entry, not just any allowed one: the query log is
+			// written before the wandering reason and shadow result land on it.
+			if em := e.(map[string]any); em["name"] == "x.ads.example" && em["action"] == "allowed" && em["reason"] == "wandering" && em["shadow"] != nil {
 				found = em
 			}
 		}
