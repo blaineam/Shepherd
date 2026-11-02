@@ -433,7 +433,9 @@ func TestExcludedDeviceIsNotFiltered(t *testing.T) {
 	var reason string
 	waitUntil(t, "the allowed query to be logged", func() bool {
 		for _, e := range r.json("GET", "/api/queries?limit=50", "", 200)["entries"].([]any) {
-			if em := e.(map[string]any); em["name"] == "x.ads.example" && em["action"] == "allowed" {
+			// A slow runner answers the polls above before the list loads, and that upstream
+			// answer is cached, so the excluded query can be logged as "cached", not "allowed".
+			if em := e.(map[string]any); em["name"] == "x.ads.example" && (em["action"] == "allowed" || em["action"] == "cached") {
 				reason, _ = em["reason"].(string)
 				if reason == "excluded" {
 					return true
@@ -475,9 +477,9 @@ func TestWanderingDeviceIsWatchedButNotFiltered(t *testing.T) {
 	var found map[string]any
 	waitUntil(t, "the allowed query to be logged", func() bool {
 		for _, e := range r.json("GET", "/api/queries?limit=50", "", 200)["entries"].([]any) {
-			// Wait for the annotated entry, not just any allowed one: the query log is
-			// written before the wandering reason and shadow result land on it.
-			if em := e.(map[string]any); em["name"] == "x.ads.example" && em["action"] == "allowed" && em["reason"] == "wandering" && em["shadow"] != nil {
+			// Wait for the annotated entry, not just any allowed one: polls answered before the
+			// list loaded are logged too, and a cached upstream answer is logged as "cached".
+			if em := e.(map[string]any); em["name"] == "x.ads.example" && (em["action"] == "allowed" || em["action"] == "cached") && em["reason"] == "wandering" && em["shadow"] != nil {
 				found = em
 			}
 		}
