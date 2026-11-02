@@ -35,9 +35,39 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
+// tempDir is t.TempDir for a test that runs the whole daemon. run starts
+// background workers (list manager, upstream probe, update check, history
+// writer) and stops them asynchronously, so one of them can still be writing
+// into the data directory when the test's cleanup runs; t.TempDir's single
+// RemoveAll then fails with "directory not empty" and fails an otherwise
+// passing test. Retry the removal until the workers have gone.
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "shepherd-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			if err := os.RemoveAll(dir); err == nil {
+				if _, serr := os.Stat(dir); os.IsNotExist(serr) {
+					return
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Errorf("could not remove %s", dir)
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+	return dir
+}
+
 func writeConfig(t *testing.T, dnsPort, portalPort int, extra string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := tempDir(t)
 	path := filepath.Join(dir, "shepherd.toml")
 	body := fmt.Sprintf(`data_dir = %q
 no_default_lists = true

@@ -83,6 +83,10 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   waited, so a tick fired before the engine had re-armed its timer was lost and the test timed out under the
   race detector (and failed `main`'s QA). They now keep ticking until the engine catches up, and no longer
   read a retry record that the previous round left behind. Test-only; no behaviour change.
+- **Flaky daemon tests on temp-directory cleanup.** Tests that run the whole daemon failed with
+  "TempDir RemoveAll cleanup: directory not empty" when a background worker was still writing into the data
+  directory as the test ended, which also failed the Release and Beta gates. Their config helper now retries
+  the removal until the workers have stopped. Test-only.
 - **Flaky wandering and excluded-device e2e tests.** On a slow runner the list-load polls were answered
   by the upstream and cached before the list loaded, so the later query was logged as `cached`, not
   `allowed`, and the tests either matched an early un-annotated entry or timed out. They now accept both
