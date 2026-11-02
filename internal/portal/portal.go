@@ -347,6 +347,9 @@ func New(d Deps) *Server {
 	// a tab merely sits open (see sessionStore.valid).
 	s.mux.Handle("GET /api/status", s.authPassive(s.status))
 	s.mux.Handle("GET /api/queries", s.authPassive(s.queries))
+	// activity is how the page tells the server a person is using it, which
+	// slides the idle-lock window (see web/js/activity.js).
+	s.mux.Handle("POST /api/activity", s.auth(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	s.mux.Handle("GET /api/rules", s.auth(s.getRules))
 	s.mux.Handle("POST /api/rules", s.auth(s.addRule))
 	s.mux.Handle("DELETE /api/rules", s.auth(s.delRule))

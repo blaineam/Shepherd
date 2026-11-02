@@ -13,6 +13,20 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **`dns.filter_aaaa`** (off by default). Answers AAAA queries with an empty answer and removes IPv6
+  hints from HTTPS records, for a network whose devices have no IPv6 route to the internet (only
+  private `fd..` or link-local addresses). Without a route the addresses cannot be used, and a device
+  that tries them first or handles the failure badly reports a network problem. Logged as
+  `ipv6-filtered`.
+
+### Fixed
+- **The portal locked while it was in use.** Idle locking counted only calls that mean a person is
+  there, and looking at the map, panning the globe or scrolling made none, so a page in active use
+  relocked after the idle window. The page now reports real input (at most once a minute) to
+  `POST /api/activity`, which slides the window; a tab left open still locks on schedule. (A restart
+  of Shepherd still ends every session, since sessions are held in memory.)
+
+### Added
 - **Bandwidth on the device card.** The device panel now shows that device's last 24 hours of download
   and upload, from the same traffic history as the Bandwidth page.
 

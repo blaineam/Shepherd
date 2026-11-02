@@ -438,3 +438,43 @@ func TestOnAccessWantedSkipsTheLookupWhenNobodyIsListening(t *testing.T) {
 		t.Errorf("OnAccess ran %d times once wanted, want 1", calls)
 	}
 }
+
+func TestFilterAAAAAnswersEmptyAndNeverAsksUpstream(t *testing.T) {
+	var hits atomicInt
+	up := fakeUpstreamAnswering(t, "198.51.100.7", &hits)
+	pool, _ := NewPool([]string{up})
+	e := &Engine{Filter: NewFilter(), Pool: pool, Cache: NewCache(10), Log: NewQueryLog(20), Stats: NewStats(), FilterAAAA: true}
+
+	w := udpWriter()
+	e.ServeDNS(w, query("v6.example.", dns.TypeAAAA))
+	if hits.Load() != 0 {
+		t.Errorf("an AAAA query reached the upstream %d times", hits.Load())
+	}
+	entries, _ := e.Log.After(0, 10)
+	if len(entries) != 1 || entries[0].Rcode != "NOERROR" || entries[0].Reason != "ipv6-filtered" {
+		t.Fatalf("entries = %+v", entries)
+	}
+
+	e.ServeDNS(udpWriter(), query("v6.example.", dns.TypeA)) // A is untouched
+	if hits.Load() != 1 {
+		t.Errorf("an A query should still be forwarded, hits = %d", hits.Load())
+	}
+}
+
+func TestWithoutIPv6HintsStripsOnlyTheHint(t *testing.T) {
+	e := &Engine{FilterAAAA: true}
+	rr := &dns.HTTPS{SVCB: dns.SVCB{Hdr: dns.RR_Header{Name: "a.example.", Rrtype: dns.TypeHTTPS, Class: dns.ClassINET}, Priority: 1, Target: ".",
+		Value: []dns.SVCBKeyValue{&dns.SVCBAlpn{Alpn: []string{"h2"}}, &dns.SVCBIPv6Hint{Hint: []net.IP{net.ParseIP("2001:db8::1")}}}}}
+	in := &dns.Msg{Answer: []dns.RR{rr}}
+	out := e.withoutIPv6Hints(in)
+	got := out.Answer[0].(*dns.HTTPS).Value
+	if len(got) != 1 || got[0].Key() != dns.SVCB_ALPN {
+		t.Errorf("hint not stripped: %v", got)
+	}
+	if len(in.Answer[0].(*dns.HTTPS).Value) != 2 {
+		t.Error("the cached message was modified")
+	}
+	if (&Engine{}).withoutIPv6Hints(in) != in {
+		t.Error("with the filter off the message must pass through untouched")
+	}
+}

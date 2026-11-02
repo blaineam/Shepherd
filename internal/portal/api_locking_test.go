@@ -242,6 +242,22 @@ func TestRealActivityExtendsTheIdleWindow(t *testing.T) {
 	}
 }
 
+func TestActivityReportExtendsTheIdleWindow(t *testing.T) {
+	h, fc := lockingHarness(t)
+	h.srv.IdleLockMinutes = 10
+	client := jarClient(t)
+	loginWithToken(t, h, client)
+
+	fc.Advance(9 * time.Minute)
+	if res := req(t, client, "POST", h.ts.URL+"/api/activity", "", map[string]string{"X-Shepherd": "1"}); res.StatusCode != http.StatusNoContent {
+		t.Fatalf("activity report = %d, want 204", res.StatusCode)
+	}
+	fc.Advance(9 * time.Minute) // 18 min since login, 9 since the report
+	if res := req(t, client, "GET", h.ts.URL+"/api/status", "", nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("a reported-active session was locked: %d", res.StatusCode)
+	}
+}
+
 func TestIdleLockMinutesZeroNeverLocks(t *testing.T) {
 	h, fc := lockingHarness(t)
 	h.srv.IdleLockMinutes = 0

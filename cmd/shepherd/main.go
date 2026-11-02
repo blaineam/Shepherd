@@ -130,7 +130,7 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	engine := &dnsengine.Engine{
 		Filter: filter, Pool: pool, Cache: dnsengine.NewCache(cfg.DNS.CacheSize),
 		Log: dnsengine.NewQueryLog(cfg.DNS.LogSize), Stats: dnsengine.NewStats(),
-		BlockNXDOMAIN: cfg.DNS.BlockMode == "nxdomain",
+		BlockNXDOMAIN: cfg.DNS.BlockMode == "nxdomain", FilterAAAA: cfg.DNS.FilterAAAA,
 	}
 
 	ctx, cancel := context.WithCancel(ctx)

@@ -3,6 +3,7 @@
 // logic lives in js/*.js and is unit tested; this file is the glue.
 import { $ } from './js/dom.js';
 import { createApi } from './js/api.js';
+import { startActivityReports } from './js/activity.js';
 import { createDemoApi } from './js/demoapi.js';
 import { DemoGenerator, DEMO_HOME } from './js/demo.js';
 import { normalizeEntry, destKey, placeName } from './js/entry.js';
@@ -89,6 +90,7 @@ if (DEMO) {
   });
 } else {
   api = createApi({ onUnauthorized: showLogin });
+  startActivityReports({ target: document, send: () => api('/api/activity', { method: 'POST', body: '{}' }) });
 }
 // Login, PIN login and the explicit Lock always talk to the real backend,
 // never the in-browser demo fake, even while DEMO is showing the lock
