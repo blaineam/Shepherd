@@ -83,6 +83,8 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   waited, so a tick fired before the engine had re-armed its timer was lost and the test timed out under the
   race detector (and failed `main`'s QA). They now keep ticking until the engine catches up, and no longer
   read a retry record that the previous round left behind. Test-only; no behaviour change.
+- **Release notes over GitHub's size limit.** The Release workflow now trims notes longer than 120,000
+  characters and links the full CHANGELOG.md, which the first stable release exceeded (HTTP 422).
 - **Flaky daemon tests on temp-directory cleanup.** Tests that run the whole daemon failed with
   "TempDir RemoveAll cleanup: directory not empty" when a background worker was still writing into the data
   directory as the test ended, which also failed the Release and Beta gates. Their config helper now retries
