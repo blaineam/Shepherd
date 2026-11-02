@@ -306,3 +306,21 @@ func TestUnwrapURLError(t *testing.T) {
 		t.Error("non-URL errors pass through")
 	}
 }
+
+func TestAStalledUpstreamCostsTheHedgeDelayNotTheTimeout(t *testing.T) {
+	d := newDoHTest(t, func(w http.ResponseWriter, r *http.Request, q *dns.Msg) {
+		<-r.Context().Done() // connects, then never answers
+	})
+	var hits atomicInt
+	live := fakeUpstreamCounting(t, &hits)
+	p := testPool(t, nil, d.roots, d.url("127.0.0.1"), live)
+	p.timeout = 2 * time.Second
+	start := time.Now()
+	resp, up, _, err := p.Exchange(context.Background(), aQuery("hedge.example.org."))
+	if err != nil || resp == nil || up.Addr != live {
+		t.Fatalf("expected the plain upstream to answer, got up=%v err=%v", up, err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("the stalled upstream cost %v; the hedge should answer inside %v", took, time.Second)
+	}
+}
