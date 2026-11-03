@@ -448,3 +448,14 @@ func TestTheLiveCardIgnoresAReaderWithNoRows(t *testing.T) {
 		t.Fatalf("live = %v", live)
 	}
 }
+
+func TestTheLiveCardIsUntouchedWithoutARouterReader(t *testing.T) {
+	h := newHarness(t)
+	out := h.ok("GET", "/api/traffic", "", 200)
+	if r := out["router"].(map[string]any); r["available"] != false {
+		t.Fatalf("router = %v", r)
+	}
+	if n := len(out["devices"].([]any)); n != 0 {
+		t.Fatalf("%d devices with no reader", n)
+	}
+}

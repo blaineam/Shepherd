@@ -63,7 +63,7 @@ type Source interface {
 }
 
 // NormalizeMAC lowercases a MAC and strips the separators routers disagree
-// about, so "A4:83:E7:11:22:33", "a4-83-e7-11-22-33" and "a483e7112233" all
+// about, so "02:00:5E:11:22:33", "02-00-5e-11-22-33" and "02005e112233" all
 // match the same device. It returns "" for anything that is not twelve hex
 // digits, which is what a Source should treat as "no MAC".
 func NormalizeMAC(s string) string {

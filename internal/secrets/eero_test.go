@@ -159,3 +159,28 @@ func TestEeroTokenStoreIsTheClientsViewOfTheStore(t *testing.T) {
 		t.Fatal("Delete left a session behind")
 	}
 }
+
+// The portal records the network and the switch together: two writes
+// could leave a network chosen with the reader off if the second failed.
+func TestSetEeroConnectionRecordsBothInOneWrite(t *testing.T) {
+	s := openAt(t, filepath.Join(t.TempDir(), FileName))
+	if ok, err := s.SetEeroConnection("net-1", true); ok || err != nil {
+		t.Fatalf("with nothing stored = %v, %v", ok, err)
+	}
+	if _, err := s.SetEero(Eero{Token: eeroToken}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.SetEeroConnection(" net-7 ", true); !ok || err != nil {
+		t.Fatalf("= %v, %v", ok, err)
+	}
+	e, _ := s.Eero()
+	if e.NetworkID != "net-7" || !e.Enabled || e.Token != eeroToken {
+		t.Fatalf("stored = %+v", e)
+	}
+	if ok, err := s.SetEeroConnection("bad\nid", true); ok || !errors.Is(err, ErrInvalid) {
+		t.Fatalf("a bad network id = %v, %v", ok, err)
+	}
+	if e, _ := s.Eero(); e.NetworkID != "net-7" {
+		t.Fatalf("a refused write changed the stored network: %+v", e)
+	}
+}

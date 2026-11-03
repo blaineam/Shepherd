@@ -84,11 +84,7 @@ func (s *Server) connectRouterUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.importSessions.discard(b.SessionID)
-	if _, err := s.Secrets.SetEeroNetwork(networkID); err != nil {
-		serverFault(w, "the connection could not be saved")
-		return
-	}
-	if _, err := s.Secrets.SetEeroEnabled(true); err != nil {
+	if _, err := s.Secrets.SetEeroConnection(networkID, true); err != nil {
 		serverFault(w, "the connection could not be saved")
 		return
 	}

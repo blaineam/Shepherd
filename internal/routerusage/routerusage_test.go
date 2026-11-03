@@ -119,12 +119,12 @@ func (h *harness) step(d time.Duration) {
 // ---- MAC --------------------------------------------------------------------
 
 func TestNormalizeMACAcceptsEverySeparatorRoutersUse(t *testing.T) {
-	for _, in := range []string{"A4:83:E7:11:22:33", "a4-83-e7-11-22-33", "a483.e711.2233", "a483e7112233", " A4 83 E7 11 22 33 "} {
-		if got := NormalizeMAC(in); got != "a483e7112233" {
+	for _, in := range []string{"02:00:5E:11:22:33", "02-00-5e-11-22-33", "0200.5e11.2233", "02005e112233", " 02 00 5E 11 22 33 "} {
+		if got := NormalizeMAC(in); got != "02005e112233" {
 			t.Errorf("NormalizeMAC(%q) = %q", in, got)
 		}
 	}
-	for _, in := range []string{"", "not-a-mac", "a483e711223", "a483e71122334", "zz:83:e7:11:22:33", "a483e711223g"} {
+	for _, in := range []string{"", "not-a-mac", "02005e11223", "02005e1122334", "zz:00:5e:11:22:33", "02005e11223g"} {
 		if got := NormalizeMAC(in); got != "" {
 			t.Errorf("NormalizeMAC(%q) = %q, want empty", in, got)
 		}
@@ -146,8 +146,8 @@ func TestKindNamesItselfAndSaysWhetherItIsEstimated(t *testing.T) {
 // rate at each end of the gap, over the gap.
 func TestRatesAreIntegratedOverTheGapAndTheFirstPollIsOnlyABaseline(t *testing.T) {
 	h := newHarness(t, KindRates, nil,
-		samples(Sample{MAC: "aa:bb:cc:00:00:01", DownBitsPerSecond: 8e6, UpBitsPerSecond: 0}),
-		samples(Sample{MAC: "aa:bb:cc:00:00:01", DownBitsPerSecond: 8e6, UpBitsPerSecond: 8e6}),
+		samples(Sample{MAC: "02:00:5e:00:00:01", DownBitsPerSecond: 8e6, UpBitsPerSecond: 0}),
+		samples(Sample{MAC: "02:00:5e:00:00:01", DownBitsPerSecond: 8e6, UpBitsPerSecond: 8e6}),
 	)
 	h.step(0)
 	if got := h.rec.all(); len(got) != 0 {
@@ -158,7 +158,7 @@ func TestRatesAreIntegratedOverTheGapAndTheFirstPollIsOnlyABaseline(t *testing.T
 	if len(rows) != 1 {
 		t.Fatalf("rows = %v", rows)
 	}
-	d := rows[0]["d-aabbcc000001"]
+	d := rows[0]["d-02005e000001"]
 	// Down held 8 Mbit/s for 10s = 10 MB. Up ramped 0 -> 8 Mbit/s, so half that.
 	if d.Down != 10_000_000 || d.Up != 5_000_000 {
 		t.Fatalf("delta = %+v, want down 10000000 up 5000000", d)
@@ -167,9 +167,9 @@ func TestRatesAreIntegratedOverTheGapAndTheFirstPollIsOnlyABaseline(t *testing.T
 
 func TestAGapLongerThanMaxGapIsLeftEmptyRatherThanInvented(t *testing.T) {
 	h := newHarness(t, KindRates, func(o *Options) { o.MaxGap = time.Minute },
-		samples(Sample{MAC: "aa:bb:cc:00:00:01", DownBitsPerSecond: 8e6}),
-		samples(Sample{MAC: "aa:bb:cc:00:00:01", DownBitsPerSecond: 8e6}),
-		samples(Sample{MAC: "aa:bb:cc:00:00:01", DownBitsPerSecond: 8e6}),
+		samples(Sample{MAC: "02:00:5e:00:00:01", DownBitsPerSecond: 8e6}),
+		samples(Sample{MAC: "02:00:5e:00:00:01", DownBitsPerSecond: 8e6}),
+		samples(Sample{MAC: "02:00:5e:00:00:01", DownBitsPerSecond: 8e6}),
 	)
 	h.step(0)
 	h.step(2 * time.Minute) // the host slept, or polls failed for a while
@@ -185,16 +185,16 @@ func TestAGapLongerThanMaxGapIsLeftEmptyRatherThanInvented(t *testing.T) {
 
 func TestNonsenseRatesNeverBecomeTraffic(t *testing.T) {
 	for name, s := range map[string]Sample{
-		"negative":  {MAC: "aa:bb:cc:00:00:01", DownBitsPerSecond: -5e6},
-		"not a num": {MAC: "aa:bb:cc:00:00:01", DownBitsPerSecond: nan()},
-		"infinite":  {MAC: "aa:bb:cc:00:00:01", DownBitsPerSecond: inf()},
-		"absurd":    {MAC: "aa:bb:cc:00:00:01", DownBitsPerSecond: 400e9},
+		"negative":  {MAC: "02:00:5e:00:00:01", DownBitsPerSecond: -5e6},
+		"not a num": {MAC: "02:00:5e:00:00:01", DownBitsPerSecond: nan()},
+		"infinite":  {MAC: "02:00:5e:00:00:01", DownBitsPerSecond: inf()},
+		"absurd":    {MAC: "02:00:5e:00:00:01", DownBitsPerSecond: 400e9},
 	} {
 		h := newHarness(t, KindRates, nil, samples(s), samples(s))
 		h.step(0)
 		h.step(10 * time.Second)
 		for _, row := range h.rec.all() {
-			if d := row["d-aabbcc000001"]; d.Down != 0 || d.Up != 0 {
+			if d := row["d-02005e000001"]; d.Down != 0 || d.Up != 0 {
 				t.Errorf("%s: recorded %+v, want nothing", name, d)
 			}
 		}
@@ -205,14 +205,14 @@ func TestNonsenseRatesNeverBecomeTraffic(t *testing.T) {
 
 func TestCountersAreDifferencedAndAResetDoesNotGoNegative(t *testing.T) {
 	h := newHarness(t, KindCounters, nil,
-		samples(Sample{MAC: "aa:bb:cc:00:00:02", DownBytes: 1000, UpBytes: 500}),
-		samples(Sample{MAC: "aa:bb:cc:00:00:02", DownBytes: 3000, UpBytes: 900}),
-		samples(Sample{MAC: "aa:bb:cc:00:00:02", DownBytes: 10, UpBytes: 5}), // the router rebooted
-		samples(Sample{MAC: "aa:bb:cc:00:00:02", DownBytes: 110, UpBytes: 25}),
+		samples(Sample{MAC: "02:00:5e:00:00:02", DownBytes: 1000, UpBytes: 500}),
+		samples(Sample{MAC: "02:00:5e:00:00:02", DownBytes: 3000, UpBytes: 900}),
+		samples(Sample{MAC: "02:00:5e:00:00:02", DownBytes: 10, UpBytes: 5}), // the router rebooted
+		samples(Sample{MAC: "02:00:5e:00:00:02", DownBytes: 110, UpBytes: 25}),
 	)
 	h.step(0)
 	h.step(10 * time.Second)
-	if d := h.rec.all()[0]["d-aabbcc000002"]; d.Down != 2000 || d.Up != 400 {
+	if d := h.rec.all()[0]["d-02005e000002"]; d.Down != 2000 || d.Up != 400 {
 		t.Fatalf("delta = %+v, want down 2000 up 400", d)
 	}
 	h.step(10 * time.Second) // the reset itself records nothing
@@ -220,15 +220,15 @@ func TestCountersAreDifferencedAndAResetDoesNotGoNegative(t *testing.T) {
 		t.Fatalf("a counter reset recorded something: %v", h.rec.all())
 	}
 	h.step(10 * time.Second) // and the next pair counts from the new baseline
-	if d := h.rec.all()[1]["d-aabbcc000002"]; d.Down != 100 || d.Up != 20 {
+	if d := h.rec.all()[1]["d-02005e000002"]; d.Down != 100 || d.Up != 20 {
 		t.Fatalf("after the reset, delta = %+v, want down 100 up 20", d)
 	}
 }
 
 func TestACounterJumpTooLargeToBeRealIsRefused(t *testing.T) {
 	h := newHarness(t, KindCounters, nil,
-		samples(Sample{MAC: "aa:bb:cc:00:00:02", DownBytes: 0}),
-		samples(Sample{MAC: "aa:bb:cc:00:00:02", DownBytes: 1 << 62}),
+		samples(Sample{MAC: "02:00:5e:00:00:02", DownBytes: 0}),
+		samples(Sample{MAC: "02:00:5e:00:00:02", DownBytes: 1 << 62}),
 	)
 	h.step(0)
 	h.step(time.Second)
@@ -243,8 +243,8 @@ func TestDevicesTheRegistryDoesNotKnowAreCountedTowardsNothing(t *testing.T) {
 	h := newHarness(t, KindRates, func(o *Options) {
 		o.Resolve = func(mac string) (string, bool) { return "", false }
 	},
-		samples(Sample{MAC: "aa:bb:cc:00:00:03", DownBitsPerSecond: 8e6}),
-		samples(Sample{MAC: "aa:bb:cc:00:00:03", DownBitsPerSecond: 8e6}),
+		samples(Sample{MAC: "02:00:5e:00:00:03", DownBitsPerSecond: 8e6}),
+		samples(Sample{MAC: "02:00:5e:00:00:03", DownBitsPerSecond: 8e6}),
 	)
 	h.step(0)
 	h.step(10 * time.Second)
@@ -260,24 +260,24 @@ func TestDevicesTheRegistryDoesNotKnowAreCountedTowardsNothing(t *testing.T) {
 // must not be added on top of it.
 func TestADeviceWatchModeIsAlreadyMeasuringIsSkipped(t *testing.T) {
 	h := newHarness(t, KindRates, func(o *Options) {
-		o.Skip = func(id string) bool { return id == "d-aabbcc000004" }
+		o.Skip = func(id string) bool { return id == "d-02005e000004" }
 	},
 		samples(
-			Sample{MAC: "aa:bb:cc:00:00:04", DownBitsPerSecond: 8e6},
-			Sample{MAC: "aa:bb:cc:00:00:05", DownBitsPerSecond: 8e6},
+			Sample{MAC: "02:00:5e:00:00:04", DownBitsPerSecond: 8e6},
+			Sample{MAC: "02:00:5e:00:00:05", DownBitsPerSecond: 8e6},
 		),
 		samples(
-			Sample{MAC: "aa:bb:cc:00:00:04", DownBitsPerSecond: 8e6},
-			Sample{MAC: "aa:bb:cc:00:00:05", DownBitsPerSecond: 8e6},
+			Sample{MAC: "02:00:5e:00:00:04", DownBitsPerSecond: 8e6},
+			Sample{MAC: "02:00:5e:00:00:05", DownBitsPerSecond: 8e6},
 		),
 	)
 	h.step(0)
 	h.step(10 * time.Second)
 	row := h.rec.all()[0]
-	if _, present := row["d-aabbcc000004"]; present {
+	if _, present := row["d-02005e000004"]; present {
 		t.Error("the watched device was counted twice")
 	}
-	if row["d-aabbcc000005"].Down == 0 {
+	if row["d-02005e000005"].Down == 0 {
 		t.Error("the unwatched device was not counted")
 	}
 }
@@ -299,12 +299,12 @@ func TestTwoMACsOnOneDeviceAreSummed(t *testing.T) {
 		o.Resolve = func(string) (string, bool) { return "d-one", true }
 	},
 		samples(
-			Sample{MAC: "aa:bb:cc:00:00:06", DownBitsPerSecond: 8e6},
-			Sample{MAC: "aa:bb:cc:00:00:07", DownBitsPerSecond: 8e6},
+			Sample{MAC: "02:00:5e:00:00:06", DownBitsPerSecond: 8e6},
+			Sample{MAC: "02:00:5e:00:00:07", DownBitsPerSecond: 8e6},
 		),
 		samples(
-			Sample{MAC: "aa:bb:cc:00:00:06", DownBitsPerSecond: 8e6},
-			Sample{MAC: "aa:bb:cc:00:00:07", DownBitsPerSecond: 8e6},
+			Sample{MAC: "02:00:5e:00:00:06", DownBitsPerSecond: 8e6},
+			Sample{MAC: "02:00:5e:00:00:07", DownBitsPerSecond: 8e6},
 		),
 	)
 	h.step(0)
@@ -324,7 +324,7 @@ func TestAFailedPollIsReportedAndLoggedOnceUntilItRecovers(t *testing.T) {
 	},
 		boom(errors.New("the router did not answer")),
 		boom(errors.New("the router did not answer")),
-		samples(Sample{MAC: "aa:bb:cc:00:00:08", DownBitsPerSecond: 0}),
+		samples(Sample{MAC: "02:00:5e:00:00:08", DownBitsPerSecond: 0}),
 	)
 	h.step(0)
 	st := h.c.Status()
@@ -396,9 +396,9 @@ func TestRunPollsOnTheIntervalUntilItsContextEnds(t *testing.T) {
 	h := newHarness(t, KindRates, func(o *Options) {
 		o.After = func(time.Duration) <-chan time.Time { return tick }
 	},
-		samples(Sample{MAC: "aa:bb:cc:00:00:09", DownBitsPerSecond: 8e6}),
-		samples(Sample{MAC: "aa:bb:cc:00:00:09", DownBitsPerSecond: 8e6}),
-		samples(Sample{MAC: "aa:bb:cc:00:00:09", DownBitsPerSecond: 8e6}),
+		samples(Sample{MAC: "02:00:5e:00:00:09", DownBitsPerSecond: 8e6}),
+		samples(Sample{MAC: "02:00:5e:00:00:09", DownBitsPerSecond: 8e6}),
+		samples(Sample{MAC: "02:00:5e:00:00:09", DownBitsPerSecond: 8e6}),
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -442,9 +442,9 @@ func (f *fakeEero) Devices(_ context.Context, networkID string) ([]importers.Eer
 
 func TestEeroReportsMegabitsPerSecondAsBitsPerSecond(t *testing.T) {
 	f := &fakeEero{devs: []importers.EeroDevice{
-		{MAC: "AA:BB:CC:00:00:10", Nickname: "Living Room TV", DownMbps: 12.5, UpMbps: 0.5, HasUsage: true},
+		{MAC: "02:00:5e:00:00:10", Nickname: "Living Room TV", DownMbps: 12.5, UpMbps: 0.5, HasUsage: true},
 		{MAC: "", Nickname: "no mac"},
-		{MAC: "AA:BB:CC:00:00:11", Hostname: "printer", HasUsage: true},
+		{MAC: "02:00:5e:00:00:11", Hostname: "printer", HasUsage: true},
 	}}
 	src := NewEero(f, "net-1")
 	if src.Name() != "eero" || src.Kind() != KindRates {
@@ -460,7 +460,7 @@ func TestEeroReportsMegabitsPerSecondAsBitsPerSecond(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("samples = %+v, want the one without a MAC dropped", got)
 	}
-	if got[0].MAC != "aabbcc000010" || got[0].Name != "Living Room TV" ||
+	if got[0].MAC != "02005e000010" || got[0].Name != "Living Room TV" ||
 		got[0].DownBitsPerSecond != 12.5e6 || got[0].UpBitsPerSecond != 0.5e6 {
 		t.Fatalf("sample = %+v", got[0])
 	}
@@ -470,7 +470,7 @@ func TestEeroReportsMegabitsPerSecondAsBitsPerSecond(t *testing.T) {
 }
 
 func TestEeroSaysSoWhenTheAnswerCarriesNoUsageAtAll(t *testing.T) {
-	f := &fakeEero{devs: []importers.EeroDevice{{MAC: "AA:BB:CC:00:00:12"}, {MAC: "AA:BB:CC:00:00:13"}}}
+	f := &fakeEero{devs: []importers.EeroDevice{{MAC: "02:00:5e:00:00:12"}, {MAC: "02:00:5e:00:00:13"}}}
 	got, err := NewEero(f, "n").Poll(context.Background())
 	if !errors.Is(err, ErrNoUsage) {
 		t.Fatalf("err = %v, want ErrNoUsage", err)
@@ -605,7 +605,7 @@ func waitPoll(t *testing.T, ch chan struct{}) {
 // A zero timestamp in the JSON would read to the portal as "it has
 // polled", so an unpolled collector must omit the field entirely.
 func TestStatusOmitsTheLastPollUntilThereHasBeenOne(t *testing.T) {
-	h := newHarness(t, KindRates, nil, samples(Sample{MAC: "aa:bb:cc:00:00:0a"}))
+	h := newHarness(t, KindRates, nil, samples(Sample{MAC: "02:00:5e:00:00:0a"}))
 	b, err := json.Marshal(h.c.Status())
 	if err != nil {
 		t.Fatal(err)
@@ -624,14 +624,14 @@ func TestStatusOmitsTheLastPollUntilThereHasBeenOne(t *testing.T) {
 func TestLiveShowsTheLatestRatesAndRunningTotals(t *testing.T) {
 	h := newHarness(t, KindRates, nil,
 		samples(
-			Sample{MAC: "aa:bb:cc:00:00:20", Name: "TV", DownBitsPerSecond: 8e6},
-			Sample{MAC: "aa:bb:cc:00:00:21", Name: "Phone", DownBitsPerSecond: 80e6},
+			Sample{MAC: "02:00:5e:00:00:20", Name: "TV", DownBitsPerSecond: 8e6},
+			Sample{MAC: "02:00:5e:00:00:21", Name: "Phone", DownBitsPerSecond: 80e6},
 		),
 		samples(
-			Sample{MAC: "aa:bb:cc:00:00:20", Name: "TV", DownBitsPerSecond: 8e6},
-			Sample{MAC: "aa:bb:cc:00:00:21", Name: "Phone", DownBitsPerSecond: 80e6},
+			Sample{MAC: "02:00:5e:00:00:20", Name: "TV", DownBitsPerSecond: 8e6},
+			Sample{MAC: "02:00:5e:00:00:21", Name: "Phone", DownBitsPerSecond: 80e6},
 		),
-		samples(Sample{MAC: "aa:bb:cc:00:00:20", Name: "TV", DownBitsPerSecond: 0}),
+		samples(Sample{MAC: "02:00:5e:00:00:20", Name: "TV", DownBitsPerSecond: 0}),
 	)
 	if len(h.c.Live()) != 0 {
 		t.Fatal("Live before any poll should be empty")
@@ -651,7 +651,7 @@ func TestLiveShowsTheLatestRatesAndRunningTotals(t *testing.T) {
 	for _, l := range h.c.Live() {
 		byID[l.DeviceID] = l
 	}
-	if got := byID["d-aabbcc000021"].DownBytes; got != 100_000_000 {
+	if got := byID["d-02005e000021"].DownBytes; got != 100_000_000 {
 		t.Fatalf("Phone total = %d, want 100000000", got)
 	}
 
@@ -661,7 +661,7 @@ func TestLiveShowsTheLatestRatesAndRunningTotals(t *testing.T) {
 	for _, l := range h.c.Live() {
 		byID[l.DeviceID] = l
 	}
-	gone := byID["d-aabbcc000021"]
+	gone := byID["d-02005e000021"]
 	if gone.DownBitsPerSecond != 0 {
 		t.Fatalf("a device absent from the poll is not moving traffic: %+v", gone)
 	}
@@ -674,8 +674,8 @@ func TestLiveShowsTheLatestRatesAndRunningTotals(t *testing.T) {
 // interval worked out to.
 func TestLiveDerivesARateFromCounters(t *testing.T) {
 	h := newHarness(t, KindCounters, nil,
-		samples(Sample{MAC: "aa:bb:cc:00:00:22", DownBytes: 0}),
-		samples(Sample{MAC: "aa:bb:cc:00:00:22", DownBytes: 10_000_000}),
+		samples(Sample{MAC: "02:00:5e:00:00:22", DownBytes: 0}),
+		samples(Sample{MAC: "02:00:5e:00:00:22", DownBytes: 10_000_000}),
 	)
 	h.step(0)
 	if r := h.c.Live()[0].DownBitsPerSecond; r != 0 {
@@ -693,8 +693,8 @@ func TestLiveSumsTheInterfacesOfOneDevice(t *testing.T) {
 	h := newHarness(t, KindRates, func(o *Options) {
 		o.Resolve = func(string) (string, bool) { return "d-one", true }
 	}, samples(
-		Sample{MAC: "aa:bb:cc:00:00:23", Name: "Laptop", DownBitsPerSecond: 8e6},
-		Sample{MAC: "aa:bb:cc:00:00:24", DownBitsPerSecond: 2e6},
+		Sample{MAC: "02:00:5e:00:00:23", Name: "Laptop", DownBitsPerSecond: 8e6},
+		Sample{MAC: "02:00:5e:00:00:24", DownBitsPerSecond: 2e6},
 	))
 	h.step(0)
 	l := h.c.Live()

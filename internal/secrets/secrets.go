@@ -461,6 +461,25 @@ func (s *Store) SetEeroEnabled(on bool) (bool, error) {
 	return true, s.mutate(func(f *file) { f.Eero = &e })
 }
 
+// SetEeroConnection records the network to read and switches the reader
+// on, in one write, without touching the stored token. It is what the
+// portal calls once a sign-in has been kept: two separate writes could
+// leave a network chosen but the reader off if the second one failed.
+// It returns false when no session is stored.
+func (s *Store) SetEeroConnection(networkID string, enabled bool) (bool, error) {
+	e, ok := s.Eero()
+	if !ok {
+		return false, nil
+	}
+	e.NetworkID = strings.TrimSpace(networkID)
+	e.Enabled = enabled
+	if err := e.validate(); err != nil {
+		return false, err
+	}
+	e.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return true, s.mutate(func(f *file) { f.Eero = &e })
+}
+
 // SetEeroNetwork records which of the account's networks to read, without
 // touching the stored token. It returns false when no session is stored.
 func (s *Store) SetEeroNetwork(networkID string) (bool, error) {
