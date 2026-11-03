@@ -8,9 +8,10 @@
 import { el } from './dom.js';
 import { button, emptyState, unavailableCard, segmented } from './ui.js';
 import { unavailable } from './mgmt.js';
+import { createRouterUsage } from './routerusageview.js';
 import {
   RANGE_PRESETS, rangeWindow, scopeOptions, scopeLabel, fillSeries, sumPoints, bucketRate, timeLabels,
-  shareOf, statusHeadline, liveRows, DOWNLOAD_CAVEAT, fmtBytes, fmtBitsPerSecond,
+  shareOf, statusHeadline, liveRows, DOWNLOAD_CAVEAT, measurementNote, fmtBytes, fmtBitsPerSecond,
   niceCeil, yTicks, lineArea, nearestIndex, pushSample, shareSlices, arcPath, rateStats,
 } from './traffic.js';
 
@@ -100,6 +101,9 @@ function sparkline(points, bucket) {
 }
 
 export function createTraffic({ root, mgmt, notify, onOpenDevice = null, watch = null }) {
+  // Reading bandwidth from the owner's own router, for a network where
+  // Watch mode cannot run. It repaints from each poll's status.
+  const routerUsage = createRouterUsage({ mgmt, notify, onChanged: () => { load().catch(() => {}); } });
   let status = null;
   let loadError = null;
   let timer = 0;
@@ -154,6 +158,10 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, watch =
     const line = statusHeadline(status);
     headline.textContent = line.text;
     headline.className = 'tf-headline ' + line.tone;
+    const note = measurementNote(status);
+    liveNote.textContent = note;
+    liveNote.hidden = !note;
+    routerUsage.render(status.router);
     const lv = status.live || {};
     tilesHolder.replaceChildren();
     const tile = (label, value, sub, cls) => {
@@ -353,7 +361,7 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, watch =
     }
     if (!status) return;
     if (!built) {
-      body.replaceChildren(liveCard, historyCard, mixCard, trendsCard, watchCard);
+      body.replaceChildren(liveCard, historyCard, mixCard, trendsCard, routerUsage.root, watchCard);
       built = true;
       paintHistory();
       paintMix();

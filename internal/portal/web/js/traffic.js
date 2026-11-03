@@ -126,7 +126,18 @@ export function shareOf(part, total) {
 // One line about what is being measured, with a tone for its colour.
 export function statusHeadline(status) {
   const s = status || {};
-  if (!s.enabled) return { tone: 'muted', text: 'Watch mode is off, so nothing is being measured. Turn it on to see bandwidth.' };
+  // The router reader, when it is working, is what the screen is showing,
+  // whatever Watch mode is doing.
+  if (!s.measuring && readingNow(s.router)) {
+    const st = s.router.status || {};
+    const live = s.live || {};
+    return {
+      tone: 'good',
+      text: 'Reading ' + (st.matched || 0) + ' devices from your ' + (s.router.source || 'router') + ': '
+        + fmtBitsPerSecond(live.down_bytes_per_second) + ' down, ' + fmtBitsPerSecond(live.up_bytes_per_second) + ' up at the last reading.',
+    };
+  }
+  if (!s.enabled) return { tone: 'muted', text: 'Watch mode is off, so nothing is being measured. Connect your router below, or turn Watch mode on.' };
   if (!s.measuring) return { tone: 'warn', text: 'Watch mode is stopped, so nothing new is being measured. History up to now is still here.' };
   const live = s.live || {};
   const n = (s.devices || []).length;
@@ -219,4 +230,50 @@ export function rateStats(values) {
   const v = (values || []).map((x) => Number(x) || 0);
   if (!v.length) return { peak: 0, avg: 0 };
   return { peak: Math.max(...v), avg: v.reduce((s, x) => s + x, 0) / v.length };
+}
+
+// ------------------------------------------------- where the numbers come from
+// Bandwidth can be measured two ways. Watch mode relays each device's
+// traffic and counts the bytes, which is exact but needs a network that
+// tolerates steering. Reading the owner's own router touches nothing, but
+// a router that reports only its instantaneous rate (eero) gives figures
+// that are integrated between polls, and must never be shown as measured.
+
+// routerConnection describes the router side of GET /api/traffic in one
+// line, with a tone, for the Bandwidth screen's source section.
+export function routerConnection(router) {
+  const r = router || {};
+  if (!r.available) return { tone: 'muted', text: 'This build cannot read bandwidth from a router.' };
+  if (!r.connected) return { tone: 'muted', text: 'No router is connected. Shepherd can read per-device bandwidth from your router without touching your traffic.' };
+  const st = r.status || {};
+  if (!r.enabled) return { tone: 'muted', text: 'Connected to ' + (r.source || 'your router') + ', but switched off.' };
+  if (st.needs_sign_in) return { tone: 'bad', text: 'Your ' + (r.source || 'router') + ' sign-in has expired. Sign in again to carry on reading bandwidth.' };
+  if (st.last_error) return { tone: 'warn', text: 'Could not read ' + (r.source || 'the router') + ': ' + st.last_error };
+  if (!st.last_poll) return { tone: 'muted', text: 'Connected to ' + (r.source || 'your router') + '. Waiting for the first reading.' };
+  return {
+    tone: 'good',
+    text: 'Reading ' + (st.matched || 0) + ' of ' + (st.devices_seen || 0) + ' devices from your ' + (r.source || 'router')
+      + ' every ' + (st.interval_seconds || 0) + 's.',
+  };
+}
+
+// readingNow reports whether the router reader is the thing currently
+// producing numbers, which is true only when it is on and last succeeded.
+export function readingNow(router) {
+  const r = router || {};
+  const st = r.status || {};
+  return !!(r.available && r.connected && r.enabled && st.last_poll && !st.last_error);
+}
+
+// measurementNote is the one sentence under the live tiles saying how the
+// figures were arrived at, so an estimate is never mistaken for a count.
+export function measurementNote(status) {
+  const s = status || {};
+  if (s.measuring) return DOWNLOAD_CAVEAT;
+  if (!readingNow(s.router)) return '';
+  const est = (s.router.status || {}).estimated;
+  const src = s.router.source || 'your router';
+  return est
+    ? 'These figures are read from ' + src + ', which reports only the rate at each moment. Shepherd samples it and fills in the time between, so totals are close but not exact, and a short burst between two readings is missed entirely.'
+    : 'These figures are byte counts read from ' + src + '.';
 }

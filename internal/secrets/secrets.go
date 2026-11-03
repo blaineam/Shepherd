@@ -424,6 +424,9 @@ func trimSMTP(m SMTP) SMTP {
 	return m
 }
 
+// Path is the file this store saves to, empty for a memory-only store.
+func (s *Store) Path() string { return s.path }
+
 // Eero returns the stored eero session and whether a token is actually set.
 func (s *Store) Eero() (Eero, bool) {
 	s.mu.RLock()
@@ -454,6 +457,21 @@ func (s *Store) SetEeroEnabled(on bool) (bool, error) {
 		return false, nil
 	}
 	e.Enabled = on
+	e.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return true, s.mutate(func(f *file) { f.Eero = &e })
+}
+
+// SetEeroNetwork records which of the account's networks to read, without
+// touching the stored token. It returns false when no session is stored.
+func (s *Store) SetEeroNetwork(networkID string) (bool, error) {
+	e, ok := s.Eero()
+	if !ok {
+		return false, nil
+	}
+	e.NetworkID = strings.TrimSpace(networkID)
+	if err := e.validate(); err != nil {
+		return false, err
+	}
 	e.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
 	return true, s.mutate(func(f *file) { f.Eero = &e })
 }

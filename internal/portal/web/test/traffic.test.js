@@ -160,3 +160,69 @@ test('rateStats reports peak and average', () => {
   assert.deepEqual(rateStats([]), { peak: 0, avg: 0 });
   assert.deepEqual(rateStats([2, 4, 6, 'x']), { peak: 6, avg: 3 });
 });
+
+import { routerConnection, readingNow, measurementNote } from '../js/traffic.js';
+
+const reading = {
+  available: true, connected: true, enabled: true, source: 'eero',
+  status: { last_poll: '2026-11-03T12:00:00Z', devices_seen: 12, matched: 9, interval_seconds: 30, estimated: true },
+};
+
+test('routerConnection words every state the reader can be in', () => {
+  assert.equal(routerConnection(null).tone, 'muted');
+  assert.match(routerConnection({ available: false }).text, /cannot read bandwidth/);
+  assert.match(routerConnection({ available: true, connected: false }).text, /No router is connected/);
+  assert.match(routerConnection({ available: true, connected: true, enabled: false, source: 'eero' }).text, /switched off/);
+
+  const expired = routerConnection({ ...reading, status: { needs_sign_in: true, last_error: 'session expired' } });
+  assert.equal(expired.tone, 'bad');
+  assert.match(expired.text, /sign-in has expired/);
+
+  const broken = routerConnection({ ...reading, status: { last_error: 'the router did not answer' } });
+  assert.equal(broken.tone, 'warn');
+  assert.match(broken.text, /did not answer/);
+
+  assert.match(routerConnection({ ...reading, status: {} }).text, /Waiting for the first reading/);
+
+  const ok = routerConnection(reading);
+  assert.equal(ok.tone, 'good');
+  assert.match(ok.text, /Reading 9 of 12 devices from your eero every 30s/);
+});
+
+test('readingNow is true only when the reader is on and last succeeded', () => {
+  assert.equal(readingNow(reading), true);
+  assert.equal(readingNow(null), false);
+  assert.equal(readingNow({ ...reading, enabled: false }), false);
+  assert.equal(readingNow({ ...reading, connected: false }), false);
+  assert.equal(readingNow({ ...reading, available: false }), false);
+  assert.equal(readingNow({ ...reading, status: { ...reading.status, last_error: 'boom' } }), false);
+  assert.equal(readingNow({ ...reading, status: {} }), false);
+});
+
+test('measurementNote never lets an estimate pass for a measurement', () => {
+  // Watch mode is measuring: the download caveat is the honest note.
+  assert.equal(measurementNote({ measuring: true }), DOWNLOAD_CAVEAT);
+  // Nothing is producing numbers.
+  assert.equal(measurementNote({ measuring: false, router: { available: true, connected: false } }), '');
+  // A rate-sampling router says so plainly.
+  const est = measurementNote({ measuring: false, router: reading });
+  assert.match(est, /rate at each moment/);
+  assert.match(est, /burst between two readings is missed/);
+  // A counter-reading router does not carry that caveat.
+  const counted = measurementNote({
+    measuring: false,
+    router: { ...reading, source: 'unifi', status: { ...reading.status, estimated: false } },
+  });
+  assert.match(counted, /byte counts read from unifi/);
+  assert.doesNotMatch(counted, /not exact/);
+});
+
+test('the headline says when the numbers come from the router instead of Watch mode', () => {
+  const h = statusHeadline({ enabled: false, measuring: false, router: reading, live: { down_bytes_per_second: 1e6, up_bytes_per_second: 1e5 } });
+  assert.equal(h.tone, 'good');
+  assert.match(h.text, /Reading 9 devices from your eero/);
+  // With no router connected the old wording stands, and points at both options.
+  const off = statusHeadline({ enabled: false, measuring: false, router: { available: true, connected: false } });
+  assert.equal(off.tone, 'muted');
+  assert.match(off.text, /Connect your router below/);
+});

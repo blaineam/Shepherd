@@ -68,12 +68,27 @@ func (r *fakeRecorder) all() []map[string]traffic.Delta {
 	return append([]map[string]traffic.Delta(nil), r.rows...)
 }
 
-// harness drives a Collector one poll at a time with a clock the test moves.
+// harness drives a Collector one poll at a time with a clock the test
+// moves. The clock is guarded because Run reads it from its own goroutine.
 type harness struct {
 	c   *Collector
 	rec *fakeRecorder
 	src *fakeSource
+
+	mu  sync.Mutex
 	now time.Time
+}
+
+func (h *harness) clock() time.Time {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.now
+}
+
+func (h *harness) advance(d time.Duration) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.now = h.now.Add(d)
 }
 
 func newHarness(t *testing.T, kind Kind, mod func(*Options), runs ...func() ([]Sample, error)) *harness {
@@ -84,7 +99,7 @@ func newHarness(t *testing.T, kind Kind, mod func(*Options), runs ...func() ([]S
 		Recorder: h.rec,
 		// Every MAC maps to a device id of "d-"+mac unless a test says otherwise.
 		Resolve: func(mac string) (string, bool) { return "d-" + mac, true },
-		Now:     func() time.Time { return h.now },
+		Now:     h.clock,
 	}
 	if mod != nil {
 		mod(&opt)
@@ -95,7 +110,7 @@ func newHarness(t *testing.T, kind Kind, mod func(*Options), runs ...func() ([]S
 
 // step advances the clock by d and runs one poll.
 func (h *harness) step(d time.Duration) {
-	h.now = h.now.Add(d)
+	h.advance(d)
 	h.c.pollOnce(context.Background())
 }
 
@@ -388,7 +403,7 @@ func TestRunPollsOnTheIntervalUntilItsContextEnds(t *testing.T) {
 	go func() { done <- h.c.Run(ctx) }()
 
 	for i := 0; i < 2; i++ {
-		h.now = h.now.Add(10 * time.Second)
+		h.advance(10 * time.Second)
 		tick <- time.Time{}
 	}
 	cancel()
@@ -489,3 +504,98 @@ func TestEeroNeedsSignInOnlyForSessionProblems(t *testing.T) {
 
 func nan() float64 { return math.NaN() }
 func inf() float64 { return math.Inf(1) }
+
+// ---- Manager ----------------------------------------------------------------
+
+func newManagerHarness(t *testing.T, build Build) (*Manager, context.CancelFunc) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	m := NewManager(ctx, build, nil)
+	t.Cleanup(func() { m.Stop(); cancel() })
+	return m, cancel
+}
+
+func TestManagerRunsNothingUntilAConnectionExists(t *testing.T) {
+	m, _ := newManagerHarness(t, func() (*Collector, bool, error) { return nil, false, nil })
+	m.Reload()
+	if st := m.Status(); st.Enabled || st.Source != "" || st.LastError != "" {
+		t.Fatalf("status = %+v, want nothing running", st)
+	}
+}
+
+func TestManagerReportsAConnectionItCouldNotOpen(t *testing.T) {
+	m, _ := newManagerHarness(t, func() (*Collector, bool, error) {
+		return nil, false, errors.New("the stored session could not be read")
+	})
+	m.Reload()
+	if st := m.Status(); st.LastError == "" {
+		t.Fatalf("status = %+v, want the failure reported", st)
+	}
+	// And a later Reload that succeeds clears it.
+	m.build = func() (*Collector, bool, error) { return nil, false, nil }
+	m.Reload()
+	if st := m.Status(); st.LastError != "" {
+		t.Fatalf("status = %+v, want the failure cleared", st)
+	}
+}
+
+func TestManagerStartsStopsAndRestartsOneCollector(t *testing.T) {
+	tick := make(chan time.Time)
+	polled := make(chan struct{}, 16)
+	mk := func() *Collector {
+		return New(Options{
+			Source: &fakeSource{kind: KindCounters, runs: repeat(32, func() ([]Sample, error) {
+				select {
+				case polled <- struct{}{}:
+				default:
+				}
+				return nil, nil
+			})},
+			Recorder: &fakeRecorder{},
+			Resolve:  func(string) (string, bool) { return "", false },
+			After:    func(time.Duration) <-chan time.Time { return tick },
+		})
+	}
+	on := true
+	m, _ := newManagerHarness(t, func() (*Collector, bool, error) {
+		if !on {
+			return nil, false, nil
+		}
+		return mk(), true, nil
+	})
+
+	m.Reload()
+	waitPoll(t, polled)
+	if st := m.Status(); st.Source != "fake" || st.Estimated {
+		t.Fatalf("status = %+v", st)
+	}
+	// Reloading swaps in a fresh collector rather than running two.
+	m.Reload()
+	waitPoll(t, polled)
+
+	on = false
+	m.Reload()
+	if st := m.Status(); st.Source != "" {
+		t.Fatalf("status after turning it off = %+v", st)
+	}
+	// Stopping twice is harmless.
+	m.Stop()
+	m.Stop()
+}
+
+func repeat(n int, f func() ([]Sample, error)) []func() ([]Sample, error) {
+	out := make([]func() ([]Sample, error), n)
+	for i := range out {
+		out[i] = f
+	}
+	return out
+}
+
+func waitPoll(t *testing.T, ch chan struct{}) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the collector never polled")
+	}
+}

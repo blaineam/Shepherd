@@ -125,6 +125,9 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
     const sum = (k) => rows.reduce((n, r) => n + r[k], 0);
     return {
       enabled: true, measuring: watchArmed,
+      // The demo shows the router reader as available but unconnected, so
+      // the section reads as it would on a fresh install.
+      router: { available: true, connected: false, source: '', network: '', status: {} },
       retention: { minute_hours: 48, hour_days: 90, day_days: 0, max_bytes: 8388608 },
       devices_tracked: devices.length,
       live: { up_bytes_per_second: sum('up_bytes_per_second'), down_bytes_per_second: sum('down_bytes_per_second'), bytes_relayed: sum('bytes_relayed'), bytes_received_est: sum('bytes_received_est') },

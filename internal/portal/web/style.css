@@ -1157,3 +1157,12 @@ button.tf-trend { cursor: pointer; } button.tf-trend:hover { border-color: var(-
 .tf-body .tf-yaxis span { white-space: nowrap; }
 .tf-body .tf-live { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; }
 .tf-body .tf-live .list-row { border: 1px solid var(--line); border-radius: var(--r); }
+
+/* Bandwidth: reading from the owner's router instead of steering traffic. */
+.ru-line { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+.ru-line.good { color: var(--teal); } .ru-line.warn { color: var(--amber); }
+.ru-line.bad { color: var(--red); } .ru-line.muted { color: var(--text-2); font-weight: 500; }
+.ru-note { margin: 0 0 12px; max-width: 72ch; }
+.ru-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0 0 12px; }
+.ru-form input, .ru-form select { min-width: 220px; }
+.ru-acts { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }

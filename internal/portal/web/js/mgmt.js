@@ -58,6 +58,10 @@ export function createMgmt(api) {
     importEeroPreview: (sessionId, networkId, overwriteNames) => post('/api/import/eero/preview', { session_id: sessionId, network_id: networkId, overwrite_names: overwriteNames }),
     importEeroApply: (sessionId) => post('/api/import/eero/apply', { session_id: sessionId }),
     importEeroCancel: (sessionId) => post('/api/import/eero/cancel', { session_id: sessionId }),
+    routerUsage: () => api('/api/routerusage'),
+    routerUsageConnect: (sessionId, networkId) => post('/api/routerusage/connect', { session_id: sessionId, network_id: networkId }),
+    routerUsageEnabled: (enabled) => post('/api/routerusage/enabled', { enabled }),
+    routerUsageForget: () => api('/api/routerusage', { method: 'DELETE' }),
     importCSVPreview: (csv, overwriteNames) => post('/api/import/csv/preview', { csv, overwrite_names: overwriteNames }),
     importCSVApply: (csv, overwriteNames) => post('/api/import/csv/apply', { csv, overwrite_names: overwriteNames }),
 

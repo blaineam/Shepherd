@@ -33,6 +33,7 @@ import (
 	"shepherd/internal/passkeys"
 	"shepherd/internal/portscan"
 	"shepherd/internal/reverseproxy"
+	"shepherd/internal/routerusage"
 	"shepherd/internal/secrets"
 	"shepherd/internal/settings"
 	"shepherd/internal/threats"
@@ -200,6 +201,12 @@ type Deps struct {
 	// hostname, passkeys are unavailable and the portal says why.
 	TLSHostname string
 	TLSListen   string
+	// RouterUsage reads per-device bandwidth from the owner's router for
+	// networks where Watch mode cannot run (docs/TRAFFIC.md). Nil leaves
+	// the Bandwidth screen without that option, which is what a build with
+	// no cmd/shepherd wiring gets.
+	RouterUsage UsageReader
+
 	// Traffic is the bandwidth history (docs/TRAFFIC.md), fed by Watch
 	// mode. Nil gets an empty, memory-only store so the API still answers.
 	Traffic *traffic.Store
@@ -210,6 +217,17 @@ type Deps struct {
 	// it), in which case /api/watch answers "not enabled" and the Devices
 	// screen shows no Watch column instead of failing.
 	Watch WatchEngine
+}
+
+// UsageReader is what the portal needs from the passive bandwidth reader
+// (internal/routerusage): what it is doing, and a way to restart it after
+// the owner changes the connection.
+type UsageReader interface {
+	// Status is the current state, for the Bandwidth screen.
+	Status() routerusage.Status
+	// Reload re-reads the stored connection and starts, stops or restarts
+	// the collector to match.
+	Reload()
 }
 
 // WatchEngine is what the portal needs from Watch mode's engine
@@ -588,6 +606,10 @@ func (s *Server) routes() {
 	h("POST /api/import/eero/preview", s.importEeroPreview)
 	h("POST /api/import/eero/apply", s.importEeroApply)
 	h("POST /api/import/eero/cancel", s.importEeroCancel)
+	h("GET /api/routerusage", s.getRouterUsage)
+	h("POST /api/routerusage/connect", s.connectRouterUsage)
+	h("POST /api/routerusage/enabled", s.setRouterUsageEnabled)
+	h("DELETE /api/routerusage", s.forgetRouterUsage)
 	h("POST /api/import/csv/preview", s.importCSVPreview)
 	h("POST /api/import/csv/apply", s.importCSVApply)
 

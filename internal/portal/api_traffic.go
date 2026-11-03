@@ -87,6 +87,9 @@ func (s *Server) getTraffic(w http.ResponseWriter, r *http.Request) {
 			"bytes_relayed": uint64(0), "bytes_received_est": uint64(0),
 		},
 		"devices": []map[string]any{},
+		// Where the numbers come from, so the screen can say whether they
+		// are measured by Watch mode or read from the owner's router.
+		"router": s.routerUsageJSON(),
 	}
 	if s.Watch == nil {
 		writeJSON(w, out)

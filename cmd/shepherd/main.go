@@ -220,6 +220,13 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	if watchEngine != nil { // avoid a non-nil interface over a nil *watch.Engine
 		deps.Watch = watchEngine
 	}
+	// Where Watch mode cannot run, per-device bandwidth can instead be read
+	// from the owner's own router (docs/TRAFFIC.md). Nothing starts until
+	// they connect one in the portal.
+	routerUsage := startRouterUsage(ctx, sec, registry, trafficStore, watchEngine)
+	defer routerUsage.Stop()
+	deps.RouterUsage = routerUsage
+
 	// Every passive ARP event is logged and, when the alarm engine is on,
 	// raised as the alarm docs/ARP.md's table maps it to (arpalarms.go).
 	// The gateway-mac-changed event also tells Watch mode to re-read the

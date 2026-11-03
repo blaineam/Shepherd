@@ -22,6 +22,16 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   upload bar, and a trend line per busy device.
 
 ### Added
+- **Per-device bandwidth read from your router**, for networks where Watch mode cannot run. A new
+  `internal/routerusage` package reads what the router already knows and records it as the same
+  per-device byte counts Watch mode produces, so the Bandwidth screen, the per-device chart and the
+  history all work unchanged. Sources report either cumulative byte counters (exact) or
+  instantaneous rates (integrated, and labelled as an estimate everywhere it reaches the owner).
+  **eero** is the first source: connect it under "Read from your router" on the Bandwidth screen,
+  which reuses the existing sign-in and keeps the session in `secrets.json`. It is unofficial --
+  eero publishes no API for this -- and it reports rates only, so its totals are close rather than
+  exact. Nothing is put in the path of your traffic, and no setting on your router is changed.
+  See [docs/TRAFFIC.md](docs/TRAFFIC.md).
 - **`dns.filter_aaaa`** (`"auto"` by default, or `"on"` / `"off"`). On a network whose devices have no
   IPv6 route to the internet (only private `fd..` or link-local addresses) every AAAA answer is an
   unreachable address, and a device that tries it first or handles the failure badly reports a network
