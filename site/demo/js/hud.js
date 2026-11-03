@@ -1,11 +1,11 @@
 // HUD chrome: stat tiles, live feed, filters, inspector, legend and timeline.
 // DOM only; all state it needs comes in through the model and callbacks.
 // Everything from the network is placed with textContent.
-import { $, el } from './dom.js';
-import { fmtNum, fmtPct, fmtClock, fmtDateTime, fmtAgo } from './format.js';
-import { placeName, deviceLabel } from './entry.js';
-import { shadowNote } from './wander.js';
-import { weightScale, weightFromScale, widthPx, legendText, fmtWeight, fmtBytes } from './weight.js';
+import { $, el } from './dom.js?v=65858b99';
+import { fmtNum, fmtPct, fmtClock, fmtDateTime, fmtAgo } from './format.js?v=86b54455';
+import { placeName, deviceLabel } from './entry.js?v=de62f770';
+import { shadowNote } from './wander.js?v=b40b3e3f';
+import { weightScale, weightFromScale, widthPx, legendText, fmtWeight, fmtBytes } from './weight.js?v=8da15ceb';
 
 const FEED_MAX = 60;
 

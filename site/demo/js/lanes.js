@@ -2,9 +2,9 @@
 // into one persistent lane whose weight accumulates and decays, so heavy flows
 // look visibly thicker than one-off lookups. Lanes live in fixed slots so the
 // renderer can map them onto instanced GPU buffers without reallocation.
-import { destKey } from './entry.js';
-import { entryWeight, MODES } from './weight.js';
-import { latLonToVec3, greatCircleAngle, arcLift } from './geo.js';
+import { destKey } from './entry.js?v=de62f770';
+import { entryWeight, MODES } from './weight.js?v=8da15ceb';
+import { latLonToVec3, greatCircleAngle, arcLift } from './geo.js?v=248f9f1a';
 
 const MAX_DOMAINS = 8;
 

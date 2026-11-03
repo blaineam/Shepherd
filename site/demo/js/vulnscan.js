@@ -5,7 +5,7 @@
 // (severityLabel/severityBadgeClass) is reused from alarms.js rather than
 // duplicated: a finding's severity is the same five-step scale an alarm's
 // severity is (see docs/VULNSCAN.md and docs/ALARMS.md).
-import { SEVERITIES } from './alarms.js';
+import { SEVERITIES } from './alarms.js?v=a5e2e2d9';
 
 const SEVERITY_RANK = Object.fromEntries(SEVERITIES.map((s, i) => [s, i]));
 

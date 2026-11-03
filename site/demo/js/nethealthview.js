@@ -7,14 +7,14 @@
 // is measured" card. All server text is placed with textContent; only the
 // SVG chart coordinates (pure numbers from nethealth.js) are set as
 // attributes.
-import { el } from './dom.js';
-import { button, segmented, emptyState, unavailableCard } from './ui.js';
-import { unavailable } from './mgmt.js';
-import { fmtDateTime } from './format.js';
+import { el } from './dom.js?v=65858b99';
+import { button, segmented, emptyState, unavailableCard } from './ui.js?v=c9bbb094';
+import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { fmtDateTime } from './format.js?v=86b54455';
 import {
   gradeClass, gradeLabel, fmtMS, fmtMSValue, fmtLoss, reachabilityText, statusHeadline, statusKind, statusPillLabel,
   areaPath, axisMax, seriesSpan, seriesToPoints, RANGE_PRESETS,
-} from './nethealth.js';
+} from './nethealth.js?v=d5668974';
 
 const NS = 'http://www.w3.org/2000/svg';
 function svg(tag, attrs) {

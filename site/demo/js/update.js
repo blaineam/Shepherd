@@ -1,6 +1,6 @@
 // The Overview's Software card: wording for the self-update state
 // (docs/UPDATE.md). Pure, so test/update.test.js covers it without a DOM.
-import { fmtBytes } from './weight.js';
+import { fmtBytes } from './weight.js?v=8da15ceb';
 
 // updateLine says where this Shepherd stands against the latest release.
 export function updateLine(u) {

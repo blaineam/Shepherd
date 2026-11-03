@@ -1,16 +1,16 @@
 // In-browser fake of the management endpoints (devices, groups, catalog and
 // policy, upstreams, history). Used only in demo mode so every screen works
 // with no backend. All data is synthetic; state lives in memory.
-import { ApiError } from './api.js';
-import { parseQuery, matchDevice, sortDevices } from './search.js';
-import { applyBulkLocal, normTag } from './bulk.js';
-import { applyModeLocal } from './wander.js';
-import { buildDevices, fallbackName, DEMO_GROUPS, DEMO_CATALOG, DEMO_SWITCHES, DEMO_PRESETS } from './demodata.js';
-import { GROUP_COLORS } from './devtypes.js';
-import { classifyAddr, isIP } from './upstreams.js';
-import { normalizeDomain, scopeKey } from './scope.js';
-import { hostBody, formatTarget, sortHosts } from './reverseproxy.js';
-import { tokenBody, relayBody } from './secrets.js';
+import { ApiError } from './api.js?v=798e1c8c';
+import { parseQuery, matchDevice, sortDevices } from './search.js?v=6d6c330f';
+import { applyBulkLocal, normTag } from './bulk.js?v=a92cfb00';
+import { applyModeLocal } from './wander.js?v=b40b3e3f';
+import { buildDevices, fallbackName, DEMO_GROUPS, DEMO_CATALOG, DEMO_SWITCHES, DEMO_PRESETS } from './demodata.js?v=1f5ce92d';
+import { GROUP_COLORS } from './devtypes.js?v=0c35dd83';
+import { classifyAddr, isIP } from './upstreams.js?v=f59ab5b8';
+import { normalizeDomain, scopeKey } from './scope.js?v=71a3b584';
+import { hostBody, formatTarget, sortHosts } from './reverseproxy.js?v=ae77c7ec';
+import { tokenBody, relayBody } from './secrets.js?v=c0f86999';
 
 const err = (status, msg) => new ApiError(msg, status);
 const strHashDemo = (s) => { let h = 0; for (let i = 0; i < String(s).length; i++) h = (h * 31 + String(s).charCodeAt(i)) >>> 0; return h; };

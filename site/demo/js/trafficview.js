@@ -5,15 +5,15 @@
 // for the chosen range and scope.
 //
 // Every string that came from the server is placed with textContent.
-import { el } from './dom.js';
-import { button, emptyState, unavailableCard, segmented } from './ui.js';
-import { unavailable } from './mgmt.js';
-import { createRouterUsage } from './routerusageview.js';
+import { el } from './dom.js?v=65858b99';
+import { button, emptyState, unavailableCard, segmented } from './ui.js?v=c9bbb094';
+import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { createRouterUsage } from './routerusageview.js?v=a2297668';
 import {
   RANGE_PRESETS, rangeWindow, scopeOptions, scopeLabel, fillSeries, sumPoints, bucketRate, timeLabels,
   shareOf, statusHeadline, liveRows, liveRowsNote, DOWNLOAD_CAVEAT, measurementNote, tileLabels, liveChartCaption, fmtBytes, fmtBitsPerSecond,
   niceCeil, yTicks, lineArea, nearestIndex, pushSample, shareSlices, arcPath, rateStats,
-} from './traffic.js';
+} from './traffic.js?v=cd821019';
 
 const POLL_MS = 2000;
 const LIVE_SAMPLES = 90; // three minutes at the poll rate

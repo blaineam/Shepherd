@@ -1,8 +1,8 @@
 // Shared catalog and policy state for the Blocking screen and the device
 // drawer. Edits are optimistic: the UI changes at once and a failed request
 // rolls just that edit back (and the caller shows the error).
-import { normalizeCatalog } from './catalog.js';
-import { dataFor, setItem, setSwitch, setMode, addRule, delRule } from './scope.js';
+import { normalizeCatalog } from './catalog.js?v=96855bed';
+import { dataFor, setItem, setSwitch, setMode, addRule, delRule } from './scope.js?v=71a3b584';
 
 export function normalizePolicy(p) {
   const q = p && typeof p === 'object' ? p : {};

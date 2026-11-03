@@ -4,10 +4,10 @@
 // -- so the two are interchangeable. The projection is equirectangular with
 // horizontal wrap, and arcs are drawn as curves bowing toward the top of the
 // screen. Nothing here needs WebGL or the vendored three.js.
-import { DEG, clamp, normalizeLon, dampVelocity } from './geo.js';
-import { weightScale, widthPx, baseAlpha } from './weight.js';
-import { landPolygons, polygonContains, coastSegments } from './topo.js';
-import { LANE_CAP, COMET_CAP, PULSE_CAP, COLORS } from './palette.js';
+import { DEG, clamp, normalizeLon, dampVelocity } from './geo.js?v=248f9f1a';
+import { weightScale, widthPx, baseAlpha } from './weight.js?v=8da15ceb';
+import { landPolygons, polygonContains, coastSegments } from './topo.js?v=e9bc6869';
+import { LANE_CAP, COMET_CAP, PULSE_CAP, COLORS } from './palette.js?v=93b6b93c';
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 12;

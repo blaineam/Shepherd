@@ -1,6 +1,6 @@
-import { normType } from './devtypes.js';
-import { isWandering } from './wander.js';
-import { watchSwitchOf } from './watch.js';
+import { normType } from './devtypes.js?v=0c35dd83';
+import { isWandering } from './wander.js?v=b40b3e3f';
+import { watchSwitchOf } from './watch.js?v=79562f0e';
 
 // Device search syntax: free text plus key:value filters, "-" negates.
 // Pure and shared by the toolbar (chips), the demo backend and the tests.

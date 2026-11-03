@@ -4,10 +4,10 @@
 //
 // Every name, address and hostname here comes from a device on the network or
 // from the owner's typing, so all text is set with textContent.
-import { el } from './dom.js';
-import { button, emptyState, unavailableCard, confirmDialog, relTime } from './ui.js';
-import { unavailable } from './mgmt.js';
-import { validateReservation, validateRange, suggestRange, rangeSummary, conflictTone, alphaNote, modeLabel, stateSummary, consequences, sortLeases, filterLeases, leaseBody, originLabel, normalizeMAC } from './dhcp.js';
+import { el } from './dom.js?v=65858b99';
+import { button, emptyState, unavailableCard, confirmDialog, relTime } from './ui.js?v=c9bbb094';
+import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { validateReservation, validateRange, suggestRange, rangeSummary, conflictTone, alphaNote, modeLabel, stateSummary, consequences, sortLeases, filterLeases, leaseBody, originLabel, normalizeMAC } from './dhcp.js?v=769b13a6';
 
 // inPool is the note beside a reserved address that sits inside the dynamic
 // range. Not a problem; worth saying.
