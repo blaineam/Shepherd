@@ -3,9 +3,35 @@
 A design, written 2026-11-03, for the half of [GATEWAY.md](GATEWAY.md) that can be had **without a
 second NIC, without a WAN client, and without demoting the eero**.
 
-Status: **design agreed 2026-11-03, implementation in progress.** The decisions are listed at the
-end, each marked with who made it. Three of them went against this document's own recommendation and
-are recorded as the maintainer's, with the recommendation left visible rather than rewritten away.
+Status: **ALPHA, off by default, built and merged 2026-11-03.** The decisions are listed at the end,
+each marked with who made it. Three of them went against this document's own recommendation and are
+recorded as the maintainer's, with the recommendation left visible rather than rewritten away.
+
+## Alpha, and what that word is doing here
+
+It would be easy to put "alpha" at the top and move on. What it means is specific, and the specifics
+are more use than the label:
+
+- **No real device has ever taken an address from this.** The lease exchange is tested end to end —
+  `DISCOVER`, `OFFER`, `REQUEST`, `ACK`, a renewal, a refusal and a release — but over loopback
+  sockets on high ports. The real port 67, the broadcast a client needs before it has an address of
+  its own, and a household's traffic crossing one network card twice have all been reasoned about
+  rather than measured. "What has been verified, and what has only been reasoned about" below is the
+  full list, and it is longer on the right-hand side than anybody would like.
+- **It is the one thing in Shepherd that can take a whole network off the internet.** Everything else
+  here fails in a way that costs you a feature. This one fails in a way that costs you the network:
+  two DHCP servers answering, or a handover done in the wrong order, leaves devices with no address
+  or no way out. The recovery — turning the router's own DHCP back on — needs nothing from Shepherd,
+  and is worth knowing before starting rather than after.
+- **Nothing turns it on for you.** It is off in the default configuration, no first-run or setup path
+  offers it, and the portal's DHCP screen says all of this before anything else on it. Somebody using
+  it has gone looking for it, which is the right shape for a feature in this state.
+- **If you want to try it, start at `observe`**, which opens a listener with no send path at all and
+  therefore cannot answer anything. Then work down the staging below in order. Each step is
+  finishable and the first three carry no risk to the household.
+
+What would move this out of alpha is not more code: it is the right-hand column of that verification
+list getting shorter, which needs a bench, a spare switch and the awkward devices named in Stage C.
 
 ## The name, first, because the obvious name is wrong
 

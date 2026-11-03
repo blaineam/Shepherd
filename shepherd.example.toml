@@ -351,9 +351,21 @@ name = "hagezi-pro"
 url = "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt"
 
 [dhcp]
-# DHCP mode (docs/DHCP.md). OFF BY DEFAULT, and the one setting in Shepherd
-# that can take a household off the internet, so read the doc before changing
-# mode to "serve".
+# DHCP mode (docs/DHCP.md). ALPHA, OFF BY DEFAULT, and the one setting in
+# Shepherd that can take a household off the internet.
+#
+# Alpha means something specific here, so it is worth saying rather than
+# implying: no real device has ever taken an address from this. The lease
+# exchange is tested end to end, but only over loopback sockets on high
+# ports, so the real port 67, the broadcast a client needs before it has an
+# address, and a household's traffic crossing one network card twice have all
+# been reasoned about rather than measured. Turning it on is trying it out.
+# Nothing offers it to you; you have to come here.
+#
+# If you do want to try it, read docs/DHCP.md first and work through the
+# staged rollout from the top. It starts at mode = "observe", which opens a
+# listener with no way to send, so it cannot answer anything and is safe to
+# leave running on a live network for as long as you like.
 #
 # What it is: Shepherd serves the LAN's DHCP, and for the devices it routes it
 # hands out its own address as their gateway instead of the router's, then
