@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -48,51 +49,69 @@ func scriptedSetup(t *testing.T) {
 const finishBody = `{"dns_listen":["192.0.2.10"],"dns_port":5353,` +
 	`"upstreams":["9.9.9.10"],"portal_host":"127.0.0.1","portal_port":8787}`
 
-// finishSetupAt completes setup over its own API, the way the page does.
-func finishSetupAt(t *testing.T, port int) {
+// finishSetup completes setup over its own API, the way the page does.
+func finishSetup(t *testing.T, base string) {
 	t.Helper()
-	url := fmt.Sprintf("http://127.0.0.1:%d/api/setup/finish?token=%s", port, setupTestToken)
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		res, err := http.Post(url, "application/json", strings.NewReader(finishBody))
-		if err == nil {
-			defer res.Body.Close()
-			if res.StatusCode != 200 {
-				b, _ := io.ReadAll(res.Body)
-				t.Fatalf("finish = %d: %s", res.StatusCode, b)
-			}
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("setup never came up on port %d: %v", port, err)
-		}
-		time.Sleep(20 * time.Millisecond)
+	res, err := http.Post(base+"/api/setup/finish?token="+setupTestToken, "application/json", strings.NewReader(finishBody))
+	if err != nil {
+		t.Fatalf("finishing setup at %s: %v", base, err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		b, _ := io.ReadAll(res.Body)
+		t.Fatalf("finish = %d: %s", res.StatusCode, b)
 	}
 }
 
-func freeTCPPort(t *testing.T) int {
+// setupURL waits for setup to come up and returns its loopback address.
+// The port is read back rather than guessed: setup picks a free one when
+// the preferred port is taken, and a port that was free a moment ago can
+// be gone by the time it binds.
+func setupURL(t *testing.T, port func() string) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if p := port(); p != "" {
+			base := "http://127.0.0.1:" + p
+			res, err := http.Get(base + "/?token=" + setupTestToken)
+			if err == nil {
+				res.Body.Close()
+				return base
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
+	t.Fatal("setup never came up")
+	return ""
+}
+
+// portFromLog reads the port out of the address setup printed, which is
+// where the owner reads it too.
+func portFromLog(logs fmt.Stringer) func() string {
+	re := regexp.MustCompile(`http://127\.0\.0\.1:(\d+)/`)
+	return func() string {
+		if m := re.FindStringSubmatch(logs.String()); m != nil {
+			return m[1]
+		}
+		return ""
+	}
 }
 
 func TestSetupSubcommandServesThePageAndWritesTheConfig(t *testing.T) {
 	scriptedSetup(t)
+	logs := captureLog(t)
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "shepherd.toml")
-	port := freeTCPPort(t)
 	var errb bytes.Buffer
 	codes := make(chan int, 1)
 	go func() {
 		// Through realMain, because the dispatch has to happen before
-		// the flags are parsed: "setup" is not a flag.
-		codes <- realMain([]string{"setup", "-config", cfg, "-port", fmt.Sprint(port)}, nil, io.Discard, &errb)
+		// the flags are parsed: "setup" is not a flag. Port 0 lets the
+		// operating system pick, and the address is read back from what
+		// setup printed.
+		codes <- realMain([]string{"setup", "-config", cfg, "-port", "0"}, nil, io.Discard, &errb)
 	}()
-	finishSetupAt(t, port)
+	finishSetup(t, setupURL(t, portFromLog(logs)))
 	select {
 	case code := <-codes:
 		if code != 0 {
@@ -142,7 +161,6 @@ func TestAnInstallWithNoConfigIsSetUpFirstAndThenStartsOnIt(t *testing.T) {
 	dir := tempDir(t)
 	t.Chdir(dir)
 	cfgPath := filepath.Join(dir, "shepherd.toml")
-	port := freeTCPPort(t)
 	done := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -152,13 +170,13 @@ func TestAnInstallWithNoConfigIsSetUpFirstAndThenStartsOnIt(t *testing.T) {
 	}
 	defer srv.Close()
 	go func() {
-		written, err := serveSetup(ctx, srv, port)
+		written, err := serveSetup(ctx, srv, 0)
 		if err == nil && written == "" {
 			err = fmt.Errorf("setup reported nothing written")
 		}
 		done <- err
 	}()
-	finishSetupAt(t, port)
+	finishSetup(t, setupURL(t, srv.Port))
 	select {
 	case err := <-done:
 		if err != nil {
@@ -352,8 +370,7 @@ func TestTheSetupPageIsHandedTheRunningShepherd(t *testing.T) {
 	cfg := config.Default()
 	cfg.DataDir = dir
 	cfg.Portal.Listen = "127.0.0.1:8787"
-	port := freeTCPPort(t)
-	cfg.DNS.Listen = []string{fmt.Sprintf("127.0.0.1:%d", port)}
+	cfg.DNS.Listen = []string{"127.0.0.1:1"} // nothing has to be listening
 
 	filter := dnsengine.NewFilter()
 	policy, err := dnsengine.OpenPolicyStore(filepath.Join(dir, "policy.json"), filter, dnsengine.PolicyOptions{})
