@@ -38,14 +38,14 @@ type NtfyStatus struct {
 // subscribed browser (never an endpoint or a key) and the ntfy status.
 func (s *Server) getPush(w http.ResponseWriter, r *http.Request) {
 	if s.Push == nil {
-		writeJSON(w, map[string]any{"enabled": false, "devices": []webpush.Device{}, "ntfy": s.Ntfy})
+		writeJSON(w, map[string]any{"enabled": false, "devices": []webpush.Device{}, "ntfy": s.ntfyStatus()})
 		return
 	}
 	devs := s.Push.Devices()
 	if devs == nil {
 		devs = []webpush.Device{}
 	}
-	writeJSON(w, map[string]any{"enabled": true, "public_key": s.Push.PublicKey(), "devices": devs, "ntfy": s.Ntfy})
+	writeJSON(w, map[string]any{"enabled": true, "public_key": s.Push.PublicKey(), "devices": devs, "ntfy": s.ntfyStatus()})
 }
 
 type pushSubscribeBody struct {

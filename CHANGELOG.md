@@ -13,6 +13,20 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Added
+- **ntfy is set up in the portal.** Alarms → Notifications → Set up ntfy is now a real form — server,
+  topic, access token or username and password, with Save, "send a test notification", a switch and
+  "forget server" — instead of a `shepherd.toml` section to copy and a restart. Shepherd's standing
+  rule is that no feature requires editing the configuration file, and the walk-through broke it.
+  The server lives in `<data_dir>/secrets.json` (0600) beside the mail relay and the router
+  connections (`internal/secrets`), is write-only like every other secret there (a saved token is
+  never sent back; a blank field keeps the stored one, and only for the same server, so a credential
+  can never be pointed at somewhere it was not entered for), and reaches the running delivery Router
+  through the new `Router.SetNtfy`, so nothing about ntfy needs a restart. Saving publishes one
+  notification as the check, which is also what the test button does: ntfy offers no way to ask
+  whether a server and token would work without sending something, and a refused server is reported
+  with nothing stored. `[alarms.ntfy]` in `shepherd.toml` is still read **once** and imported, so an
+  install already using it keeps working; after that the portal owns it and a startup line says so.
+  See [docs/ALARMS.md](docs/ALARMS.md).
 - **Releases are signed.** The Ed25519 release key pair exists now: the public half is built into
   Shepherd (`update.ReleasePublicKeyB64`) and the private half is the `SHEPHERD_SIGNING_KEY`
   repository secret, so both workflows write `SHA256SUMS.sig` beside the checksums and a running

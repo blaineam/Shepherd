@@ -11,6 +11,7 @@ import (
 	"shepherd/internal/config"
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/ntfy"
+	"shepherd/internal/secrets"
 )
 
 // startAlarms builds the alarm engine and its delivery Router, wires ntfy
@@ -32,21 +33,21 @@ import (
 // that let main.go's own ctx cancellation race the Router's final
 // Router.Save, intermittently leaving <data_dir>/alarms mid-write when a
 // test's early failure tore the directory down immediately after.
-func startAlarms(ctx context.Context, cfg config.Config, pool *dnsengine.Pool) (eng *alarms.Engine, push *pushService, stop func(), err error) {
+func startAlarms(ctx context.Context, cfg config.Config, pool *dnsengine.Pool, sec *secrets.Store) (eng *alarms.Engine, push *pushService, rt *alarms.Router, stop func(), err error) {
 	dir := filepath.Join(cfg.DataDir, "alarms")
 	eng, err = alarms.New(alarms.Options{Dir: dir})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	push, pusher, err := startPush(cfg)
 	if err != nil {
 		eng.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	rt := alarms.NewRouter(alarms.RouterOptions{Source: eng, Pusher: pusher, Ntfy: ntfyPublisherFor(cfg.Alarms.Ntfy), Path: alarms.DefaultRouterPath(dir)})
+	rt = alarms.NewRouter(alarms.RouterOptions{Source: eng, Pusher: pusher, Ntfy: ntfyPublisherFor(sec), Path: alarms.DefaultRouterPath(dir)})
 	if err := rt.Load(); err != nil {
 		eng.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	eng.Subscribe(rt.Handle)
 	rctx, rcancel := context.WithCancel(ctx)
@@ -59,18 +60,27 @@ func startAlarms(ctx context.Context, cfg config.Config, pool *dnsengine.Pool) (
 		wg.Wait()
 		eng.Close()
 	}
-	return eng, push, stop, nil
+	return eng, push, rt, stop, nil
 }
 
-// ntfyPublisherFor adapts the ntfy config section to the Router's
-// NtfyPublisher, or nil when ntfy delivery is off.
-func ntfyPublisherFor(c config.AlarmsNtfy) alarms.NtfyPublisher {
-	if !c.Enabled {
+// ntfyPublisherFor adapts the ntfy server the portal holds to the Router's
+// NtfyPublisher, or nil when none is set or the owner has switched delivery
+// off. The store is the single source of truth: shepherd.toml's
+// [alarms.ntfy] is imported into it once at startup (seedNtfy) and ignored
+// from then on, exactly like the mail relay.
+func ntfyPublisherFor(sec *secrets.Store) alarms.NtfyPublisher {
+	n, ok := sec.Ntfy()
+	if !ok || !n.Enabled {
 		return nil
 	}
-	return alarms.NewNtfyPublisher(&ntfy.Client{
-		Server: c.Server, Token: c.Token, Username: c.Username, Password: c.Password,
-	}, c.Topic)
+	return alarms.NewNtfyPublisher(ntfyClient(n), n.Topic)
+}
+
+// ntfyClient is the publishing client for a stored server. It is also what
+// the portal's "send a test notification" action uses, so a test and a real
+// alarm go out over exactly the same path.
+func ntfyClient(n secrets.Ntfy) *ntfy.Client {
+	return &ntfy.Client{Server: n.Server, Token: n.Token, Username: n.Username, Password: n.Password}
 }
 
 // wireUpstreamAlarms hooks the pool's health-change callback (see

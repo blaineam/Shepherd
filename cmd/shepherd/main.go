@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"shepherd/internal/alarms"
 	"shepherd/internal/arp"
 	"shepherd/internal/config"
 	"shepherd/internal/dnsengine"
@@ -163,12 +164,16 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		Token: token, Version: version, Settings: prefs, GeoBlock: geoBlock,
 		DataDir: cfg.DataDir, IdleLockMinutes: cfg.Portal.IdleLockMinutes}
 
+	// alarmRouter is kept so an ntfy server saved in the portal reaches the
+	// running Router (see secretsChanged); it is nil when alarms are off.
+	var alarmRouter *alarms.Router
 	if cfg.Alarms.Enabled {
-		alarmEngine, push, stopAlarms, err := startAlarms(ctx, cfg, pool)
+		alarmEngine, push, router, stopAlarms, err := startAlarms(ctx, cfg, pool, sec)
 		if err != nil {
 			return err
 		}
 		defer stopAlarms()
+		alarmRouter = router
 		deps.Alarms = alarmEngine
 		if push != nil { // avoid a non-nil interface over a nil *pushService
 			deps.Push = push
@@ -281,7 +286,8 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	deps.VerifyDNSProvider = verifyDNSProvider(cfg)
 	deps.VerifySMTP = verifySMTP
 	deps.DNSProviderUsers = dnsProviderUsers(cfg)
-	deps.OnSecretsChanged = secretsChanged(sec, acctRelay, kicker)
+	deps.OnSecretsChanged = secretsChanged(sec, acctRelay, kicker, alarmRouter)
+	deps.VerifyNtfy = verifyNtfy
 
 	// ---- Self-update (docs/UPDATE.md) -----------------------------------
 	startRetention(ctx, cfg, deps.Alarms)
@@ -369,9 +375,6 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		return err
 	}
 	deps.ReverseProxy = proxyHosts
-	if n := cfg.Alarms.Ntfy; cfg.Alarms.Enabled && n.Enabled {
-		deps.Ntfy = portal.NtfyStatus{Enabled: true, Server: n.Server, Topic: n.Topic}
-	}
 	deps.ReverseProxyStatus = portal.ReverseProxyStatus{Listen: cfg.ReverseProxy.Listen, Wildcard: cfg.ReverseProxy.Wildcard()}
 	proxySrv, err := startReverseProxy(ctx, cfg, proxyHosts, sec, stopOnFailure(portalErr, cancel))
 	if err != nil {

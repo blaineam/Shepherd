@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"shepherd/internal/accountability"
+	"shepherd/internal/alarms"
 	"shepherd/internal/config"
+	"shepherd/internal/ntfy"
 	"shepherd/internal/secrets"
 	"shepherd/internal/tlscert"
 )
@@ -28,6 +30,9 @@ var (
 	// smtpVerify replaces the portal's real connect-and-authenticate relay
 	// check. Nil means (*accountability.SMTPSender).Verify.
 	smtpVerify func(ctx context.Context, cfg accountability.SMTPConfig) accountability.Result
+	// ntfyPublish replaces the real publish behind the portal's ntfy check
+	// and its test button. Nil means a real request to the owner's server.
+	ntfyPublish func(ctx context.Context, n secrets.Ntfy) error
 )
 
 // errNoDNSProvider is what a certificate attempt reports while no DNS
@@ -56,6 +61,9 @@ func openSecrets(cfg config.Config) (*secrets.Store, error) {
 		return nil, err
 	}
 	if err := seedSMTP(store, cfg); err != nil {
+		return nil, err
+	}
+	if err := seedNtfy(store, cfg); err != nil {
 		return nil, err
 	}
 	return store, nil
@@ -165,6 +173,39 @@ func seedSMTP(store *secrets.Store, cfg config.Config) error {
 	}
 	if imported {
 		log.Printf("secrets: imported the SMTP relay from shepherd.toml's [accountability.smtp]; the portal manages it from now on and shepherd.toml's copy is no longer read")
+	}
+	return nil
+}
+
+// seedNtfy imports [alarms.ntfy] as the portal-managed ntfy connection. The
+// owner's standing rule is that no feature should require editing
+// shepherd.toml, so the portal owns this; the config section stays a
+// one-time seed so installs already running it keep working.
+func seedNtfy(store *secrets.Store, cfg config.Config) error {
+	c := cfg.Alarms.Ntfy
+	if c.Server == "" {
+		return nil
+	}
+	seed := secrets.Ntfy{Server: c.Server, Topic: c.Topic, Token: c.Token,
+		Username: c.Username, Password: c.Password, Enabled: c.Enabled}
+	if store.NtfyManaged() {
+		cur, _ := store.Ntfy()
+		if cur.Server != seed.Server || cur.Topic != seed.Topic || cur.Token != seed.Token ||
+			cur.Username != seed.Username || cur.Password != seed.Password {
+			log.Printf("secrets: shepherd.toml's [alarms.ntfy] is ignored: ntfy delivery is managed in the portal's Alarms screen (since %s); change it there", cur.UpdatedAt.Format(time.DateOnly))
+		}
+		return nil
+	}
+	imported, err := store.SeedNtfy(seed)
+	if errors.Is(err, secrets.ErrInvalid) {
+		log.Printf("secrets: not importing [alarms.ntfy] from shepherd.toml: %v", err)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("secrets: saving the ntfy connection imported from shepherd.toml: %w", err)
+	}
+	if imported {
+		log.Printf("secrets: imported ntfy delivery from shepherd.toml's [alarms.ntfy]; the portal manages it from now on and shepherd.toml's copy is no longer read")
 	}
 	return nil
 }
@@ -294,6 +335,31 @@ func verifySMTP(ctx context.Context, m secrets.SMTP) error {
 	}
 }
 
+// verifyNtfy publishes one notification to n. It is both the portal's check
+// before an ntfy server is saved and its "send a test notification" action,
+// because ntfy offers no way to ask whether a server and token would work
+// without publishing something -- and for a notification channel, one
+// notification arriving is the clearest confirmation there is. It goes out
+// over exactly the path a real alarm takes (internal/ntfy's client, with the
+// stored credentials), so a success here means alarms will arrive.
+func verifyNtfy(ctx context.Context, n secrets.Ntfy) error {
+	if ntfyPublish != nil {
+		return ntfyPublish(ctx, n)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	_, err := ntfyClient(n).Publish(ctx, ntfy.Message{
+		Topic: n.Topic,
+		Title: "Shepherd is connected",
+		Body:  "This is the test notification from Shepherd's Alarms screen. Alarms will arrive here.",
+		Tags:  []string{"white_check_mark"},
+	})
+	if err != nil {
+		return fmt.Errorf("ntfy did not accept the notification: %w", err)
+	}
+	return nil
+}
+
 // applySMTP points relay at whatever relay the store holds now (or none).
 func applySMTP(relay *accountability.RelaySender, store *secrets.Store) error {
 	m, ok := store.SMTP()
@@ -338,11 +404,16 @@ func (k *certKicker) kick() {
 
 // secretsChanged is the portal's OnSecretsChanged: it applies a saved or
 // cleared secret to the running process, so nothing needs a restart.
-func secretsChanged(store *secrets.Store, relay *accountability.RelaySender, kicker *certKicker) func(kind string) {
+func secretsChanged(store *secrets.Store, relay *accountability.RelaySender, kicker *certKicker, router *alarms.Router) func(kind string) {
 	return func(kind string) {
 		switch kind {
 		case "dns_provider":
 			kicker.kick()
+		case "ntfy":
+			if router == nil {
+				return // the alarm engine is off in shepherd.toml
+			}
+			router.SetNtfy(ntfyPublisherFor(store))
 		case "smtp":
 			if relay == nil {
 				return // accountability is off in shepherd.toml: stored, not used

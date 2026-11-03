@@ -2,8 +2,10 @@
 
 // Package secrets keeps the bring-your-own credentials Shepherd needs and
 // cannot generate for itself — today a DNS provider API token (for ACME
-// DNS-01 certificates, shared by [tls] and [reverseproxy]) and an outgoing
-// SMTP relay (for accountability email) — in one portal-managed file,
+// DNS-01 certificates, shared by [tls] and [reverseproxy]), an outgoing
+// SMTP relay (for accountability email), the router connections the
+// Bandwidth screen reads and the ntfy server alarms are published to — in
+// one portal-managed file,
 // <data_dir>/secrets.json.
 //
 // It follows the persistence shape every other portal-owned store in this
@@ -35,6 +37,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"shepherd/internal/ntfy"
 )
 
 // FileName is the store's file inside the data directory.
@@ -165,6 +169,72 @@ func (s SMTP) validate() error {
 	return checkField("password", s.Password, false)
 }
 
+// Ntfy is the ntfy server alarm notifications are published to
+// (docs/ALARMS.md). It is the same shape as SMTP and for the same reason:
+// it is a service only the owner can name, so it belongs in the portal
+// rather than in shepherd.toml. Enabled is the owner's switch; the server
+// and credentials stay stored while it is off, so turning delivery back on
+// costs no re-typing. An empty Server with a non-zero Meta means the owner
+// cleared it in the portal.
+type Ntfy struct {
+	Server string `json:"server"`
+	Topic  string `json:"topic"`
+	// Token authenticates with a bearer token and wins over Username and
+	// Password, which is ntfy.Client's own rule; the store refuses both so
+	// nobody has to know that.
+	Token    string `json:"token,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	Enabled  bool   `json:"enabled"`
+	Meta
+}
+
+// Configured reports whether a server is actually set.
+func (n Ntfy) Configured() bool { return n.Server != "" }
+
+// String never includes the token or the password.
+func (n Ntfy) String() string {
+	if !n.Configured() {
+		return "ntfy (not set)"
+	}
+	auth := "no credentials"
+	switch {
+	case n.Token != "":
+		auth = "token set"
+	case n.Username != "":
+		auth = "username and password set"
+	}
+	return fmt.Sprintf("ntfy %s (topic %s, %s, enabled %v, from %s)", n.Server, n.Topic, auth, n.Enabled, n.Source)
+}
+
+// GoString redacts the same way for %#v.
+func (n Ntfy) GoString() string { return n.String() }
+
+// validate reuses internal/ntfy's own server and topic rules, so the portal,
+// shepherd.toml and the publisher all agree on what is acceptable.
+func (n Ntfy) validate() error {
+	if n.Server == "" {
+		return fmt.Errorf("%w: the ntfy server is required", ErrInvalid)
+	}
+	if _, err := ntfy.BaseURL(n.Server); err != nil {
+		return fmt.Errorf("%w: %s", ErrInvalid, err)
+	}
+	if !ntfy.ValidTopic(n.Topic) {
+		return fmt.Errorf("%w: the topic must be 1 to 64 letters, digits, - or _, got %q", ErrInvalid, n.Topic)
+	}
+	if n.Token != "" && (n.Username != "" || n.Password != "") {
+		return fmt.Errorf("%w: use either a token or a username and password, not both", ErrInvalid)
+	}
+	for name, v := range map[string]string{"ntfy server": n.Server, "topic": n.Topic, "token": n.Token, "username": n.Username} {
+		if err := checkField(name, v, true); err != nil {
+			return err
+		}
+	}
+	// A password may contain spaces; a control character would be an
+	// injection into the Authorization header.
+	return checkField("password", n.Password, false)
+}
+
 // checkField rejects control characters (a CR or LF in a header or SMTP
 // command would be an injection) and, when noSpace, any whitespace at all.
 func checkField(name, v string, noSpace bool) error {
@@ -269,6 +339,7 @@ type file struct {
 	SMTP        *SMTP        `json:"smtp,omitempty"`
 	Eero        *Eero        `json:"eero,omitempty"`
 	UniFi       *UniFi       `json:"unifi,omitempty"`
+	Ntfy        *Ntfy        `json:"ntfy,omitempty"`
 }
 
 // Store owns secrets.json. It is safe for concurrent use. An empty path
@@ -323,6 +394,11 @@ func Open(path string) (*Store, error) {
 	if u := f.UniFi; u != nil && u.Configured() {
 		if err := u.validate(); err != nil {
 			return nil, fmt.Errorf("%s: unifi: %w", path, err)
+		}
+	}
+	if n := f.Ntfy; n != nil && n.Configured() {
+		if err := n.validate(); err != nil {
+			return nil, fmt.Errorf("%s: ntfy: %w", path, err)
 		}
 	}
 	s.data = f
@@ -474,6 +550,102 @@ func trimSMTP(m SMTP) SMTP {
 	m.From = strings.TrimSpace(m.From)
 	m.TLS = strings.TrimSpace(m.TLS)
 	return m
+}
+
+// Ntfy returns the stored ntfy server and whether one is actually set.
+func (s *Store) Ntfy() (Ntfy, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.data.Ntfy == nil {
+		return Ntfy{}, false
+	}
+	n := *s.data.Ntfy
+	return n, n.Configured()
+}
+
+// NtfyManaged reports whether the portal owns ntfy delivery. Once it does,
+// shepherd.toml's [alarms.ntfy] is no longer read.
+func (s *Store) NtfyManaged() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.Ntfy != nil
+}
+
+// Normalize trims n, validates it and stores the server in internal/ntfy's
+// own canonical form (no trailing slash), so the same server typed two ways
+// is one stored value.
+func (n Ntfy) Normalize() (Ntfy, error) {
+	n = trimNtfy(n)
+	if err := n.validate(); err != nil {
+		return Ntfy{}, err
+	}
+	base, err := ntfy.BaseURL(n.Server)
+	if err != nil {
+		return Ntfy{}, fmt.Errorf("%w: %s", ErrInvalid, err)
+	}
+	n.Server = base
+	return n, nil
+}
+
+// SetNtfy validates and saves n as the owner's choice from the portal.
+func (s *Store) SetNtfy(n Ntfy) (Ntfy, error) {
+	n, err := n.Normalize()
+	if err != nil {
+		return Ntfy{}, err
+	}
+	n.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return n, s.mutate(func(f *file) { f.Ntfy = &n })
+}
+
+// SetNtfyEnabled flips the switch without disturbing the server or the
+// credentials, so turning delivery off and on again costs no re-typing. It
+// reports false when no server is stored: there is nothing to turn on.
+func (s *Store) SetNtfyEnabled(on bool) (bool, error) {
+	n, ok := s.Ntfy()
+	if !ok {
+		return false, nil
+	}
+	n.Enabled = on
+	n.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return true, s.mutate(func(f *file) { f.Ntfy = &n })
+}
+
+// ClearNtfy forgets the server and remembers that it was removed on purpose,
+// so shepherd.toml's copy is not imported again at the next start.
+func (s *Store) ClearNtfy() error {
+	return s.mutate(func(f *file) {
+		f.Ntfy = &Ntfy{Meta: Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}}
+	})
+}
+
+// SeedNtfy imports n from shepherd.toml's [alarms.ntfy], but only while the
+// portal has never owned ntfy delivery. It reports whether n was imported.
+// An empty server imports nothing.
+func (s *Store) SeedNtfy(n Ntfy) (bool, error) {
+	if strings.TrimSpace(n.Server) == "" {
+		return false, nil
+	}
+	n, err := n.Normalize()
+	if err != nil {
+		return false, err
+	}
+	n.Meta = Meta{Source: SourceConfig, UpdatedAt: s.now().UTC()}
+	return s.seed(func(f *file) bool {
+		if f.Ntfy != nil {
+			return false
+		}
+		f.Ntfy = &n
+		return true
+	})
+}
+
+// trimNtfy trims every field but the password, which is taken as given.
+func trimNtfy(n Ntfy) Ntfy {
+	n.Server = strings.TrimSpace(n.Server)
+	n.Topic = strings.TrimSpace(n.Topic)
+	n.Token = strings.TrimSpace(n.Token)
+	n.Username = strings.TrimSpace(n.Username)
+	return n
 }
 
 // Path is the file this store saves to, empty for a memory-only store.
@@ -650,6 +822,10 @@ func (s *Store) mutate(fn func(*file), want ...func() bool) error {
 	if next.UniFi != nil {
 		u := *next.UniFi
 		next.UniFi = &u
+	}
+	if next.Ntfy != nil {
+		n := *next.Ntfy
+		next.Ntfy = &n
 	}
 	fn(&next)
 	for _, w := range want {

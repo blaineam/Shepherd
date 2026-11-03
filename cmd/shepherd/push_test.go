@@ -140,14 +140,14 @@ func TestStartAlarmsWiresPush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng, push, stop, err := startAlarms(context.Background(), cfg, pool)
+	eng, push, _, stop, err := startAlarms(context.Background(), cfg, pool, memSecrets(t))
 	if err != nil || eng == nil || push == nil {
 		t.Fatalf("startAlarms: %v %v %v", eng, push, err)
 	}
 	stop()
 	// And with push off, the engine still starts without a service.
 	cfg.Alarms.Push.Enabled = false
-	eng, push, stop, err = startAlarms(context.Background(), cfg, pool)
+	eng, push, _, stop, err = startAlarms(context.Background(), cfg, pool, memSecrets(t))
 	if err != nil || eng == nil || push != nil {
 		t.Fatalf("startAlarms without push: %v %v %v", eng, push, err)
 	}
