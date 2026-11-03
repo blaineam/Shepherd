@@ -52,14 +52,23 @@ const finishBody = `{"dns_listen":["192.0.2.10"],"dns_port":5353,` +
 // finishSetup completes setup over its own API, the way the page does.
 func finishSetup(t *testing.T, base string) {
 	t.Helper()
-	res, err := http.Post(base+"/api/setup/finish?token="+setupTestToken, "application/json", strings.NewReader(finishBody))
-	if err != nil {
-		t.Fatalf("finishing setup at %s: %v", base, err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		b, _ := io.ReadAll(res.Body)
-		t.Fatalf("finish = %d: %s", res.StatusCode, b)
+	// Retried, because a shared CI runner can drop the first connection
+	// to a listener that has only just come up.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		res, err := http.Post(base+"/api/setup/finish?token="+setupTestToken, "application/json", strings.NewReader(finishBody))
+		if err == nil {
+			defer res.Body.Close()
+			if res.StatusCode != 200 {
+				b, _ := io.ReadAll(res.Body)
+				t.Fatalf("finish = %d: %s", res.StatusCode, b)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("finishing setup at %s: %v", base, err)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
@@ -86,14 +95,17 @@ func setupURL(t *testing.T, port func() string) string {
 }
 
 // portFromLog reads the port out of the address setup printed, which is
-// where the owner reads it too.
+// where the owner reads it too. The most recent one: the captured log is
+// the whole process's, and another test's setup server may have printed
+// its own address into it and since gone away.
 func portFromLog(logs fmt.Stringer) func() string {
-	re := regexp.MustCompile(`http://127\.0\.0\.1:(\d+)/`)
+	re := regexp.MustCompile(`http://127\.0\.0\.1:(\d+)/\?token=` + setupTestToken)
 	return func() string {
-		if m := re.FindStringSubmatch(logs.String()); m != nil {
-			return m[1]
+		ms := re.FindAllStringSubmatch(logs.String(), -1)
+		if len(ms) == 0 {
+			return ""
 		}
-		return ""
+		return ms[len(ms)-1][1]
 	}
 }
 
