@@ -248,6 +248,7 @@ func (u *UniFi) post(ctx context.Context, path string, body []byte) (int, http.H
 		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// codeql[go/request-forgery]
 	resp, err := u.client().Do(req)
 	if err != nil {
 		return 0, nil, scrubURLError(err)
@@ -272,6 +273,7 @@ func (u *UniFi) get(ctx context.Context, path string, into any) error {
 		req.Header.Set("X-Csrf-Token", u.csrf)
 	}
 	u.mu.Unlock()
+	// codeql[go/request-forgery]
 	resp, err := u.client().Do(req)
 	if err != nil {
 		return scrubURLError(err)
