@@ -1638,7 +1638,8 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 	// Mirrored for long enough. Is anything actually circulating? The
 	// sampled frames are drained here either way, since the trip's record
 	// wants them too.
-	flows, circulating := intercept.AnalyzeSamples(ctrl.FrameSamples())
+	samples := ctrl.FrameSamples()
+	flows, circulating := intercept.AnalyzeSamples(samples)
 	dupShare := 0.0
 	if streakRelayed+streakDups > 0 {
 		dupShare = float64(streakDups) / float64(streakRelayed+streakDups)
@@ -1687,7 +1688,15 @@ func (e *Engine) checkForLoop(now time.Time, relayedPPS float64, status []interc
 		Suppressed: suppressed,
 		Devices:    loopSuspects(status, e.reg),
 		Flows:      flows,
+		// The raw evidence, so a trip can be traced after the fact: how
+		// the duplicate brake fared during the mirrored seconds, how long
+		// echoes took to come back (local, switch or wireless), and the
+		// sampled frames themselves.
+		StreakRelayed: streakRelayed, StreakDuplicates: streakDups, StreakReturned: streakReturned,
+		Echo:   echoDelays(ctrl),
+		Frames: sampleHex(samples),
 	}
+	appendStopHistory(e.cfg.StatePath, e.state.LastLoopStop)
 	saveErr := saveState(e.cfg.StatePath, e.state)
 	e.loopStreak = 0
 	e.mu.Unlock()

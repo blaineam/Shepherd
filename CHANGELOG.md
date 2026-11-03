@@ -22,6 +22,11 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   upload bar, and a trend line per busy device.
 
 ### Added
+- **Every loop-brake trip is kept, with its raw evidence.** `last_loop_stop` in `watch.json` now also
+  records the relay's counts over the mirrored seconds, the echo-delay histogram (local, switch or
+  wireless) and the sampled frames as hex, and each trip is appended to `watch-stops.jsonl` beside it
+  so the next trip no longer erases the one before. Aimed at tracing why watch mode stops until it
+  stops no more.
 - **UniFi as a bandwidth source.** A UniFi Network controller keeps real byte counters per client,
   so unlike eero its figures are measurements rather than sampled estimates, and when both are
   connected the controller wins. Connecting one is a single form (address, a read-only account,
