@@ -386,16 +386,14 @@ func TestRealSocketsAgainstARealEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := &dnsengine.Engine{Filter: dnsengine.NewFilter(), Pool: pool, Cache: dnsengine.NewCache(100), Log: dnsengine.NewQueryLog(50), Stats: dnsengine.NewStats()}
-	tt := New(Options{Addrs: func() []string { return nil }, Interfaces: hostOf()})
-	e.Quiet = tt.IsCanary
-
 	port := freePort(t)
 	addr := net.JoinHostPort("127.0.0.1", port)
+	dead := net.JoinHostPort("127.0.0.1", freePort(t))
+	tt := New(Options{Addrs: func() []string { return []string{addr, dead} }, Interfaces: hostOf(), Window: pool.Window})
+	e.Quiet = tt.IsCanary // before serving: the engine reads it on every query
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = dnsengine.Serve(ctx, []string{addr}, e) }()
-	tt.o.Addrs = func() []string { return []string{addr, net.JoinHostPort("127.0.0.1", freePort(t))} }
-	tt.o.Window = pool.Window
 	waitUp(t, addr)
 
 	r := tt.RunOnce(ctx)

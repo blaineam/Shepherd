@@ -41,6 +41,9 @@ func qaEngine(t *testing.T, ips ...string) (string, *dnsengine.Engine, *Tester) 
 	for _, ip := range ips {
 		addrs = append(addrs, net.JoinHostPort(ip, port))
 	}
+	// Quiet is set before serving starts: the engine reads it on every query.
+	tt := New(Options{Addrs: func() []string { return addrs }, Interfaces: hostOf(), Window: pool.Window})
+	e.Quiet = tt.IsCanary
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { _ = dnsengine.Serve(ctx, addrs, e); close(done) }()
@@ -48,8 +51,6 @@ func qaEngine(t *testing.T, ips ...string) (string, *dnsengine.Engine, *Tester) 
 	if len(addrs) > 0 {
 		waitUp(t, addrs[0])
 	}
-	tt := New(Options{Addrs: func() []string { return addrs }, Interfaces: hostOf(), Window: pool.Window})
-	e.Quiet = tt.IsCanary
 	return port, e, tt
 }
 
