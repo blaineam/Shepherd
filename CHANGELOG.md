@@ -13,6 +13,19 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Changed
+- **Watch mode is deprecated.** Per-device bandwidth now comes from the router over its own API
+  (eero and UniFi), which measures both directions instead of estimating downloads, puts nothing in
+  the path of your traffic, changes no setting on your router, and works on mesh networks where
+  one-sided ARP steering cannot be made reliable at all. Watch mode stays in the tree, off by
+  default, for the installs already running it, and gets no new features; the portal's Watch mode
+  section is labelled deprecated and points at "Read from your router" above it, and starting with
+  `watch.enabled = true` now logs the same. `shepherd.example.toml` said `enabled = true` while the
+  code defaulted to false -- the example now matches the code. The reason it was given up on rather
+  than merely switched off is written down in [docs/WATCH.md](docs/WATCH.md): on an eero mesh the
+  gateway reflects forwarded frames carrying a foreign source IP, so the first full-size segment of
+  every flow never arrived, reproduced with both relays and with plain kernel forwarding. Source NAT
+  stopped it dead (0/10 to 10/10 on the probe, zero reflected frames), so if this is ever revived it
+  belongs in [docs/GATEWAY.md](docs/GATEWAY.md) as a DHCP/NAT mode, not as ARP steering.
 - **The Overview and Watch mode screens are gone.** The Overview repeated what the Map, History and
   Bandwidth screens show better, so the portal opens on the Map and what only the Overview had (software
   updates, blocklist health, your own rules, the Private Relay switch) is the new **System** screen under

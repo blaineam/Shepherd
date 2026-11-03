@@ -1,5 +1,28 @@
 # Watch mode
 
+> **Status, 2026-11-03: DEPRECATED. Off by default, no new features.** Per-device bandwidth now
+> comes from the router over its own API — eero and UniFi today, under "Read from your router" on
+> the Bandwidth screen ([TRAFFIC.md](TRAFFIC.md), `internal/routerusage`). That reads what the
+> router already counts, so it measures **both** directions instead of estimating downloads, it
+> puts nothing in the path of your traffic, and it works on networks where one-sided steering
+> cannot be made to work at all. Watch mode stays in the tree for the installs already using it,
+> and because the loop-brake forensics it produced are worth keeping; it is not where the project
+> is going.
+>
+> **Why it was given up on, not just turned off.** On the network it was developed against — an
+> eero mesh — the gateway reflects a forwarded frame back at Shepherd whenever the frame carries a
+> foreign source IP out of the interface it arrived on. The first full-size segment of every flow
+> (a TLS ClientHello, a large POST) therefore never reached the server, which looks to a person
+> like requests that hang. This was reproduced with the XDP relay, with the userspace relay and
+> with plain kernel IP forwarding, so it is not Shepherd's relay code. Source NAT stopped it dead
+> (0/10 → 10/10 on the big-first-segment probe, 25/25 `gh api` calls, zero reflected frames), which
+> is the finding that matters: if this capability is ever revived it should be a **DHCP/gateway
+> mode** — Shepherd hands out the LAN's addresses and NATs the traffic, what Firewalla calls Simple
+> mode — rather than one-sided ARP steering. See [GATEWAY.md](GATEWAY.md).
+>
+> The rest of this document describes Watch mode as it stands, and is kept accurate for anyone
+> running it.
+
 > **Status, 2026-11-01 (evening): reinstated as opt-in, with the loop brake rewritten.** Earlier
 > the same day Watch mode was retired on three measurements. Two of them stand and one does not:
 >

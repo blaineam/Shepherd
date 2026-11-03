@@ -4,12 +4,15 @@ How much each device, each group and the whole network moves over the wire, live
 The portal's **Bandwidth** screen shows it and `internal/traffic` keeps the history. There are two
 ways to get the numbers, and the screen says plainly which one is in effect:
 
-- **[Watch mode](WATCH.md)**, which relays each device's traffic and counts the bytes. Exact, but
-  it is an intervention, and on some routers it cannot be made to work at all.
-- **[Reading your router](#reading-them-from-your-router)** (`internal/routerusage`), which asks
-  the router you already have what each device has moved. Nothing is put in the path of your
-  traffic, so it works where Watch mode cannot, but what you get depends on what your router will
-  tell you.
+- **[Reading your router](#reading-them-from-your-router)** (`internal/routerusage`) — **the way
+  to do this.** It asks the router you already have what each device has moved. Nothing is put in
+  the path of your traffic, both directions are covered, and it works on networks where steering
+  cannot; what you get depends on what your router will tell you, which is why eero's figures are
+  a floor and UniFi's are exact. eero and UniFi are supported today.
+- **[Watch mode](WATCH.md)** — **deprecated**, off by default, no new features. It relays each
+  device's traffic and counts the bytes, which is exact for uploads, but it is an intervention, it
+  only ever sees one direction (downloads are estimated from TCP acknowledgements), and on some
+  networks it cannot be made to work at all.
 
 Neither adds a byte to the network.
 

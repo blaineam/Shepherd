@@ -294,18 +294,32 @@ cloudflare_api_token = ""
 cloudflare_api_token_file = ""  # e.g. "/etc/shepherd/cloudflare-api-token"
 
 [watch]
+# DEPRECATED. For per-device bandwidth, connect your router instead: open the
+# Bandwidth screen, "Read from your router", and sign in to eero or a UniFi
+# controller (docs/TRAFFIC.md). That reads what the router already counts, so
+# it measures BOTH directions, puts nothing in the path of your traffic, and
+# works on networks where steering cannot be made reliable at all. Watch mode
+# is kept for installs already using it and gets no new features.
+#
 # Watch mode (docs/WATCH.md): steers each eligible device's outbound IPv4
 # traffic through Shepherd by one-sided ARP steering, relayed to the real
-# gateway in the kernel (XDP) or by a parallel userspace relay. On by default;
+# gateway in the kernel (XDP) or by a parallel userspace relay. Off by default;
 # needs Linux with CAP_NET_RAW, CAP_NET_ADMIN and CAP_BPF, and reports itself
 # unavailable (DNS filtering unaffected) anywhere it cannot run. Never steered:
 # the gateway, Shepherd's own interfaces, Excluded devices, network
 # infrastructure (routers, mesh nodes, access points, hubs, Thread border
 # routers, Thread/Matter advertisers), and any device whose own Watch switch
-# is off in the portal. The portal's Watch tab has the kill switch, which
-# stops all steering at once and stays off across restarts until re-armed.
-# One-sided means outbound-only visibility; see the doc. IPv4 only.
-enabled = true
+# is off in the portal. The Bandwidth screen's Watch mode section has the kill
+# switch, which stops all steering at once and stays off across restarts until
+# re-armed. One-sided means outbound-only visibility: downloads are estimated
+# from each device's own TCP acknowledgements, never measured. IPv4 only.
+#
+# Known to fail on some networks: a mesh gateway that reflects forwarded frames
+# back at Shepherd stops the first full-size segment of every flow, which looks
+# like requests that hang. Source NAT fixed it when measured here, which is why
+# any revival of this should be a DHCP/gateway mode (docs/GATEWAY.md) rather
+# than one-sided steering.
+enabled = false
 interface = ""           # empty: the default route's interface
 mode = "auto"            # auto (XDP native, else XDP generic, else userspace), xdp, userspace, off
 workers = 0              # userspace relay workers; 0 = automatic (4)

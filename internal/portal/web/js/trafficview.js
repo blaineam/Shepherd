@@ -126,7 +126,7 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, watch =
   const head = el('div', 'pg-head stack');
   const title = el('h2', 'pg-title');
   title.append(el('span', '', 'Bandwidth'));
-  head.append(title, el('p', 'pg-sub muted', 'How much each device, each group and the whole network moves over the wire, live and over time, measured by Watch mode as it relays each device’s traffic, so it costs the network nothing.'));
+  head.append(title, el('p', 'pg-sub muted', 'How much each device, each group and the whole network moves over the wire, live and over time, read from your own router or relayed by Watch mode, so it costs the network nothing either way.'));
   const body = el('div', 'tf-body');
   root.append(head, body);
 
