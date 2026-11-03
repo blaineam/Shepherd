@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"regexp"
 	"slices"
@@ -48,6 +49,86 @@ type Config struct {
 	Selftest       Selftest       `toml:"selftest"`
 	ReverseProxy   ReverseProxy   `toml:"reverseproxy"`
 	Watch          Watch          `toml:"watch"`
+	DHCP           DHCP           `toml:"dhcp"`
+}
+
+// DHCP controls DHCP mode (docs/DHCP.md), which is off by default and is the
+// one setting in Shepherd that can take a household off the internet.
+//
+// What it is: Shepherd serves the LAN's DHCP, and for the devices it routes
+// it puts its own address in option 3 instead of the router's, forwards their
+// traffic and masquerades it out to the router. That makes both directions of
+// those devices' traffic pass through Shepherd, which is the only way to
+// measure downloads rather than estimate them, and it is a one-armed shape:
+// one NIC, one flat segment, the router still routing. Source NAT is what
+// makes it work at all — forwarding a frame back out the interface it arrived
+// on is only a hairpin hazard while that frame carries a foreign source
+// address.
+//
+// Mode is the dangerous dial and has three positions rather than two:
+// "off" opens no socket; "observe" opens a listener with no send path, which
+// feeds the device registry and shows what Shepherd would have answered
+// without being able to answer; "serve" answers, and refuses to while
+// another DHCP server is still replying on the segment.
+//
+// Route is separate from Mode on purpose. With Mode = "serve" and Route
+// false, Shepherd hands out every lease with the router's own address in
+// option 3, so nothing is on Shepherd's data path: a complete, safe resting
+// place to sit in for a week before routing anything. Routing is then
+// all-or-nothing by the maintainer's decision of 2026-11-03 — there is no
+// per-device opt-in, only a per-device opt-out and a refusal list that covers
+// the gateway, Shepherd's own interfaces, network infrastructure, Thread and
+// Matter gear and, unless RouteConsoles is set, game consoles.
+//
+// It needs Linux, the nft command, and either a writable /proc/sys or the
+// forwarding and redirect sysctls already set on the host. Without those it
+// reports itself unavailable in the portal and Shepherd starts normally.
+type DHCP struct {
+	// Mode is "off" (the default), "observe" or "serve".
+	Mode string `toml:"mode"`
+	// Interface is the LAN NIC. Empty picks the interface the default
+	// route leaves through, the same convention [arp] and [watch] use.
+	Interface string `toml:"interface"`
+	// Subnet is the LAN prefix in CIDR form, which gives the netmask and
+	// bounds every address handed out. Empty takes it from Interface.
+	Subnet string `toml:"subnet"`
+	// ServerIP is Shepherd's own address on the LAN: the server
+	// identifier, and what goes in option 3 for a routed device. Empty
+	// takes the interface's first IPv4 address.
+	ServerIP string `toml:"server_ip"`
+	// Gateway is the router, which is what goes in option 3 for every
+	// device Shepherd does not route. Empty takes the default route's
+	// gateway.
+	Gateway string `toml:"gateway"`
+	// PoolStart and PoolEnd are the inclusive dynamic range. Reserved
+	// addresses must lie outside it, and so must Shepherd's own address
+	// and the gateway's.
+	PoolStart string `toml:"pool_start"`
+	PoolEnd   string `toml:"pool_end"`
+	// DNS is what goes in option 6. Empty hands out ServerIP, which is the
+	// point of the project; a household that wants a fallback resolver in
+	// the list can name both.
+	DNS []string `toml:"dns"`
+	// Domain is option 15, the client's search domain. Optional.
+	Domain string `toml:"domain"`
+	// LeaseSeconds is how long a lease lasts. Default 600. Short on
+	// purpose: it is how fast a device stops being routed when Shepherd
+	// decides it should not be, and that is the whole fail-open mechanism.
+	// The cost is that the segment starts failing sooner after the host
+	// goes down, which is the trade-off this knob exists to let you move.
+	LeaseSeconds int `toml:"lease_seconds"`
+	// Route turns routing on. False still serves every lease, with the
+	// router's own address in option 3.
+	Route bool `toml:"route"`
+	// RouteConsoles routes game consoles too. Off by default: double NAT
+	// is what makes a console's NAT type worse.
+	RouteConsoles bool `toml:"route_consoles"`
+	// SettleSeconds is how long the segment must be free of another DHCP
+	// server's replies before Shepherd will serve, and how long after the
+	// last sighting one is still considered present. Default 60.
+	SettleSeconds int `toml:"settle_seconds"`
+	// NFT is the nftables command. Empty means "nft" on the PATH.
+	NFT string `toml:"nft"`
 }
 
 // Watch controls Watch mode (docs/WATCH.md), which is DEPRECATED and off by
@@ -635,7 +716,12 @@ func Default() Config {
 		// because Watch mode is outbound-only and a device's already-open
 		// connections can bypass it, and because one-sided steering could
 		// not be made reliable on a reflecting mesh (docs/WATCH.md).
-		Watch:   Watch{Enabled: false, Mode: "auto", ActiveWindowSeconds: 900, AllowRoutingHost: true},
+		Watch: Watch{Enabled: false, Mode: "auto", ActiveWindowSeconds: 900, AllowRoutingHost: true},
+		// DHCP mode is off, and this is the one default in Shepherd that
+		// is not a judgement call: serving the wrong DHCP on somebody's
+		// network takes their house off the internet. docs/DHCP.md has
+		// the staged rollout that earns each step.
+		DHCP:    DHCP{Mode: "off", LeaseSeconds: 600, SettleSeconds: 60},
 		DataDir: "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
@@ -775,6 +861,9 @@ func (c Config) Validate() error {
 	if err := c.validateWatch(); err != nil {
 		return err
 	}
+	if err := c.validateDHCP(); err != nil {
+		return err
+	}
 	if c.Nethealth.Enabled && c.Nethealth.IntervalSeconds < 60 {
 		return errors.New("nethealth.interval_seconds must be at least 60")
 	}
@@ -869,6 +958,71 @@ func (c Config) validateWatch() error {
 	}
 	if w.HealthIntervalSeconds < 0 || w.IdleGraceSeconds < 0 || w.StartupGraceSeconds < 0 {
 		return errors.New("watch.health_interval_seconds, watch.idle_grace_seconds and watch.startup_grace_seconds must not be negative")
+	}
+	return nil
+}
+
+// validateDHCP checks the DHCP-mode block. It is stricter than most of this
+// file on purpose: a bad address here is handed to every device on the
+// network, so the config file is the cheapest place to catch it.
+//
+// What it deliberately does not check is whether the addresses match the
+// interface's real configuration. That is a runtime fact, it changes while
+// Shepherd runs, and dhcp.Settings.Valid is where it belongs — reported in
+// the portal rather than refusing to start, so a mistake in the DHCP block
+// never stops DNS filtering.
+func (c Config) validateDHCP() error {
+	d := c.DHCP
+	switch strings.ToLower(strings.TrimSpace(d.Mode)) {
+	case "", "off", "observe", "serve":
+	default:
+		return fmt.Errorf(`dhcp.mode must be "off", "observe" or "serve", got %q`, d.Mode)
+	}
+	if d.Subnet != "" {
+		p, err := netip.ParsePrefix(d.Subnet)
+		if err != nil {
+			return fmt.Errorf("dhcp.subnet must be a CIDR prefix like 192.0.2.0/24: %w", err)
+		}
+		if !p.Addr().Is4() {
+			return errors.New("dhcp.subnet must be IPv4; DHCP mode never touches IPv6 (docs/DHCP.md)")
+		}
+	}
+	for _, f := range []struct {
+		name, val string
+	}{{"dhcp.server_ip", d.ServerIP}, {"dhcp.gateway", d.Gateway}, {"dhcp.pool_start", d.PoolStart}, {"dhcp.pool_end", d.PoolEnd}} {
+		if f.val == "" {
+			continue
+		}
+		a, err := netip.ParseAddr(f.val)
+		if err != nil || !a.Is4() {
+			return fmt.Errorf("%s must be an IPv4 address, got %q", f.name, f.val)
+		}
+	}
+	if (d.PoolStart == "") != (d.PoolEnd == "") {
+		return errors.New("dhcp.pool_start and dhcp.pool_end must be set together")
+	}
+	if d.PoolStart != "" {
+		start, _ := netip.ParseAddr(d.PoolStart)
+		end, _ := netip.ParseAddr(d.PoolEnd)
+		if start.Compare(end) > 0 {
+			return fmt.Errorf("dhcp.pool_start %s is above dhcp.pool_end %s", start, end)
+		}
+	}
+	for _, v := range d.DNS {
+		if a, err := netip.ParseAddr(v); err != nil || !a.Is4() {
+			return fmt.Errorf("dhcp.dns must hold IPv4 addresses, got %q", v)
+		}
+	}
+	if d.LeaseSeconds != 0 && d.LeaseSeconds < 60 {
+		return errors.New("dhcp.lease_seconds must be at least 60; a shorter lease renews faster than clients retry")
+	}
+	if d.SettleSeconds < 0 {
+		return errors.New("dhcp.settle_seconds must not be negative")
+	}
+	// Serving needs enough to answer with. Routing does not need anything
+	// extra in the file, because the interface supplies the rest.
+	if strings.EqualFold(strings.TrimSpace(d.Mode), "serve") && d.PoolStart == "" {
+		return errors.New(`dhcp.mode = "serve" needs dhcp.pool_start and dhcp.pool_end: there is nothing to hand out otherwise`)
 	}
 	return nil
 }

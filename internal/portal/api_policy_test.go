@@ -4,10 +4,16 @@ package portal
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"shepherd/internal/dnsengine"
 )
 
 func scopeByKind(t *testing.T, policy map[string]any, kind, id string) map[string]any {
@@ -284,6 +290,48 @@ func TestLegacyEndpointsActOnTheNetworkScope(t *testing.T) {
 		t.Errorf("rules = %v", r)
 	}
 	h.expect("POST", "/api/lists/refresh", "", 202)
+}
+
+// A refresh outlives its request on purpose, so nothing in the request path
+// tells you when it has finished. That is what made CI flaky: the goroutine
+// was still writing list files into the t.TempDir() being removed, which
+// surfaced as "TempDir RemoveAll cleanup: directory not empty" against
+// whichever test happened to have started it. Hold the source open to prove
+// both halves: the request does not wait, and waitBackground does.
+func TestWaitBackgroundDrainsARefreshThatOutlivesItsRequest(t *testing.T) {
+	var fetched atomic.Int32
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		// Stay slow after the release as well, so a waitBackground that did
+		// not actually wait would lose this race and fail the test rather
+		// than passing by luck.
+		time.Sleep(100 * time.Millisecond)
+		fetched.Add(1)
+		fmt.Fprint(w, "slow.example\n")
+	}))
+	t.Cleanup(slow.Close)
+
+	dir := t.TempDir()
+	filter := dnsengine.NewFilter()
+	lists := dnsengine.NewScopedListManager(filter, testPolicy(t, filter, dir, slow.URL), dir, nil)
+	h := newHarnessWith(t, func(d *Deps) { d.Lists = lists })
+
+	// Registered after the harness, so it runs before the harness's own
+	// waitBackground cleanup: a failure below must not deadlock the drain.
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+
+	h.expect("POST", "/api/lists/refresh", "", 202)
+	if n := fetched.Load(); n != 0 {
+		t.Fatalf("the request waited for the refresh: %d fetches already done", n)
+	}
+	unblock()
+	h.srv.waitBackground()
+	if fetched.Load() == 0 {
+		t.Error("waitBackground returned before the refresh had run")
+	}
 }
 
 func TestStatusGainsDeviceAndCatalogCounts(t *testing.T) {

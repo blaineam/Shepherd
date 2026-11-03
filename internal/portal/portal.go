@@ -26,6 +26,7 @@ import (
 	"shepherd/internal/alarms"
 	"shepherd/internal/arp"
 	"shepherd/internal/devices"
+	"shepherd/internal/dhcp"
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/geo"
 	"shepherd/internal/importers"
@@ -235,6 +236,53 @@ type Deps struct {
 	// it), in which case /api/watch answers "not enabled" and the Devices
 	// screen shows no Watch column instead of failing.
 	Watch WatchEngine
+
+	// DHCP is DHCP mode (docs/DHCP.md): the leases, the reservations, the
+	// addressing it would hand out and the kill switch. Nil means
+	// cmd/shepherd did not wire it in, in which case /api/dhcp answers
+	// "not available" and the screen says so rather than failing.
+	//
+	// It is wired in even when the mode is off, so the whole thing can be
+	// prepared and read before it is switched on — which is the point of
+	// a feature whose first wrong move takes a household off the internet.
+	DHCP DHCPService
+}
+
+// DHCPService is what the portal needs from DHCP mode (*dhcp.Server). An
+// interface so the API is testable without a socket, and so a build with no
+// DHCP wiring is simply a nil Deps.DHCP.
+type DHCPService interface {
+	// Status is the whole state: the mode, whether it is serving and
+	// routing, and what is stopping it when it is not.
+	Status() dhcp.Status
+	// SettingsView is the addressing it hands out.
+	SettingsView() dhcp.SettingsView
+	// RangeView is the addressing the operator chose, and what it would
+	// replace; Conflicts is why it does not fit the network as it is.
+	RangeView() dhcp.RangeView
+	Conflicts() []dhcp.Conflict
+	// SetRange stores a chosen range, or clears it when the range is not
+	// set.
+	SetRange(ctx context.Context, r dhcp.Range) error
+	// Reservation is one device's reservation, for the per-device
+	// reserved switch on the Devices screen.
+	Reservation(mac string) (dhcp.Reservation, bool)
+	// Leases is every lease with the routing decision attached.
+	Leases() []dhcp.LeaseView
+	Reservations() []dhcp.Reservation
+	SetReservation(r dhcp.Reservation) error
+	DeleteReservation(mac string) (bool, error)
+	// Confirm records the typed confirmation that Shepherd may serve DHCP
+	// here. Serving does not start without it.
+	Confirm(ctx context.Context, on bool) error
+	// Unroute is the kill switch: routing stops now and stays stopped
+	// across restarts. Leasing carries on, with the router's own address
+	// in option 3, so no device loses its address.
+	Unroute(ctx context.Context, reason string) error
+	Rearm(ctx context.Context) error
+	// ForgetPeers clears the record of other DHCP servers seen, for after
+	// the router's own DHCP has been turned off.
+	ForgetPeers(ctx context.Context)
 }
 
 // UsageReader is what the portal needs from the passive bandwidth reader
@@ -272,6 +320,10 @@ type Server struct {
 	Deps
 	started time.Time
 	mux     *http.ServeMux
+
+	// bg tracks work started by refreshAsync, which outlives its request on
+	// purpose. waitBackground drains it.
+	bg sync.WaitGroup
 
 	mu      sync.Mutex
 	memHome *settings.Home // used when no settings store is configured
@@ -617,6 +669,14 @@ func (s *Server) routes() {
 	h("GET /api/watch", s.getWatch)
 	h("POST /api/watch/kill", s.killWatch)
 	h("POST /api/watch/rearm", s.rearmWatch)
+	h("GET /api/dhcp", s.getDHCP)
+	h("POST /api/dhcp/confirm", s.confirmDHCP)
+	h("POST /api/dhcp/kill", s.killDHCP)
+	h("POST /api/dhcp/rearm", s.rearmDHCP)
+	h("POST /api/dhcp/peers/forget", s.forgetDHCPPeers)
+	h("PUT /api/dhcp/range", s.putDHCPRange)
+	h("PUT /api/dhcp/reservations", s.putDHCPReservation)
+	h("DELETE /api/dhcp/reservations/{mac}", s.deleteDHCPReservation)
 	h("GET /api/groups", s.listGroups)
 	h("POST /api/groups", s.createGroup)
 	h("PATCH /api/groups/{id}", s.patchGroup)

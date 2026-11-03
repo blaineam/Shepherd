@@ -124,6 +124,20 @@ Separately from exclusion, every device has its own three-way **Watch** switch (
 on the Devices screen, for opting one device out of traffic steering while leaving its DNS filtering alone. See
 [WATCH.md](WATCH.md).
 
+It also has a three-way **Route** switch (Automatic, Always route, Never route), which matters only in DHCP mode
+([DHCP.md](DHCP.md)). Automatic means "whatever the mode says": routed while routing is on and the device is
+eligible, not routed otherwise. **Never route** is the escape hatch for a device that turns out to mind double NAT,
+and it is the only per-device say in the matter — routing is otherwise all-or-nothing, deliberately, because a
+bandwidth picture assembled from whichever devices somebody remembered to tick is a half-truth presented as a
+number. **Always route** overrides the eligibility refusals (infrastructure, Thread and Matter gear, game consoles)
+but not the two that can never be overridden: the gateway itself and Shepherd's own interfaces.
+
+While DHCP mode is wired in, each device also carries a **Reserve this address** switch. On pins
+that hardware to the address it holds now, so it keeps it however long the device is away; off
+unpins it. A reserved address inside the dynamic pool is fine — it is simply held back from
+everyone else — and a device the registry knows only by address has no switch, because a
+reservation is keyed on hardware.
+
 ## What Watch mode adds
 
 The registry itself needs no special placement, only that devices use Shepherd for DNS or show up in the neighbor table.
@@ -155,7 +169,7 @@ Every device is in one of three modes, set from the Devices screen (or `PATCH /a
 |---|---|---|---|
 | **Protected** (default) | Everything that applies: blocklists, app and category blocks, rules, policies | Yes | Normal devices |
 | **Wandering** | **None at all.** Not even the Private Relay policy | **Yes, every request**, flagged as wandering | A device that misbehaves under filtering, a device you want to study, or a guest you want to see but not restrict |
-| **Excluded** | None | Yes (DNS), but the device is left alone | Infrastructure that must never be touched (routers, mesh nodes, Thread border routers) and any device that must never be steered by Watch mode. Watch mode also excludes infrastructure on its own, without this |
+| **Excluded** | None | Yes (DNS), but the device is left alone | Infrastructure that must never be touched (routers, mesh nodes, Thread border routers) and any device that must never be steered by Watch mode or routed in DHCP mode. Both modes also exclude infrastructure on their own, without this |
 
 Like a sheep wandering off while the shepherd keeps watch, a wandering device talks freely and nothing it does goes unseen.
 
