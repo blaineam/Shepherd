@@ -62,7 +62,7 @@ test('deviceLine words each subscription state', () => {
   assert.equal(isThisBrowser({ id: 'x' }, ''), false);
 });
 
-import { suggestTopic, ntfyStatusLine, ntfySnippet, NTFY_STEPS, NTFY_DEFAULT_SERVER } from '../js/push.js';
+import { suggestTopic, ntfyStatusLine, ntfyFields, ntfySaveBody, NTFY_STEPS, NTFY_DEFAULT_SERVER } from '../js/push.js';
 
 test('suggestTopic ends in random letters from bytes and falls back safely', () => {
   assert.equal(suggestTopic([0, 1, 31, 32]), 'shepherd-ab9a');
@@ -71,19 +71,47 @@ test('suggestTopic ends in random letters from bytes and falls back safely', () 
   assert.match(suggestTopic([200, 7, 99, 3, 250, 18, 5, 77]), /^shepherd-[a-z2-9]{8}$/);
 });
 
-test('ntfyStatusLine says off, or where alarms are published', () => {
+test('ntfyStatusLine distinguishes not set up, set up but off, and delivering', () => {
   assert.equal(ntfyStatusLine(null).tone, 'muted');
-  const on = ntfyStatusLine({ enabled: true, server: 'https://ntfy.example.com', topic: 'x' });
+  assert.match(ntfyStatusLine(null).text, /not set up/);
+  const off = ntfyStatusLine({ configured: true, enabled: false, server: 'https://ntfy.example.com', topic: 'x' });
+  assert.equal(off.tone, 'warn');
+  assert.match(off.text, /switched off/);
+  const on = ntfyStatusLine({ configured: true, enabled: true, server: 'https://ntfy.example.com', topic: 'x' });
   assert.equal(on.tone, 'good');
   assert.match(on.text, /ntfy\.example\.com \/ x/);
-  assert.match(ntfyStatusLine({ enabled: true }).text, /publishing alarms to \./);
 });
 
-test('ntfySnippet is a ready-to-paste section with no credentials', () => {
-  const s = ntfySnippet({ topic: 'shepherd-abc' });
-  assert.ok(s.startsWith('[alarms.ntfy]\nenabled = true\nserver = "' + NTFY_DEFAULT_SERVER + '"\ntopic = "shepherd-abc"'));
-  assert.match(s, /# token = ""/);
-  assert.doesNotMatch(s, /password/);
-  assert.match(ntfySnippet(), /topic = "shepherd-alarms"/);
-  assert.equal(NTFY_STEPS.length, 4);
+test('ntfyFields prefills the form and says when a credential is already stored', () => {
+  const empty = ntfyFields(null, 'shepherd-abc');
+  assert.equal(empty.server, NTFY_DEFAULT_SERVER);
+  assert.equal(empty.topic, 'shepherd-abc');
+  assert.equal(empty.enabled, true);
+  assert.match(empty.tokenPlaceholder, /only for a server that needs a login/);
+  assert.equal(empty.passwordPlaceholder, '');
+  const stored = ntfyFields({ configured: true, enabled: false, server: 'https://ntfy.example.com', topic: 't', username: 'u', has_token: true, has_password: true });
+  assert.equal(stored.server, 'https://ntfy.example.com');
+  assert.equal(stored.topic, 't');
+  assert.equal(stored.username, 'u');
+  assert.equal(stored.enabled, false);
+  assert.match(stored.tokenPlaceholder, /leave blank to keep it/);
+  assert.match(stored.passwordPlaceholder, /leave blank to keep it/);
+  // The fields never carry the secret itself; the API does not send it.
+  assert.equal(JSON.stringify(stored).includes('token"'), false);
+});
+
+test('ntfySaveBody trims, keeps a stored credential by leaving it out, and clears on request', () => {
+  const body = ntfySaveBody({ server: ' https://ntfy.example.com ', topic: ' t ', username: ' u ', token: ' tk ', enabled: true }, null);
+  assert.deepEqual(body, { server: 'https://ntfy.example.com', topic: 't', username: 'u', enabled: true, token: 'tk' });
+  // Blank with one stored: nothing is sent, so the server keeps it.
+  const keep = ntfySaveBody({ server: 'https://ntfy.example.com', topic: 't', enabled: false }, { has_token: true, has_password: true });
+  assert.deepEqual(keep, { server: 'https://ntfy.example.com', topic: 't', username: '', enabled: false });
+  const cleared = ntfySaveBody({ server: 'https://ntfy.example.com', topic: 't', clearToken: true, clearPassword: true }, { has_token: true, has_password: true });
+  assert.equal(cleared.clear_token, true);
+  assert.equal(cleared.clear_password, true);
+});
+
+test('the ntfy steps are what happens on the phone, with no file to edit', () => {
+  assert.equal(NTFY_STEPS.length, 3);
+  for (const step of NTFY_STEPS) assert.equal(/shepherd\.toml/.test(step), false);
 });

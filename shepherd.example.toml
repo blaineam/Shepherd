@@ -124,8 +124,14 @@ enabled = true
 contact = ""               # email or https URL a push service may contact; empty picks one
 
 [alarms.ntfy]
-# ntfy delivery is off until you point it at a server. It is the fallback
-# when a push could not be delivered, or the second channel with "always".
+# ntfy delivery is set up in the portal: Alarms -> Notifications -> Set up
+# ntfy (docs/ALARMS.md). The server, topic and token live in
+# <data_dir>/secrets.json (0600), like the mail relay and the router
+# connections, and changing them needs no restart.
+#
+# This section is read ONCE, for an install that predates that: it is
+# imported the first time Shepherd starts without a server in the portal,
+# and ignored from then on (a startup line says so if it differs).
 enabled = false
 server = ""                # e.g. "https://ntfy.example.com" (self-hosted or public)
 topic = "shepherd-alarms"

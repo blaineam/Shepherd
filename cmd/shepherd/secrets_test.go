@@ -13,6 +13,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"shepherd/internal/alarms"
+	"shepherd/internal/dnsengine"
 	"strings"
 	"sync"
 	"testing"
@@ -549,7 +551,7 @@ func TestATokenSavedLaterIsUsedRightAwayWithoutARestart(t *testing.T) {
 	if _, err := sec.SetDNSProvider(secrets.DNSProvider{Provider: secrets.ProviderCloudflare, APIToken: portalToken}); err != nil {
 		t.Fatal(err)
 	}
-	secretsChanged(sec, nil, kicker)("dns_provider")
+	secretsChanged(sec, nil, kicker, nil)("dns_provider")
 	waitFor(t, "a certificate right after the token was saved", func() bool { return mgr.Certificate() != nil })
 	if !cf.sawBearer(portalToken) {
 		t.Error("the token saved in the portal must be the one used")
@@ -692,5 +694,139 @@ func TestRunWiresTheChecksAndAppliesSavesLive(t *testing.T) {
 	mu.Unlock()
 	if n != 1 {
 		t.Errorf("the relay check ran %d times, want 1", n)
+	}
+}
+
+func TestNtfyIsImportedFromTheConfigOnceThenThePortalOwnsIt(t *testing.T) {
+	logs := captureLog(t)
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.DataDir = dir
+	cfg.Alarms.Ntfy = config.AlarmsNtfy{Enabled: true, Server: "https://ntfy.example.com",
+		Topic: "shepherd-abc", Token: "tok-ntfy-cfg"}
+	store, err := openSecrets(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, ok := store.Ntfy()
+	if !ok || n.Token != "tok-ntfy-cfg" || !n.Enabled || n.Source != secrets.SourceConfig {
+		t.Fatalf("imported = %s", n)
+	}
+	if !strings.Contains(logs.String(), "imported ntfy delivery") {
+		t.Errorf("the import should be logged:\n%s", logs.String())
+	}
+
+	// The owner then changes it in the portal; shepherd.toml's copy is
+	// ignored from that point, with a line saying where to change it.
+	if _, err := store.SetNtfy(secrets.Ntfy{Server: "https://ntfy.example.net", Topic: "shepherd-xyz"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openSecrets(cfg); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := secrets.Open(filepath.Join(dir, secrets.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := reopened.Ntfy(); n.Server != "https://ntfy.example.net" {
+		t.Errorf("the config overwrote the portal's value: %s", n)
+	}
+	if !strings.Contains(logs.String(), "[alarms.ntfy] is ignored") {
+		t.Errorf("the ignored config should be logged:\n%s", logs.String())
+	}
+}
+
+func TestAnUnusableNtfySectionIsLoggedRatherThanFatal(t *testing.T) {
+	logs := captureLog(t)
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.Alarms.Ntfy = config.AlarmsNtfy{Enabled: true, Server: "not a url", Topic: "t"}
+	store, err := openSecrets(cfg)
+	if err != nil {
+		t.Fatalf("a bad ntfy section must not stop startup: %v", err)
+	}
+	if _, ok := store.Ntfy(); ok {
+		t.Error("nothing should have been imported")
+	}
+	if !strings.Contains(logs.String(), "not importing [alarms.ntfy]") {
+		t.Errorf("it should say why:\n%s", logs.String())
+	}
+}
+
+func TestAnNtfyServerSavedInThePortalReachesTheRunningRouter(t *testing.T) {
+	// No restart: the whole point of moving ntfy out of shepherd.toml.
+	dir := tempDir(t)
+	cfg := config.Default()
+	cfg.DataDir = dir
+	pool, err := dnsengine.NewPool([]string{"127.0.0.1:1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := secrets.Open(filepath.Join(dir, secrets.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng, _, router, stop, err := startAlarms(context.Background(), cfg, pool, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	_ = eng
+	configured := func() bool {
+		for _, st := range router.Status() {
+			if st.Channel == alarms.ChannelNtfy {
+				return st.Configured
+			}
+		}
+		return false
+	}
+	if configured() {
+		t.Fatal("nothing is stored, so the channel is not configured")
+	}
+	changed := secretsChanged(store, nil, &certKicker{}, router)
+	if _, err := store.SetNtfy(secrets.Ntfy{Server: "https://ntfy.example.com", Topic: "t", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	changed("ntfy")
+	if !configured() {
+		t.Error("the saved server should have reached the router")
+	}
+	if _, err := store.SetNtfyEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	changed("ntfy")
+	if configured() {
+		t.Error("switching off should have reached the router too")
+	}
+	// And with alarms off in shepherd.toml there is no router to tell,
+	// which must not panic.
+	secretsChanged(store, nil, &certKicker{}, nil)("ntfy")
+}
+
+func TestVerifyNtfyPublishesOneNotification(t *testing.T) {
+	var got struct {
+		path, auth, title string
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.path, got.auth, got.title = r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("Title")
+		fmt.Fprint(w, `{"id":"1"}`)
+	}))
+	defer srv.Close()
+	n := secrets.Ntfy{Server: srv.URL, Topic: "shepherd-abc", Token: "tok-ntfy-1"}
+	if err := verifyNtfy(context.Background(), n); err != nil {
+		t.Fatalf("verifyNtfy: %v", err)
+	}
+	if got.auth != "Bearer tok-ntfy-1" || got.title == "" {
+		t.Errorf("the publish did not carry the stored credentials: %+v", got)
+	}
+
+	// A server that refuses says so, phrased for whoever just pressed Save.
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	defer bad.Close()
+	err := verifyNtfy(context.Background(), secrets.Ntfy{Server: bad.URL, Topic: "t"})
+	if err == nil || !strings.Contains(err.Error(), "did not accept") {
+		t.Errorf("err = %v", err)
 	}
 }

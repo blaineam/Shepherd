@@ -156,6 +156,35 @@ res, err := c.Publish(ctx, ntfy.Message{
 - The server URL is operator configuration, so unlike Web Push this client does not refuse private
   addresses: a self-hosted ntfy normally lives on one.
 
+# Setting up ntfy
+
+In the portal: **Alarms → Notifications → Set up ntfy**. Nothing here needs a text editor, which is
+the rule the whole portal follows.
+
+1. Install the ntfy app on a phone (App Store or Google Play) or open the ntfy web app. The public
+   server at `ntfy.sh` needs no account; a self-hosted one works the same way.
+2. In the app, subscribe to the topic the form shows. It is generated with random letters on
+   purpose: on a public server **anyone who knows the topic can read your alarms**, so treat it as
+   a secret and do not reuse a guessable name.
+3. Press **Save**. Shepherd publishes one notification immediately as the check — ntfy has no way to
+   ask whether a server and token would work without sending something, and for a notification
+   channel one notification arriving is the clearest confirmation there is. A server that refuses is
+   reported and **nothing is stored**.
+
+After that:
+
+- **Send a test notification** publishes another one at any time, including while delivery is
+  switched off, so a server can be proven before alarms are allowed to it.
+- **Switch off** stops delivery but keeps the server and credentials, so switching it back on costs
+  no re-typing.
+- **Forget server** removes everything, including the token.
+
+A server that needs a login takes either an access token or a username and password, never both. A
+saved token or password is never sent back to the browser: the form says one is stored and keeps it
+if the field is left blank, and only for the **same** server — change the server and the credential
+is asked for again, because a stored credential must never be sendable to somewhere it was not
+entered for.
+
 # The engine (`internal/alarms`)
 
 ## Model
@@ -496,12 +525,20 @@ rather than blocking the engine, so re-fetch with `List` after a `bulk` change o
 # Wiring into `cmd/shepherd` and the portal
 
 `[alarms]` in `shepherd.toml` (see `shepherd.example.toml`) turns the engine on (`enabled`, default
-true) and configures the two delivery channels: Web Push (`[alarms.push]`: `enabled`, default true,
-and an optional `contact`) and ntfy (`[alarms.ntfy]`: `enabled`, `server`, `topic`, and `token` or
-`username`/`password`). `cmd/shepherd/alarms.go`'s `startAlarms` builds the engine under
-`<data_dir>/alarms`, builds a `Router` with both adapters (each `nil` when its channel is off, so it
-simply carries nothing), subscribes and runs it, and is wired into `main.go` the same way
-`startDevices` and `startClassify` are.
+true) and configures Web Push (`[alarms.push]`: `enabled`, default true, and an optional `contact`).
+`cmd/shepherd/alarms.go`'s `startAlarms` builds the engine under `<data_dir>/alarms`, builds a
+`Router` with both adapters (each `nil` when its channel is off, so it simply carries nothing),
+subscribes and runs it, and is wired into `main.go` the same way `startDevices` and `startClassify`
+are.
+
+**ntfy is set up in the portal, not in `shepherd.toml`** (see "Setting up ntfy" above). The server,
+topic and credentials live in `<data_dir>/secrets.json` (`internal/secrets`, 0600), beside the mail
+relay and the router connections, and the portal is the only place they are edited. `[alarms.ntfy]`
+is still read **once**, to carry an install that predates this over: it is imported the first time
+Shepherd starts without a stored server (`seedNtfy` in `cmd/shepherd/secrets.go`), and from then on
+the config section is ignored, with a startup line saying so if it differs. A server saved, switched
+or forgotten in the portal reaches the running `Router` through `Router.SetNtfy`
+(`Deps.OnSecretsChanged`), so nothing about ntfy needs a restart.
 
 **Web Push wiring** (`cmd/shepherd/push.go`, since 2026-11-01, once the portal had HTTPS through
 `[tls]`). `startPush` loads or generates the VAPID key pair at `<data_dir>/alarms/vapid.json` (keep

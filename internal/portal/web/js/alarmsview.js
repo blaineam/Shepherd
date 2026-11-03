@@ -8,7 +8,7 @@ import { el } from './dom.js';
 import { icon, iconButton, button, segmented, emptyState, unavailableCard, confirmDialog, openMenu, relTime } from './ui.js';
 import { unavailable } from './mgmt.js';
 import { Selection } from './selection.js';
-import { pushSupport, permissionLine, urlBase64ToUint8Array, subscribeBody, defaultDeviceName, deviceLine, isThisBrowser, ntfyStatusLine, ntfySnippet, suggestTopic, NTFY_STEPS } from './push.js';
+import { pushSupport, permissionLine, urlBase64ToUint8Array, subscribeBody, defaultDeviceName, deviceLine, isThisBrowser, ntfyStatusLine, ntfyFields, ntfySaveBody, suggestTopic, NTFY_STEPS } from './push.js';
 import {
   SEVERITIES, STATES, severityLabel, severityBadgeClass, stateLabel,
   MUTE_PRESETS, MUTE_SCOPES, bulkSummary, ruleMatchSummary, feedLine, matchLine,
@@ -536,6 +536,10 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
       push = await mgmt.pushStatus();
       pushError = null;
     } catch (e) { pushError = e; }
+    // ntfy is loaded with it: it is the other half of the Notifications
+    // card and delivers even where Web Push cannot (an iPhone in Lockdown
+    // Mode, a portal without HTTPS).
+    await loadNtfy();
     paintPush();
   }
 
@@ -601,32 +605,130 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
     } catch (e) { notify(e.message); }
   }
 
-  // The walk-through for ntfy, always available under Notifications and
-  // open by default until ntfy is on.
+  // ntfy is set up here, not in shepherd.toml: the server is one only the
+  // owner can name, and no feature of Shepherd should need a text editor
+  // (docs/ALARMS.md). Stored credentials are never sent back, so a blank
+  // token or password field means "keep the stored one".
+  let ntfy = null;
+  let ntfyError = null;
+
+  async function loadNtfy() {
+    try {
+      ntfy = await mgmt.ntfy();
+      ntfyError = null;
+    } catch (e) { ntfyError = e; }
+  }
+
+  function suggestedTopic() {
+    let bytes = [];
+    try { bytes = Array.from(crypto.getRandomValues(new Uint8Array(8))); } catch { /* the default topic name still works */ }
+    return suggestTopic(bytes);
+  }
+
   function ntfyGuide() {
-    const n = (push && push.ntfy) || {};
     const box = el('details', 'al-ntfy');
-    box.open = !n.enabled;
+    box.open = !(ntfy && ntfy.enabled);
     box.append(el('summary', '', 'Set up ntfy (phone notifications without Web Push)'));
-    const line = ntfyStatusLine(n);
+    if (ntfyError) {
+      box.append(el('p', 'err small', ntfyError.message));
+      return box;
+    }
+    const line = ntfyStatusLine(ntfy || {});
     box.append(el('p', 'al-push-line ' + line.tone, line.text));
+    if (ntfy && ntfy.source) box.append(el('p', 'muted small', 'Set from ' + ntfy.source + '.'));
+    if (ntfy && !ntfy.available) box.append(el('p', 'warn small', 'The alarm engine is off in shepherd.toml ([alarms]), so nothing is delivered until it is on.'));
     const steps = el('ol', 'al-ntfy-steps');
     for (const t of NTFY_STEPS) steps.append(el('li', '', t));
     box.append(steps);
-    let bytes = [];
-    try { bytes = Array.from(crypto.getRandomValues(new Uint8Array(8))); } catch { /* the default topic name still works */ }
-    const snippet = el('pre', 'al-ntfy-code mono', ntfySnippet({ server: n.server, topic: n.topic || suggestTopic(bytes) }));
-    const copy = button('Copy', 'ghost', async () => {
-      try { await navigator.clipboard.writeText(snippet.textContent); notify('Copied'); } catch { notify('Select the text and copy it'); }
-    });
-    box.append(snippet, copy);
-    box.append(el('p', 'muted small', 'Self-hosting ntfy, or using a server that needs a login? Set server to its address and add token (or username and password). More in docs/ALARMS.md.'));
+    box.append(ntfyForm());
+    box.append(el('p', 'muted small', 'A public server needs no account. Self-hosting, or a server that needs a login? Use the token, or the username and password. More in docs/ALARMS.md.'));
     return box;
+  }
+
+  function ntfyForm() {
+    const doc = ntfy || {};
+    const f = el('form', 'cust-form al-ntfy-form');
+    f.autocomplete = 'off';
+    const input = (label, value, type = 'text', placeholder) => {
+      const i = el('input');
+      i.type = type;
+      i.value = value || '';
+      i.placeholder = placeholder === undefined ? label : placeholder;
+      i.autocomplete = type === 'password' ? 'new-password' : 'off';
+      i.spellcheck = false;
+      i.setAttribute('aria-label', label);
+      return i;
+    };
+    const pre = ntfyFields(doc, suggestedTopic());
+    const server = input('ntfy server', pre.server);
+    const topic = input('Topic', pre.topic);
+    const username = input('Username (only if your server needs one)', pre.username);
+    const token = input('Access token', '', 'password', pre.tokenPlaceholder);
+    const password = input('Password', '', 'password', pre.passwordPlaceholder);
+    const r1 = el('div', 'cf-row');
+    r1.append(server, topic);
+    const r2 = el('div', 'cf-row');
+    r2.append(token, username, password);
+    const save = button(doc.configured ? 'Save changes' : 'Save and send a test', 'primary');
+    save.type = 'submit';
+    const acts = el('div', 'cf-row');
+    acts.append(save);
+    if (doc.configured) {
+      acts.append(button('Send a test notification', 'ghost', testNtfy));
+      acts.append(button(doc.enabled ? 'Switch off' : 'Switch on', 'ghost', () => setNtfyEnabled(!doc.enabled)));
+      acts.append(button('Forget server', 'ghost', forgetNtfy));
+    }
+    const err = el('p', 'err small');
+    err.setAttribute('role', 'status');
+    f.append(r1, r2, acts, err);
+    f.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const body = ntfySaveBody({ server: server.value, topic: topic.value, username: username.value,
+        token: token.value, password: password.value, enabled: true }, doc);
+      err.textContent = '';
+      save.disabled = true;
+      save.textContent = 'Sending a test…';
+      try {
+        ntfy = await mgmt.saveNtfy(body);
+        notify('ntfy saved; a test notification was sent');
+        paintPush();
+      } catch (e) {
+        err.textContent = e.message;
+        save.disabled = false;
+        save.textContent = doc.configured ? 'Save changes' : 'Save and send a test';
+      }
+    });
+    return f;
+  }
+
+  async function testNtfy() {
+    try {
+      await mgmt.testNtfy();
+      notify('Test notification published to ntfy');
+    } catch (e) { notify(e.message); }
+  }
+
+  async function setNtfyEnabled(on) {
+    try {
+      ntfy = await mgmt.setNtfyEnabled(on);
+      notify(on ? 'ntfy delivery is on' : 'ntfy delivery is off; the server is kept');
+      paintPush();
+    } catch (e) { notify(e.message); }
+  }
+
+  async function forgetNtfy() {
+    const ok = await confirmDialog({ title: 'Forget this ntfy server?', body: 'The server, topic and any token are removed. Alarms stop being published to it until you set one again.', confirm: 'Forget', danger: true });
+    if (!ok) return;
+    try {
+      ntfy = await mgmt.forgetNtfy();
+      notify('ntfy server forgotten');
+      paintPush();
+    } catch (e) { notify(e.message); }
   }
 
   function paintPush() {
     paintPushBody();
-    if (push && !pushError) pushWrap.append(ntfyGuide());
+    if (!pushError) pushWrap.append(ntfyGuide());
   }
 
   function paintPushBody() {
@@ -640,7 +742,7 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
     }
     if (!push) return;
     if (!push.enabled) {
-      pushWrap.append(el('p', 'al-push-line muted', 'Web Push is turned off in shepherd.toml ([alarms.push]). ntfy, when configured, still delivers.'));
+      pushWrap.append(el('p', 'al-push-line muted', 'Web Push is turned off in shepherd.toml ([alarms.push]). ntfy, set up below, still delivers.'));
       return;
     }
     const support = pushSupport(env());

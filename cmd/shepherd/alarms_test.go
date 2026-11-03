@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"shepherd/internal/secrets"
 	"testing"
 	"time"
 
@@ -24,7 +25,7 @@ func TestStartAlarmsBuildsAWorkingEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng, _, stop, err := startAlarms(context.Background(), cfg, pool)
+	eng, _, _, stop, err := startAlarms(context.Background(), cfg, pool, memSecrets(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +63,7 @@ func TestStartAlarmsFailsIfTheDirCannotBeCreated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := startAlarms(context.Background(), cfg, pool); err == nil {
+	if _, _, _, _, err := startAlarms(context.Background(), cfg, pool, memSecrets(t)); err == nil {
 		t.Error("expected an error when the alarms directory cannot be created")
 	}
 }
@@ -81,17 +82,32 @@ func TestStartAlarmsFailsOnACorruptDeliveriesFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := startAlarms(context.Background(), cfg, pool); err == nil {
+	if _, _, _, _, err := startAlarms(context.Background(), cfg, pool, memSecrets(t)); err == nil {
 		t.Error("expected an error when the router's saved delivery log is corrupt")
 	}
 }
 
-func TestNtfyPublisherForRespectsEnabled(t *testing.T) {
-	if ntfyPublisherFor(config.AlarmsNtfy{Enabled: false, Server: "https://ntfy.example.com", Topic: "t"}) != nil {
-		t.Error("disabled ntfy must yield no publisher")
+func TestNtfyPublisherForFollowsTheStore(t *testing.T) {
+	store := memSecrets(t)
+	if ntfyPublisherFor(store) != nil {
+		t.Error("no stored server must yield no publisher")
 	}
-	if ntfyPublisherFor(config.AlarmsNtfy{Enabled: true, Server: "https://ntfy.example.com", Topic: "t"}) == nil {
-		t.Error("enabled ntfy must yield a publisher")
+	n := secrets.Ntfy{Server: "https://ntfy.example.com", Topic: "shepherd-alarms", Token: "tk"}
+	if _, err := store.SetNtfy(n); err != nil {
+		t.Fatal(err)
+	}
+	// Stored but switched off: kept, not delivered.
+	if ntfyPublisherFor(store) != nil {
+		t.Error("a switched-off server must yield no publisher")
+	}
+	if _, err := store.SetNtfyEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if ntfyPublisherFor(store) == nil {
+		t.Error("a switched-on server must yield a publisher")
+	}
+	if c := ntfyClient(n); c.Server != n.Server || c.Token != "tk" {
+		t.Errorf("the publishing client does not carry the stored credentials: %+v", c)
 	}
 }
 
@@ -206,4 +222,15 @@ func TestWireUpstreamAlarmsNoDownAlarmWhileAnotherUpstreamIsHealthy(t *testing.T
 	if page.Total != 0 {
 		t.Fatalf("must not raise upstream-down while another upstream is healthy, got %d", page.Total)
 	}
+}
+
+// memSecrets is an empty, memory-only secrets store: the tests that start
+// the alarm engine care about the engine, not about what is stored.
+func memSecrets(t *testing.T) *secrets.Store {
+	t.Helper()
+	store, err := secrets.Open("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
 }

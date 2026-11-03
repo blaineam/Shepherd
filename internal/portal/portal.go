@@ -176,9 +176,12 @@ type Deps struct {
 	// the separate, less frequent bufferbloat check.
 	NethealthBufferbloatEnabled bool
 
-	// Ntfy describes the ntfy delivery channel for the Alarms screen; the
-	// zero value is "off".
-	Ntfy NtfyStatus
+	// VerifyNtfy publishes one notification to an ntfy server, which is
+	// both the check before a server is saved and the "send a test
+	// notification" action: ntfy has no way to ask whether a token would
+	// work without publishing something. Nil in a build that cannot
+	// publish, and the API then says so.
+	VerifyNtfy func(context.Context, secrets.Ntfy) error
 
 	// Selftest is the built-in DNS self-test (internal/selftest,
 	// docs/DNS-QA.md). Nil means it is off: the endpoint says so.
@@ -683,6 +686,11 @@ func (s *Server) routes() {
 	h("POST /api/update/apply", s.applyUpdate)
 	h("GET /api/threats", s.getThreats)
 	h("POST /api/threats/refresh", s.refreshThreats)
+	h("GET /api/alarms/ntfy", s.getNtfy)
+	h("PUT /api/alarms/ntfy", s.putNtfy)
+	h("PATCH /api/alarms/ntfy", s.patchNtfy)
+	h("POST /api/alarms/ntfy/test", s.testNtfy)
+	h("DELETE /api/alarms/ntfy", s.deleteNtfy)
 	h("GET /api/alarms/push", s.getPush)
 	h("POST /api/alarms/push/subscribe", s.subscribePush)
 	h("POST /api/alarms/push/test", s.testPush)

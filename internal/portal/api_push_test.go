@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"shepherd/internal/secrets"
 	"strings"
 	"testing"
 
@@ -125,7 +126,10 @@ func TestPushSubscribeRenameRemoveAndTest(t *testing.T) {
 
 func TestPushStatusReportsNtfyWithoutCredentials(t *testing.T) {
 	h := newHarness(t)
-	h.srv.Ntfy = NtfyStatus{Enabled: true, Server: "https://ntfy.example.com", Topic: "shepherd-x"}
+	// The status follows the stored server, which is where ntfy now lives.
+	if _, err := h.srv.Secrets.SetNtfy(secrets.Ntfy{Server: "https://ntfy.example.com", Topic: "shepherd-x", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
 	n := h.ok("GET", "/api/alarms/push", "", 200)["ntfy"].(map[string]any)
 	if n["enabled"] != true || n["server"] != "https://ntfy.example.com" || n["topic"] != "shepherd-x" || len(n) != 3 {
 		t.Fatalf("ntfy = %v", n)
