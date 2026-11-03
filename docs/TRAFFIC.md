@@ -94,6 +94,14 @@ source and its figures are **estimates**: traffic between two polls is interpola
 that starts and ends between them is missed entirely. The portal never shows those numbers as
 measured.
 
+**How far off, measured.** On the maintainer's network, downloading about 300 MB in roughly a
+minute was recorded as 45 MB -- a sixth of it. Thirty seconds is a long time next to a file
+transfer, and both the sampling and eero's own reporting lag. So the per-device totals from this
+source are a **floor, not a measurement**: they are good for "which devices are busy, and roughly
+in what proportion", and poor for "how much has this device used this month". A shorter interval
+narrows the gap at the cost of more requests to eero. A `KindCounters` source does not have this
+problem at all, which is the argument for one.
+
 **Connecting one.** On the Bandwidth screen, under "Read from your router", enter the eero
 account's email or phone, type the code eero sends, and pick the network. The session token is
 kept in `secrets.json` (`internal/secrets`, mode 0600, the same protection as every other stored

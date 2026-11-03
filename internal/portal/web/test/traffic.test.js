@@ -207,7 +207,7 @@ test('measurementNote never lets an estimate pass for a measurement', () => {
   // A rate-sampling router says so plainly.
   const est = measurementNote({ measuring: false, router: reading });
   assert.match(est, /rate at each moment/);
-  assert.match(est, /burst between two readings is missed/);
+  assert.match(est, /floor, not a measurement/);
   // A counter-reading router does not carry that caveat.
   const counted = measurementNote({
     measuring: false,

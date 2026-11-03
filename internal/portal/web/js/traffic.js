@@ -274,7 +274,7 @@ export function measurementNote(status) {
   const est = (s.router.status || {}).estimated;
   const src = s.router.source || 'your router';
   return est
-    ? 'These figures are read from ' + src + ', which reports only the rate at each moment. Shepherd samples it and fills in the time between, so totals are close but not exact, and a short burst between two readings is missed entirely.'
+    ? 'These figures are read from ' + src + ', which reports only the rate at each moment. Shepherd samples that and fills in the time between, so they show which devices are busy rather than how much they moved: anything shorter than the gap between readings is largely missed, and a few hundred megabytes downloaded in under a minute can be counted as a fraction of that. Treat the totals as a floor, not a measurement.'
     : 'These figures are byte counts read from ' + src + '.';
 }
 

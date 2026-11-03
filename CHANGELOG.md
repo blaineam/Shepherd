@@ -34,7 +34,8 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   See [docs/TRAFFIC.md](docs/TRAFFIC.md). The "Right now" card and the per-device rows are fed by
   the reader too while Watch mode is not measuring, so the live view is not left at zero; the
   rolling chart's caption says how often the router is actually read, since the line steps rather
-  than curves.
+  than curves. Measured against a known transfer, eero's sampling recorded about a sixth of it, so
+  the screen and the docs call these totals a floor rather than a measurement.
 - **`dns.filter_aaaa`** (`"auto"` by default, or `"on"` / `"off"`). On a network whose devices have no
   IPv6 route to the internet (only private `fd..` or link-local addresses) every AAAA answer is an
   unreachable address, and a device that tries it first or handles the failure badly reports a network
