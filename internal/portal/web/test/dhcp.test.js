@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizeMAC, isMAC, parseIPv4, inRange, inSubnet, validateReservation,
-  validateRange, isPrivateV4, suggestRange, rangeSummary, conflictTone, reservedLabel,
+  validateRange, isPrivateV4, suggestRange, rangeSummary, conflictTone, reservedLabel, alphaNote,
   modeLabel, stateSummary, consequences, sortLeases, filterLeases, leaseBody, originLabel,
 } from '../js/dhcp.js';
 
@@ -272,4 +272,29 @@ test('reservedLabel words the per-device switch for every state', () => {
   assert.match(reservedLabel({ on: true }).text, /name only/);
   assert.match(reservedLabel({ on: false, candidate: '192.0.2.101' }).text, /Pin this device to 192\.0\.2\.101/);
   assert.match(reservedLabel({ on: false }).text, /has not seen one/);
+});
+
+// Alpha is a promise about honesty, so the note has to carry the specifics
+// rather than the word. If somebody reads this and decides to wait, it has
+// done its job.
+test('alphaNote says what alpha actually means, without softening it', () => {
+  const lines = alphaNote();
+  assert.ok(lines.length >= 3, 'it needs room for the specifics');
+  const all = lines.join('\n');
+  // Never run against real hardware, and which parts specifically.
+  assert.match(all, /No real device has ever taken an address/i);
+  assert.match(all, /loopback/i);
+  assert.match(all, /port 67/);
+  assert.match(all, /broadcast/i);
+  // What going wrong costs.
+  assert.match(all, /off the internet/i);
+  assert.match(all, /router's own DHCP back on/i);
+  // And where to start if you want it anyway.
+  assert.match(all, /docs\/DHCP\.md/);
+  assert.match(all, /Watching/);
+  assert.match(all, /nothing turns it on for you/i);
+  // No marketing: nothing here should read as reassurance.
+  for (const word of ['production ready', 'stable', 'battle-tested', 'safe to use']) {
+    assert.ok(!all.toLowerCase().includes(word), 'alpha must not be softened with "' + word + '"');
+  }
 });

@@ -537,7 +537,7 @@ func TestEveryDeviceCarriesItsReservationState(t *testing.T) {
 }
 
 func TestADeviceWithNoHardwareAddressIsOfferedNoReservedSwitch(t *testing.T) {
-	h, _ := dhcpHarness(t, dhcp.ModeOff, false)
+	h, _ := dhcpHarness(t, dhcp.ModeObserve, false)
 	// A device known only by address -- a container, or one seen only
 	// through DNS -- cannot be reserved: the reservation is keyed on
 	// hardware, and offering a switch that cannot work is worse than none.
@@ -557,5 +557,35 @@ func TestWithoutDHCPModeTheDevicesScreenShowsNoReservedSwitch(t *testing.T) {
 	one := h.ok("GET", "/api/devices/"+id, "", 200)
 	if _, ok := one["reserved"]; ok {
 		t.Error("with no DHCP mode there is nothing true to say about a reservation")
+	}
+}
+
+// DHCP mode is alpha, so it is something somebody goes looking for. With the
+// mode off, the Devices screen offers no reserved switch even though the
+// service is wired in and the reservation would store perfectly well: a
+// switch for an alpha feature does not belong on a screen somebody was
+// already on. The DHCP screen itself stays fully usable, because getting
+// there is the going and looking.
+func TestWithTheModeOffTheDevicesScreenStillOffersNothing(t *testing.T) {
+	h, srv := dhcpHarness(t, dhcp.ModeOff, false)
+	id := h.addDevice("02:00:5e:01:02:03", "192.0.2.105", "")
+	one := h.ok("GET", "/api/devices/"+id, "", 200)
+	if _, ok := one["reserved"]; ok {
+		t.Errorf("reserved = %+v, want the field left off while the mode is off", one["reserved"])
+	}
+	list := h.ok("GET", "/api/devices", "", 200)
+	for _, d := range list["devices"].([]any) {
+		if _, ok := d.(map[string]any)["reserved"]; ok {
+			t.Error("and the list should not carry it either")
+		}
+	}
+	// But the DHCP screen can still store one, which is the whole point of
+	// being able to prepare the arrangement before switching it on.
+	if err := srv.SetReservation(dhcp.Reservation{MAC: "02:00:5e:01:02:03", IP: netip.MustParseAddr("192.0.2.50")}); err != nil {
+		t.Errorf("SetReservation with the mode off: %v", err)
+	}
+	m := h.ok("GET", "/api/dhcp", "", 200)
+	if len(m["reservations"].([]any)) != 1 {
+		t.Errorf("reservations = %+v", m["reservations"])
 	}
 }

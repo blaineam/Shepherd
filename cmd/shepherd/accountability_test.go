@@ -217,7 +217,7 @@ func TestARelaySavedInThePortalLaterTakesEffectWithoutARestart(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	changed := secretsChanged(sec, relay, &certKicker{})
+	changed := secretsChanged(sec, relay, &certKicker{}, nil)
 
 	// What the portal does on PUT /api/accountability/smtp: save, then notify.
 	if _, err := sec.SetSMTP(testRelay()); err != nil {
@@ -244,6 +244,6 @@ func TestARelaySavedInThePortalLaterTakesEffectWithoutARestart(t *testing.T) {
 	if relay.Configured() || engine.OnAccessWanted() {
 		t.Error("a relay cleared in the portal must stop at once")
 	}
-	changed("unknown kind")                         // ignored
-	secretsChanged(sec, nil, &certKicker{})("smtp") // accountability off: stored, not applied, no panic
+	changed("unknown kind")                              // ignored
+	secretsChanged(sec, nil, &certKicker{}, nil)("smtp") // accountability off: stored, not applied, no panic
 }
