@@ -49,6 +49,10 @@ type deviceJSON struct {
 	// from the engine. Omitted entirely when Watch mode is not wired in,
 	// so the portal can tell "no Watch mode" from "Watch mode says this".
 	WatchState *watch.DeviceStatus `json:"watch_state,omitempty"`
+	// Route is the device's own DHCP-mode routing switch: "auto" (the
+	// mode decides, which routes it while routing is on), "on" or "off".
+	// See docs/DHCP.md.
+	Route string `json:"route"`
 }
 
 func toDevice(d devices.Device) deviceJSON {
@@ -68,7 +72,7 @@ func toDevice(d devices.Device) deviceJSON {
 		Vendor: d.Vendor, Type: typ, TypeReason: d.TypeReason, TypeAuto: d.TypeAuto, TypeConfidence: d.TypeConfidence,
 		MACs: orEmpty(d.MACs), IPs: orEmpty(d.IPs), FirstSeen: d.FirstSeen, LastSeen: d.LastSeen,
 		Groups: orEmpty(d.Groups), Tags: orEmpty(d.Tags), Excluded: d.Excluded, Wandering: wandering, WanderingUntil: until, Notes: d.Notes,
-		Watch: d.Watch.String(),
+		Watch: d.Watch.String(), Route: d.Route.String(),
 	}
 }
 
@@ -175,6 +179,7 @@ func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
 		Wandering        *bool     `json:"wandering"`
 		WanderingMinutes int       `json:"wandering_minutes"`
 		Watch            *string   `json:"watch"`
+		Route            *string   `json:"route"`
 	}
 	if !decode(w, r, &b, smallBody) {
 		return
@@ -209,6 +214,15 @@ func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
 		}
 		watchMode = m
 	}
+	var routeMode devices.RouteMode
+	if b.Route != nil {
+		m, ok := devices.ParseRouteMode(*b.Route)
+		if !ok {
+			bad(w, `route must be "auto", "on" or "off"`)
+			return
+		}
+		routeMode = m
+	}
 	var err error
 	if b.Alias != nil {
 		err = s.Devices.Rename(id, *b.Alias)
@@ -230,6 +244,9 @@ func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil && b.Watch != nil {
 		err = s.Devices.SetWatch(id, watchMode)
+	}
+	if err == nil && b.Route != nil {
+		err = s.Devices.SetRoute(id, routeMode)
 	}
 	if errors.Is(err, devices.ErrNotFound) { // deleted by someone else meanwhile
 		notFound(w, "unknown device")
@@ -286,6 +303,7 @@ func (s *Server) bulkDevices(w http.ResponseWriter, r *http.Request) {
 		Wandering        *bool    `json:"wandering"`
 		WanderingMinutes int      `json:"wandering_minutes"`
 		Watch            *string  `json:"watch"`
+		Route            *string  `json:"route"`
 	}
 	if !decode(w, r, &b, smallBody) {
 		return
@@ -338,6 +356,17 @@ func (s *Server) bulkDevices(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		res = s.Devices.BulkSetWatch(b.IDs, m)
+	case "set_route":
+		if b.Route == nil {
+			bad(w, "route is required")
+			return
+		}
+		m, ok := devices.ParseRouteMode(*b.Route)
+		if !ok {
+			bad(w, `route must be "auto", "on" or "off"`)
+			return
+		}
+		res = s.Devices.BulkSetRoute(b.IDs, m)
 	case "set_tags":
 		if len(b.AddTags)+len(b.RemoveTags) == 0 {
 			bad(w, "give add_tags or remove_tags")
