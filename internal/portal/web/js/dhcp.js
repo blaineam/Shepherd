@@ -1,12 +1,14 @@
 // DHCP mode's wording and validation. Pure: no DOM, no network.
 //
-// The server validates every reservation again (internal/dhcp), and it is the
+// The server validates everything again (internal/dhcp), and it is the
 // authority. This is here so a typo is explained while someone is typing it
-// rather than after a round trip -- and because the rule that matters most, a
-// reserved address inside the dynamic pool, is the one that would otherwise
-// hand one address to two devices.
+// rather than after a round trip.
 
 const MAC_RE = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/;
+
+// The three ranges a LAN may use, for the message somebody reads when they
+// have typed a public one by mistake. RFC 1918's own prefixes.
+const RFC1918 = '10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16'; // leakcheck:allow
 
 // normalizeMAC mirrors dhcp.NormalizeMAC: any spelling of six hex pairs
 // becomes lowercase, colon-separated. Empty means it is not a MAC address.
@@ -81,17 +83,122 @@ export function validateReservation({ mac, ip, hostname, note }, settings = {}) 
   if (settings.subnet && !inSubnet(addr, settings.subnet)) {
     return { ok: false, field: 'ip', error: addr + ' is not inside the LAN ' + settings.subnet };
   }
-  if (settings.pool_start && inRange(addr, settings.pool_start, settings.pool_end)) {
-    return {
-      ok: false,
-      field: 'ip',
-      error: addr + ' is inside the pool Shepherd hands out from (' + settings.pool_start + '–' + settings.pool_end
-        + '), so it could be given to two devices. Pick an address outside the pool.',
-    };
-  }
   if (settings.server_ip === addr) return { ok: false, field: 'ip', error: addr + ' is Shepherd\'s own address' };
   if (settings.gateway === addr) return { ok: false, field: 'ip', error: addr + ' is the router\'s own address' };
-  return { ok: true, value: { mac: m, ip: addr, hostname: name, note: n } };
+  const out = { ok: true, value: { mac: m, ip: addr, hostname: name, note: n } };
+  // An address inside the dynamic pool is allowed and is the ordinary case:
+  // pinning a device to the address it already holds. The allocator takes a
+  // reserved address out of the pool walk for everyone else, so it can only
+  // go to the device it names. Worth saying, not worth refusing.
+  if (settings.pool_start && inRange(addr, settings.pool_start, settings.pool_end)) {
+    out.note = addr + ' is inside the pool Shepherd hands out from (' + settings.pool_start + '–' + settings.pool_end
+      + '). That is fine — it is simply held back from everyone else — but shrinking the pool past it is tidier.';
+  }
+  return out;
+}
+
+// validateRange checks a chosen LAN range before it is sent. The server
+// checks it again, and then checks it against the network as it is, which is
+// the part that cannot be done here.
+export function validateRange({ subnet, server_ip: serverIP, gateway, pool_start: poolStart, pool_end: poolEnd }) {
+  const m = /^(\d+\.\d+\.\d+\.\d+)\/(\d{1,2})$/.exec(String(subnet || '').trim());
+  if (!m || !parseIPv4(m[1])) return { ok: false, field: 'subnet', error: 'Enter the range in CIDR form, like 192.0.2.0/24' };
+  const bits = Number(m[2]);
+  if (bits < 16 || bits > 30) return { ok: false, field: 'subnet', error: 'The prefix must be between /16 and /30' };
+  const cidr = m[1] + '/' + bits;
+  if (!isPrivateV4(m[1])) {
+    return { ok: false, field: 'subnet', error: 'A LAN uses a private range: ' + RFC1918 };
+  }
+  const fields = [
+    ['server_ip', serverIP, 'Shepherd\'s own address in the new range'],
+    ['gateway', gateway, 'the router\'s address in the new range'],
+    ['pool_start', poolStart, 'the first address to hand out'],
+    ['pool_end', poolEnd, 'the last address to hand out'],
+  ];
+  const value = { subnet: cidr };
+  for (const [key, raw, label] of fields) {
+    const v = String(raw || '').trim();
+    if (!v) return { ok: false, field: key, error: 'Enter ' + label };
+    if (!parseIPv4(v)) return { ok: false, field: key, error: label[0].toUpperCase() + label.slice(1) + ' must be an IPv4 address' };
+    if (!inSubnet(v, cidr)) return { ok: false, field: key, error: v + ' is not inside ' + cidr };
+    value[key] = v;
+  }
+  if (value.server_ip === value.gateway) {
+    return { ok: false, field: 'gateway', error: 'Shepherd and the router cannot share one address' };
+  }
+  if (!inRange(value.pool_end, value.pool_start, value.pool_end) || !inRange(value.pool_start, value.pool_start, value.pool_end)) {
+    return { ok: false, field: 'pool_end', error: 'The pool must start at or below where it ends' };
+  }
+  for (const [key, label] of [['server_ip', 'Shepherd\'s own address'], ['gateway', 'the router\'s address']]) {
+    if (inRange(value[key], value.pool_start, value.pool_end)) {
+      return { ok: false, field: key, error: label[0].toUpperCase() + label.slice(1) + ' is inside the pool, so it could be handed to a device' };
+    }
+  }
+  return { ok: true, value };
+}
+
+// isPrivateV4 mirrors netip.Addr.IsPrivate: a LAN is one of the three
+// ranges RFC 1918 set aside, and nothing else.
+export function isPrivateV4(ip) {
+  const o = parseIPv4(ip);
+  if (!o) return false;
+  if (o[0] === 10) return true;
+  if (o[0] === 172 && o[1] >= 16 && o[1] <= 31) return true;
+  return o[0] === 192 && o[1] === 168;
+}
+
+// suggestRange fills a range form from a chosen prefix, following the
+// convention nearly every home router uses: the router on .1, this host just
+// above it, and the pool well clear of both.
+export function suggestRange(cidr, current = {}) {
+  const m = /^(\d+)\.(\d+)\.(\d+)\.\d+\/(\d{1,2})$/.exec(String(cidr || '').trim());
+  if (!m) return null;
+  const bits = Number(m[4]);
+  if (bits !== 24) return null; // the only shape this convention fits
+  const base = m[1] + '.' + m[2] + '.' + m[3] + '.';
+  return {
+    subnet: base + '0/24',
+    gateway: base + '1',
+    server_ip: current.server_ip && inSubnet(current.server_ip, base + '0/24') ? current.server_ip : base + '2',
+    pool_start: base + '100',
+    pool_end: base + '200',
+  };
+}
+
+// conflictTone maps a conflict's severity to the screen's tone classes.
+export function conflictTone(severity) { return severity === 'blocking' ? 'bad' : 'warn'; }
+
+// rangeSummary is the one line above the conflicts: what is in force, and
+// whether anything is stopping the chosen range.
+export function rangeSummary(rangeView, conflicts) {
+  const r = rangeView || {};
+  const list = conflicts || [];
+  if (!r.chosen) {
+    const cur = (r.current && r.current.subnet) || 'the interface\'s own range';
+    return { tone: 'muted', text: 'Using ' + cur + ', which comes from shepherd.toml and this host\'s interface. Choose a range below to use a different one.' };
+  }
+  const blocking = list.filter((c) => c.severity === 'blocking');
+  if (blocking.length) {
+    return {
+      tone: 'bad',
+      text: 'Chosen: ' + r.subnet + '. Shepherd will not serve it yet — ' + blocking.length
+        + (blocking.length === 1 ? ' thing has' : ' things have') + ' to change first.',
+    };
+  }
+  if (list.length) return { tone: 'warn', text: 'Chosen: ' + r.subnet + '. It fits, with notes.' };
+  return { tone: 'good', text: 'Chosen: ' + r.subnet + '. It fits the network as it is.' };
+}
+
+// reservedLabel words the per-device reserved switch.
+export function reservedLabel(res) {
+  if (!res) return null;
+  if (res.on) {
+    return res.ip
+      ? { on: true, text: 'Pinned to ' + res.ip + (res.in_pool ? ', held back from the pool for this device' : '') }
+      : { on: true, text: 'Reserved by name only' };
+  }
+  if (res.candidate) return { on: false, text: 'Pin this device to ' + res.candidate + ', so it keeps that address' };
+  return { on: false, text: 'No address to pin yet: Shepherd has not seen one for this device' };
 }
 
 // modeLabel is how each mode reads on the screen.

@@ -29,7 +29,7 @@ const confirmPhrase = "serve dhcp"
 
 // dhcpJSON is the whole screen. A nil service answers the same shape with
 // available false, so the screen says why rather than failing.
-func dhcpJSON(s dhcp.Status, set dhcp.SettingsView, leases []dhcp.LeaseView, res []dhcp.Reservation) map[string]any {
+func dhcpJSON(s dhcp.Status, set dhcp.SettingsView, rng dhcp.RangeView, conflicts []dhcp.Conflict, leases []dhcp.LeaseView, res []dhcp.Reservation) map[string]any {
 	if leases == nil {
 		leases = []dhcp.LeaseView{}
 	}
@@ -39,8 +39,12 @@ func dhcpJSON(s dhcp.Status, set dhcp.SettingsView, leases []dhcp.LeaseView, res
 	if s.Peers == nil {
 		s.Peers = []dhcp.Peer{}
 	}
+	if conflicts == nil {
+		conflicts = []dhcp.Conflict{}
+	}
 	return map[string]any{
 		"available": true, "status": s, "settings": set,
+		"range": rng, "conflicts": conflicts,
 		"leases": leases, "reservations": res,
 		"confirm_phrase": confirmPhrase,
 	}
@@ -54,11 +58,12 @@ func (s *Server) getDHCP(w http.ResponseWriter, r *http.Request) {
 			"status": dhcp.Status{Mode: string(dhcp.ModeOff),
 				Blocked: "DHCP mode is not configured", Peers: []dhcp.Peer{}},
 			"settings": dhcp.SettingsView{}, "leases": []dhcp.LeaseView{},
+			"range": dhcp.RangeView{}, "conflicts": []dhcp.Conflict{},
 			"reservations": []dhcp.Reservation{}, "confirm_phrase": confirmPhrase,
 		})
 		return
 	}
-	writeJSON(w, dhcpJSON(s.DHCP.Status(), s.DHCP.SettingsView(), s.DHCP.Leases(), s.DHCP.Reservations()))
+	writeJSON(w, dhcpJSON(s.DHCP.Status(), s.DHCP.SettingsView(), s.DHCP.RangeView(), s.DHCP.Conflicts(), s.DHCP.Leases(), s.DHCP.Reservations()))
 }
 
 func (s *Server) dhcpOrNotFound(w http.ResponseWriter) bool {
@@ -179,6 +184,71 @@ func (s *Server) putDHCPReservation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		serverFault(w, "the reservation could not be saved")
+		return
+	}
+	s.getDHCP(w, r)
+}
+
+// putDHCPRange stores the range the operator wants the LAN to use. An empty
+// subnet clears it, putting the configuration file and the interface back in
+// charge.
+//
+// A range that does not fit the network yet is stored anyway, and the
+// conflicts come back in the same answer. That is deliberate: the whole
+// point is to write down where you are going and be told what has to change
+// on the router first, and refusing to store it would make that impossible.
+// Serving stops while a blocking conflict stands.
+func (s *Server) putDHCPRange(w http.ResponseWriter, r *http.Request) {
+	if !s.dhcpOrNotFound(w) {
+		return
+	}
+	var b struct {
+		Subnet    string `json:"subnet"`
+		ServerIP  string `json:"server_ip"`
+		Gateway   string `json:"gateway"`
+		PoolStart string `json:"pool_start"`
+		PoolEnd   string `json:"pool_end"`
+	}
+	if !decode(w, r, &b, smallBody) {
+		return
+	}
+	var rng dhcp.Range
+	if strings.TrimSpace(b.Subnet) != "" {
+		p, err := netip.ParsePrefix(strings.TrimSpace(b.Subnet))
+		if err != nil {
+			bad(w, "the range must be in CIDR form, like 192.0.2.0/24")
+			return
+		}
+		rng.Subnet = p
+		for _, f := range []struct {
+			name string
+			val  string
+			into *netip.Addr
+		}{
+			{"Shepherd's own address", b.ServerIP, &rng.ServerIP},
+			{"the router's address", b.Gateway, &rng.Gateway},
+			{"the pool start", b.PoolStart, &rng.Pool.Start},
+			{"the pool end", b.PoolEnd, &rng.Pool.End},
+		} {
+			v := strings.TrimSpace(f.val)
+			if v == "" {
+				bad(w, f.name+" is required")
+				return
+			}
+			a, err := netip.ParseAddr(v)
+			if err != nil {
+				bad(w, f.name+" must be an IPv4 address")
+				return
+			}
+			*f.into = a
+		}
+	}
+	if err := s.DHCP.SetRange(r.Context(), rng); err != nil {
+		if errors.Is(err, dhcp.ErrRange) {
+			bad(w, strings.TrimPrefix(err.Error(), "dhcp: range: "))
+			return
+		}
+		serverFault(w, "the range could not be saved")
 		return
 	}
 	s.getDHCP(w, r)

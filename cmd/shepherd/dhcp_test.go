@@ -335,9 +335,13 @@ func TestTheModeBeingOffStillCarriesTheAddressingForTheScreen(t *testing.T) {
 	if set.Subnet != "192.0.2.0/24" || set.PoolStart != "192.0.2.100" || set.PoolSize != 11 {
 		t.Fatalf("SettingsView = %+v", set)
 	}
-	// And the pool rule is enforced against it.
-	if err := srv.SetReservation(dhcp.Reservation{MAC: "02:00:5e:01:02:03", IP: netip.MustParseAddr("192.0.2.105")}); err == nil {
-		t.Error("an address inside the pool must be refused with the mode off too")
+	// And a reservation is checked against it: an address outside the LAN
+	// is refused, while one inside the pool is the ordinary case.
+	if err := srv.SetReservation(dhcp.Reservation{MAC: "02:00:5e:01:02:03", IP: netip.MustParseAddr("198.51.100.5")}); err == nil {
+		t.Error("an address outside the LAN must be refused with the mode off too")
+	}
+	if err := srv.SetReservation(dhcp.Reservation{MAC: "02:00:5e:01:02:03", IP: netip.MustParseAddr("192.0.2.105")}); err != nil {
+		t.Errorf("pinning a device to the address it already holds is the ordinary case: %v", err)
 	}
 }
 
@@ -369,5 +373,90 @@ func TestAnInterfaceThatCannotBeReadStopsAModeThatIsOn(t *testing.T) {
 	}
 	if srv != nil {
 		t.Error("but a mode that is on cannot run without the interface")
+	}
+}
+
+// The collision check is only as good as its picture of the network, and
+// the registry is where that picture already lives.
+func TestObserveNetworkReadsTheHostAndTheRegistry(t *testing.T) {
+	host := goodHost()
+	reg := devices.New(devices.Options{NodeID: "test", Vendor: func(string) string { return "" }})
+	reg.Observe(devices.Observation{Source: devices.SourceNeighbor, MAC: "02:00:5e:01:02:03", IP: "192.0.2.31", Hostname: "camera"})
+	reg.Observe(devices.Observation{Source: devices.SourceNeighbor, MAC: "02:00:5e:01:02:04", IP: "192.0.2.47"})
+
+	o := observeNetwork(host, "eth0", reg)
+	if len(o.HostAddrs) != 1 || o.HostAddrs[0].String() != "192.0.2.20" {
+		t.Errorf("HostAddrs = %v", o.HostAddrs)
+	}
+	if len(o.HostNets) != 1 {
+		t.Errorf("HostNets = %v", o.HostNets)
+	}
+	if o.Gateway.String() != "192.0.2.1" {
+		t.Errorf("Gateway = %v", o.Gateway)
+	}
+	if len(o.Holders) != 2 {
+		t.Fatalf("Holders = %+v, want both devices", o.Holders)
+	}
+	var named bool
+	for _, h := range o.Holders {
+		if h.MAC == "" {
+			t.Errorf("a holder should carry the hardware address: %+v", h)
+		}
+		if h.Name == "" {
+			t.Errorf("and something to call it: %+v", h)
+		}
+		if h.Name == "camera" {
+			named = true
+		}
+	}
+	if !named {
+		t.Error("a device's own name should reach the conflict wording")
+	}
+
+	// A host that cannot be read gives an empty picture rather than a
+	// wrong one, and the registry half still works.
+	blind := observeNetwork(fakeHost{routeErr: errUnreadable, addrErr: errUnreadable}, "eth0", reg)
+	if len(blind.HostAddrs) != 0 || blind.Gateway.IsValid() {
+		t.Errorf("a host that cannot be read reports nothing about itself: %+v", blind)
+	}
+	if len(blind.Holders) != 2 {
+		t.Error("but the registry is still a picture of the network")
+	}
+
+	// And no registry at all is not a crash.
+	if got := observeNetwork(host, "eth0", nil); len(got.Holders) != 0 {
+		t.Errorf("Holders = %+v", got.Holders)
+	}
+}
+
+var errUnreadable = errors.New("cannot be read")
+
+func TestStartDHCPObservesTheNetworkForTheRangeCheck(t *testing.T) {
+	withHost(t, goodHost())
+	cfg := dhcpConfig(t, "off")
+	reg := devices.New(devices.Options{NodeID: "test", Vendor: func(string) string { return "" }})
+	reg.Observe(devices.Observation{Source: devices.SourceNeighbor, MAC: "02:00:5e:01:02:03", IP: "192.0.2.105"})
+	srv, err := startDHCP(context.Background(), cfg, reg, nil)
+	if err != nil {
+		t.Fatalf("startDHCP: %v", err)
+	}
+	// Choosing a range the network does not use must come back with what
+	// has to change, even with the mode off: that is when somebody plans
+	// the change.
+	rng := dhcp.Range{
+		Subnet:   netip.MustParsePrefix("192.168.1.0/24"),
+		ServerIP: netip.MustParseAddr("192.168.1.20"),
+		Gateway:  netip.MustParseAddr("192.168.1.1"),
+		Pool:     dhcp.Pool{Start: netip.MustParseAddr("192.168.1.100"), End: netip.MustParseAddr("192.168.1.200")},
+	}
+	if err := srv.SetRange(context.Background(), rng); err != nil {
+		t.Fatalf("SetRange: %v", err)
+	}
+	cs := srv.Conflicts()
+	if len(cs) == 0 {
+		t.Fatal("the check needs a picture of the network, and it has one with the mode off")
+	}
+	if _, blocked := dhcp.Blocked(cs); !blocked {
+		t.Errorf("conflicts = %+v, want at least one blocking", cs)
 	}
 }

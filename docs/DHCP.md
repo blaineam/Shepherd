@@ -327,6 +327,43 @@ neighbour discovery. What remains is that a Thread border router needs an IPv4 l
 else, which is why it is on the never-routed list and why the lease path has to be boring and
 correct for it.
 
+## Choosing which range the LAN uses
+
+The addresses a household sees are a preference, not a fact: somebody who wants their LAN to read
+`10.0.0.x` rather than `192.168.1.x` should be able to say so. So the range is a thing the operator
+picks in the portal — the prefix, Shepherd's address in it, the router's address in it, and the
+part of it handed out dynamically — and it overrides what the configuration file and the interface
+say, with no restart.
+
+**But Shepherd is not the router here.** It serves the leases and masquerades what it forwards; the
+router is still the way off the segment for every device Shepherd does not route, and the next hop
+for the ones it does. So a range the router does not itself use cannot be served, and the valuable
+part of this feature is not the picker — it is being told exactly what has to change before it can
+work, rather than finding out at two in the morning.
+
+That is what the collision check is. A chosen range is compared against the network as Shepherd can
+actually see it — this host's own addresses, the gateway the default route points at, and every
+address the device registry knows is in use (which it learns from DNS queries, the neighbour table,
+mDNS, and, once this mode is watching, from DHCP itself). The result is a list, blocking first,
+each written as what to change:
+
+| | Severity | Why |
+|---|---|---|
+| This host has no address in the chosen range | **blocking** | Shepherd could not answer a client it had just addressed |
+| The router answers somewhere else | **blocking** | Every device Shepherd does not route would be handed a gateway that does not exist |
+| A device holds an address inside the new pool that Shepherd did not hand out | **blocking** | The pool would hand it out a second time, and both devices would then be wrong |
+| Devices are outside the new range | warning | They move at their next renewal; anything hand-configured has to be changed by hand |
+| A reservation is outside the new range | warning | It cannot be honoured there |
+
+**A range that does not fit yet is stored anyway**, and that is deliberate: the point is to write
+down where you are going and be told what to change. Serving simply stops while a blocking conflict
+stands, in the same place and the same way it stops when another DHCP server is answering. The
+intended order is: pick the range, read the list, change the router's LAN to match, watch the list
+empty, and only then is anything served.
+
+The range must be a private one — one of RFC 1918's three — between a /16 and a /30. A household LAN is one of those three, and a public range typed in by mistake would be a
+network that cannot reach the thing it is pretending to be.
+
 ## The lease store
 
 Two files in `data_dir`, for a reason:
@@ -364,12 +401,21 @@ feature the maintainer asked for by name. The model:
   Shepherd offers the reserved address whatever the lease store says. If another device currently
   holds that address, its lease is revoked (and it gets a new one on its next request) — the
   reservation is the intent, the lease is a cache.
-- **A reserved address must be outside the dynamic pool**, and the portal refuses to save one that
-  is not, with the reason. This is the single most common way to break a DHCP server, and it should
-  be impossible from the UI rather than documented.
-- **Creating one from a device is the primary path.** The device detail screen gets "Reserve this
-  address", pre-filled with what that device currently holds. Typing a MAC by hand works too, for a
-  device that is not on the network yet.
+- **An address inside the dynamic pool is allowed**, and it is the ordinary case: pinning a device
+  to the address it already holds, which is nearly always a pool address. An earlier draft of this
+  document refused one, on the grounds that handing an address out twice is the commonest way to
+  break a DHCP server. That was right about the danger and wrong about where it is handled — the
+  allocator already takes somebody else's reservation out of the pool walk, so an in-pool
+  reservation can only ever go to the device it names. The portal says when a reserved address sits
+  inside the pool, because shrinking the pool past it is tidier, and says it as a note rather than
+  a refusal.
+- **Creating one from a device is the primary path, and it is one switch.** Every device on the
+  Devices screen carries a **Reserve this address** switch while DHCP mode is wired in: on pins it
+  to the address it holds now, off unpins it. The DHCP screen's own lease list has the same action,
+  and typing a MAC by hand works too, for a device that is not on the network yet. A device the
+  registry knows only by address — a container, or one seen only through DNS — is offered no switch
+  at all, because a reservation is keyed on hardware and a switch that cannot work is worse than
+  none.
 - **Reservations are not the routing opt-out.** Which gateway a device gets is a property of the
   *device* (`Device.Route`, alongside the existing `Device.Watch`), not of its reservation, so it
   can be set from the device screen for any device whether or not it has a reserved address. The

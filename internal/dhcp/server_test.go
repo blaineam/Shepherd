@@ -570,8 +570,11 @@ func TestTheServersPortalHandleWorksWithTheModeOff(t *testing.T) {
 	if got := hs.srv.Reservations(); len(got) != 1 || got[0].MAC != macA {
 		t.Fatalf("Reservations = %+v", got)
 	}
-	if err := hs.srv.SetReservation(Reservation{MAC: macB, IP: poolStart}); err == nil {
-		t.Error("an address inside the pool must be refused against the live settings")
+	if err := hs.srv.SetReservation(Reservation{MAC: macB, IP: poolStart}); err != nil {
+		t.Errorf("pinning a device to a pool address is the ordinary case: %v", err)
+	}
+	if err := hs.srv.SetReservation(Reservation{MAC: "02:00:5e:01:02:09", IP: netip.MustParseAddr("198.51.100.5")}); err == nil {
+		t.Error("an address outside the LAN must still be refused")
 	}
 	ok, err := hs.srv.DeleteReservation(macA)
 	if err != nil || !ok {
@@ -857,5 +860,131 @@ func TestServeRefusesToSendAReplyOutsideServeMode(t *testing.T) {
 	hs.srv.serve(context.Background(), hs.conn, packet{pkt: pkt})
 	if len(hs.conn.replies()) != 0 {
 		t.Fatal("observe mode sent something")
+	}
+}
+
+// Choosing a range the network does not use yet is allowed and is the point:
+// the operator writes down where they are going and is told what has to
+// change on the router. Serving stops until it fits.
+func TestAChosenRangeThatDoesNotFitStopsServingAndSaysWhatToChange(t *testing.T) {
+	hs := newServerHarness(t, ModeServe)
+	hs.srv.Observe = func() Observed {
+		return Observed{HostAddrs: []netip.Addr{shepherdA}, Gateway: gatewayA}
+	}
+	if err := hs.state.SetConfirmed(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := hs.srv.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := hs.srv.serveGate(hs.clock.now()); !ok {
+		t.Fatal("it should serve before a range is chosen")
+	}
+
+	want := Range{
+		Subnet:   netip.MustParsePrefix("192.168.1.0/24"),
+		ServerIP: netip.MustParseAddr("192.168.1.20"),
+		Gateway:  netip.MustParseAddr("192.168.1.1"),
+		Pool:     Pool{Start: netip.MustParseAddr("192.168.1.100"), End: netip.MustParseAddr("192.168.1.200")},
+	}
+	if err := hs.srv.SetRange(context.Background(), want); err != nil {
+		t.Fatalf("SetRange: %v; a range that does not fit yet is still worth storing", err)
+	}
+	ok, why := hs.srv.serveGate(hs.clock.now())
+	if ok {
+		t.Fatal("a range the router does not use must stop serving")
+	}
+	if !strings.Contains(why, "192.168.1") {
+		t.Errorf("the reason should say what to change: %q", why)
+	}
+	if len(hs.srv.Conflicts()) == 0 {
+		t.Error("and the conflicts should be readable on their own")
+	}
+
+	// The chosen range is in force for the addressing even while it is
+	// blocked, so the screen shows what it would hand out.
+	if got := hs.srv.SettingsView().Subnet; got != "192.168.1.0/24" {
+		t.Errorf("SettingsView.Subnet = %q, want the chosen range", got)
+	}
+	rv := hs.srv.RangeView()
+	if !rv.Chosen || rv.Subnet != "192.168.1.0/24" || rv.Gateway != "192.168.1.1" {
+		t.Errorf("RangeView = %+v", rv)
+	}
+	if rv.Current.Subnet != "192.0.2.0/24" {
+		t.Errorf("RangeView.Current = %+v, want what it would fall back to", rv.Current)
+	}
+
+	// Once the network matches, it serves.
+	hs.srv.Observe = func() Observed {
+		return Observed{HostAddrs: []netip.Addr{want.ServerIP}, Gateway: want.Gateway}
+	}
+	if ok, why := hs.srv.serveGate(hs.clock.now()); !ok {
+		t.Errorf("with the router moved it should serve: %q", why)
+	}
+
+	// Clearing it goes back to the interface's own range.
+	if err := hs.srv.SetRange(context.Background(), Range{}); err != nil {
+		t.Fatalf("clearing: %v", err)
+	}
+	if hs.srv.RangeView().Chosen || hs.srv.SettingsView().Subnet != "192.0.2.0/24" {
+		t.Error("clearing the range puts the configuration file back in charge")
+	}
+	if hs.srv.Conflicts() != nil {
+		t.Error("and there is nothing left to compare")
+	}
+}
+
+func TestAnAddressShepherdLeasedIsNotCountedAsACollision(t *testing.T) {
+	hs := newServerHarness(t, ModeServe)
+	if err := hs.srv.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	inPool := netip.MustParseAddr("192.168.1.105")
+	rng := Range{
+		Subnet:   netip.MustParsePrefix("192.168.1.0/24"),
+		ServerIP: netip.MustParseAddr("192.168.1.20"),
+		Gateway:  netip.MustParseAddr("192.168.1.1"),
+		Pool:     Pool{Start: netip.MustParseAddr("192.168.1.100"), End: netip.MustParseAddr("192.168.1.200")},
+	}
+	hs.srv.Observe = func() Observed {
+		return Observed{HostAddrs: []netip.Addr{rng.ServerIP}, Gateway: rng.Gateway,
+			Holders: []Holder{{IP: inPool, MAC: macA, Name: "Kids Tablet"}}}
+	}
+	if err := hs.srv.SetRange(context.Background(), rng); err != nil {
+		t.Fatal(err)
+	}
+	if _, blocked := Blocked(hs.srv.Conflicts()); !blocked {
+		t.Fatal("an address in the pool that Shepherd did not hand out is a collision")
+	}
+
+	// Once it is one of Shepherd's own leases it moves on its own.
+	hs.srv.Store.Put(Lease{MAC: macA, IP: inPool, Origin: OriginShepherd, Expires: hs.clock.now().Add(time.Hour)})
+	if c, blocked := Blocked(hs.srv.Conflicts()); blocked {
+		t.Errorf("a leased address is not a collision: %+v", c)
+	}
+}
+
+func TestSetRangeRefusesARangeThatIsWrongOnItsOwnTerms(t *testing.T) {
+	hs := newServerHarness(t, ModeOff)
+	if err := hs.srv.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	err := hs.srv.SetRange(context.Background(), Range{Subnet: netip.MustParsePrefix("192.168.1.0/24")})
+	if err == nil || !errors.Is(err, ErrRange) {
+		t.Fatalf("SetRange = %v, want an ErrRange", err)
+	}
+	var none *Server
+	_ = none
+	if err := (&Server{}).SetRange(context.Background(), Range{}); err == nil {
+		t.Error("a server with no state store cannot save a range")
+	}
+	if (&Server{}).Conflicts() != nil {
+		t.Error("and has nothing to compare")
+	}
+	if (&Server{}).RangeView().Chosen {
+		t.Error("or to report")
+	}
+	if _, ok := (&Server{}).Reservation(macA); ok {
+		t.Error("or to look a reservation up in")
 	}
 }

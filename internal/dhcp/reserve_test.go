@@ -47,6 +47,21 @@ func TestReservationValidateNormalizesAndRefusesTheWaysToBreakAddressing(t *test
 		t.Errorf("Validate should normalize in place, got %+v", r)
 	}
 
+	// An address inside the dynamic pool is allowed, and it is the ordinary
+	// case: pinning a device to the address it already holds. The allocator
+	// takes a reserved address out of the pool walk for everyone else, so
+	// it can only ever go to the device it names.
+	inPool := Reservation{MAC: macA, IP: netip.MustParseAddr("192.0.2.105")}
+	if err := inPool.Validate(lanPrefix, pool); err != nil {
+		t.Errorf("a reservation inside the pool is allowed: %v", err)
+	}
+	if !inPool.InPool(pool) {
+		t.Error("but the portal should be able to say that it is inside the pool")
+	}
+	if (Reservation{MAC: macA}).InPool(pool) {
+		t.Error("a name-only reservation is not inside anything")
+	}
+
 	// A reservation with no address is still worth having: it holds a name.
 	nameOnly := Reservation{MAC: macA, Hostname: "printer"}
 	if err := nameOnly.Validate(lanPrefix, pool); err != nil {
@@ -60,7 +75,6 @@ func TestReservationValidateNormalizesAndRefusesTheWaysToBreakAddressing(t *test
 	}{
 		{"no MAC", Reservation{}, "MAC address is required"},
 		{"nonsense MAC", Reservation{MAC: "zz"}, "MAC address is required"},
-		{"inside the pool", Reservation{MAC: macA, IP: netip.MustParseAddr("192.0.2.105")}, "inside the dynamic pool"},
 		{"outside the LAN", Reservation{MAC: macA, IP: netip.MustParseAddr("198.51.100.5")}, "not inside the LAN"},
 		{"IPv6", Reservation{MAC: macA, IP: netip.MustParseAddr("2001:db8::1")}, "must be IPv4"},
 		{"long hostname", Reservation{MAC: macA, Hostname: strings.Repeat("a", 64)}, "limited to 63"},

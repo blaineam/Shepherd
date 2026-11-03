@@ -132,6 +132,12 @@ bandwidth picture assembled from whichever devices somebody remembered to tick i
 number. **Always route** overrides the eligibility refusals (infrastructure, Thread and Matter gear, game consoles)
 but not the two that can never be overridden: the gateway itself and Shepherd's own interfaces.
 
+While DHCP mode is wired in, each device also carries a **Reserve this address** switch. On pins
+that hardware to the address it holds now, so it keeps it however long the device is away; off
+unpins it. A reserved address inside the dynamic pool is fine — it is simply held back from
+everyone else — and a device the registry knows only by address has no switch, because a
+reservation is keyed on hardware.
+
 ## What Watch mode adds
 
 The registry itself needs no special placement, only that devices use Shepherd for DNS or show up in the neighbor table.

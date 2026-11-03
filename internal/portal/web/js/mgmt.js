@@ -138,6 +138,7 @@ export function createMgmt(api) {
     dhcpKill: (reason) => post('/api/dhcp/kill', { reason }),
     dhcpRearm: () => post('/api/dhcp/rearm', {}),
     dhcpForgetPeers: () => post('/api/dhcp/peers/forget', {}),
+    dhcpSetRange: (body) => api('/api/dhcp/range', { method: 'PUT', body: J(body) }),
     dhcpSetReservation: (body) => api('/api/dhcp/reservations', { method: 'PUT', body: J(body) }),
     dhcpDeleteReservation: (mac) => api('/api/dhcp/reservations/' + encodeURIComponent(mac), { method: 'DELETE' }),
 

@@ -197,7 +197,12 @@ func startDHCP(ctx context.Context, cfg config.Config, reg *devices.Registry, al
 			Mode: func() dhcp.Mode { return dhcp.ModeOff }, State: state,
 			Store: dhcp.NewLeases(), Peers: dhcp.NewPeers(),
 			Settings: func() dhcp.Settings { return settings },
-			Log:      log.Default(),
+			// Observed even with the mode off: choosing a range is
+			// something to work through before anything is served, and
+			// the whole point of the check is to say what has to change
+			// on the router first.
+			Observe: func() dhcp.Observed { return observeNetwork(host, iface, reg) },
+			Log:     log.Default(),
 		}
 		if err := srv.Prepare(); err != nil {
 			log.Printf("dhcp: %v", err)
@@ -220,6 +225,7 @@ func startDHCP(ctx context.Context, cfg config.Config, reg *devices.Registry, al
 		RouteConsoles: func() bool { return cfg.DHCP.RouteConsoles },
 		Own:           func() dhcp.Own { return dhcp.Own{MACs: macs, IPs: ips, Gateway: gateway} },
 		Lookup:        func(mac string) (devices.Device, bool) { return reg.FindByMAC(mac) },
+		Observe:       func() dhcp.Observed { return observeNetwork(host, iface, reg) },
 		Store:         dhcp.NewLeases(),
 		State:         state,
 		Peers:         dhcp.NewPeers(),
@@ -243,6 +249,41 @@ func startDHCP(ctx context.Context, cfg config.Config, reg *devices.Registry, al
 		}
 	}()
 	return srv, nil
+}
+
+// observeNetwork is the network as Shepherd can see it now, for the
+// collision check behind the portal's range picker: this host's own
+// addresses, the gateway, and every address the device registry knows is in
+// use. The registry is the right source because it already learns addresses
+// from DNS queries, the neighbour table, mDNS and -- once this mode is
+// watching -- from DHCP itself, which between them is a far better picture
+// of "what is actually on this network" than anything this package could
+// gather on its own.
+func observeNetwork(host hostNetwork, iface string, reg *devices.Registry) dhcp.Observed {
+	o := dhcp.Observed{}
+	if addrs, nets, err := host.Addrs(iface); err == nil {
+		o.HostAddrs, o.HostNets = addrs, nets
+	}
+	if _, gw, err := host.DefaultRoute(); err == nil {
+		o.Gateway = gw
+	}
+	if reg == nil {
+		return o
+	}
+	for _, d := range reg.List() {
+		mac := ""
+		if len(d.MACs) > 0 {
+			mac = d.MACs[0]
+		}
+		for _, raw := range d.IPs {
+			ip, err := netip.ParseAddr(raw)
+			if err != nil || !ip.Is4() {
+				continue
+			}
+			o.Holders = append(o.Holders, dhcp.Holder{IP: ip, MAC: mac, Name: d.DisplayName()})
+		}
+	}
+	return o
 }
 
 // dhcpSettings turns the configuration block plus what the interface says

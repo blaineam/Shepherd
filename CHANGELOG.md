@@ -48,7 +48,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   `mode = "serve"` with `route = false` leases the whole house with the router's own address in
   option 3 and puts nothing on Shepherd's data path. The portal's new DHCP screen shows the leases,
   the addressing, what is blocking it, and **address reservations you can add, edit and remove**;
-  each device gains its own routing opt-out beside its Watch switch. Failure is deliberately
+  each device gains its own routing opt-out beside its Watch switch, and a **Reserve this address**
+  switch that pins it to the address it already holds. **The LAN's range is yours to choose** — the
+  prefix, Shepherd's address, the router's address and the pool — and a chosen range is checked
+  against the network as Shepherd can actually see it: this host's addresses, the gateway, and every
+  address the device registry knows is in use. A range the router does not use yet is stored, not
+  refused, with a list of what has to change first; serving stops until the list is empty, because
+  Shepherd serves the leases and the router still routes. Failure is deliberately
   fail-*open*, departing from the fail-closed decision in [docs/GATEWAY.md](docs/GATEWAY.md) for a
   stated reason: an unhealthy Shepherd hands out the router's address instead of its own, so routed
   devices drift back on their own within one renewal interval without anything having to work.

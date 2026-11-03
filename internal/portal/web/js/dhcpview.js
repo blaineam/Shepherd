@@ -7,7 +7,14 @@
 import { el } from './dom.js';
 import { button, emptyState, unavailableCard, confirmDialog, relTime } from './ui.js';
 import { unavailable } from './mgmt.js';
-import { validateReservation, modeLabel, stateSummary, consequences, sortLeases, filterLeases, leaseBody, originLabel, normalizeMAC } from './dhcp.js';
+import { validateReservation, validateRange, suggestRange, rangeSummary, conflictTone, modeLabel, stateSummary, consequences, sortLeases, filterLeases, leaseBody, originLabel, normalizeMAC } from './dhcp.js';
+
+// inPool is the note beside a reserved address that sits inside the dynamic
+// range. Not a problem; worth saying.
+const inPool = (ip, set) => {
+  const n = (a) => a.split('.').reduce((acc, p) => acc * 256 + Number(p), 0);
+  try { return n(set.pool_start) <= n(ip) && n(ip) <= n(set.pool_end); } catch { return false; }
+};
 
 export function createDhcp({ root, mgmt, notify, onOpenDevice }) {
   let data = null;
@@ -30,6 +37,7 @@ export function createDhcp({ root, mgmt, notify, onOpenDevice }) {
   const stateCard = el('section', 'card');
   const whatCard = el('section', 'card');
   const settingsCard = el('section', 'card');
+  const rangeCard = el('section', 'card');
   const resCard = el('section', 'card');
   const leaseCard = el('section', 'card');
 
@@ -177,10 +185,102 @@ export function createDhcp({ root, mgmt, notify, onOpenDevice }) {
     if (set.domain) kv.row('Search domain', set.domain, 'mono');
     kv.row('Lease time', set.lease_seconds ? Math.round(set.lease_seconds / 60) + ' minutes' : '—');
     settingsCard.append(kv);
+    const chosen = data.range && data.range.chosen;
     settingsCard.append(el('p', 'muted small rp-note',
-      'These come from the [dhcp] block in shepherd.toml, filled in from the interface where the file leaves them empty, so changing '
-      + 'them needs an edit and a restart. The lease time is short on purpose: it is how quickly a device stops being routed when '
-      + 'Shepherd decides it should not be.'));
+      (chosen
+        ? 'These come from the range you chose below, which overrides the [dhcp] block in shepherd.toml with no restart. '
+        : 'These come from the [dhcp] block in shepherd.toml, filled in from the interface where the file leaves them empty. '
+          + 'Change them there, or choose a range below. ')
+      + 'The lease time is short on purpose: it is how quickly a device stops being routed when Shepherd decides it should not be.'));
+  }
+
+  // ---- the range this LAN uses -------------------------------------------
+  //
+  // Shepherd is not the router here, so a range the router does not itself
+  // use cannot be served. The whole value of this card is saying that
+  // plainly, with the address the router would have to move to, rather than
+  // letting somebody find out at two in the morning.
+  function paintRange() {
+    rangeCard.replaceChildren(cardHead('Range'));
+    const rv = data.range || {};
+    const conflicts = data.conflicts || [];
+    const sum = rangeSummary(rv, conflicts);
+    rangeCard.append(el('p', 'rp-tone-' + sum.tone, sum.text));
+
+    if (conflicts.length) {
+      const ul = el('ul', 'dhcp-conflicts');
+      for (const c of conflicts) {
+        const li = el('li', 'rp-tone-' + conflictTone(c.severity));
+        li.append(el('strong', '', c.severity === 'blocking' ? 'Must change: ' : 'Worth knowing: '));
+        li.append(el('span', '', c.detail));
+        ul.append(li);
+      }
+      rangeCard.append(ul);
+    }
+
+    const f = el('form', 'rp-form');
+    const fields = {};
+    const mk = (key, label, placeholder, cls = 'mono') => {
+      const i = el('input', cls);
+      i.setAttribute('aria-label', label);
+      i.placeholder = placeholder;
+      i.value = rv[key] || '';
+      fields[key] = i;
+      return i;
+    };
+    const subnet = mk('subnet', 'LAN range', '192.0.2.0/24');
+    const row1 = el('div', 'rp-form-row');
+    row1.append(subnet);
+    // Picking a /24 fills the rest the way nearly every home router does,
+    // so the common case is one field and a glance rather than five fields.
+    row1.append(button('Fill the rest', 'ghost', () => {
+      const s2 = suggestRange(subnet.value, rv);
+      if (!s2) { err.textContent = 'Give a /24 to fill the rest from, or type each address yourself.'; return; }
+      err.textContent = '';
+      for (const [k, v] of Object.entries(s2)) if (fields[k]) fields[k].value = v;
+    }));
+    const row2 = el('div', 'rp-form-row');
+    row2.append(mk('server_ip', 'Shepherd\'s address in the new range', 'Shepherd, e.g. 192.0.2.20'));
+    row2.append(mk('gateway', 'The router\'s address in the new range', 'router, e.g. 192.0.2.1'));
+    const row3 = el('div', 'rp-form-row');
+    row3.append(mk('pool_start', 'First address to hand out', 'pool from, e.g. 192.0.2.100'));
+    row3.append(mk('pool_end', 'Last address to hand out', 'pool to, e.g. 192.0.2.200'));
+    const save = button(rv.chosen ? 'Save range' : 'Use this range', 'primary');
+    save.type = 'submit';
+    const actions = el('div', 'rp-form-row');
+    actions.append(save);
+    if (rv.chosen) {
+      actions.append(button('Back to the interface\'s own range', 'ghost', async () => {
+        const ok = await confirmDialog({
+          title: 'Stop using the chosen range?',
+          body: 'Shepherd goes back to what shepherd.toml and this host\'s interface say. Devices move at their next renewal.',
+          confirm: 'Clear it',
+        });
+        if (!ok) return;
+        try { data = await mgmt.dhcpSetRange({ subnet: '' }); paint(); notify('Back to the interface\'s own range.'); } catch (x) { notify(x.message || String(x), true); }
+      }));
+    }
+    const err = el('p', 'err small');
+    err.setAttribute('role', 'status');
+    f.append(row1, row2, row3, actions, err);
+    f.append(el('p', 'muted small rp-note',
+      'Shepherd serves the addresses; your router still routes them. So a range only works once the router uses it too — '
+      + 'change the router\'s own LAN to match, and Shepherd will say here when the two agree. Saving a range that does not '
+      + 'fit yet is fine and is the point: it tells you exactly what to change. Nothing is served until it fits.'));
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.textContent = '';
+      const body = {};
+      for (const [k, i] of Object.entries(fields)) body[k] = i.value;
+      const check = validateRange(body);
+      if (!check.ok) { err.textContent = check.error; return; }
+      try {
+        data = await mgmt.dhcpSetRange(check.value);
+        paint();
+        notify('Range saved.');
+      } catch (x) { err.textContent = x.message || String(x); }
+    });
+    rangeCard.append(f);
   }
 
   // ---- reservations ------------------------------------------------------
@@ -228,7 +328,7 @@ export function createDhcp({ root, mgmt, notify, onOpenDevice }) {
         data = await mgmt.dhcpSetReservation(check.value);
         editing = '';
         paint();
-        notify('Reservation saved for ' + check.value.mac + '.');
+        notify(check.note ? 'Reservation saved. ' + check.note : 'Reservation saved for ' + check.value.mac + '.');
       } catch (x) { err.textContent = x.message || String(x); }
     });
     return f;
@@ -259,7 +359,12 @@ export function createDhcp({ root, mgmt, notify, onOpenDevice }) {
         }
         const tr = el('tr');
         tr.append(el('td', 'mono', r.mac));
-        tr.append(el('td', 'mono', r.ip || 'name only'));
+        const addr = el('td', 'mono');
+        addr.append(el('span', '', r.ip || 'name only'));
+        if (r.ip && data.settings && data.settings.pool_start && inPool(r.ip, data.settings)) {
+          addr.append(el('span', 'muted small', ' in the pool, held back for this device'));
+        }
+        tr.append(addr);
         tr.append(el('td', '', r.hostname || '—'));
         tr.append(el('td', 'muted small', r.note || ''));
         const actions = el('td', 'dhcp-act');
@@ -357,10 +462,11 @@ export function createDhcp({ root, mgmt, notify, onOpenDevice }) {
       stateCard.append(el('p', 'muted small rp-note', data.reason || ''));
       return;
     }
-    body.replaceChildren(stateCard, whatCard, settingsCard, resCard, leaseCard);
+    body.replaceChildren(stateCard, whatCard, settingsCard, rangeCard, resCard, leaseCard);
     paintState();
     paintWhat();
     paintSettings();
+    paintRange();
     paintReservations();
     paintLeases();
   }

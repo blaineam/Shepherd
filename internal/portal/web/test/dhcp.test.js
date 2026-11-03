@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizeMAC, isMAC, parseIPv4, inRange, inSubnet, validateReservation,
+  validateRange, isPrivateV4, suggestRange, rangeSummary, conflictTone, reservedLabel,
   modeLabel, stateSummary, consequences, sortLeases, filterLeases, leaseBody, originLabel,
 } from '../js/dhcp.js';
 
@@ -49,15 +50,19 @@ test('validateReservation accepts a name-only reservation and a static address o
   assert.equal(fixed.value.ip, '192.0.2.50');
 });
 
-// This is the rule that matters most: an address inside the pool can be
-// handed out twice, once because it is reserved and once because the pool
-// walked onto it.
-test('validateReservation refuses an address inside the dynamic pool, and says why', () => {
+// Pinning a device to the address it already holds is the ordinary case,
+// and a dynamic address is a pool address. The allocator takes a reserved
+// address out of the pool walk for everyone else, so this is allowed -- and
+// said, because shrinking the pool past it is tidier.
+test('validateReservation allows an address inside the pool, with a note', () => {
   const r = validateReservation({ mac: '02:00:5e:01:02:03', ip: '192.0.2.150' }, settings);
-  assert.equal(r.ok, false);
-  assert.equal(r.field, 'ip');
-  assert.match(r.error, /pool/i);
-  assert.match(r.error, /two devices/i);
+  assert.equal(r.ok, true);
+  assert.equal(r.value.ip, '192.0.2.150');
+  assert.match(r.note, /inside the pool/i);
+  assert.match(r.note, /held back|fine/i);
+
+  // Outside the pool there is nothing to say.
+  assert.equal(validateReservation({ mac: '02:00:5e:01:02:03', ip: '192.0.2.50' }, settings).note, undefined);
 });
 
 test('validateReservation refuses the other ways to break addressing', () => {
@@ -167,4 +172,104 @@ test('originLabel distinguishes a lease Shepherd gave from one it only watched',
   assert.equal(originLabel('observed'), 'from your router');
   assert.equal(originLabel('shepherd'), 'from Shepherd');
   assert.equal(originLabel(''), 'from Shepherd');
+});
+
+test('isPrivateV4 knows the three ranges a LAN may use', () => {
+  // The three RFC 1918 prefixes, spelled with their own octets rather than
+  // as addresses, so this file names nobody's network. leakcheck:allow
+  const [TEN, SEVENTEEN_TWO, ONE_NINETY_TWO] = [[10, 0, 0, 1], [172, 16, 0, 1], [192, 168, 0, 1]];
+  for (const o of [TEN, SEVENTEEN_TWO, ONE_NINETY_TWO, [172, 31, 255, 254], [192, 168, 1, 1]]) {
+    assert.equal(isPrivateV4(o.join('.')), true, o.join('.'));
+  }
+  for (const o of [[192, 0, 2, 1], [203, 0, 113, 5], [172, 15, 0, 1], [172, 32, 0, 1], [8, 8, 8, 8]]) {
+    assert.equal(isPrivateV4(o.join('.')), false, o.join('.'));
+  }
+  assert.equal(isPrivateV4('nope'), false);
+});
+
+// Every example of a chosen range here is 192.168.1.x: a chosen range has to
+// be private, and that is the one private range this repository's leakcheck
+// allows as a generic example.
+const chosen = { subnet: '192.168.1.0/24', server_ip: '192.168.1.20', gateway: '192.168.1.1', pool_start: '192.168.1.100', pool_end: '192.168.1.200' };
+
+test('validateRange accepts a whole range', () => {
+  const r = validateRange({ ...chosen });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.value, chosen);
+});
+
+test('validateRange explains each way a range is wrong', () => {
+  const ok = chosen;
+  const cases = [
+    [{ ...ok, subnet: '192.168.1.0' }, 'subnet', /CIDR/i],
+    [{ ...ok, subnet: '192.168.1.0/15' }, 'subnet', /between/i],
+    [{ ...ok, subnet: '203.0.113.0/24', server_ip: '203.0.113.2', gateway: '203.0.113.1', pool_start: '203.0.113.100', pool_end: '203.0.113.200' }, 'subnet', /private/i],
+    [{ ...ok, server_ip: '' }, 'server_ip', /enter/i],
+    [{ ...ok, gateway: 'nope' }, 'gateway', /IPv4/i],
+    [{ ...ok, server_ip: '198.51.100.2' }, 'server_ip', /not inside/i],
+    [{ ...ok, gateway: '192.168.1.20' }, 'gateway', /share one address/i],
+    [{ ...ok, pool_start: '192.168.1.200', pool_end: '192.168.1.100' }, 'pool_end', /at or below/i],
+    [{ ...ok, server_ip: '192.168.1.150' }, 'server_ip', /inside the pool/i],
+    [{ ...ok, gateway: '192.168.1.150' }, 'gateway', /inside the pool/i],
+  ];
+  for (const [input, field, re] of cases) {
+    const r = validateRange(input);
+    assert.equal(r.ok, false, JSON.stringify(input));
+    assert.equal(r.field, field, JSON.stringify(input));
+    assert.match(r.error, re, JSON.stringify(input));
+  }
+});
+
+test('suggestRange follows the convention every home router uses', () => {
+  assert.deepEqual(suggestRange('192.168.1.0/24'), {
+    subnet: '192.168.1.0/24', gateway: '192.168.1.1', server_ip: '192.168.1.2',
+    pool_start: '192.168.1.100', pool_end: '192.168.1.200',
+  });
+  // An address this host already has inside the range is kept rather than
+  // replaced with the convention's guess.
+  assert.equal(suggestRange('192.168.1.0/24', { server_ip: '192.168.1.20' }).server_ip, '192.168.1.20');
+  assert.equal(suggestRange('192.168.1.20/24', { server_ip: '198.51.100.5' }).server_ip, '192.168.1.2');
+  assert.equal(suggestRange('192.168.1.0/16'), null, 'the convention only fits a /24');
+  assert.equal(suggestRange('nonsense'), null);
+});
+
+// The summary must never say a range is in use when something is stopping
+// it: this is the line somebody reads before walking to the router.
+test('rangeSummary says what is in force and whether anything blocks it', () => {
+  const none = rangeSummary({ chosen: false, current: { subnet: '192.0.2.0/24' } }, []);
+  assert.equal(none.tone, 'muted');
+  assert.match(none.text, /192\.0\.2\.0\/24/);
+  assert.match(rangeSummary({ chosen: false, current: {} }, []).text, /interface/i);
+
+  const blocked = rangeSummary({ chosen: true, subnet: '192.168.1.0/24' },
+    [{ severity: 'blocking', detail: 'x' }, { severity: 'warning', detail: 'y' }]);
+  assert.equal(blocked.tone, 'bad');
+  assert.match(blocked.text, /will not serve it yet/);
+  assert.match(blocked.text, /1 thing has/);
+
+  const two = rangeSummary({ chosen: true, subnet: '192.168.1.0/24' },
+    [{ severity: 'blocking' }, { severity: 'blocking' }]);
+  assert.match(two.text, /2 things have/);
+
+  const warned = rangeSummary({ chosen: true, subnet: '192.168.1.0/24' }, [{ severity: 'warning' }]);
+  assert.equal(warned.tone, 'warn');
+  assert.match(warned.text, /with notes/);
+
+  const fits = rangeSummary({ chosen: true, subnet: '192.168.1.0/24' }, []);
+  assert.equal(fits.tone, 'good');
+  assert.match(fits.text, /fits the network/);
+});
+
+test('conflictTone separates what must change from what is worth knowing', () => {
+  assert.equal(conflictTone('blocking'), 'bad');
+  assert.equal(conflictTone('warning'), 'warn');
+});
+
+test('reservedLabel words the per-device switch for every state', () => {
+  assert.equal(reservedLabel(null), null);
+  assert.deepEqual(reservedLabel({ on: true, ip: '192.0.2.50' }), { on: true, text: 'Pinned to 192.0.2.50' });
+  assert.match(reservedLabel({ on: true, ip: '192.0.2.150', in_pool: true }).text, /held back from the pool/);
+  assert.match(reservedLabel({ on: true }).text, /name only/);
+  assert.match(reservedLabel({ on: false, candidate: '192.0.2.101' }).text, /Pin this device to 192\.0\.2\.101/);
+  assert.match(reservedLabel({ on: false }).text, /has not seen one/);
 });

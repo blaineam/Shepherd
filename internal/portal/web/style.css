@@ -1215,3 +1215,5 @@ button.tf-trend { cursor: pointer; } button.tf-trend:hover { border-color: var(-
   .dhcp-act button { margin: 6px 6px 0 0; }
   .dhcp-search { max-width: none; }
 }
+.dhcp-conflicts { margin: 10px 0 0; padding-left: 18px; max-width: 90ch; }
+.dhcp-conflicts li { margin-bottom: 6px; }

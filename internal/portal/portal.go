@@ -254,6 +254,16 @@ type DHCPService interface {
 	Status() dhcp.Status
 	// SettingsView is the addressing it hands out.
 	SettingsView() dhcp.SettingsView
+	// RangeView is the addressing the operator chose, and what it would
+	// replace; Conflicts is why it does not fit the network as it is.
+	RangeView() dhcp.RangeView
+	Conflicts() []dhcp.Conflict
+	// SetRange stores a chosen range, or clears it when the range is not
+	// set.
+	SetRange(ctx context.Context, r dhcp.Range) error
+	// Reservation is one device's reservation, for the per-device
+	// reserved switch on the Devices screen.
+	Reservation(mac string) (dhcp.Reservation, bool)
 	// Leases is every lease with the routing decision attached.
 	Leases() []dhcp.LeaseView
 	Reservations() []dhcp.Reservation
@@ -657,6 +667,7 @@ func (s *Server) routes() {
 	h("POST /api/dhcp/kill", s.killDHCP)
 	h("POST /api/dhcp/rearm", s.rearmDHCP)
 	h("POST /api/dhcp/peers/forget", s.forgetDHCPPeers)
+	h("PUT /api/dhcp/range", s.putDHCPRange)
 	h("PUT /api/dhcp/reservations", s.putDHCPReservation)
 	h("DELETE /api/dhcp/reservations/{mac}", s.deleteDHCPReservation)
 	h("GET /api/groups", s.listGroups)

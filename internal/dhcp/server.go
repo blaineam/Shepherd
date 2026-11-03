@@ -54,6 +54,10 @@ type Server struct {
 	Own func() Own
 	// Lookup resolves a MAC to a device record, for the routing policy.
 	Lookup func(mac string) (devices.Device, bool)
+	// Observe reports the network as it is now -- this host's addresses,
+	// the gateway and every address the registry knows is in use -- so a
+	// chosen range can be checked against it before anything is served.
+	Observe func() Observed
 
 	// Store is the lease store.
 	Store *Leases
@@ -174,11 +178,59 @@ func (s *Server) mode() Mode {
 	return m
 }
 
+// settings is the addressing in force: what the configuration file and the
+// interface give, with the operator's chosen range (if any) on top.
 func (s *Server) settings() Settings {
-	if s.Settings == nil {
-		return Settings{}
+	var base Settings
+	if s.Settings != nil {
+		base = s.Settings()
 	}
-	return s.Settings()
+	if s.State == nil {
+		return base
+	}
+	return s.State.Range().Apply(base)
+}
+
+// observed is the network as Shepherd can see it now, for the collision
+// check. A server with no Observe function sees nothing, which makes Check
+// report only what is wrong with the range on its own terms.
+func (s *Server) observed() Observed {
+	if s.Observe == nil {
+		return Observed{}
+	}
+	return s.Observe()
+}
+
+// Conflicts is why the chosen range does not fit the network as it is. It is
+// empty when no range has been chosen, because then there is nothing to
+// compare: the settings already came from the interface.
+func (s *Server) Conflicts() []Conflict {
+	if s.State == nil {
+		return nil
+	}
+	r := s.State.Range()
+	if !r.Set() {
+		return nil
+	}
+	o := s.observed()
+	// Mark the addresses Shepherd itself handed out. They are the ones
+	// that move on their own at the next renewal, so they are not the
+	// collision a static address is -- and the caller supplying Observed
+	// has no way to know which is which.
+	if s.Store != nil {
+		leased := map[netip.Addr]bool{}
+		for _, l := range s.Store.All() {
+			if l.Origin == OriginShepherd && l.IP.IsValid() {
+				leased[l.IP] = true
+			}
+		}
+		for i := range o.Holders {
+			if leased[o.Holders[i].IP] {
+				o.Holders[i].Leased = true
+			}
+		}
+	}
+	return Check(r, o, s.State.Reservations())
 }
 
 func (s *Server) own() Own {
@@ -223,6 +275,12 @@ func (s *Server) serveGate(now time.Time) (ok bool, why string) {
 			return false, "another DHCP server is answering from " + active[0].Server.String() +
 				"; turn the router's DHCP off, then clear this in the portal"
 		}
+	}
+	// A chosen range that does not fit the network is the one refusal an
+	// operator asked for themselves. Serving it anyway would hand out
+	// addresses nothing can route, or hand one address to two devices.
+	if c, blocked := Blocked(s.Conflicts()); blocked {
+		return false, c.Detail
 	}
 	return true, ""
 }
@@ -690,6 +748,72 @@ func (s *Server) Leases() []LeaseView {
 	return out
 }
 
+// RangeView is the chosen range as the portal shows it, with what it would
+// replace, so the screen can say "this is what you are changing from".
+type RangeView struct {
+	// Chosen is true when the operator has picked a range; false means the
+	// configuration file and the interface are in charge.
+	Chosen    bool   `json:"chosen"`
+	Subnet    string `json:"subnet,omitempty"`
+	ServerIP  string `json:"server_ip,omitempty"`
+	Gateway   string `json:"gateway,omitempty"`
+	PoolStart string `json:"pool_start,omitempty"`
+	PoolEnd   string `json:"pool_end,omitempty"`
+	// Current is what the interface and the configuration file say today,
+	// which is what a cleared range falls back to.
+	Current SettingsView `json:"current"`
+}
+
+// RangeView returns the chosen range and what it would replace.
+func (s *Server) RangeView() RangeView {
+	v := RangeView{}
+	if s.Settings != nil {
+		v.Current = settingsView(s.Settings())
+	}
+	if s.State == nil {
+		return v
+	}
+	r := s.State.Range()
+	if !r.Set() {
+		return v
+	}
+	v.Chosen = true
+	v.Subnet = r.Subnet.String()
+	if r.ServerIP.IsValid() {
+		v.ServerIP = r.ServerIP.String()
+	}
+	if r.Gateway.IsValid() {
+		v.Gateway = r.Gateway.String()
+	}
+	if r.Pool.Valid() {
+		v.PoolStart, v.PoolEnd = r.Pool.Start.String(), r.Pool.End.String()
+	}
+	return v
+}
+
+// SetRange stores the operator's chosen addressing, or clears it when r is
+// not set. It takes effect on the next renewal; serving stops while the
+// range does not fit the network (see Check).
+func (s *Server) SetRange(ctx context.Context, r Range) error {
+	if s.State == nil {
+		return errors.New("dhcp: no state store")
+	}
+	if err := s.State.SetRange(r); err != nil {
+		return err
+	}
+	s.refresh(ctx)
+	return nil
+}
+
+// Reservation returns the reservation for one MAC, which is what the device
+// list needs to show a per-device reserved switch.
+func (s *Server) Reservation(mac string) (Reservation, bool) {
+	if s.State == nil {
+		return Reservation{}, false
+	}
+	return s.State.Reservation(mac)
+}
+
 // Reservations returns every reservation.
 func (s *Server) Reservations() []Reservation {
 	if s.State == nil {
@@ -754,9 +878,10 @@ type SettingsView struct {
 	PoolSize     int      `json:"pool_size"`
 }
 
-// SettingsView returns the addressing, for the portal.
-func (s *Server) SettingsView() SettingsView {
-	set := s.settings()
+// SettingsView returns the addressing in force, for the portal.
+func (s *Server) SettingsView() SettingsView { return settingsView(s.settings()) }
+
+func settingsView(set Settings) SettingsView {
 	v := SettingsView{Domain: set.Domain, LeaseSeconds: int(set.leaseTime() / time.Second), PoolSize: set.Pool.Size()}
 	if set.Subnet.IsValid() {
 		v.Subnet = set.Subnet.String()

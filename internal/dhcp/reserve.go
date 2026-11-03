@@ -40,11 +40,19 @@ var ErrReservation = errors.New("dhcp: reservation")
 
 // Validate normalizes a reservation and reports why it cannot be stored.
 //
-// pool, when valid, is the dynamic range, and a reserved address inside it is
-// refused. That rule exists because handing the same address out twice — once
-// because it is reserved and once because the pool walked onto it — is the
-// single most common way to break a DHCP server, and it should be impossible
-// from the portal rather than documented in a note nobody reads.
+// A reserved address inside the dynamic pool is **allowed**. An earlier
+// version of this refused one, on the grounds that handing the same address
+// out twice is the commonest way to break a DHCP server. That reasoning was
+// right about the danger and wrong about where it is handled: the allocator
+// already takes somebody else's reservation out of the pool walk
+// (Allocator.free), so an in-pool reservation can only ever go to the device
+// it names. Refusing one instead made the ordinary thing — pinning a device
+// to the address it already has, which is nearly always a pool address —
+// impossible, which is worse than untidy.
+//
+// The portal still says when a reserved address sits inside the pool,
+// because shrinking the pool past it is tidier and because an operator
+// should know. It says it as a note, not a refusal.
 func (r *Reservation) Validate(subnet netip.Prefix, pool Pool) error {
 	r.MAC = NormalizeMAC(r.MAC)
 	if r.MAC == "" {
@@ -70,11 +78,12 @@ func (r *Reservation) Validate(subnet netip.Prefix, pool Pool) error {
 	if subnet.IsValid() && !subnet.Contains(r.IP) {
 		return fmt.Errorf("%w: %s is not inside the LAN %s", ErrReservation, r.IP, subnet)
 	}
-	if pool.Valid() && pool.Contains(r.IP) {
-		return fmt.Errorf("%w: %s is inside the dynamic pool %s-%s, so it could be handed out twice; reserve an address outside the pool", ErrReservation, r.IP, pool.Start, pool.End)
-	}
 	return nil
 }
+
+// InPool reports whether a reservation sits inside the dynamic range. It is
+// a note for the portal, not a refusal: see Validate.
+func (r Reservation) InPool(pool Pool) bool { return r.IP.IsValid() && pool.Contains(r.IP) }
 
 func validHostname(s string) bool {
 	for i, c := range s {
@@ -95,6 +104,13 @@ type stateFile struct {
 	// Reservations is the operator's intent, and the reason this file is
 	// separate from the leases.
 	Reservations []*Reservation `json:"reservations,omitempty"`
+	// Range is the addressing the operator chose in the portal, which
+	// overrides what the configuration file and the interface say. It is
+	// stored rather than configured because choosing it is a decision
+	// taken against the live network -- Check compares it with what is
+	// actually in use -- and because changing it should not need a
+	// restart.
+	Range *Range `json:"range,omitempty"`
 	// Confirmed records that someone typed the confirmation in the portal.
 	// It is stored rather than held in memory because the whole point is
 	// that a restart must not quietly start serving DHCP for a household
@@ -248,6 +264,47 @@ func (s *State) DeleteReservation(mac string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// Range returns the operator's chosen addressing, or the zero Range when
+// they have not chosen one and the configuration file is the truth.
+func (s *State) Range() Range {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.data.Range == nil {
+		return Range{}
+	}
+	return *s.data.Range
+}
+
+// SetRange stores a chosen range, or clears it when r is not set, which puts
+// the configuration file and the interface back in charge.
+//
+// It validates the range on its own terms and nothing more: whether it fits
+// the network as it is now is Check's question, and the answer changes as
+// the operator works through it. Refusing to *store* a range that does not
+// fit yet would make it impossible to write down where you are going before
+// you get there.
+func (s *State) SetRange(r Range) error {
+	if r.Set() {
+		if err := r.Validate(); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prev := s.data.Range
+	if r.Set() {
+		c := r
+		s.data.Range = &c
+	} else {
+		s.data.Range = nil
+	}
+	if err := s.saveLocked(); err != nil {
+		s.data.Range = prev
+		return err
+	}
+	return nil
 }
 
 // Confirmed reports whether the typed portal confirmation has been given.

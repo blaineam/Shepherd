@@ -4,6 +4,7 @@ package portal
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/netip"
@@ -205,7 +206,6 @@ func TestReservationValidationExplainsEachRefusal(t *testing.T) {
 	cases := map[string]string{
 		`{"mac":""}`:         "MAC",
 		`{"mac":"nonsense"}`: "MAC",
-		`{"mac":"02:00:5e:01:02:03","ip":"192.0.2.105"}`:                        "pool",
 		`{"mac":"02:00:5e:01:02:03","ip":"198.51.100.5"}`:                       "LAN",
 		`{"mac":"02:00:5e:01:02:03","ip":"not an address"}`:                     "IPv4",
 		`{"mac":"02:00:5e:01:02:03","hostname":"not a name!"}`:                  "hostname",
@@ -221,6 +221,14 @@ func TestReservationValidationExplainsEachRefusal(t *testing.T) {
 		if !strings.Contains(strings.ToLower(out), strings.ToLower(want)) {
 			t.Errorf("PUT %s said %q, should mention %q", body, strings.TrimSpace(out), want)
 		}
+	}
+
+	// An address inside the dynamic pool is the ordinary case -- pinning a
+	// device to the address it already holds -- and the allocator takes a
+	// reserved address out of the pool for everyone else.
+	m := h.ok("PUT", "/api/dhcp/reservations", `{"mac":"02:00:5e:01:02:09","ip":"192.0.2.105"}`, 200)
+	if len(m["reservations"].([]any)) != 1 {
+		t.Errorf("reservations = %+v", m["reservations"])
 	}
 
 	// Two reservations cannot hold one address.
@@ -305,10 +313,11 @@ func TestADevicesRoutingSwitchIsReachableFromTheDevicesAPI(t *testing.T) {
 // exercised. Those messages matter: the operator has to know which half of a
 // kill switch worked.
 type failingDHCP struct {
-	status dhcp.Status
-	leases []dhcp.LeaseView
-	res    []dhcp.Reservation
-	err    error
+	status    dhcp.Status
+	leases    []dhcp.LeaseView
+	res       []dhcp.Reservation
+	conflicts []dhcp.Conflict
+	err       error
 }
 
 func (f *failingDHCP) Status() dhcp.Status                   { return f.status }
@@ -323,6 +332,19 @@ func (f *failingDHCP) Confirm(context.Context, bool) error   { return f.err }
 func (f *failingDHCP) Unroute(context.Context, string) error { return f.err }
 func (f *failingDHCP) Rearm(context.Context) error           { return f.err }
 func (f *failingDHCP) ForgetPeers(context.Context)           {}
+func (f *failingDHCP) RangeView() dhcp.RangeView             { return dhcp.RangeView{} }
+func (f *failingDHCP) Conflicts() []dhcp.Conflict            { return f.conflicts }
+func (f *failingDHCP) SetRange(context.Context, dhcp.Range) error {
+	return f.err
+}
+func (f *failingDHCP) Reservation(mac string) (dhcp.Reservation, bool) {
+	for _, r := range f.res {
+		if r.MAC == mac {
+			return r, true
+		}
+	}
+	return dhcp.Reservation{}, false
+}
 
 func TestAFailedWriteIsReportedRatherThanLookingLikeSuccess(t *testing.T) {
 	svc := &failingDHCP{err: errors.New("disk full")}
@@ -367,4 +389,173 @@ func TestMalformedBodiesAreRefused(t *testing.T) {
 	}
 	h.expect("PUT", "/api/dhcp/reservations", `{nope`, 400)
 	h.expect("PUT", "/api/dhcp/reservations", `{"mac":"02:00:5e:01:02:03","unknown":1}`, 400)
+}
+
+// A range that does not fit yet is stored anyway and the conflicts come back
+// with it: the whole point is being told what to change on the router.
+func TestTheRangeEndpointStoresAChoiceAndReportsWhatBlocksIt(t *testing.T) {
+	h, srv := dhcpHarness(t, dhcp.ModeServe, false)
+	srv.Observe = func() dhcp.Observed {
+		return dhcp.Observed{
+			HostAddrs: []netip.Addr{netip.MustParseAddr("192.0.2.20")},
+			Gateway:   netip.MustParseAddr("192.0.2.1"),
+			Holders:   []dhcp.Holder{{IP: netip.MustParseAddr("192.0.2.31"), Name: "Garage Camera"}},
+		}
+	}
+	body := `{"subnet":"192.168.1.0/24","server_ip":"192.168.1.20","gateway":"192.168.1.1","pool_start":"192.168.1.100","pool_end":"192.168.1.200"}`
+	m := h.ok("PUT", "/api/dhcp/range", body, 200)
+
+	rng := m["range"].(map[string]any)
+	if rng["chosen"] != true || rng["subnet"] != "192.168.1.0/24" {
+		t.Fatalf("range = %+v", rng)
+	}
+	if rng["current"].(map[string]any)["subnet"] != "192.0.2.0/24" {
+		t.Errorf("the screen should show what it would fall back to: %+v", rng["current"])
+	}
+	conflicts := m["conflicts"].([]any)
+	if len(conflicts) == 0 {
+		t.Fatal("a range nothing on this network uses must report conflicts")
+	}
+	var blocking int
+	for _, c := range conflicts {
+		if c.(map[string]any)["severity"] == "blocking" {
+			blocking++
+		}
+	}
+	if blocking == 0 {
+		t.Errorf("at least one must be blocking: %+v", conflicts)
+	}
+	// And it stops serving while that stands.
+	if m["status"].(map[string]any)["serving"] == true {
+		t.Error("serving must stop while the chosen range does not fit")
+	}
+	// The addressing shown is the chosen one, so the form and the
+	// reservation rules follow it.
+	if m["settings"].(map[string]any)["subnet"] != "192.168.1.0/24" {
+		t.Errorf("settings = %+v", m["settings"])
+	}
+
+	// Clearing it puts the interface back in charge.
+	m = h.ok("PUT", "/api/dhcp/range", `{"subnet":""}`, 200)
+	if m["range"].(map[string]any)["chosen"] != false {
+		t.Errorf("range = %+v", m["range"])
+	}
+	if len(m["conflicts"].([]any)) != 0 {
+		t.Errorf("with no chosen range there is nothing to compare: %+v", m["conflicts"])
+	}
+}
+
+func TestTheRangeEndpointExplainsEachRefusal(t *testing.T) {
+	h, _ := dhcpHarness(t, dhcp.ModeOff, false)
+	full := func(over map[string]string) string {
+		b := map[string]string{"subnet": "192.168.1.0/24", "server_ip": "192.168.1.20",
+			"gateway": "192.168.1.1", "pool_start": "192.168.1.100", "pool_end": "192.168.1.200"}
+		for k, v := range over {
+			b[k] = v
+		}
+		out, err := json.Marshal(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+	cases := map[string]string{
+		full(map[string]string{"subnet": "192.168.1.0"}):      "CIDR",
+		full(map[string]string{"server_ip": ""}):              "required",
+		full(map[string]string{"gateway": "nope"}):            "IPv4",
+		full(map[string]string{"server_ip": "10.0.0.2"}):      "not inside",
+		full(map[string]string{"subnet": "203.0.113.0/24"}):   "private",
+		full(map[string]string{"server_ip": "192.168.1.150"}): "inside the pool",
+	}
+	for body, want := range cases {
+		code, out := h.call("PUT", "/api/dhcp/range", body)
+		if code != 400 {
+			t.Errorf("PUT %s = %d, want 400", body, code)
+			continue
+		}
+		if !strings.Contains(strings.ToLower(out), strings.ToLower(want)) {
+			t.Errorf("PUT %s said %q, should mention %q", body, strings.TrimSpace(out), want)
+		}
+	}
+	h.expect("PUT", "/api/dhcp/range", `{nope`, 400)
+}
+
+// Toggling any device's address as reserved, from the Devices screen, is
+// what the per-device field is for.
+func TestEveryDeviceCarriesItsReservationState(t *testing.T) {
+	h, srv := dhcpHarness(t, dhcp.ModeServe, false)
+	id := h.addDevice("02:00:5e:01:02:03", "192.0.2.105", "tablet")
+
+	one := h.ok("GET", "/api/devices/"+id, "", 200)
+	res, ok := one["reserved"].(map[string]any)
+	if !ok {
+		t.Fatalf("a device should carry its reservation state: %+v", one)
+	}
+	if res["on"] != false {
+		t.Errorf("it has no reservation yet: %+v", res)
+	}
+	if res["candidate"] != "192.0.2.105" {
+		t.Errorf("candidate = %v, want the address it holds now", res["candidate"])
+	}
+	if res["in_pool"] != true {
+		t.Errorf("in_pool = %v; a dynamic address is a pool address, and the screen should say so", res["in_pool"])
+	}
+	if res["mac"] != "02:00:5e:01:02:03" {
+		t.Errorf("mac = %v, want the key the reservation is stored under", res["mac"])
+	}
+
+	// Pinning it is the ordinary PUT, with the address it already holds.
+	h.ok("PUT", "/api/dhcp/reservations", `{"mac":"02:00:5e:01:02:03","ip":"192.0.2.105"}`, 200)
+	one = h.ok("GET", "/api/devices/"+id, "", 200)
+	res = one["reserved"].(map[string]any)
+	if res["on"] != true || res["ip"] != "192.0.2.105" {
+		t.Fatalf("reserved = %+v", res)
+	}
+
+	// And the list carries it too, so the screen does not need a call per
+	// device.
+	list := h.ok("GET", "/api/devices", "", 200)
+	devs := list["devices"].([]any)
+	var found bool
+	for _, d := range devs {
+		dm := d.(map[string]any)
+		if dm["id"] == id {
+			found = dm["reserved"].(map[string]any)["on"] == true
+		}
+	}
+	if !found {
+		t.Error("the device list should carry each device's reservation")
+	}
+
+	// Unpinning is the DELETE.
+	h.ok("DELETE", "/api/dhcp/reservations/02:00:5e:01:02:03", "", 200)
+	one = h.ok("GET", "/api/devices/"+id, "", 200)
+	if one["reserved"].(map[string]any)["on"] != false {
+		t.Error("it should be unpinned")
+	}
+	_ = srv
+}
+
+func TestADeviceWithNoHardwareAddressIsOfferedNoReservedSwitch(t *testing.T) {
+	h, _ := dhcpHarness(t, dhcp.ModeOff, false)
+	// A device known only by address -- a container, or one seen only
+	// through DNS -- cannot be reserved: the reservation is keyed on
+	// hardware, and offering a switch that cannot work is worse than none.
+	id := h.reg.Observe(devices.Observation{Source: devices.SourceDNS, IP: "192.0.2.77", Time: time.Now()})
+	if id == "" {
+		t.Fatal("the observation should have created a device")
+	}
+	one := h.ok("GET", "/api/devices/"+id, "", 200)
+	if _, ok := one["reserved"]; ok {
+		t.Errorf("reserved = %+v, want the field left off", one["reserved"])
+	}
+}
+
+func TestWithoutDHCPModeTheDevicesScreenShowsNoReservedSwitch(t *testing.T) {
+	h := newHarness(t)
+	id := h.addDevice("02:00:5e:01:02:03", "192.0.2.105", "")
+	one := h.ok("GET", "/api/devices/"+id, "", 200)
+	if _, ok := one["reserved"]; ok {
+		t.Error("with no DHCP mode there is nothing true to say about a reservation")
+	}
 }
