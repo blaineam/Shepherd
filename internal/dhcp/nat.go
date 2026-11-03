@@ -169,9 +169,33 @@ func Ruleset(lan string, routed []netip.Addr) string {
 	return b.String()
 }
 
+// Verify checks that the rule set Shepherd believes it installed is still
+// there. It exists because Apply is idempotent, and an idempotent Apply would
+// otherwise never notice that the kernel stopped cooperating: something else
+// flushed the table, nft stopped working, the host's own firewall was
+// reloaded. In a design that fails open by stopping to claim to be the
+// gateway, noticing is the whole mechanism, so it is checked on every
+// housekeeping tick rather than assumed from the last success.
+func (r *Reconciler) Verify(ctx context.Context) error {
+	r.mu.Lock()
+	active := r.active
+	r.mu.Unlock()
+	if !active {
+		return nil
+	}
+	if _, err := r.run(ctx, nil, "list", "table", "ip", TableName); err != nil {
+		r.mu.Lock()
+		r.active = false
+		r.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
 // Apply makes the kernel route and translate exactly the given addresses. It
 // is idempotent: an unchanged set does nothing, so this can be called on
-// every lease change.
+// every lease change. Verify is what notices a kernel that stopped
+// cooperating while the set did not change.
 func (r *Reconciler) Apply(ctx context.Context, routed []netip.Addr) (changed bool, err error) {
 	want := slices.Clone(routed)
 	slices.SortFunc(want, func(a, b netip.Addr) int { return a.Compare(b) })

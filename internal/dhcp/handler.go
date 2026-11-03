@@ -15,6 +15,9 @@ import (
 	"shepherd/internal/devices"
 )
 
+// zeroMAC is the all-zero hardware address, which is never a device.
+const zeroMAC = "00:00:00:00:00:00"
+
 // Settings is the network DHCP mode hands out. It is read afresh for every
 // packet, so a change in the portal takes effect on the next renewal rather
 // than on the next restart.
@@ -157,7 +160,10 @@ func (h *Handler) Handle(pkt *dhcpv4.DHCPv4, mode Mode, from netip.Addr) Result 
 	}
 
 	mac := NormalizeMAC(pkt.ClientHWAddr.String())
-	if mac == "" {
+	// An all-zero chaddr is not a device. It is what a packet built with no
+	// hardware address looks like, and keying a lease on it would let every
+	// such packet share one record.
+	if mac == "" || mac == zeroMAC {
 		return Result{Action: ActionIgnore, Why: "no usable client MAC address"}
 	}
 
@@ -385,6 +391,19 @@ func ipSlice(addrs []netip.Addr) []net.IP {
 	return out
 }
 
+// buildReply wraps dhcpv4.NewReplyFromRequest so the one error it can report
+// is handled in a single place. With this library that error is unreachable in
+// practice — it comes from the random transaction ID — but the signature
+// returns it, and a half-formed reply must never be mistaken for an answer.
+func buildReply(pkt *dhcpv4.DHCPv4, what string, mods ...dhcpv4.Modifier) (*dhcpv4.DHCPv4, *Result) {
+	reply, err := dhcpv4.NewReplyFromRequest(pkt, mods...)
+	if err != nil {
+		res := Result{Action: ActionIgnore, Why: "building the " + what + ": " + err.Error()}
+		return nil, &res
+	}
+	return reply, nil
+}
+
 func (h *Handler) offer(pkt *dhcpv4.DHCPv4, mac string, set Settings) Result {
 	requested, _ := netip.AddrFromSlice(pkt.RequestedIPAddress().To4())
 	ip, reserved, err := h.Alloc.Allocate(mac, requested)
@@ -395,12 +414,12 @@ func (h *Handler) offer(pkt *dhcpv4.DHCPv4, mac string, set Settings) Result {
 		return Result{Action: ActionIgnore, Why: err.Error()}
 	}
 	_, dec, mods := h.compose(pkt, mac, ip, reserved, set)
-	reply, err := dhcpv4.NewReplyFromRequest(pkt, append([]dhcpv4.Modifier{
+	reply, bad := buildReply(pkt, "offer", append([]dhcpv4.Modifier{
 		dhcpv4.WithMessageType(dhcpv4.MessageTypeOffer),
 		dhcpv4.WithYourIP(ip.AsSlice()),
 	}, mods...)...)
-	if err != nil {
-		return Result{Action: ActionIgnore, Why: "building the offer: " + err.Error()}
+	if bad != nil {
+		return *bad
 	}
 	// An offer is not a lease. Nothing is stored until the client asks for
 	// the address in a REQUEST, because storing it here would let one
@@ -441,25 +460,25 @@ func (h *Handler) request(pkt *dhcpv4.DHCPv4, mac string, set Settings) Result {
 		return h.nak(pkt, set, "the address "+want.String()+" is not available; "+ip.String()+" is")
 	}
 	lease, dec, mods := h.compose(pkt, mac, ip, reserved, set)
-	reply, err := dhcpv4.NewReplyFromRequest(pkt, append([]dhcpv4.Modifier{
+	reply, bad := buildReply(pkt, "acknowledgement", append([]dhcpv4.Modifier{
 		dhcpv4.WithMessageType(dhcpv4.MessageTypeAck),
 		dhcpv4.WithYourIP(ip.AsSlice()),
 	}, mods...)...)
-	if err != nil {
-		return Result{Action: ActionIgnore, Why: "building the acknowledgement: " + err.Error()}
+	if bad != nil {
+		return *bad
 	}
 	h.Leases.Put(lease)
 	return Result{Action: ActionAck, Reply: reply, To: replyTo(pkt), Lease: lease, Routing: dec}
 }
 
 func (h *Handler) nak(pkt *dhcpv4.DHCPv4, set Settings, why string) Result {
-	reply, err := dhcpv4.NewReplyFromRequest(pkt,
+	reply, bad := buildReply(pkt, "refusal",
 		dhcpv4.WithMessageType(dhcpv4.MessageTypeNak),
 		dhcpv4.WithOption(dhcpv4.OptServerIdentifier(set.ServerIP.AsSlice())),
 		dhcpv4.WithOption(dhcpv4.OptMessage(why)),
 	)
-	if err != nil {
-		return Result{Action: ActionIgnore, Why: "building the refusal: " + err.Error()}
+	if bad != nil {
+		return *bad
 	}
 	// RFC 2131: a NAK always goes to the broadcast address, because the
 	// address the client thinks it has is exactly what is being refused.
@@ -501,11 +520,11 @@ func (h *Handler) inform(pkt *dhcpv4.DHCPv4, mac string, set Settings) Result {
 	_, dec, mods := h.compose(pkt, mac, ip, false, set)
 	// A lease time in an INFORM reply is a protocol error: there is no
 	// lease.
-	reply, err := dhcpv4.NewReplyFromRequest(pkt, append([]dhcpv4.Modifier{
+	reply, bad := buildReply(pkt, "inform reply", append([]dhcpv4.Modifier{
 		dhcpv4.WithMessageType(dhcpv4.MessageTypeAck),
 	}, mods...)...)
-	if err != nil {
-		return Result{Action: ActionIgnore, Why: "building the inform reply: " + err.Error()}
+	if bad != nil {
+		return *bad
 	}
 	reply.DeleteOption(dhcpv4.OptionIPAddressLeaseTime)
 	reply.DeleteOption(dhcpv4.OptionRenewTimeValue)

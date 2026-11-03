@@ -131,7 +131,7 @@ type Status struct {
 	DisarmedReason string    `json:"disarmed_reason,omitempty"`
 	DisarmedAt     time.Time `json:"disarmed_at,omitempty"`
 
-	Peers []Peer `json:"peers,omitempty"`
+	Peers []Peer `json:"peers"`
 
 	Leases      int `json:"leases"`
 	RoutedCount int `json:"routed_count"`
@@ -291,7 +291,7 @@ func (s *Server) Prepare() error {
 	} else if !s.Store.Loaded() {
 		// No path means an in-memory store, which is a legitimate
 		// configuration for a test and for observe mode.
-		_, _ = s.Store.LoadOrReset(devNull)
+		s.Store.MarkLoaded()
 	}
 	set := s.settings()
 	alloc := &Allocator{
@@ -302,16 +302,9 @@ func (s *Server) Prepare() error {
 		Settings: s.settings, Policy: s.policy, Leases: s.Store,
 		Alloc: alloc, Peers: s.Peers, Sink: s.Sink, Now: s.now,
 	}
+	s.updateStatus()
 	return nil
 }
-
-// devNull is a path that never exists, so LoadOrReset marks an in-memory
-// store loaded without reading anything.
-const devNull = "\x00"
-
-// Handler exposes the packet handler, for the tests and for a future
-// diagnostic that replays a captured packet.
-func (s *Server) Handler() *Handler { return s.handler }
 
 // Run opens the socket and serves until ctx ends. In ModeOff it refreshes the
 // status once and returns nil: there is nothing to run, and that is not an
@@ -506,7 +499,14 @@ func (s *Server) reconcile(ctx context.Context) {
 	if routing {
 		want = s.Store.Routed(s.now(), s.own().IPs)
 	}
-	changed, err := s.NAT.Apply(ctx, want)
+	// Check that what was installed is still installed before deciding
+	// nothing needs doing: an idempotent Apply cannot notice a kernel that
+	// stopped cooperating, and noticing is how this mode fails open.
+	err := s.NAT.Verify(ctx)
+	var changed bool
+	if err == nil {
+		changed, err = s.NAT.Apply(ctx, want)
+	}
 	if err != nil {
 		s.setNAT(NATStatus{Available: false, Error: err.Error()})
 		// A kernel that will not take the rules means routed devices have
@@ -528,12 +528,19 @@ func (s *Server) reconcile(ctx context.Context) {
 	}
 }
 
-// refresh is the housekeeping tick: recompute the gates, reconcile the
-// kernel, expire old leases and save.
+// refresh is the housekeeping tick: reconcile the kernel, then recompute the
+// status, expire old leases and save.
 func (s *Server) refresh(ctx context.Context) {
-	now := s.now()
 	s.reconcile(ctx)
+	s.updateStatus()
+}
 
+// updateStatus recomputes the gates and the counters without touching the
+// kernel. Prepare calls it so the portal has an honest status for a mode that
+// never starts, which is the ordinary case: the whole arrangement is meant to
+// be reviewable before it is switched on.
+func (s *Server) updateStatus() {
+	now := s.now()
 	serving, why := s.serveGate(now)
 	routing, routeWhy := s.routeGate()
 
@@ -768,7 +775,3 @@ func (s *Server) SettingsView() SettingsView {
 	}
 	return v
 }
-
-// Refresh recomputes the status now, for an API call that has just changed
-// something.
-func (s *Server) Refresh(ctx context.Context) { s.refresh(ctx) }

@@ -14,6 +14,7 @@ much traffic reaches it:
 |---|---|---|---|
 | **Guard** (default) | Router hands out Shepherd as DNS | DNS filtering, categories, allow/block lists, Tailscale-wide protection, remote access, uptime and speed tests | DNS fallback only; no path risk |
 | **Watch** (opt-in, off by default — [WATCH.md](WATCH.md)) | Shepherd steers chosen devices' IPv4 traffic through itself by one-sided ARP | Outbound destinations, upload measured exactly, download estimated from TCP acknowledgements ([TRAFFIC.md](TRAFFIC.md)); one-sided steering cannot see the return path itself | Selected devices lose IPv4 internet until they recover |
+| **DHCP** (opt-in, off by default -- [DHCP.md](DHCP.md)) | Shepherd serves the LAN's DHCP and hands routed devices itself as their gateway, masquerading their traffic to the router | Both directions of every routed device's IPv4 traffic, so downloads are *measured*; per-destination bytes; a real pause. No ARP spoofing anywhere, and DHCP-sourced device identity. One NIC, one flat segment, the router still routing | Routed devices lose IPv4 internet until Shepherd returns; an unhealthy-but-running Shepherd hands out the router again and they recover by themselves within a lease interval |
 | **Gateway** (future, optional) | Shepherd as router | Everything | Total outage |
 
 Watch mode is IPv4 only. See [IPV6.md](IPV6.md).
@@ -64,7 +65,13 @@ Watch mode has one interface and swappable methods, tried in this order:
    Shepherd sends corrective ARP replies, and the device recovers on its own within minutes
    even if Shepherd dies. Firewalla documents ARP compatibility problems with some mesh routers
    and does not list eero 7, so this must be tested per router before relying on it.
-2. **DHCP takeover (if ARP proves flaky).** Shepherd serves DHCP and hands chosen devices itself as gateway. Needs the router's DHCP pool shrunk and reserved (see the Firewalla eero workaround).
+2. **DHCP mode.** Shepherd serves DHCP and hands routed devices itself as gateway, then masquerades
+   their traffic to the router. No longer the stopgap this list once called it: it is built, off by
+   default, and designed in [DHCP.md](DHCP.md). What changed is the source NAT measured on
+   2026-11-02 -- forwarding a frame back out the interface it arrived on is only a hairpin hazard
+   while that frame carries a foreign source address -- which is also what brings the return traffic
+   through Shepherd and makes downloads measured rather than estimated. It needs the router's own
+   DHCP turned off, and it costs double NAT for the devices it routes.
 3. **Bridge or router with dual NICs (if the first two aren't enough).** A second NIC (for example Thunderbolt 10G) puts Shepherd physically inline.
 
 ARP and DHCP only affect IPv4. Shepherd never spoofs NDP or touches RAs.

@@ -52,7 +52,10 @@ export function createDhcp({ root, mgmt, notify, onOpenDevice }) {
     kv.row('Listening', s.listening ? 'yes' : 'no', s.listening ? 'good' : 'muted');
     kv.row('Leases held', String(s.leases || 0));
     kv.row('Routed through Shepherd', String(s.routed_count || 0));
-    if (s.nat) {
+    // Only while the mode is on: with it off nothing has asked the kernel
+    // anything, and "unavailable" would read as a fault rather than as a
+    // question nobody put.
+    if (s.nat && s.mode !== 'off') {
       kv.row('Kernel NAT', s.nat.available ? 'ready' : (s.nat.error || 'unavailable'), s.nat.available ? 'good' : 'rp-tone-warn');
     }
     if (s.error) kv.row('Problem', s.error, 'err');

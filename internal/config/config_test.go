@@ -1007,3 +1007,123 @@ func TestSelftestDefaultsExampleAndValidation(t *testing.T) {
 		t.Errorf("overrides: %+v %v", cfg.Selftest, err)
 	}
 }
+
+// The [dhcp] block is checked more strictly than most of this file: a bad
+// address here is handed to every device on the network, so the
+// configuration file is the cheapest place to catch it.
+func TestValidateDHCPRefusesWhatWouldBreakAddressing(t *testing.T) {
+	base := func() Config {
+		c := Default()
+		c.DHCP.Mode = "serve"
+		c.DHCP.PoolStart = "192.0.2.100"
+		c.DHCP.PoolEnd = "192.0.2.110"
+		return c
+	}
+	cases := map[string]func(*Config){
+		"unknown mode":               func(c *Config) { c.DHCP.Mode = "maybe" },
+		"subnet with no prefix":      func(c *Config) { c.DHCP.Subnet = "192.0.2.0" },
+		"IPv6 subnet":                func(c *Config) { c.DHCP.Subnet = "2001:db8::/64" },
+		"bad server address":         func(c *Config) { c.DHCP.ServerIP = "nope" },
+		"IPv6 server address":        func(c *Config) { c.DHCP.ServerIP = "2001:db8::1" },
+		"bad gateway":                func(c *Config) { c.DHCP.Gateway = "192.0.2" },
+		"bad pool start":             func(c *Config) { c.DHCP.PoolStart = "nope" },
+		"half a pool":                func(c *Config) { c.DHCP.PoolEnd = "" },
+		"inverted pool":              func(c *Config) { c.DHCP.PoolStart, c.DHCP.PoolEnd = "192.0.2.110", "192.0.2.100" },
+		"bad resolver":               func(c *Config) { c.DHCP.DNS = []string{"nope"} },
+		"IPv6 resolver":              func(c *Config) { c.DHCP.DNS = []string{"2001:db8::1"} },
+		"lease shorter than a retry": func(c *Config) { c.DHCP.LeaseSeconds = 30 },
+		"negative settle":            func(c *Config) { c.DHCP.SettleSeconds = -1 },
+		"serving with no pool":       func(c *Config) { c.DHCP.PoolStart, c.DHCP.PoolEnd = "", "" },
+	}
+	for name, mutate := range cases {
+		c := base()
+		mutate(&c)
+		err := c.Validate()
+		if err == nil {
+			t.Errorf("%s: Validate should refuse it", name)
+			continue
+		}
+		if !strings.Contains(err.Error(), "dhcp") {
+			t.Errorf("%s: error %q should name the setting", name, err)
+		}
+	}
+}
+
+func TestValidateDHCPAcceptsACompleteBlockAndAnEmptyOne(t *testing.T) {
+	c := Default()
+	c.DHCP = DHCP{
+		Mode: "serve", Interface: "eth0", Subnet: "192.0.2.0/24", ServerIP: "192.0.2.20",
+		Gateway: "192.0.2.1", PoolStart: "192.0.2.100", PoolEnd: "192.0.2.110",
+		DNS: []string{"192.0.2.20"}, Domain: "example.test", LeaseSeconds: 600,
+		Route: true, RouteConsoles: false, SettleSeconds: 60,
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("a complete block should be valid: %v", err)
+	}
+
+	// Observe mode has nothing to hand out, so it needs no pool.
+	obs := Default()
+	obs.DHCP.Mode = "observe"
+	if err := obs.Validate(); err != nil {
+		t.Errorf("observe mode needs no pool: %v", err)
+	}
+
+	// And the default, which is what every existing install keeps.
+	if err := Default().Validate(); err != nil {
+		t.Errorf("the default configuration must be valid: %v", err)
+	}
+}
+
+// Serving the wrong DHCP takes a house off the internet, so this is the one
+// default in Shepherd that is not a judgement call.
+func TestDHCPIsOffByDefault(t *testing.T) {
+	d := Default().DHCP
+	if d.Mode != "off" {
+		t.Fatalf("dhcp.mode = %q, want off", d.Mode)
+	}
+	if d.Route || d.RouteConsoles {
+		t.Error("and nothing is routed")
+	}
+	if d.LeaseSeconds != 600 {
+		t.Errorf("lease_seconds = %d, want 600: short on purpose, because it is how fast a device stops being routed", d.LeaseSeconds)
+	}
+	if d.SettleSeconds != 60 {
+		t.Errorf("settle_seconds = %d, want 60", d.SettleSeconds)
+	}
+}
+
+func TestDHCPBlockLoadsFromTheFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "shepherd.toml")
+	body := `
+data_dir = "data"
+[dhcp]
+mode = "observe"
+interface = "eth0"
+subnet = "192.0.2.0/24"
+server_ip = "192.0.2.20"
+gateway = "192.0.2.1"
+pool_start = "192.0.2.100"
+pool_end = "192.0.2.110"
+dns = ["192.0.2.20"]
+lease_seconds = 900
+route = true
+route_consoles = true
+settle_seconds = 30
+nft = "/usr/sbin/nft"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	d := cfg.DHCP
+	if d.Mode != "observe" || d.Interface != "eth0" || d.Subnet != "192.0.2.0/24" {
+		t.Errorf("DHCP = %+v", d)
+	}
+	if !d.Route || !d.RouteConsoles || d.LeaseSeconds != 900 || d.SettleSeconds != 30 || d.NFT != "/usr/sbin/nft" {
+		t.Errorf("DHCP = %+v", d)
+	}
+}

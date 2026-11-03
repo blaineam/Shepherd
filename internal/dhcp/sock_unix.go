@@ -7,6 +7,7 @@ package dhcp
 import (
 	"context"
 	"net"
+	"strconv"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -58,7 +59,7 @@ func listenUDP(ctx context.Context, iface string, port int, broadcast bool) (Con
 			return ctrlErr
 		},
 	}
-	c, err := lc.ListenPacket(ctx, "udp4", net.JoinHostPort("0.0.0.0", itoa(port)))
+	c, err := lc.ListenPacket(ctx, "udp4", net.JoinHostPort("0.0.0.0", strconv.Itoa(port)))
 	if err != nil {
 		return nil, err
 	}

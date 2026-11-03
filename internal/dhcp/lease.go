@@ -355,6 +355,16 @@ func (s *Leases) LoadOrReset(path string) (reset bool, err error) {
 	return true, nil
 }
 
+// MarkLoaded records that there is nothing to load, which is the case for an
+// in-memory store: observe mode with no data directory, and the tests.
+// Serving is gated on Loaded, and a store that was never meant to be read
+// from disk must not be mistaken for one whose read has not happened yet.
+func (s *Leases) MarkLoaded() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.loaded = true
+}
+
 // Loaded reports whether a load has happened. Serving is gated on it: a
 // server that answers before it knows what it has already handed out will
 // hand the same address to two devices.
@@ -365,35 +375,34 @@ func (s *Leases) Loaded() bool {
 }
 
 // writeFileAtomic writes data to path through a temporary file in the same
-// directory, so a crash leaves either the old file or the new one.
+// directory, so a crash leaves either the old file or the new one. The
+// contents are flushed to the disk before the rename, because the point of
+// the reservations file is that it survives the machine losing power.
 func writeFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*.tmp")
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*.tmp")
 	if err != nil {
 		return err
 	}
 	name := tmp.Name()
-	fail := func(err error) error {
-		tmp.Close()
+	err = writeAndSync(tmp, data)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(name, path)
+	}
+	if err != nil {
 		os.Remove(name)
+	}
+	return err
+}
+
+func writeAndSync(f *os.File, data []byte) error {
+	if err := f.Chmod(0o600); err != nil {
 		return err
 	}
-	if err := tmp.Chmod(0o600); err != nil {
-		return fail(err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		return fail(err)
-	}
-	if err := tmp.Sync(); err != nil {
-		return fail(err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(name)
+	if _, err := f.Write(data); err != nil {
 		return err
 	}
-	if err := os.Rename(name, path); err != nil {
-		os.Remove(name)
-		return err
-	}
-	return nil
+	return f.Sync()
 }

@@ -200,14 +200,19 @@ func (s *State) SetReservation(r Reservation, subnet netip.Prefix, pool Pool) er
 	}
 	now := s.now()
 	r.Updated = now
-	prev := s.data
-	for i, o := range s.data.Reservations {
+	prev := s.data.Reservations
+	for i, o := range prev {
 		if o.MAC == r.MAC {
 			r.Created = o.Created
 			c := r
-			s.data.Reservations[i] = &c
+			// A fresh slice, not an in-place write: s.data.Reservations
+			// and prev would otherwise share one backing array, and the
+			// rollback below would not undo anything.
+			next := slices.Clone(prev)
+			next[i] = &c
+			s.data.Reservations = next
 			if err := s.saveLocked(); err != nil {
-				s.data = prev
+				s.data.Reservations = prev
 				return err
 			}
 			return nil
@@ -215,9 +220,9 @@ func (s *State) SetReservation(r Reservation, subnet netip.Prefix, pool Pool) er
 	}
 	r.Created = now
 	c := r
-	s.data.Reservations = append(s.data.Reservations, &c)
+	s.data.Reservations = append(slices.Clone(prev), &c)
 	if err := s.saveLocked(); err != nil {
-		s.data = prev
+		s.data.Reservations = prev
 		return err
 	}
 	return nil
