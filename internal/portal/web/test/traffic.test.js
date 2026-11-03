@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   RANGE_PRESETS, rangeWindow, scopeOptions, scopeLabel, fillSeries, sumPoints, bucketRate, areaPaths, axisLabels,
-  timeLabels, shareOf, statusHeadline, liveRows, DOWNLOAD_CAVEAT, fmtBytes, fmtBitsPerSecond,
+  timeLabels, shareOf, statusHeadline, liveRows, liveRowsNote, DOWNLOAD_CAVEAT, fmtBytes, fmtBitsPerSecond,
 } from '../js/traffic.js';
 
 const T0 = Date.parse('2026-11-01T12:00:00Z');
@@ -91,4 +91,178 @@ test('liveRows sorts busiest first and the caveat names the blind spots', () => 
   assert.match(DOWNLOAD_CAVEAT, /QUIC/);
   assert.equal(fmtBytes(2048), '2.0 KB');
   assert.equal(fmtBitsPerSecond(125), '1.00 kbit/s');
+});
+
+import { niceCeil, yTicks, lineArea, nearestIndex, pushSample, shareSlices, arcPath, rateStats } from '../js/traffic.js';
+
+test('niceCeil rounds up to 1, 2, 2.5, 5 or 10 times a power of ten', () => {
+  assert.equal(niceCeil(0), 1);
+  assert.equal(niceCeil(-3), 1);
+  assert.equal(niceCeil(1), 1);
+  assert.equal(niceCeil(1.1), 2);
+  assert.equal(niceCeil(2.3), 2.5);
+  assert.equal(niceCeil(4.2), 5);
+  assert.equal(niceCeil(97.9e6), 100e6);
+  assert.equal(niceCeil(310), 500);
+});
+
+test('yTicks spans zero to the nice ceiling in equal steps', () => {
+  assert.deepEqual(yTicks(97, 4), [0, 25, 50, 75, 100]);
+  assert.equal(yTicks(0, 2).length, 3);
+});
+
+test('lineArea scales to a shared ceiling and closes the area on the baseline', () => {
+  assert.deepEqual(lineArea([], 10), { line: '', area: '' });
+  const r = lineArea([0, 10], 10, { width: 100, height: 50, pad: 0 });
+  assert.equal(r.line, 'M0.0,50.0 L100.0,0.0');
+  assert.ok(r.area.startsWith('M0.0,50.0 L0.0,50.0') && r.area.endsWith('L100.0,50.0 Z'));
+  // Above-ceiling values clamp; one point draws centred; a zero ceiling is safe.
+  assert.equal(lineArea([99], 10, { width: 100, height: 50, pad: 0 }).line, 'M50.0,0.0');
+  assert.equal(lineArea([0, 0], 0, { width: 10, height: 10, pad: 0 }).line, 'M0.0,10.0 L10.0,10.0');
+});
+
+test('nearestIndex maps a pointer fraction onto a sample', () => {
+  assert.equal(nearestIndex(0, 5), 0);
+  assert.equal(nearestIndex(1, 5), 4);
+  assert.equal(nearestIndex(0.5, 5), 2);
+  assert.equal(nearestIndex(-1, 5), 0);
+  assert.equal(nearestIndex(9, 5), 4);
+  assert.equal(nearestIndex(0.5, 1), 0);
+});
+
+test('pushSample keeps only the newest samples', () => {
+  let b = null;
+  for (let i = 0; i < 5; i++) b = pushSample(b, i, 3);
+  assert.deepEqual(b, [2, 3, 4]);
+});
+
+test('shareSlices keeps the biggest, folds the rest into Other and sums to one', () => {
+  assert.deepEqual(shareSlices([]), []);
+  assert.deepEqual(shareSlices([{ value: 0 }]), []);
+  const s = shareSlices([{ name: 'a', value: 50 }, { name: 'b', value: 30 }, { name: 'c', value: 15 }, { name: 'd', value: 5 }], 2);
+  assert.deepEqual(s.map((x) => x.item.name), ['a', 'b', 'Other']);
+  assert.ok(s[2].item.other);
+  assert.equal(s[2].value, 20);
+  assert.ok(Math.abs(s.reduce((t, x) => t + x.fraction, 0) - 1) < 1e-9);
+  assert.equal(shareSlices([{ name: 'a', value: 1 }], 5).length, 1);
+});
+
+test('arcPath draws a closed ring segment, even for a whole turn', () => {
+  const half = arcPath(50, 50, 40, 20, 0, 0.5);
+  assert.ok(half.startsWith('M50.00,10.00') && half.endsWith('Z'));
+  assert.match(half, / A40,40 0 0 1 /);
+  const big = arcPath(50, 50, 40, 20, 0, 0.75);
+  assert.match(big, / A40,40 0 1 1 /);
+  assert.ok(arcPath(50, 50, 40, 20, 0, 1).endsWith('Z'));
+});
+
+test('rateStats reports peak and average', () => {
+  assert.deepEqual(rateStats([]), { peak: 0, avg: 0 });
+  assert.deepEqual(rateStats([2, 4, 6, 'x']), { peak: 6, avg: 3 });
+});
+
+import { routerConnection, readingNow, measurementNote, liveChartCaption, nameSyncSummary } from '../js/traffic.js';
+
+const reading = {
+  available: true, connected: true, enabled: true, source: 'eero',
+  status: { last_poll: '2026-11-03T12:00:00Z', devices_seen: 12, matched: 9, interval_seconds: 30, estimated: true },
+};
+
+test('routerConnection words every state the reader can be in', () => {
+  assert.equal(routerConnection(null).tone, 'muted');
+  assert.match(routerConnection({ available: false }).text, /cannot read bandwidth/);
+  assert.match(routerConnection({ available: true, connected: false }).text, /No router is connected/);
+  assert.match(routerConnection({ available: true, connected: true, enabled: false, source: 'eero' }).text, /switched off/);
+
+  const expired = routerConnection({ ...reading, status: { needs_sign_in: true, last_error: 'session expired' } });
+  assert.equal(expired.tone, 'bad');
+  assert.match(expired.text, /sign-in has expired/);
+
+  const broken = routerConnection({ ...reading, status: { last_error: 'the router did not answer' } });
+  assert.equal(broken.tone, 'warn');
+  assert.match(broken.text, /did not answer/);
+
+  assert.match(routerConnection({ ...reading, status: {} }).text, /Waiting for the first reading/);
+
+  const ok = routerConnection(reading);
+  assert.equal(ok.tone, 'good');
+  assert.match(ok.text, /Reading 9 of 12 devices from your eero every 30s/);
+});
+
+test('readingNow is true only when the reader is on and last succeeded', () => {
+  assert.equal(readingNow(reading), true);
+  assert.equal(readingNow(null), false);
+  assert.equal(readingNow({ ...reading, enabled: false }), false);
+  assert.equal(readingNow({ ...reading, connected: false }), false);
+  assert.equal(readingNow({ ...reading, available: false }), false);
+  assert.equal(readingNow({ ...reading, status: { ...reading.status, last_error: 'boom' } }), false);
+  assert.equal(readingNow({ ...reading, status: {} }), false);
+});
+
+test('measurementNote never lets an estimate pass for a measurement', () => {
+  // Watch mode is measuring: the download caveat is the honest note.
+  assert.equal(measurementNote({ measuring: true }), DOWNLOAD_CAVEAT);
+  // Nothing is producing numbers.
+  assert.equal(measurementNote({ measuring: false, router: { available: true, connected: false } }), '');
+  // A rate-sampling router says so plainly.
+  const est = measurementNote({ measuring: false, router: reading });
+  assert.match(est, /rate at each moment/);
+  assert.match(est, /floor, not a measurement/);
+  // A counter-reading router does not carry that caveat.
+  const counted = measurementNote({
+    measuring: false,
+    router: { ...reading, source: 'unifi', status: { ...reading.status, estimated: false } },
+  });
+  assert.match(counted, /byte counts read from unifi/);
+  assert.doesNotMatch(counted, /not exact/);
+});
+
+test('the headline says when the numbers come from the router instead of Watch mode', () => {
+  const h = statusHeadline({ enabled: false, measuring: false, router: reading, live: { down_bytes_per_second: 1e6, up_bytes_per_second: 1e5 } });
+  assert.equal(h.tone, 'good');
+  assert.match(h.text, /Reading 9 devices from your eero/);
+  // With no router connected the old wording stands, and points at both options.
+  const off = statusHeadline({ enabled: false, measuring: false, router: { available: true, connected: false } });
+  assert.equal(off.tone, 'muted');
+  assert.match(off.text, /Connect your router below/);
+});
+
+test('liveChartCaption does not overstate how often the line moves', () => {
+  const plain = liveChartCaption({ measuring: true }, 90, 2000);
+  assert.match(plain, /one sample every 2 seconds/);
+  const router = liveChartCaption({ measuring: false, router: reading }, 90, 2000);
+  assert.match(router, /read every 30 seconds, so the line steps rather than curves/);
+  assert.match(router, /The last 3 minutes/);
+});
+
+test('the live card shows only the busiest few devices', () => {
+  const mk = (id, rate) => ({ device_id: id, name: id, down_bytes_per_second: rate, up_bytes_per_second: 0 });
+  const many = { devices: [mk('a', 0), mk('b', 500), mk('c', 0), mk('d', 900), mk('e', 0), mk('f', 0)] };
+  // Unlimited keeps everything, busiest first.
+  assert.deepEqual(liveRows(many).map((d) => d.device_id), ['d', 'b', 'a', 'c', 'e', 'f']);
+  // Capped, the idle ones drop out rather than padding the list.
+  assert.deepEqual(liveRows(many, 3).map((d) => d.device_id), ['d', 'b']);
+  // A quiet network still shows something rather than an empty card.
+  const quiet = { devices: [mk('a', 0), mk('b', 0), mk('c', 0)] };
+  assert.equal(liveRows(quiet, 2).length, 2);
+  assert.deepEqual(liveRows({ devices: [mk('a', 1)] }, 8).map((d) => d.device_id), ['a']);
+  assert.deepEqual(liveRows(null, 5), []);
+});
+
+test('liveRowsNote says what the live card is leaving out', () => {
+  const status = { devices: new Array(88).fill({ down_bytes_per_second: 0, up_bytes_per_second: 0 }) };
+  assert.match(liveRowsNote(status, 8), /the 8 busiest of 88 devices/);
+  assert.equal(liveRowsNote(status, 88), '');
+  assert.equal(liveRowsNote({ devices: [] }, 0), '');
+  assert.equal(liveRowsNote(null, 0), '');
+});
+
+test('nameSyncSummary says what will change, and what a rename costs', () => {
+  assert.match(nameSyncSummary({}, false), /Nothing to change/);
+  assert.match(nameSyncSummary({}, true), /Nothing changed/);
+  assert.equal(nameSyncSummary({ named: 1 }, false), 'This will make these changes: 1 device named.');
+  assert.equal(nameSyncSummary({ created: 2, named: 3 }, true), 'Synced: 2 devices added and 3 devices named.');
+  const all = nameSyncSummary({ created: 1, named: 2, renamed: 1, groups_created: 1, memberships_added: 4 }, false);
+  assert.equal(all, 'This will make these changes: 1 device added, 2 devices named, 1 device renamed, 1 group created and 4 devices put in groups.');
+  assert.equal(nameSyncSummary(null, false), 'Nothing to change: your names already match eero.');
 });

@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# dns-qa: the automated DNS QA suite (docs/DNS-QA.md).
+#   dns-qa            run every TestQA_ test, with the race detector
+#   dns-qa -v         show each test as it runs
+#   dns-qa --count N  repeat N times (default 1) to shake out flakes
+#
+# It starts a real engine on real loopback sockets in front of fake upstream
+# resolvers and checks failover, hedging, blackholes, TCP fallback, AAAA
+# filtering, blocklists, Private Relay, the cache and listener coverage. The
+# listener-coverage tests bind 127.0.0.2 and 127.0.0.3; where the host does not
+# allow that (macOS without `sudo ifconfig lo0 alias 127.0.0.2`) they skip, and
+# the summary says so. CI runs this on Linux, where they always run.
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+
+verbose=""
+count=1
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -v) verbose=-v ;;
+    --count) count=${2:?--count needs a number}; shift ;;
+    *) echo "usage: dns-qa [-v] [--count N]" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+out=$(mktemp)
+trap 'rm -f "$out"' EXIT
+# -v is always on underneath so skips can be counted; it is only echoed on request.
+if ! go test -race -count="$count" -v -run '^TestQA_' ./internal/dnsengine ./internal/selftest >"$out" 2>&1; then
+  cat "$out"
+  echo "dns-qa: FAILED" >&2
+  exit 1
+fi
+if [ -n "$verbose" ]; then cat "$out"; fi
+passed=$(grep -c '^--- PASS: TestQA_' "$out" || true)
+skipped=$(grep -c '^--- SKIP: TestQA_' "$out" || true)
+echo "dns-qa: $passed passed, $skipped skipped"
+if [ "$skipped" -gt 0 ]; then
+  echo "dns-qa: skipped tests need 127.0.0.2 and 127.0.0.3 (Linux has them; macOS: sudo ifconfig lo0 alias 127.0.0.2 && sudo ifconfig lo0 alias 127.0.0.3)" >&2
+fi

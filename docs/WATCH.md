@@ -98,7 +98,7 @@ IPv6 steering for smart-home, Thread or Matter gear (see below).
 
 ## Stopping it: the kill switch
 
-The Watch screen has one button that unsteers every device at once and tells each one the
+The Watch mode section of the Bandwidth screen has one button that unsteers every device at once and tells each one the
 router's real address again. It takes effect immediately, it does not wait for anything on the
 network, and **it stays off across restarts** until you re-arm it in the same place. Press it if
 anything looks wrong; nothing else in Shepherd is affected, DNS filtering included.
@@ -298,6 +298,8 @@ addresses, the protocol and the first sixteen bytes of the transport header -- a
 frame it has already relayed inside 100 ms. Dropped rather than passed up: IPv4 forwarding is on
 on many hosts, and passing it would hand the kernel a frame it would route straight back out of
 the interface it came from.
+
+A **pure TCP acknowledgement** is the exception, because two different packets can be byte for byte the same: a receiver that sees a gap repeats the same ACK for every segment that follows, and TCP needs those duplicate ACKs to reach the sender. A repeated pure ACK is relayed up to 8 times inside the window before it is dropped as a loop, so a loop of them is still contained within a handful of passes.
 
 The window is placed between two real numbers. A loop's round trip is microseconds. The shortest
 TCP retransmission timeout Linux will use is 200 ms. So a frame going round is caught the second
@@ -593,7 +595,7 @@ Linux, and three capabilities:
 Only `CAP_NET_RAW` is needed for the userspace relay. The other three are what
 the in-kernel relay needs, and all three have to be present: miss `CAP_PERFMON`
 and everything still works, just through the slower path, with the reason in the
-log and on the Watch screen. This is worth checking after any change to how
+log and in the Watch mode section of the Bandwidth screen. This is worth checking after any change to how
 Shepherd is run — it was found on the live host, where the container had
 `CAP_BPF` but not `CAP_PERFMON` and had quietly been using the userspace relay.
 
@@ -611,13 +613,13 @@ entirely in Shepherd's own process over raw `AF_PACKET` sockets (or in the kerne
 no frame ever reaches a routing decision, netfilter or conntrack.
 
 Anywhere Watch mode cannot run — a non-Linux host, a missing capability, no usable interface — it
-logs one clear reason, reports itself unavailable on the Watch screen, retries quietly on a
+logs one clear reason, reports itself unavailable in the Watch mode section of the Bandwidth screen, retries quietly on a
 backoff, and changes nothing else. DNS filtering, the device registry, the scanners and the portal
 all behave exactly as they would without it.
 
 ## In the portal
 
-- **Watch screen:** whether it is running and through which relay, the router and Shepherd's own
+- **Watch mode section of the Bandwidth screen:** whether it is running and through which relay, the router and Shepherd's own
   addresses, live relayed throughput in bits and packets per second, every watched device with its
   own rate, why each unwatched device is unwatched, the IPv6 state, the recent "stopped watching"
   log, and the kill switch.

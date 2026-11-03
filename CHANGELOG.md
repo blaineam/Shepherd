@@ -12,12 +12,112 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Changed
+- **The Overview and Watch mode screens are gone.** The Overview repeated what the Map, History and
+  Bandwidth screens show better, so the portal opens on the Map and what only the Overview had (software
+  updates, blocklist health, your own rules, the Private Relay switch) is the new **System** screen under
+  Settings. Watch mode's status, device list and kill switch are the last section of **Bandwidth**.
+- **Bandwidth is mostly charts now.** A live rolling chart with a bar pair per device, an Over time chart
+  with round-number gridlines and a hover read-out, a share-of-traffic donut with a download against
+  upload bar, and a trend line per busy device.
+
 ### Added
 - **Every loop-brake trip is kept, with its raw evidence.** `last_loop_stop` in `watch.json` now also
   records the relay's counts over the mirrored seconds, the echo-delay histogram (local, switch or
   wireless) and the sampled frames as hex, and each trip is appended to `watch-stops.jsonl` beside it
   so the next trip no longer erases the one before. Aimed at tracing why watch mode stops until it
   stops no more.
+- **UniFi as a bandwidth source.** A UniFi Network controller keeps real byte counters per client,
+  so unlike eero its figures are measurements rather than sampled estimates, and when both are
+  connected the controller wins. Connecting one is a single form (address, a read-only account,
+  site) with no verification code; the credentials are checked against the controller before they
+  are stored. Both a UniFi OS console and a self-hosted Network Application work, discovered at
+  login, and redirects are refused so a mistyped address cannot walk the session cookie somewhere
+  else. See [docs/TRAFFIC.md](docs/TRAFFIC.md).
+- **Per-device bandwidth read from your router**, for networks where Watch mode cannot run. A new
+  `internal/routerusage` package reads what the router already knows and records it as the same
+  per-device byte counts Watch mode produces, so the Bandwidth screen, the per-device chart and the
+  history all work unchanged. Sources report either cumulative byte counters (exact) or
+  instantaneous rates (integrated, and labelled as an estimate everywhere it reaches the owner).
+  **eero** is the first source: connect it under "Read from your router" on the Bandwidth screen,
+  which reuses the existing sign-in and keeps the session in `secrets.json`. It is unofficial --
+  eero publishes no API for this -- and it reports rates only, so its totals are close rather than
+  exact. Nothing is put in the path of your traffic, and no setting on your router is changed.
+  See [docs/TRAFFIC.md](docs/TRAFFIC.md). The "Right now" card and the per-device rows are fed by
+  the reader too while Watch mode is not measuring, so the live view is not left at zero; the
+  rolling chart's caption says how often the router is actually read, since the line steps rather
+  than curves. Measured against a known transfer, eero's sampling recorded about a sixth of it, so
+  the screen and the docs call these totals a floor rather than a measurement. The live card shows
+  only the eight busiest devices, since a router source lists every device it knows, and says how
+  many it is leaving out. The kept sign-in also powers **Device names**: copy eero's names and
+  profiles into Shepherd whenever you like, with no new verification code. It previews first, and
+  names you set yourself are kept unless you explicitly ask for them to be replaced.
+- **ntfy setup walk-through** under Notifications on the Alarms screen: an expandable section with the steps, a ready-to-paste `[alarms.ntfy]` block with a hard-to-guess topic suggested, and a line saying whether ntfy is on and where it publishes (never the token). `GET /api/alarms/push` now includes an `ntfy` object.
+- **A built-in DNS self-test** (`[selftest]`, on by default). Every minute Shepherd asks a known-good and a
+  known-blocked name of every address it listens on, over UDP and TCP, so an address devices use with no
+  listener behind it (the wired-versus-Wi-Fi failure that left a PS5 with "host not found") is caught within
+  a minute instead of by a person. It also watches each upstream's error rate and latency over a rolling
+  window, flags one above 5 percent errors or far slower than its peers, and warns when this host has a LAN
+  address that is neither served nor listed in `selftest.not_served`. Results are a card on the Upstreams
+  screen and `GET /api/selftest`; four new alarm types (`dns-listener-down`, `dns-canary-failed`,
+  `dns-lan-uncovered`, `dns-upstream-degraded`) fire after two failing rounds and not again within the
+  cooldown. The test's queries are kept out of the query log and device list. See
+  [docs/DNS-QA.md](docs/DNS-QA.md).
+- **`scripts/dns-qa`, an automated DNS QA suite** (its tests run in CI with the rest): a real engine on real sockets in
+  front of fake UDP, TCP, DoH and DoT upstreams, checking failover, hedging, stalled and blackholed upstreams,
+  TCP fallback on truncation, the AAAA filter and `ipv6hint` stripping, blocklists and allowlist precedence,
+  Private Relay NXDOMAIN, cache TTLs, and listener coverage on loopback aliases.
+- **`dns.filter_aaaa`** (`"auto"` by default, or `"on"` / `"off"`). On a network whose devices have no
+  IPv6 route to the internet (only private `fd..` or link-local addresses) every AAAA answer is an
+  unreachable address, and a device that tries it first or handles the failure badly reports a network
+  problem. Shepherd now answers AAAA queries with an empty answer, and drops IPv6 hints from HTTPS
+  records, while outbound IPv6 is unreachable. `auto` finds out by trying a TCP connect to three public
+  IPv6 resolvers every minute: one success turns AAAA answers back on at once, two failed rounds in a
+  row turn them off, and each change is logged. Filtered answers show as `ipv6-filtered` in the log.
+
+### Fixed
+
+- **Filtered AAAA answers, and blocked names, could make a device query without end.** A synthesized
+  NODATA or NXDOMAIN carried no SOA in its authority section, and RFC 2308 negative caching needs
+  one: with nothing to cache against, a client that prefers IPv6 just asks again. A solar inverter
+  here asked for the same filtered `AAAA` **forty-eight times a second**, indefinitely, and never
+  fell back to IPv4. Every synthesized negative answer now carries an SOA with a one-minute
+  negative TTL, which matches how often the IPv6 probe runs.
+
+- The Bandwidth charts overflowed the left edge of their card on a phone. An axis label wider than
+  the gutter ("100 Mbit/s") was positioned from the right with no left bound, so it grew out of the
+  card; it is now bounded on both sides, the gutter is wide enough to hold it, and the live, trend
+  and totals grids no longer demand a minimum width wider than a phone's card.
+
+- A failed update check caused by GitHub's anonymous rate limit (60 requests an hour per address, shared by everything on your network) now says so and when it resets, instead of "HTTP 403".
+- **Watch mode no longer eats duplicate TCP acknowledgements.** The duplicate brake drops any frame it has already relayed inside 100 ms, but a receiver that sees a gap sends the same ACK again for every segment that follows, and TCP needs those to reach the sender (three start a fast retransmit; SACK recovery runs on them). One lost packet on the download path therefore cost the sender a full retransmission timeout, which shows up as stalled and failed requests. A repeated pure ACK is now relayed up to 8 times inside the window before it is treated as a loop, in both the kernel and userspace relays; data, SYN, FIN and RST frames are dropped on their first repeat as before.
+- **Unsteering now really restores a device.** The corrective ARP reply that tells a device the gateway's real address again was sent with the gateway's MAC as its Ethernet source, a forged link-layer address that wired links and docks drop, so a wired device kept the claim and sent everything through Shepherd until its ARP entry expired. It now leaves from Shepherd's own MAC (the body still says the gateway's), which is accepted, and it is repeated four more times, half a second apart, in the background in case one is lost.
+
+- Update checks, blocklist refreshes and the other feed downloads failed with a DNS timeout when the host's `resolv.conf` named resolvers Shepherd does not listen on (the usual case in a host-network container), so every list showed "Rejected". Shepherd's own fetches now resolve through the bootstrap servers.
+- Subscribing to push notifications failed with "sw.js load failed": the service worker and web manifest were not embedded in the binary.
+- **The portal locked while it was in use.** Idle locking counted only calls that mean a person is
+  there, and looking at the map, panning the globe or scrolling made none, so a page in active use
+  relocked after the idle window. The page now reports real input (at most once a minute) to
+  `POST /api/activity`, which slides the window; a tab left open still locks on schedule. (A restart
+  of Shepherd still ends every session, since sessions are held in memory.)
+
+### Added
+- **Bandwidth on the device card.** The device panel now shows that device's last 24 hours of download
+  and upload, from the same traffic history as the Bandwidth page.
+
+### Fixed
+- **The device panel's close button was hidden under the top bar.** The panel started at the very top of
+  the window, behind the LIVE bar, so its header and close button could not be clicked. It now starts
+  below the bar.
+
+### Fixed
+- **A stalled upstream no longer makes DNS lookups fail.** Upstreams were tried one after another with a
+  two-second timeout each, so one that stalled (a slow DNS-over-TLS connection, or a resolver dropping
+  packets) cost every query two seconds before the next was tried, longer than many clients wait.
+  Shepherd now starts the next upstream after a short hedge delay (3x the first one's round trip,
+  150 to 400 ms) or at once if the first fails, and answers with whichever replies first. An upstream
+  that was hedged out still records its own success or failure, so a chronically slow one still falls
+  down the ranking.
 
 ## [0.1.0] - 2026-11-02
 

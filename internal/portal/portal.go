@@ -33,6 +33,7 @@ import (
 	"shepherd/internal/passkeys"
 	"shepherd/internal/portscan"
 	"shepherd/internal/reverseproxy"
+	"shepherd/internal/routerusage"
 	"shepherd/internal/secrets"
 	"shepherd/internal/settings"
 	"shepherd/internal/threats"
@@ -44,7 +45,7 @@ import (
 // Only what the browser needs is embedded: the page, its modules and vendored
 // libraries. The unit tests under web/test stay out of the binary.
 //
-//go:embed web/index.html web/app.js web/style.css web/icon.png web/js web/vendor
+//go:embed web/index.html web/app.js web/style.css web/icon.png web/sw.js web/manifest.webmanifest web/js web/vendor
 var webFS embed.FS
 
 const cookieName = "shepherd_session"
@@ -94,6 +95,13 @@ type Deps struct {
 	// api_import.go). Nil talks to production eero over https; tests point it
 	// at a fake server with importers.NewTestClient.
 	NewEeroClient func() (*importers.Client, error)
+
+	// NewStoredEeroClient builds a client that resumes the kept sign-in
+	// (api_routerusage.go), for reading bandwidth and syncing names
+	// without another verification code. Nil talks to production eero;
+	// tests point it at a fake server. The store it is given is the only
+	// place the token lives.
+	NewStoredEeroClient func(importers.TokenStore) (*importers.Client, error)
 
 	// Alarms is the alarm engine (docs/ALARMS.md). Nil gives an unwired,
 	// in-memory engine that nothing raises alarms through, so the API still
@@ -168,6 +176,14 @@ type Deps struct {
 	// the separate, less frequent bufferbloat check.
 	NethealthBufferbloatEnabled bool
 
+	// Ntfy describes the ntfy delivery channel for the Alarms screen; the
+	// zero value is "off".
+	Ntfy NtfyStatus
+
+	// Selftest is the built-in DNS self-test (internal/selftest,
+	// docs/DNS-QA.md). Nil means it is off: the endpoint says so.
+	Selftest SelftestSource
+
 	// ReverseProxy holds the hosts the [reverseproxy] listener forwards
 	// (docs/REVERSEPROXY.md). Nil gets a memory-only store, so the API
 	// still works but nothing persists.
@@ -200,6 +216,12 @@ type Deps struct {
 	// hostname, passkeys are unavailable and the portal says why.
 	TLSHostname string
 	TLSListen   string
+	// RouterUsage reads per-device bandwidth from the owner's router for
+	// networks where Watch mode cannot run (docs/TRAFFIC.md). Nil leaves
+	// the Bandwidth screen without that option, which is what a build with
+	// no cmd/shepherd wiring gets.
+	RouterUsage UsageReader
+
 	// Traffic is the bandwidth history (docs/TRAFFIC.md), fed by Watch
 	// mode. Nil gets an empty, memory-only store so the API still answers.
 	Traffic *traffic.Store
@@ -210,6 +232,20 @@ type Deps struct {
 	// it), in which case /api/watch answers "not enabled" and the Devices
 	// screen shows no Watch column instead of failing.
 	Watch WatchEngine
+}
+
+// UsageReader is what the portal needs from the passive bandwidth reader
+// (internal/routerusage): what it is doing, and a way to restart it after
+// the owner changes the connection.
+type UsageReader interface {
+	// Status is the current state, for the Bandwidth screen.
+	Status() routerusage.Status
+	// Live is every device as of the last poll, busiest first, for the
+	// screen's "Right now" card while the reader is the source.
+	Live() []routerusage.LiveDevice
+	// Reload re-reads the stored connection and starts, stops or restarts
+	// the collector to match.
+	Reload()
 }
 
 // WatchEngine is what the portal needs from Watch mode's engine
@@ -347,6 +383,9 @@ func New(d Deps) *Server {
 	// a tab merely sits open (see sessionStore.valid).
 	s.mux.Handle("GET /api/status", s.authPassive(s.status))
 	s.mux.Handle("GET /api/queries", s.authPassive(s.queries))
+	// activity is how the page tells the server a person is using it, which
+	// slides the idle-lock window (see web/js/activity.js).
+	s.mux.Handle("POST /api/activity", s.auth(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	s.mux.Handle("GET /api/rules", s.auth(s.getRules))
 	s.mux.Handle("POST /api/rules", s.auth(s.addRule))
 	s.mux.Handle("DELETE /api/rules", s.auth(s.delRule))
@@ -585,6 +624,14 @@ func (s *Server) routes() {
 	h("POST /api/import/eero/preview", s.importEeroPreview)
 	h("POST /api/import/eero/apply", s.importEeroApply)
 	h("POST /api/import/eero/cancel", s.importEeroCancel)
+	h("GET /api/routerusage", s.getRouterUsage)
+	h("POST /api/routerusage/connect", s.connectRouterUsage)
+	h("POST /api/routerusage/enabled", s.setRouterUsageEnabled)
+	h("DELETE /api/routerusage", s.forgetRouterUsage)
+	h("POST /api/routerusage/names", s.syncRouterNames)
+	h("POST /api/routerusage/unifi", s.connectUniFi)
+	h("POST /api/routerusage/unifi/enabled", s.setUniFiEnabled)
+	h("DELETE /api/routerusage/unifi", s.forgetUniFi)
 	h("POST /api/import/csv/preview", s.importCSVPreview)
 	h("POST /api/import/csv/apply", s.importCSVApply)
 
@@ -668,6 +715,9 @@ func (s *Server) routes() {
 	h("GET /api/nethealth/bufferbloat", s.nethealthBufferbloat)
 	h("POST /api/nethealth/probe", s.nethealthProbeNow)
 	h("POST /api/nethealth/bufferbloat/run", s.nethealthBufferbloatNow)
+
+	h("GET /api/selftest", s.getSelftest)
+	h("POST /api/selftest/run", s.runSelftest)
 
 	h("GET /api/reverseproxy", s.getReverseProxy)
 	h("GET /api/reverseproxy/hosts", s.listProxyHosts)

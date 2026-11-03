@@ -25,18 +25,27 @@ type PushService interface {
 
 const maxPushName = 60
 
-// getPush reports whether Web Push is on, the public key, and every
-// subscribed browser (never an endpoint or a key).
+// NtfyStatus says whether ntfy delivery is on and where it publishes, so the
+// Alarms screen can walk the owner through setting it up. It never carries
+// a token or password.
+type NtfyStatus struct {
+	Enabled bool   `json:"enabled"`
+	Server  string `json:"server,omitempty"`
+	Topic   string `json:"topic,omitempty"`
+}
+
+// getPush reports whether Web Push is on, the public key, every
+// subscribed browser (never an endpoint or a key) and the ntfy status.
 func (s *Server) getPush(w http.ResponseWriter, r *http.Request) {
 	if s.Push == nil {
-		writeJSON(w, map[string]any{"enabled": false, "devices": []webpush.Device{}})
+		writeJSON(w, map[string]any{"enabled": false, "devices": []webpush.Device{}, "ntfy": s.Ntfy})
 		return
 	}
 	devs := s.Push.Devices()
 	if devs == nil {
 		devs = []webpush.Device{}
 	}
-	writeJSON(w, map[string]any{"enabled": true, "public_key": s.Push.PublicKey(), "devices": devs})
+	writeJSON(w, map[string]any{"enabled": true, "public_key": s.Push.PublicKey(), "devices": devs, "ntfy": s.Ntfy})
 }
 
 type pushSubscribeBody struct {

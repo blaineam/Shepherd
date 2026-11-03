@@ -1,10 +1,17 @@
 # Bandwidth
 
 How much each device, each group and the whole network moves over the wire, live and over time.
-The portal's **Bandwidth** screen shows it; `internal/traffic` keeps the history; the numbers come
-from [Watch mode](WATCH.md). Nothing here adds a byte to the network: the relay already carries
-every steered device's outbound frames, and this is bookkeeping on frames that are passing through
-anyway.
+The portal's **Bandwidth** screen shows it and `internal/traffic` keeps the history. There are two
+ways to get the numbers, and the screen says plainly which one is in effect:
+
+- **[Watch mode](WATCH.md)**, which relays each device's traffic and counts the bytes. Exact, but
+  it is an intervention, and on some routers it cannot be made to work at all.
+- **[Reading your router](#reading-them-from-your-router)** (`internal/routerusage`), which asks
+  the router you already have what each device has moved. Nothing is put in the path of your
+  traffic, so it works where Watch mode cannot, but what you get depends on what your router will
+  tell you.
+
+Neither adds a byte to the network.
 
 ## Where the numbers come from
 
@@ -54,6 +61,105 @@ the exact total both ways; the difference between that and the sum of the estima
 this cannot see. Closing it needs the return path: a mirror port on a managed switch, two-sided
 interception, or Gateway mode (docs/DESIGN.md).
 
+## Reading them from your router
+
+Not every network tolerates Watch mode. One-sided ARP steering depends on how the router switches
+frames, and on at least one consumer mesh router it cannot be made to work: the router hands a
+steered device's frames straight back, and the traffic dies. For those networks Shepherd can read
+per-device bandwidth from the router instead, which touches nothing.
+
+`internal/routerusage` is the shape of that. A `Source` is one router, and it declares which of
+two things it can report:
+
+| Kind | What the router gives | How Shepherd uses it | Accuracy |
+|---|---|---|---|
+| `KindCounters` | Bytes since the router booted | Differences consecutive reads | Exact apart from resets |
+| `KindRates` | The rate right this moment | Integrates samples over time | An estimate |
+
+The `Collector` normalizes both into the same per-device byte deltas `internal/traffic` already
+stores, so the Bandwidth screen, the per-device chart and the history work the same either way. It
+polls every 30 seconds, ignores a device the registry has never seen, refuses a counter that went
+backwards or a figure too large to be real, and leaves a gap empty rather than interpolating
+across a missed poll. A device Watch mode is already steering is skipped, so the two measurements
+are never added together.
+
+### eero
+
+eero is the first source, and the only one today. eero publishes **no API** for this; the client
+talks to the undocumented one its own app uses, the way well-known open-source clients do, so it
+is unofficial and can stop working without notice.
+
+eero reports only the rate right now (`down_mbps`, `up_mbps` per device), so it is a `KindRates`
+source and its figures are **estimates**: traffic between two polls is interpolated, and a burst
+that starts and ends between them is missed entirely. The portal never shows those numbers as
+measured.
+
+**How far off, measured.** On the maintainer's network, downloading about 300 MB in roughly a
+minute was recorded as 45 MB -- a sixth of it. Thirty seconds is a long time next to a file
+transfer, and both the sampling and eero's own reporting lag. So the per-device totals from this
+source are a **floor, not a measurement**: they are good for "which devices are busy, and roughly
+in what proportion", and poor for "how much has this device used this month". A shorter interval
+narrows the gap at the cost of more requests to eero. A `KindCounters` source does not have this
+problem at all, which is the argument for one.
+
+**Connecting one.** On the Bandwidth screen, under "Read from your router", enter the eero
+account's email or phone, type the code eero sends, and pick the network. The session token is
+kept in `secrets.json` (`internal/secrets`, mode 0600, the same protection as every other stored
+credential) and never leaves the server: it goes from the eero client straight into the store, and
+no API call returns it. Switching the reader off keeps the sign-in, so turning it back on needs no
+new code; **Disconnect** forgets it entirely.
+
+**When the session expires**, the reader says so and the screen offers a sign-in rather than
+showing a stuck collector. The network already chosen is kept.
+
+### Device names
+
+The kept sign-in is good for more than bandwidth. eero already knows what the household calls each
+device, and `internal/importers` already maps those names to Shepherd aliases and eero's profiles
+to groups -- that was the one-time import. With a session kept, the same thing can be run whenever
+the owner adds a device, with no new verification code, from **Device names** in the same section.
+
+It always previews first, and says exactly what would change before anything is written.
+**The owner's own names win:** a device they have named in Shepherd is left alone unless they tick
+"Also replace names I have set myself", which is asked for per sync and is never the default and
+never automatic. Running it twice changes nothing the second time.
+
+`POST /api/routerusage/names` takes `dry_run` and `overwrite_names` and returns the same report the
+import does.
+
+### UniFi
+
+A UniFi Network controller keeps **real byte counters** per client, so it is a `KindCounters`
+source: differencing consecutive reads is exact, and none of eero's sampling error applies. If you
+have the choice, this is the one to use.
+
+Connecting one is a single form -- a controller address, an account on it and the site -- because
+unlike eero there is no verification code. **A read-only account is enough**; Shepherd only reads.
+The credentials are checked against the controller before they are stored, so a typo is a message
+on the screen rather than a collector that never works, and the password is kept in `secrets.json`
+and never returned by any endpoint.
+
+Two shapes of controller exist and both work. A UniFi OS console (a Dream Machine, a Cloud
+Gateway, a UDR) answers under `/proxy/network` and wants a CSRF token; a self-hosted Network
+Application answers directly. Which one is in front is discovered at login rather than configured.
+
+The counters come from `stat/sta`, the endpoint the controller's own web interface uses:
+Ubiquiti's documented API lists clients but does not expose their traffic. **Mind the direction** --
+the controller reports from its own point of view, so its `tx_bytes` is what it sent *to* the
+client, which is that device's download.
+
+Controllers ship with a self-signed certificate, so a LAN address usually needs **Accept its
+self-signed certificate**. It is off unless the owner turns it on.
+
+When both a controller and an eero are connected, the controller wins: its numbers are
+measurements and eero's are estimates.
+
+### Adding another router
+
+A new source is one type with three methods -- `Name`, `Kind` and `Poll` -- plus a constructor.
+Everything else is shared. Routers that keep real byte counters (UniFi, OpenWrt) are the better
+case: `KindCounters` is exact and needs no integration.
+
 ## History
 
 `internal/traffic.Store` keeps one series per device at three resolutions and folds data from one
@@ -97,7 +203,7 @@ The **Bandwidth** screen, under Monitor:
 - **Who used the most:** devices and groups ranked by bytes moved in the range, with each one's
   share of the network's total.
 
-The Watch screen's traffic tiles and each device's drawer show the live download estimate too.
+The Bandwidth screen's live tiles and each device's drawer show the live download estimate too.
 
 ## API
 

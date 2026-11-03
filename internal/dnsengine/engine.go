@@ -21,6 +21,20 @@ type Engine struct {
 	Log           *QueryLog
 	Stats         *Stats
 	BlockNXDOMAIN bool
+	// FilterAAAA, when it returns true, makes the engine answer every AAAA
+	// query with an empty (NODATA) answer and strip IPv6 hints from
+	// HTTPS/SVCB records. It is for a network whose devices have no IPv6
+	// route to the internet (only private fd.. or link-local addresses):
+	// the addresses are unreachable there, and devices that try them
+	// first, or handle the failure badly, report a network problem. Nil
+	// means never. IPv6Probe.Filtering is the automatic form.
+	FilterAAAA func() bool
+	// Quiet, when set, is asked about every query name; a true answer keeps
+	// that query out of the log, the statistics, the device registry and
+	// OnEntry. It is for the built-in DNS self-test (internal/selftest),
+	// which asks a few names on every address every minute and must not
+	// show up as a device or as traffic. Must be cheap; nil means never.
+	Quiet func(name string) bool
 	// Geo places answer addresses on the globe. Nil disables geolocation.
 	Geo Geo
 	// Clients maps a client address to its device and groups for scoped
@@ -70,6 +84,12 @@ type Engine struct {
 	// fast and must not block.
 	CountryBlock func(clientIP string, dests []Dest) (country string, blocked bool)
 }
+
+// CanaryBlockedName is a name the engine always blocks (A queries from
+// anyone, honoring dns.block_mode). The DNS self-test asks for it on every
+// listening address to prove the filter is in the path, whatever lists the
+// owner has chosen. It is under .invalid, which never resolves anywhere.
+const CanaryBlockedName = "blocked.selftest.shepherd.invalid"
 
 // AccessInfo is what OnAccess receives for one query matching a watched
 // catalog or custom list item.
@@ -144,12 +164,41 @@ func (e *Engine) write(w dns.ResponseWriter, r, resp *dns.Msg) {
 	_ = w.WriteMsg(resp)
 }
 
+// negativeTTL bounds how long a synthesized negative answer may be cached.
+// A minute matches the IPv6 probe's interval, so AAAA answers come back
+// promptly once IPv6 works again.
+const negativeTTL = 60
+
+// negativeSOA is the SOA record RFC 2308 wants in the authority section of
+// a NODATA or NXDOMAIN answer. Without one a resolver has nothing to cache
+// the negative answer against, so a client that keeps asking never stops:
+// a solar inverter here asked for the same filtered AAAA forty-eight times
+// a second, indefinitely, and never fell back to IPv4.
+//
+// The owner name is the question's own, because Shepherd synthesizes these
+// answers and does not know the real zone apex; that is what other
+// filtering resolvers do and what clients accept. The MNAME is deliberately
+// unresolvable: nothing should ever try to reach it.
+func negativeSOA(name string) *dns.SOA {
+	return &dns.SOA{
+		Hdr:     dns.RR_Header{Name: name, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: negativeTTL},
+		Ns:      "shepherd.invalid.",
+		Mbox:    "hostmaster.shepherd.invalid.",
+		Serial:  1,
+		Refresh: 3600,
+		Retry:   600,
+		Expire:  86400,
+		Minttl:  negativeTTL,
+	}
+}
+
 func (e *Engine) sinkhole(r *dns.Msg, q dns.Question, nxdomain bool) *dns.Msg {
 	m := new(dns.Msg)
 	m.SetReply(r)
 	m.RecursionAvailable = true
 	if nxdomain || e.BlockNXDOMAIN {
 		m.Rcode = dns.RcodeNameError
+		m.Ns = []dns.RR{negativeSOA(q.Name)}
 		return m
 	}
 	hdr := dns.RR_Header{Name: q.Name, Class: dns.ClassINET, Ttl: 60}
@@ -160,8 +209,11 @@ func (e *Engine) sinkhole(r *dns.Msg, q dns.Question, nxdomain bool) *dns.Msg {
 	case dns.TypeAAAA:
 		hdr.Rrtype = dns.TypeAAAA
 		m.Answer = append(m.Answer, &dns.AAAA{Hdr: hdr, AAAA: net.IPv6zero})
+	default:
+		// NOERROR with no answer is a NODATA, and needs the SOA too.
+		m.Ns = []dns.RR{negativeSOA(q.Name)}
 	}
-	return m // other types: NOERROR with no answer
+	return m
 }
 
 // publicIP reports whether ip is a routable address worth placing on a map.
@@ -232,6 +284,9 @@ func (e *Engine) destsOf(ips []net.IP) []Dest {
 // moment the write syscall returns, regardless of what Go code follows it.
 // Recording first closes that race entirely rather than narrowing it.
 func (e *Engine) done(entry Entry, start time.Time) {
+	if e.Quiet != nil && e.Quiet(entry.Name) {
+		return
+	}
 	entry.Ms = float64(time.Since(start).Microseconds()) / 1000
 	e.Log.Add(entry)
 	e.Stats.Record(entry)
@@ -301,7 +356,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		entry.Type = fmt.Sprintf("TYPE%d", q.Qtype)
 	}
 
-	if e.ClientSeen != nil {
+	if e.ClientSeen != nil && (e.Quiet == nil || !e.Quiet(entry.Name)) {
 		e.ClientSeen(entry.Client)
 	}
 	var d Decision
@@ -316,6 +371,9 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 	if d.Reason == "" {
 		d = e.Filter.CheckFor(entry.Client, entry.Name, e.Clients)
+	}
+	if entry.Name == CanaryBlockedName && !wander && q.Qtype == dns.TypeA {
+		d = Decision{Blocked: true, Reason: "selftest"} // the self-test's always-blocked name
 	}
 	if wander { // answer everything, but remember what filtering would have done
 		if d.Blocked {
@@ -337,7 +395,20 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 	entry.Reason = d.Reason // "allowlist" or empty
 
+	if e.filterAAAA() && q.Qtype == dns.TypeAAAA {
+		resp := new(dns.Msg)
+		resp.SetReply(r)
+		resp.RecursionAvailable = true
+		// Without the SOA this is an uncacheable NODATA and a client that
+		// prefers IPv6 can spin on it forever.
+		resp.Ns = []dns.RR{negativeSOA(q.Name)}
+		entry.Action, entry.Reason, entry.Rcode = "allowed", "ipv6-filtered", "NOERROR"
+		e.finishAllowed(w, r, q, entry, resp, start)
+		return
+	}
+
 	if resp, ok := e.Cache.Get(r); ok {
+		resp = e.withoutIPv6Hints(resp)
 		entry.Action, entry.Rcode = "cached", dns.RcodeToString[resp.Rcode]
 		e.finishAllowed(w, r, q, entry, resp, start)
 		return
@@ -355,6 +426,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 	e.Cache.Put(r, resp)
+	resp = e.withoutIPv6Hints(resp)
 	entry.Action, entry.Upstream, entry.Rcode = "allowed", up.Addr, dns.RcodeToString[resp.Rcode]
 	e.finishAllowed(w, r, q, entry, resp, start)
 }
@@ -493,3 +565,51 @@ func Serve(ctx context.Context, addrs []string, h dns.Handler, opts ...ServeOpti
 		return err
 	}
 }
+
+// withoutIPv6Hints drops the ipv6hint parameter from HTTPS and SVCB answers
+// while AAAA filtering is on, on a copy, so the cached answer stays as the
+// upstream sent it.
+func (e *Engine) withoutIPv6Hints(resp *dns.Msg) *dns.Msg {
+	if !e.filterAAAA() || resp == nil {
+		return resp
+	}
+	has := false
+	for _, rr := range resp.Answer {
+		var kv []dns.SVCBKeyValue
+		switch v := rr.(type) {
+		case *dns.HTTPS:
+			kv = v.Value
+		case *dns.SVCB:
+			kv = v.Value
+		}
+		for _, p := range kv {
+			if p.Key() == dns.SVCB_IPV6HINT {
+				has = true
+			}
+		}
+	}
+	if !has {
+		return resp
+	}
+	out := resp.Copy()
+	for _, rr := range out.Answer {
+		strip := func(kv []dns.SVCBKeyValue) []dns.SVCBKeyValue {
+			keep := kv[:0]
+			for _, p := range kv {
+				if p.Key() != dns.SVCB_IPV6HINT {
+					keep = append(keep, p)
+				}
+			}
+			return keep
+		}
+		switch v := rr.(type) {
+		case *dns.HTTPS:
+			v.Value = strip(v.Value)
+		case *dns.SVCB:
+			v.Value = strip(v.Value)
+		}
+	}
+	return out
+}
+
+func (e *Engine) filterAAAA() bool { return e.FilterAAAA != nil && e.FilterAAAA() }

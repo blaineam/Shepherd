@@ -68,6 +68,11 @@ func TestSpooferSendsClaimThenCorrectiveOnStop(t *testing.T) {
 	if last.SenderMAC != gwMAC || last.SenderIP != gwIP || last.TargetMAC != devMAC || last.TargetIP != devIP || last.Op != arp.OpReply {
 		t.Fatalf("corrective frame wrong: %+v", last)
 	}
+	// It says the gateway's MAC in the body but is never sent from it: a
+	// forged Ethernet source is dropped on wired links.
+	if last.SrcMAC != shepherdMAC {
+		t.Fatalf("corrective Ethernet source = %v, want Shepherd's own %v", last.SrcMAC, shepherdMAC)
+	}
 	select {
 	case <-ch:
 	default:
@@ -312,5 +317,55 @@ func TestSpooferSendErrorReported(t *testing.T) {
 	sp.sendClaim()
 	if len(errs) != 1 {
 		t.Fatalf("want 1 reported error, got %d", len(errs))
+	}
+}
+
+// One corrective frame on a busy segment is easily lost, and a device that
+// keeps believing the claim sends everything to Shepherd until its ARP entry
+// expires. The revert is therefore repeated in the background, without making
+// Stop wait for the repeats.
+func TestSpooferRepeatsTheCorrectiveInTheBackground(t *testing.T) {
+	sender := NewFakeSender()
+	clk := NewFakeClock(t0)
+	cfg := testSpooferConfig(sender, clk)
+	cfg.CorrectiveRepeats = 2
+	cfg.CorrectiveGap = time.Second
+	sp := NewSpoofer(cfg)
+
+	done := make(chan struct{})
+	go func() { sp.Run(context.Background()); close(done) }()
+	sp.Stop()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Stop waited for the repeated correctives")
+	}
+	correctives := func() int {
+		n := 0
+		for _, f := range sender.Frames() {
+			if a := arpOf(t, f); a.SenderMAC == gwMAC {
+				n++
+			}
+		}
+		return n
+	}
+	if got := correctives(); got != 1 {
+		t.Fatalf("correctives right after stop = %d, want 1", got)
+	}
+	// Each repeat waits on the clock; step it until the next one lands.
+	for want := 2; want <= 3; want++ {
+		deadline := time.Now().Add(2 * time.Second)
+		for correctives() < want && time.Now().Before(deadline) {
+			clk.Advance(time.Second)
+			time.Sleep(2 * time.Millisecond)
+		}
+		if got := correctives(); got != want {
+			t.Fatalf("correctives after repeat %d = %d, want %d", want-1, got, want)
+		}
+	}
+	clk.Advance(10 * time.Second)
+	time.Sleep(20 * time.Millisecond)
+	if got := correctives(); got != 3 {
+		t.Fatalf("correctives after the repeats finished = %d, want 3", got)
 	}
 }

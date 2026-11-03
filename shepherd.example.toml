@@ -48,6 +48,9 @@ upstreams = ["9.9.9.10", "149.112.112.10", "1.1.1.1"]
 # upstreams. Never the system resolver.
 bootstrap = ["9.9.9.9", "1.1.1.1"]
 block_mode = "null"            # "null" answers 0.0.0.0 / ::, "nxdomain" answers NXDOMAIN
+# "auto" withholds AAAA answers only while outbound IPv6 is unreachable (a LAN with just private
+# fd.. addresses); "on" always withholds them, "off" never does.
+filter_aaaa = "auto"
 probe_interval_seconds = 15
 cache_size = 20000
 log_size = 5000
@@ -228,6 +231,22 @@ enabled = false
 interval_seconds = 120                 # 2 minutes; minimum 60
 bufferbloat_enabled = false
 bufferbloat_interval_seconds = 3600    # 1 hour; minimum 600 when enabled
+
+[selftest]
+# The built-in DNS self-test (docs/DNS-QA.md). Every interval it asks a
+# known-good and a known-blocked name of EVERY address Shepherd listens on,
+# over UDP and TCP, checks each upstream's error rate and latency, and warns
+# when this host has a LAN address with no DNS listener. It only talks to
+# Shepherd's own listeners. Results are on the Upstreams screen and
+# /api/selftest; failures raise alarms (with a cooldown).
+enabled = true
+interval_seconds = 60                 # minimum 10
+good_name = "example.com"             # must resolve
+blocked_name = ""                     # a name on one of your lists; empty = a synthetic name Shepherd always blocks
+not_served = []                       # LAN addresses of this host that deliberately have no DNS listener
+max_error_percent = 5                 # flag an upstream above this error rate over the window
+window_minutes = 15
+alarm_cooldown_minutes = 30           # the least time between two alarms for the same finding
 
 [portal]
 listen = "127.0.0.1:8787"

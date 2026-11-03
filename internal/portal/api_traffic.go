@@ -87,8 +87,12 @@ func (s *Server) getTraffic(w http.ResponseWriter, r *http.Request) {
 			"bytes_relayed": uint64(0), "bytes_received_est": uint64(0),
 		},
 		"devices": []map[string]any{},
+		// Where the numbers come from, so the screen can say whether they
+		// are measured by Watch mode or read from the owner's router.
+		"router": s.routerUsageJSON(),
 	}
 	if s.Watch == nil {
+		s.fillFromRouter(out)
 		writeJSON(w, out)
 		return
 	}
@@ -125,7 +129,53 @@ func (s *Server) getTraffic(w http.ResponseWriter, r *http.Request) {
 		return devs[i]["bytes_relayed"].(uint64)+devs[i]["bytes_received_est"].(uint64) > devs[j]["bytes_relayed"].(uint64)+devs[j]["bytes_received_est"].(uint64)
 	})
 	out["devices"] = devs
+	if !out["measuring"].(bool) {
+		s.fillFromRouter(out)
+	}
 	writeJSON(w, out)
+}
+
+// fillFromRouter puts the router reader's last poll into the live card,
+// for a network where Watch mode is not measuring. Watch mode's own
+// numbers always win where it is running, because they are measured
+// rather than sampled.
+func (s *Server) fillFromRouter(out map[string]any) {
+	if s.RouterUsage == nil {
+		return
+	}
+	st := s.RouterUsage.Status()
+	if st.Source == "" || !st.Enabled || st.LastPoll == nil || st.LastError != "" {
+		return
+	}
+	var down, up float64
+	var downTotal, upTotal uint64
+	devs := []map[string]any{}
+	for _, d := range s.RouterUsage.Live() {
+		down += d.DownBitsPerSecond
+		up += d.UpBitsPerSecond
+		downTotal += d.DownBytes
+		upTotal += d.UpBytes
+		// Shepherd's own name for the device wins over the router's.
+		name, groups := d.Name, []string(nil)
+		if dev, ok := s.Devices.Get(d.DeviceID); ok {
+			if n := dev.DisplayName(); n != "" {
+				name = n
+			}
+			groups = dev.Groups
+		}
+		devs = append(devs, map[string]any{
+			"device_id": d.DeviceID, "name": name, "groups": orEmpty(groups),
+			// Bits per second on the wire, bytes per second in the API, as
+			// everywhere else here.
+			"up_bytes_per_second": d.UpBitsPerSecond / 8, "down_bytes_per_second": d.DownBitsPerSecond / 8,
+			"bytes_relayed": d.UpBytes, "bytes_received_est": d.DownBytes,
+		})
+	}
+	out["live"] = map[string]any{
+		"up_bytes_per_second": up / 8, "down_bytes_per_second": down / 8,
+		"bytes_relayed": upTotal, "bytes_received_est": downTotal,
+	}
+	out["devices"] = devs
 }
 
 // trafficSeries is the history for one scope over [from, to] at a bucket

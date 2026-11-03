@@ -51,6 +51,7 @@ type Upstream struct {
 	lastErr string
 	queries uint64
 	errors  uint64
+	recent  sampleRing
 
 	// onHealth, when set by the owning Pool, is called outside the lock
 	// whenever record() changes healthy. See Pool.OnHealthChange.
@@ -323,6 +324,7 @@ func (u *Upstream) record(ok bool, rtt time.Duration, err error) {
 	u.mu.Lock()
 	was := u.healthy
 	u.queries++
+	u.recent.add(time.Now(), ok, rtt)
 	if ok {
 		u.fails, u.healthy, u.lastErr = 0, true, ""
 		if u.rtt == 0 {
@@ -357,6 +359,44 @@ func (u *Upstream) status() UpstreamStatus {
 		Addr: u.Addr, Healthy: u.healthy, RTTms: float64(u.rtt.Microseconds()) / 1000,
 		Fails: u.fails, LastError: u.lastErr, Queries: u.queries, Errors: u.errors,
 	}
+}
+
+// UpstreamWindow is one upstream's recent behaviour: how many queries it saw
+// over a rolling window, how many failed (no answer, or SERVFAIL), and the
+// round-trip percentiles of the ones that were answered. Unlike the
+// cumulative counters in UpstreamStatus it forgets, so a resolver that was
+// bad an hour ago and is fine now reads fine.
+type UpstreamWindow struct {
+	Addr    string  `json:"addr"`
+	Queries int     `json:"queries"`
+	Errors  int     `json:"errors"`
+	P50ms   float64 `json:"p50_ms"`
+	P95ms   float64 `json:"p95_ms"`
+}
+
+// ErrorRate is Errors/Queries as a percentage, 0 when nothing was asked.
+func (w UpstreamWindow) ErrorRate() float64 {
+	if w.Queries == 0 {
+		return 0
+	}
+	return 100 * float64(w.Errors) / float64(w.Queries)
+}
+
+// Window reports every upstream's behaviour over the last d, in
+// configuration order. It looks at the most recent few hundred queries per
+// upstream, so on a busy resolver it covers less than d.
+func (p *Pool) Window(d time.Duration) []UpstreamWindow {
+	ups := p.snapshot()
+	since := time.Now().Add(-d)
+	out := make([]UpstreamWindow, len(ups))
+	for i, u := range ups {
+		u.mu.Lock()
+		w := u.recent.window(since)
+		u.mu.Unlock()
+		w.Addr = u.Addr
+		out[i] = w
+	}
+	return out
 }
 
 // probeQuery builds a query for a unique name so the answer cannot come from
@@ -654,26 +694,106 @@ func (p *Pool) order() []*Upstream {
 	return out
 }
 
-// Exchange tries up to three upstreams in health order. If every upstream
-// fails it returns an error, or the last SERVFAIL if one answered that way.
+// hedgeDelay is how long Exchange waits on one upstream before it asks the
+// next as well. A stalled upstream used to cost the client a whole timeout
+// (two seconds) before the second was tried, which is longer than many
+// clients wait; with the hedge the cost is this delay, and the first good
+// answer wins.
+func hedgeDelay(u *Upstream) time.Duration {
+	u.mu.Lock()
+	rtt := u.rtt
+	u.mu.Unlock()
+	d := 3 * rtt
+	if d < 150*time.Millisecond {
+		d = 150 * time.Millisecond
+	}
+	if d > 400*time.Millisecond {
+		d = 400 * time.Millisecond
+	}
+	return d
+}
+
+// Exchange asks up to three upstreams in health order, but not one after
+// another: the next is started as soon as the one before it fails or has
+// not answered inside hedgeDelay, and the first good answer is returned
+// while the others are cancelled. If every upstream fails it returns an
+// error, or the last SERVFAIL if one answered that way.
 func (p *Pool) Exchange(ctx context.Context, m *dns.Msg) (*dns.Msg, *Upstream, time.Duration, error) {
+	order := p.order()
+	if len(order) > 3 {
+		order = order[:3]
+	}
+	type result struct {
+		u    *Upstream
+		resp *dns.Msg
+		rtt  time.Duration
+		err  error
+	}
+	if ctx.Err() != nil {
+		return nil, nil, 0, errors.New("no upstream answered")
+	}
+	results := make(chan result, len(order))
+	// A hedged-out upstream is left to finish (or time out) on its own and
+	// records its own outcome, so one that keeps stalling still loses its
+	// healthy standing; only the caller's context cancels it.
+	start := func(u *Upstream) {
+		q := m.Copy()
+		go func() {
+			resp, rtt, err := u.exchange(ctx, q, p.timeout)
+			if ctx.Err() == nil || err == nil {
+				u.record(answered(resp, err), rtt, err)
+			}
+			results <- result{u, resp, rtt, err}
+		}()
+	}
+
 	var lastResp *dns.Msg
 	var lastUp *Upstream
 	var lastErr error
-	for i, u := range p.order() {
-		if i == 3 || ctx.Err() != nil {
-			break
+	started, done := 0, 0
+	if len(order) > 0 {
+		start(order[0])
+		started = 1
+	}
+	for done < started {
+		var hedge <-chan time.Time
+		var t *time.Timer
+		if started < len(order) {
+			t = time.NewTimer(hedgeDelay(order[started-1]))
+			hedge = t.C
 		}
-		resp, rtt, err := u.exchange(ctx, m, p.timeout)
-		ok := answered(resp, err)
-		u.record(ok, rtt, err)
-		if ok {
-			return resp, u, rtt, nil
-		}
-		if err != nil {
-			lastErr = err
-		} else {
-			lastResp, lastUp = resp, u
+		select {
+		case r := <-results:
+			if t != nil {
+				t.Stop()
+			}
+			done++
+			if ctx.Err() != nil && r.err != nil {
+				continue // cancelled by the caller: not the upstream's fault
+			}
+			if answered(r.resp, r.err) {
+				return r.resp, r.u, r.rtt, nil
+			}
+			if r.err != nil {
+				lastErr = r.err
+			} else {
+				lastResp, lastUp = r.resp, r.u
+			}
+			if started < len(order) { // failed: no reason to wait for the hedge
+				start(order[started])
+				started++
+			}
+		case <-hedge:
+			start(order[started])
+			started++
+		case <-ctx.Done():
+			if t != nil {
+				t.Stop()
+			}
+			if lastErr == nil {
+				lastErr = ctx.Err()
+			}
+			return nil, nil, 0, lastErr
 		}
 	}
 	if lastResp != nil {
@@ -723,4 +843,55 @@ func (p *Pool) Status() []UpstreamStatus {
 		out[i] = u.status()
 	}
 	return out
+}
+
+// sampleRingSize bounds the memory per upstream; at a busy home network's
+// query rate it still covers several minutes, and at an idle one hours.
+const sampleRingSize = 512
+
+type sample struct {
+	at  time.Time
+	ok  bool
+	rtt time.Duration
+}
+
+// sampleRing is a fixed-size ring of the latest query outcomes. The owner
+// holds the Upstream's lock around every call.
+type sampleRing struct {
+	buf  [sampleRingSize]sample
+	next int
+	n    int
+}
+
+func (r *sampleRing) add(at time.Time, ok bool, rtt time.Duration) {
+	r.buf[r.next] = sample{at, ok, rtt}
+	r.next = (r.next + 1) % sampleRingSize
+	if r.n < sampleRingSize {
+		r.n++
+	}
+}
+
+func (r *sampleRing) window(since time.Time) UpstreamWindow {
+	var w UpstreamWindow
+	var rtts []time.Duration
+	for i := 0; i < r.n; i++ {
+		s := r.buf[i]
+		if s.at.Before(since) {
+			continue
+		}
+		w.Queries++
+		if s.ok {
+			rtts = append(rtts, s.rtt)
+		} else {
+			w.Errors++
+		}
+	}
+	if len(rtts) > 0 {
+		sort.Slice(rtts, func(i, j int) bool { return rtts[i] < rtts[j] })
+		ms := func(q float64) float64 {
+			return float64(rtts[int(q*float64(len(rtts)-1)+0.5)].Microseconds()) / 1000
+		}
+		w.P50ms, w.P95ms = ms(0.5), ms(0.95)
+	}
+	return w
 }

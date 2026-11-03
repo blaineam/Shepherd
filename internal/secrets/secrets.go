@@ -182,11 +182,93 @@ func checkField(name, v string, noSpace bool) error {
 	return nil
 }
 
+// Eero is the owner's kept-signed-in eero session, used to read per-device
+// usage for the Bandwidth screen. Enabled is the owner's switch; the token
+// stays stored while it is off, so turning it back on needs no new sign-in.
+type Eero struct {
+	Token     string `json:"token"`
+	NetworkID string `json:"network_id"`
+	Enabled   bool   `json:"enabled"`
+	Meta
+}
+
+// Configured reports whether a session token is actually stored.
+func (e Eero) Configured() bool { return e.Token != "" }
+
+// String never includes the token.
+func (e Eero) String() string {
+	if !e.Configured() {
+		return "eero session (not set)"
+	}
+	return fmt.Sprintf("eero session (token set, network %s, enabled %v, from %s)", e.NetworkID, e.Enabled, e.Source)
+}
+
+// GoString redacts the same way for %#v.
+func (e Eero) GoString() string { return e.String() }
+
+func (e Eero) validate() error {
+	if e.Token == "" {
+		return fmt.Errorf("%w: the eero session token must not be empty", ErrInvalid)
+	}
+	if err := checkField("eero session token", e.Token, true); err != nil {
+		return err
+	}
+	return checkField("eero network id", e.NetworkID, true)
+}
+
+// UniFi is a UniFi Network controller Shepherd reads per-device byte
+// counters from. Unlike the eero session this is a username and password
+// the owner holds; a read-only controller account is enough.
+type UniFi struct {
+	BaseURL         string `json:"base_url"`
+	Username        string `json:"username"`
+	Password        string `json:"password"`
+	Site            string `json:"site"`
+	AllowSelfSigned bool   `json:"allow_self_signed"`
+	Enabled         bool   `json:"enabled"`
+	Meta
+}
+
+// Configured reports whether a controller is actually set.
+func (u UniFi) Configured() bool { return u.BaseURL != "" }
+
+// String never includes the password.
+func (u UniFi) String() string {
+	if !u.Configured() {
+		return "unifi controller (not set)"
+	}
+	return fmt.Sprintf("unifi controller %s (site %s, enabled %v, from %s)", u.BaseURL, u.Site, u.Enabled, u.Source)
+}
+
+// GoString redacts the same way for %#v.
+func (u UniFi) GoString() string { return u.String() }
+
+func (u UniFi) validate() error {
+	if u.BaseURL == "" {
+		return fmt.Errorf("%w: the controller address is required", ErrInvalid)
+	}
+	if !strings.HasPrefix(u.BaseURL, "http://") && !strings.HasPrefix(u.BaseURL, "https://") {
+		return fmt.Errorf("%w: the controller address must start with http:// or https://", ErrInvalid)
+	}
+	if u.Username == "" {
+		return fmt.Errorf("%w: the controller username is required", ErrInvalid)
+	}
+	for name, v := range map[string]string{"controller address": u.BaseURL, "username": u.Username, "site": u.Site} {
+		if err := checkField(name, v, true); err != nil {
+			return err
+		}
+	}
+	// A password may contain spaces, never a control character.
+	return checkField("password", u.Password, false)
+}
+
 type file struct {
 	Version int `json:"version"`
 	// A nil record means "never owned": shepherd.toml may still seed it.
 	DNSProvider *DNSProvider `json:"dns_provider,omitempty"`
 	SMTP        *SMTP        `json:"smtp,omitempty"`
+	Eero        *Eero        `json:"eero,omitempty"`
+	UniFi       *UniFi       `json:"unifi,omitempty"`
 }
 
 // Store owns secrets.json. It is safe for concurrent use. An empty path
@@ -231,6 +313,16 @@ func Open(path string) (*Store, error) {
 	if m := f.SMTP; m != nil && m.Configured() {
 		if err := m.validate(); err != nil {
 			return nil, fmt.Errorf("%s: smtp: %w", path, err)
+		}
+	}
+	if e := f.Eero; e != nil && e.Configured() {
+		if err := e.validate(); err != nil {
+			return nil, fmt.Errorf("%s: eero: %w", path, err)
+		}
+	}
+	if u := f.UniFi; u != nil && u.Configured() {
+		if err := u.validate(); err != nil {
+			return nil, fmt.Errorf("%s: unifi: %w", path, err)
 		}
 	}
 	s.data = f
@@ -384,6 +476,151 @@ func trimSMTP(m SMTP) SMTP {
 	return m
 }
 
+// Path is the file this store saves to, empty for a memory-only store.
+func (s *Store) Path() string { return s.path }
+
+// Eero returns the stored eero session and whether a token is actually set.
+func (s *Store) Eero() (Eero, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.data.Eero == nil {
+		return Eero{}, false
+	}
+	e := *s.data.Eero
+	return e, e.Configured()
+}
+
+// SetEero validates and saves e as the owner's choice from the portal.
+func (s *Store) SetEero(e Eero) (Eero, error) {
+	e.Token = strings.TrimSpace(e.Token)
+	e.NetworkID = strings.TrimSpace(e.NetworkID)
+	if err := e.validate(); err != nil {
+		return Eero{}, err
+	}
+	e.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return e, s.mutate(func(f *file) { f.Eero = &e })
+}
+
+// SetEeroEnabled flips the switch without touching the stored token. It
+// returns false when no session is stored.
+func (s *Store) SetEeroEnabled(on bool) (bool, error) {
+	e, ok := s.Eero()
+	if !ok {
+		return false, nil
+	}
+	e.Enabled = on
+	e.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return true, s.mutate(func(f *file) { f.Eero = &e })
+}
+
+// SetEeroConnection records the network to read and switches the reader
+// on, in one write, without touching the stored token. It is what the
+// portal calls once a sign-in has been kept: two separate writes could
+// leave a network chosen but the reader off if the second one failed.
+// It returns false when no session is stored.
+func (s *Store) SetEeroConnection(networkID string, enabled bool) (bool, error) {
+	e, ok := s.Eero()
+	if !ok {
+		return false, nil
+	}
+	e.NetworkID = strings.TrimSpace(networkID)
+	e.Enabled = enabled
+	if err := e.validate(); err != nil {
+		return false, err
+	}
+	e.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return true, s.mutate(func(f *file) { f.Eero = &e })
+}
+
+// SetEeroNetwork records which of the account's networks to read, without
+// touching the stored token. It returns false when no session is stored.
+func (s *Store) SetEeroNetwork(networkID string) (bool, error) {
+	e, ok := s.Eero()
+	if !ok {
+		return false, nil
+	}
+	e.NetworkID = strings.TrimSpace(networkID)
+	if err := e.validate(); err != nil {
+		return false, err
+	}
+	e.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return true, s.mutate(func(f *file) { f.Eero = &e })
+}
+
+// ClearEero forgets the session entirely.
+func (s *Store) ClearEero() error {
+	return s.mutate(func(f *file) {
+		f.Eero = &Eero{Meta: Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}}
+	})
+}
+
+// UniFi returns the stored controller and whether one is actually set.
+func (s *Store) UniFi() (UniFi, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.data.UniFi == nil {
+		return UniFi{}, false
+	}
+	u := *s.data.UniFi
+	return u, u.Configured()
+}
+
+// SetUniFi validates and saves u as the owner's choice from the portal.
+func (s *Store) SetUniFi(u UniFi) (UniFi, error) {
+	u.BaseURL = strings.TrimRight(strings.TrimSpace(u.BaseURL), "/")
+	u.Username = strings.TrimSpace(u.Username)
+	u.Site = strings.TrimSpace(u.Site)
+	if u.Site == "" {
+		u.Site = "default"
+	}
+	if err := u.validate(); err != nil {
+		return UniFi{}, err
+	}
+	u.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return u, s.mutate(func(f *file) { f.UniFi = &u })
+}
+
+// SetUniFiEnabled flips the switch without disturbing the credentials.
+// It returns false when no controller is stored.
+func (s *Store) SetUniFiEnabled(on bool) (bool, error) {
+	u, ok := s.UniFi()
+	if !ok {
+		return false, nil
+	}
+	u.Enabled = on
+	u.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return true, s.mutate(func(f *file) { f.UniFi = &u })
+}
+
+// ClearUniFi forgets the controller and its credentials.
+func (s *Store) ClearUniFi() error {
+	return s.mutate(func(f *file) {
+		f.UniFi = &UniFi{Meta: Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}}
+	})
+}
+
+// EeroTokenStore adapts the stored session to the eero client's TokenStore,
+// so a signed-in client can keep or resume its token across restarts. Saving
+// a token keeps the stored network and switch.
+type EeroTokenStore struct{ S *Store }
+
+// Load returns the stored token, or "" when none is stored.
+func (t EeroTokenStore) Load() (string, error) {
+	e, _ := t.S.Eero()
+	return e.Token, nil
+}
+
+// Save stores tok, keeping the network and switch already chosen.
+func (t EeroTokenStore) Save(tok string) error {
+	e, _ := t.S.Eero()
+	e.Token = tok
+	_, err := t.S.SetEero(e)
+	return err
+}
+
+// Delete forgets the session.
+func (t EeroTokenStore) Delete() error { return t.S.ClearEero() }
+
 // seed applies fn to a copy and saves it only when fn reports a change.
 func (s *Store) seed(fn func(*file) bool) (bool, error) {
 	changed := false
@@ -405,6 +642,14 @@ func (s *Store) mutate(fn func(*file), want ...func() bool) error {
 	if next.SMTP != nil {
 		m := *next.SMTP
 		next.SMTP = &m
+	}
+	if next.Eero != nil {
+		e := *next.Eero
+		next.Eero = &e
+	}
+	if next.UniFi != nil {
+		u := *next.UniFi
+		next.UniFi = &u
 	}
 	fn(&next)
 	for _, w := range want {

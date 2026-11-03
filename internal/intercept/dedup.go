@@ -41,7 +41,17 @@ type Dedup struct {
 type dedupEntry struct {
 	fingerprint uint64
 	at          time.Time
+	repeats     int // sightings of this fingerprint inside the window beyond the first
 }
+
+// PureACKRepeats is how many times a repeated pure TCP acknowledgement is
+// still relayed inside the window before it is treated as a loop. A
+// receiver that sees a gap sends the same ACK again for every segment that
+// follows, and TCP needs those duplicate ACKs to reach the sender (three
+// start a fast retransmit, and SACK recovery runs on them); dropping them
+// turns one lost packet into a full retransmission timeout. It matches
+// PURE_ACK_REPEATS in the XDP program.
+const PureACKRepeats = 8
 
 const (
 	// DefaultDedupWindow matches DUP_WINDOW_NS in the XDP program.
@@ -75,9 +85,14 @@ func (d *Dedup) Seen(raw []byte, now time.Time) bool {
 		d.table = make([]dedupEntry, n)
 	}
 	e := &d.table[(fp>>16)%uint64(len(d.table))]
-	dup := e.fingerprint == fp && !now.Before(e.at) && now.Sub(e.at) < window
+	same := e.fingerprint == fp && !now.Before(e.at) && now.Sub(e.at) < window
+	if same {
+		e.repeats++
+	} else {
+		e.repeats = 0
+	}
 	e.fingerprint, e.at = fp, now
-	return dup
+	return same && (!isPureACK(raw) || e.repeats > PureACKRepeats)
 }
 
 // Fingerprint identifies one frame well enough to recognise it coming
@@ -140,4 +155,34 @@ func Fingerprint(raw []byte) (fp uint64, ok bool) {
 		return 0, false
 	}
 	return h | 1, true
+}
+
+// isPureACK reports whether raw is a TCP segment with no payload that is a
+// plain acknowledgement: ACK set, and none of SYN, FIN, RST or URG.
+func isPureACK(raw []byte) bool {
+	var l4, total int
+	switch {
+	case len(raw) >= ethHeaderLen+ipv4HeaderMinLen && binary.BigEndian.Uint16(raw[12:14]) == etherTypeIPv4:
+		ip := raw[ethHeaderLen:]
+		ihl := int(ip[0]&0x0f) * 4
+		tot := int(binary.BigEndian.Uint16(ip[2:4]))
+		if ip[9] != 6 || ihl < ipv4HeaderMinLen || tot < ihl {
+			return false
+		}
+		l4, total = ethHeaderLen+ihl, tot-ihl
+	case len(raw) >= ethHeaderLen+ipv6HeaderLen && binary.BigEndian.Uint16(raw[12:14]) == etherTypeIPv6:
+		ip := raw[ethHeaderLen:]
+		if ip[6] != 6 {
+			return false
+		}
+		l4, total = ethHeaderLen+ipv6HeaderLen, int(binary.BigEndian.Uint16(ip[4:6]))
+	default:
+		return false
+	}
+	if len(raw) < l4+14 {
+		return false
+	}
+	thl := int(raw[l4+12]>>4) * 4
+	flags := raw[l4+13]
+	return thl >= 20 && total == thl && flags&0x10 != 0 && flags&(0x01|0x02|0x04|0x20) == 0
 }

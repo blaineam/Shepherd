@@ -3,6 +3,7 @@
 // logic lives in js/*.js and is unit tested; this file is the glue.
 import { $ } from './js/dom.js';
 import { createApi } from './js/api.js';
+import { startActivityReports } from './js/activity.js';
 import { createDemoApi } from './js/demoapi.js';
 import { DemoGenerator, DEMO_HOME } from './js/demo.js';
 import { normalizeEntry, destKey, placeName } from './js/entry.js';
@@ -89,6 +90,7 @@ if (DEMO) {
   });
 } else {
   api = createApi({ onUnauthorized: showLogin });
+  startActivityReports({ target: document, send: () => api('/api/activity', { method: 'POST', body: '{}' }) });
 }
 // Login, PIN login and the explicit Lock always talk to the real backend,
 // never the in-browser demo fake, even while DEMO is showing the lock
@@ -96,7 +98,7 @@ if (DEMO) {
 const realApi = createApi({ onUnauthorized: () => {} });
 
 // ---------------------------------------------------------------- UI pieces
-const details = createDetails({ api, getRows: () => model.recentNewestFirst(400), notify, onRulesChanged: () => {}, names });
+const details = createDetails({ api, notify });
 const setTiles = createTiles();
 const legend = createLegend();
 const filters = createFilters({ model, onChange: onFiltersChanged });
@@ -464,7 +466,7 @@ async function pollStatus() {
 // ---------------------------------------------------------------- management screens
 const mgmt = createMgmt(api);
 const policyStore = createPolicyStore({ mgmt });
-const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'vulnscan', 'watch', 'network', 'traffic', 'upstreams', 'proxy', 'history', 'accountability', 'locking', 'details'];
+const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'vulnscan', 'network', 'traffic', 'upstreams', 'proxy', 'history', 'accountability', 'locking', 'details'];
 
 const blocking = createBlocking({
   root: $('#view-blocking'), mgmt, store: policyStore, notify,
@@ -483,11 +485,11 @@ const vulnscanView = createVulnscan({
 });
 const networkView = createNethealth({ root: $('#view-network'), mgmt, notify });
 const watchView = createWatch({
-  root: $('#view-watch'), mgmt, notify,
+  root: document.createElement('section'), mgmt, notify, embedded: true,
   onOpenDevice: (id) => { showView('devices'); devicesView.openDevice(id); },
 });
 const trafficView = createTraffic({
-  root: $('#view-traffic'), mgmt, notify,
+  root: $('#view-traffic'), mgmt, notify, watch: watchView,
   onOpenDevice: (id) => { showView('devices'); devicesView.openDevice(id); },
 });
 const upstreamsView = createUpstreams({ root: $('#view-upstreams'), mgmt, notify });
@@ -521,20 +523,18 @@ function showView(name) {
   document.body.classList.toggle('on-details', name === 'details');
   document.body.classList.toggle('on-page', !hud);
   try { history.replaceState(null, '', location.pathname + location.search + (hud ? '' : '#' + name)); } catch { /* ignore */ }
-  if (name === 'details') { details.renderRows(); details.loadUpdate(); }
+  if (name === 'details') details.loadUpdate();
   if (name !== 'upstreams') upstreamsView.hide();
   if (name !== 'proxy') proxyView.hide();
   if (name !== 'alarms') alarmsView.hide();
   if (name !== 'vulnscan') vulnscanView.hide();
   if (name !== 'network') networkView.hide();
-  if (name !== 'watch') watchView.hide();
   if (name !== 'traffic') trafficView.hide();
   if (name !== 'locking') lockingView.hide();
   if (name === 'devices') devicesView.show();
   else if (name === 'blocking') devicesView.reloadGroups().catch(() => {}).finally(() => blocking.show());
   else if (name === 'alarms') alarmsView.show();
   else if (name === 'vulnscan') vulnscanView.show();
-  else if (name === 'watch') watchView.show();
   else if (name === 'traffic') trafficView.show().catch(() => {});
   else if (name === 'network') networkView.show();
   else if (name === 'upstreams') upstreamsView.show();
@@ -571,7 +571,6 @@ $('.tabs').addEventListener('keydown', (e) => {
   showView(next);
   $('#tab-' + next).focus();
 });
-setInterval(() => { if (!$('#view-details').hidden) details.renderRows(); }, 1000);
 
 // ---------------------------------------------------------------- toolbar
 $('#btn-home').addEventListener('click', () => setHomeMode(!homeMode));
@@ -729,7 +728,7 @@ async function main() {
   $('.demo-switch').hidden = LOCKED;
   if (LOCKED) { $('#login').hidden = false; offerPasskey(); }
   if (params.get('setup_pin') === '1') { try { history.replaceState(null, '', location.pathname + location.search.replace(/[?&]setup_pin=1/, '').replace(/^&/, '?') + location.hash); } catch { /* ignore */ } showView('locking'); }
-  { const h = location.hash.slice(1); if (VIEWS.includes(h) && h !== 'hud') showView(h); }
+  { const h = location.hash.slice(1); if (VIEWS.includes(h) && h !== 'hud') showView(h); else if (h === 'watch') showView('traffic'); }
   try {
     await initGlobe();
   } catch (err) {
@@ -739,7 +738,7 @@ async function main() {
     const b = $('#details-banner');
     b.textContent = 'The map needs WebGL or canvas, and neither is available in this browser. Everything else works here.';
     b.hidden = false;
-    if (location.hash !== '#hud' && !VIEWS.includes(location.hash.slice(1))) showView('details');
+    if (location.hash !== '#hud' && !VIEWS.includes(location.hash.slice(1))) showView('traffic');
     if (DEBUG) console.warn('globe disabled:', err && err.message);
   }
   bootData();

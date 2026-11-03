@@ -6,8 +6,8 @@ or the file `portal-token` in the data directory).
 ## Layout
 
 The portal is a dashboard with a side menu. On a desktop the menu is always visible on the left,
-grouped into **Monitor** (Map, Overview, History, Alarms, Vulnerabilities, Network health), **Protect**
-(Devices, Blocking, Watch mode) and **Settings** (Upstream DNS, Reverse proxy, Accountability, Locking).
+grouped into **Monitor** (Map, History, Alarms, Vulnerabilities, Network health, Bandwidth), **Protect**
+(Devices, Blocking) and **Settings** (Upstream DNS, Reverse proxy, Accountability, Locking, System). The portal opens on the Map.
 Monitor also holds **Bandwidth** ([TRAFFIC.md](TRAFFIC.md)): live and historical bytes per device, group and network.
 The top bar carries the connection state (live, demo, replay or offline), the clock, the demo-data switch
 and the Lock button. Below about 1024px the side menu slides in from the left behind a labelled **Menu**
@@ -28,9 +28,9 @@ their scroll bar sits at the edge of the screen rather than inside a box. Screen
 - **Legend.** Colors, lane thickness scale and map attribution. Always visible on desktop; on a phone it starts hidden behind a "Legend" button so it does not permanently take over the screen.
 - **Home.** Found automatically from your network's public address. Choose **Set home** and click the globe to choose your own, which always wins; the automatic location is only city-level and can be wrong.
 - **Replay.** The timeline at the bottom switches between **LIVE** and any retained period. Pause, and play at 1x, 10x, 60x or 300x. With encrypted history enabled, replay reaches as far back as you keep history; otherwise it covers what is in memory.
-- **Overview.** The earlier dashboard (live table, upstream and list health, rules, the Private Relay switch, top devices) is one click away in the menu (the `#details` screen). It also states plainly that Watch mode is a planned feature not yet available in this build (see the roadmap's step 11) — everything shown is from DNS-only Guard mode, so the portal never leaves that silently ambiguous.
+- **System.** Software updates, blocklist health (with the reason a list was rejected), your own allow and block rules and the Private Relay switch. The query totals, live table and top lists the old Overview repeated are on the Map, History and Bandwidth screens. Without WebGL or canvas the HUD falls back to Bandwidth. Watch mode's controls are the last section of Bandwidth.
 
-Without WebGL (Safari in Lockdown Mode, for one) the globe is replaced by a flat 2D map drawn on a canvas: the same dot-matrix land, home-to-destination arcs, comets, pulses, day/night shading, drag-to-pan and scroll or pinch to zoom, with click, hover and Set home working the same way. Only if canvas is also missing does the HUD fall back to the Overview. It respects reduced motion (no auto-rotate, calmer pulses).
+Without WebGL (Safari in Lockdown Mode, for one) the globe is replaced by a flat 2D map drawn on a canvas: the same dot-matrix land, home-to-destination arcs, comets, pulses, day/night shading, drag-to-pan and scroll or pinch to zoom, with click, hover and Set home working the same way. Only if canvas is also missing does the HUD fall back to Bandwidth. It respects reduced motion (no auto-rotate, calmer pulses).
 
 ## Mobile
 

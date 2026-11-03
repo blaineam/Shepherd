@@ -48,7 +48,12 @@ const (
 	TypeARPManyIPs        = "arp-many-ips"
 	TypeARPFlood          = "arp-flood"
 	TypeARPReplyStorm     = "arp-reply-storm"
-	TypeTest              = "test"
+	// The built-in DNS self-test's findings (internal/selftest, docs/DNS-QA.md).
+	TypeDNSListenerDown     = "dns-listener-down"
+	TypeDNSCanaryFailed     = "dns-canary-failed"
+	TypeDNSLANUncovered     = "dns-lan-uncovered"
+	TypeDNSUpstreamDegraded = "dns-upstream-degraded"
+	TypeTest                = "test"
 )
 
 // AlarmType describes a kind of alarm: how it reads, how severe it is by
@@ -109,6 +114,10 @@ func BuiltinTypes() []AlarmType {
 		all(TypeARPManyIPs, "One device claims many IPs", "One hardware address claimed many addresses in a few minutes: a scanner, a poisoner, or a host running virtual machines.", SeverityMedium, true, true),
 		portal(all(TypeARPFlood, "Gratuitous ARP flood", "A stream of unsolicited address announcements from one device.", SeverityLow, true, true)),
 		all(TypeARPReplyStorm, "ARP reply storm", "Many ARP replies from one device that answered no request: poisoning replies, or a bridge Shepherd cannot see requests through.", SeverityMedium, true, true),
+		all(TypeDNSListenerDown, "DNS listener not answering", "Shepherd says it listens on an address, but a test query to it over UDP or TCP got no answer.", SeverityCritical, false, false),
+		all(TypeDNSCanaryFailed, "DNS self-test failed", "A listener answers, but a known-good name did not resolve or a known-blocked name was not blocked.", SeverityHigh, false, false),
+		all(TypeDNSLANUncovered, "LAN address has no DNS listener", "This host has a LAN address Shepherd does not serve DNS on. Devices pointed at it get \"host not found\".", SeverityMedium, false, false),
+		all(TypeDNSUpstreamDegraded, "Upstream DNS degraded", "An upstream resolver is failing more than a few percent of its queries, or is far slower than the others.", SeverityMedium, false, false),
 		func() AlarmType {
 			t := all(TypeTest, "Test notification", "Sent on request to check that notifications arrive.", SeverityHigh, false, false)
 			t.Bypass = true

@@ -32,6 +32,11 @@ import (
 var version = "dev"
 
 func main() {
+	// Shepherd's own HTTP fetches must not depend on the host's resolv.conf,
+	// which in a host-network container names resolvers that are not there.
+	// Installed here, before anything runs, because it writes a global; run()
+	// then says which servers it asks.
+	dnsengine.InstallHostResolver()
 	os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr))
 }
 
@@ -121,6 +126,7 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	if err != nil {
 		return err
 	}
+	dnsengine.SetHostServers(pool.Bootstrap)
 	// Runtime edits made in the portal live in upstreams.json and, once it
 	// exists, win over dns.upstreams.
 	ups := dnsengine.OpenUpstreamStore(filepath.Join(cfg.DataDir, "upstreams.json"), pool)
@@ -136,6 +142,11 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go pool.Probe(ctx, time.Duration(cfg.DNS.ProbeIntervalSeconds)*time.Second)
+	filterAAAA, v6 := aaaaFilter(cfg.DNS.FilterAAAA)
+	engine.FilterAAAA = filterAAAA
+	if v6 != nil {
+		go v6.Run(ctx, time.Minute)
+	}
 	go listMgr.Run(ctx, 24*time.Hour)
 
 	registry, stopDevices, err := startDevices(ctx, cfg, engine)
@@ -209,6 +220,13 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	if watchEngine != nil { // avoid a non-nil interface over a nil *watch.Engine
 		deps.Watch = watchEngine
 	}
+	// Where Watch mode cannot run, per-device bandwidth can instead be read
+	// from the owner's own router (docs/TRAFFIC.md). Nothing starts until
+	// they connect one in the portal.
+	routerUsage := startRouterUsage(ctx, sec, registry, trafficStore, watchEngine)
+	defer routerUsage.Stop()
+	deps.RouterUsage = routerUsage
+
 	// Every passive ARP event is logged and, when the alarm engine is on,
 	// raised as the alarm docs/ARP.md's table maps it to (arpalarms.go).
 	// The gateway-mac-changed event also tells Watch mode to re-read the
@@ -300,6 +318,11 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	deps.NethealthEnabled = cfg.Nethealth.Enabled
 	deps.NethealthBufferbloatEnabled = cfg.Nethealth.BufferbloatEnabled
 
+	var skipped skipSet
+	if st := startSelftest(ctx, cfg, engine, &skipped, deps.Alarms); st != nil {
+		deps.Selftest = st
+	}
+
 	if cfg.History.Mode == "encrypted" {
 		store, err := openHistory(cfg)
 		if err != nil {
@@ -331,6 +354,9 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		return err
 	}
 	deps.ReverseProxy = proxyHosts
+	if n := cfg.Alarms.Ntfy; cfg.Alarms.Enabled && n.Enabled {
+		deps.Ntfy = portal.NtfyStatus{Enabled: true, Server: n.Server, Topic: n.Topic}
+	}
 	deps.ReverseProxyStatus = portal.ReverseProxyStatus{Listen: cfg.ReverseProxy.Listen, Wildcard: cfg.ReverseProxy.Wildcard()}
 	proxySrv, err := startReverseProxy(ctx, cfg, proxyHosts, sec, stopOnFailure(portalErr, cancel))
 	if err != nil {
@@ -397,6 +423,7 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	if err := dnsengine.Serve(ctx, cfg.DNS.ListenAddrs(), engine,
 		dnsengine.TolerateMissingAddresses(func(addr string, err error) {
 			log.Printf("dns: WARNING: not listening on %s: %v (this host does not have that address)", addr, err)
+			skipped.add(addr)
 		}),
 		// The loopback listeners are Shepherd's own idea, not the owner's,
 		// so anything at all can go wrong with one without stopping
@@ -404,6 +431,7 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		// whose system resolver owns 127.0.0.1:53 is the normal case.
 		dnsengine.Optional(cfg.DNS.AddedLoopbackAddrs(), func(addr string, err error) {
 			log.Printf("dns: not listening on %s: %v (dns.listen_loopback; something else on this host already answers there)", addr, err)
+			skipped.add(addr)
 		})); err != nil {
 		return err
 	}
@@ -468,4 +496,26 @@ func openHistory(cfg config.Config) (*history.Store, error) {
 		Dir: filepath.Join(dir, "store"), Keys: keys,
 		RetentionDays: cfg.History.RetentionDays, MaxBytes: capsFor(cfg).History,
 	})
+}
+
+// aaaaFilter builds the engine's AAAA-filtering switch from dns.filter_aaaa:
+// nil for "off", always true for "on", and for "auto" the IPv6 probe's
+// verdict (the probe is returned so the caller can run it).
+func aaaaFilter(mode string) (func() bool, *dnsengine.IPv6Probe) {
+	switch mode {
+	case "on":
+		return func() bool { return true }, nil
+	case "auto":
+		v6 := &dnsengine.IPv6Probe{OnChange: logIPv6Change}
+		return v6.Filtering, v6
+	}
+	return nil, nil
+}
+
+func logIPv6Change(usable bool) {
+	if usable {
+		log.Printf("dns: outbound IPv6 is reachable, so AAAA answers are given out")
+		return
+	}
+	log.Printf("dns: outbound IPv6 is not reachable (dns.filter_aaaa = \"auto\"), so AAAA answers are withheld until it is")
 }

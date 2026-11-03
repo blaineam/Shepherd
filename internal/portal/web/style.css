@@ -538,7 +538,7 @@ input[type=range]:disabled { opacity: .35; cursor: not-allowed; }
 .bulk-x { margin-left: auto; }
 
 /* device drawer */
-.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100vw); z-index: 26; background: var(--surface); border-left: 1px solid var(--line-2); box-shadow: -20px 0 60px #00000080; overflow: auto; padding: 18px 22px 32px; }
+.drawer { position: fixed; top: var(--top-h); right: 0; bottom: 0; width: min(480px, 100vw); z-index: 26; background: var(--surface); border-left: 1px solid var(--line-2); box-shadow: -20px 0 60px #00000080; overflow: auto; padding: 18px 22px 32px; }
 .drawer-scrim { display: block; position: fixed; inset: 0; z-index: 25; background: #070a0e66; }
 .dr-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .dr-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -908,6 +908,8 @@ tr.a-error .h-dom { color: var(--amber); }
 .tf-svg { width: 100%; height: 140px; display: block; }
 .tf-down { fill: var(--teal); fill-opacity: .35; stroke: var(--teal); stroke-width: 1.5; }
 .tf-up { fill: var(--amber); fill-opacity: .45; stroke: var(--amber); stroke-width: 1.5; }
+.dr-bw .tf-svg { height: 90px; }
+.dr-bw-totals { display: flex; gap: 14px; flex-wrap: wrap; margin: 6px 0 0; }
 .tf-chart-empty { grid-column: 1 / -1; margin: 0; padding: 40px 0; text-align: center; }
 .tf-xaxis { display: flex; justify-content: space-between; margin: 4px 0 0; }
 .tf-legend { display: flex; gap: 14px; flex-wrap: wrap; margin: 10px 0 14px; }
@@ -1098,3 +1100,89 @@ button.wm-row:hover, button.wm-row:focus-visible { background: #ffffff06; outlin
   input:not([type=checkbox]):not([type=range]), select, textarea { font-size: 16px !important; }
   .sbox input { padding: 6px 2px; }
 }
+
+/* Bandwidth: charts. Gridlines sit on round numbers, areas fade toward the
+   baseline, and a crosshair reads out the bucket under the pointer. */
+.tf-body .tf-chart-wrap { grid-template-columns: 64px minmax(0, 1fr); }
+.tf-body .tf-yaxis { position: relative; display: block; padding: 0; }
+/* Bounded on both sides: with only `right` set, a label wider than the
+   gutter ("100 Mbit/s" on a phone) grows leftward straight out of the
+   card. Constrained here, the worst case is a clipped label, not an
+   overflowing one. */
+.tf-body .tf-yaxis span { position: absolute; left: 0; right: 0; text-align: right; transform: translateY(-50%); line-height: 1; overflow: hidden; text-overflow: ellipsis; }
+.tf-plot { position: relative; min-width: 0; touch-action: pan-y; }
+.tf-plot .tf-svg { width: 100%; }
+.tf-grid { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.tf-base { stroke: var(--line-2); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.tf-line { stroke-width: 1.6; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.tf-line-down { stroke: var(--teal); } .tf-line-up { stroke: var(--amber); }
+.tf-grad-down { stop-color: var(--teal); } .tf-grad-up { stop-color: var(--amber); }
+.tf-cross { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--text-3); pointer-events: none; }
+.tf-tip { position: absolute; top: 4px; transform: translateX(-50%); background: var(--surface-3); border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 6px 9px; pointer-events: none; white-space: nowrap; box-shadow: var(--shadow-sm); z-index: 2; }
+.tf-tip-t { color: var(--text-2); margin-bottom: 2px; } .tf-tip-down { color: var(--teal); } .tf-tip-up { color: var(--amber); }
+.tf-body .tf-xaxis { margin-left: 72px; }
+.tf-cap { margin: 8px 0 0; }
+.tf-live-chart { margin: 14px 0 6px; }
+.wm-tile.tile-down .wm-tile-v { color: var(--teal); } .wm-tile.tile-up .wm-tile-v { color: var(--amber); }
+.tf-sums { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(130px, 100%), 1fr)); gap: 10px; margin: 2px 0 14px; }
+.tf-stat { background: var(--surface-2); border-radius: var(--r-sm); padding: 10px 12px; }
+.tf-stat-v { font: 600 18px/1.3 var(--sans); font-variant-numeric: tabular-nums; }
+.tf-stat-down .tf-stat-v { color: var(--teal); } .tf-stat-up .tf-stat-v { color: var(--amber); }
+.tf-duo { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 4px 12px; align-items: center; margin: 6px 0 2px; }
+.tf-duo-bar { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.tf-duo-fill { height: 100%; border-radius: 3px; min-width: 2px; transition: width .4s ease; }
+.tf-duo-down { background: var(--teal); } .tf-duo-up { background: var(--amber); }
+.tf-duo-n { text-align: right; color: var(--text-2); white-space: nowrap; }
+.tf-mix { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 20px; align-items: center; margin-bottom: 18px; }
+.tf-donut-box { position: relative; width: 200px; height: 200px; }
+.tf-donut { width: 100%; height: 100%; }
+.tf-donut-c { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+.tf-donut-v { font: 600 18px var(--sans); font-variant-numeric: tabular-nums; }
+.sl { stroke: var(--surface); stroke-width: 1.5; }
+path.sl0 { fill: var(--teal); } path.sl1 { fill: var(--blue); } path.sl2 { fill: var(--amber); } path.sl3 { fill: var(--wander); } path.sl4 { fill: var(--red); } path.sl5 { fill: #6fcf97; } path.sl-other { fill: var(--text-3); }
+.tf-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 8px; }
+span.sl0 { background: var(--teal); } span.sl1 { background: var(--blue); } span.sl2 { background: var(--amber); } span.sl3 { background: var(--wander); } span.sl4 { background: var(--red); } span.sl5 { background: #6fcf97; } span.sl-other { background: var(--text-3); }
+.tf-split { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--surface-2); margin: 6px 0 0; }
+.tf-split-down { background: var(--teal); } .tf-split-up { background: var(--amber); }
+.tf-trends { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(210px, 100%), 1fr)); gap: 12px; }
+.tf-trend { display: flex; flex-direction: column; gap: 6px; text-align: left; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; color: inherit; font: inherit; min-width: 0; }
+button.tf-trend { cursor: pointer; } button.tf-trend:hover { border-color: var(--line-2); background: var(--surface-3); }
+.tf-trend-n { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tf-spark { width: 100%; height: 40px; display: block; }
+.tf-spark-down { fill: var(--teal); fill-opacity: .22; }
+.sec-t { margin: 0 0 6px; font: 600 15px var(--sans); }
+.sec-sub { margin: 0 0 14px; max-width: 70ch; }
+@media (max-width: 720px) {
+  .tf-mix { grid-template-columns: 1fr; justify-items: center; }
+  .tf-mix-legend { width: 100%; }
+  /* Wide enough for "100 Mbit/s" at this size, so the gutter holds the
+     label instead of the label escaping the gutter. */
+  .tf-body .tf-chart-wrap { grid-template-columns: 70px minmax(0, 1fr); }
+  .tf-body .tf-yaxis span { font-size: 10px; }
+  .tf-body .tf-xaxis { margin-left: 78px; font-size: 10px; }
+  .tf-body .tf-xaxis span { white-space: nowrap; }
+}
+.tf-body .tf-yaxis span { white-space: nowrap; }
+
+.tf-body .tf-live { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 10px; }
+.tf-body .tf-live .list-row { border: 1px solid var(--line); border-radius: var(--r); }
+
+/* Bandwidth: reading from the owner's router instead of steering traffic. */
+.ru-line { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+.ru-line.good { color: var(--teal); } .ru-line.warn { color: var(--amber); }
+.ru-line.bad { color: var(--red); } .ru-line.muted { color: var(--text-2); font-weight: 500; }
+.ru-note { margin: 0 0 12px; max-width: 72ch; }
+.ru-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0 0 12px; }
+.ru-form input, .ru-form select { min-width: 220px; }
+.ru-acts { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+.ru-names { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.ru-sub { margin: 0 0 6px; font: 600 14px var(--sans); }
+.ru-names .switch { margin: 0 0 12px; }
+.ru-kinds { display: flex; gap: 8px; margin: 0 0 12px; }
+.ru-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); align-items: center; }
+.ru-grid .switch, .ru-grid button { grid-column: 1 / -1; justify-self: start; }
+
+.al-ntfy { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+.al-ntfy > summary { cursor: pointer; font-weight: 600; }
+.al-ntfy-steps { margin: 8px 0 12px 20px; padding: 0; display: grid; gap: 6px; max-width: 70ch; color: var(--text-2); }
+.al-ntfy-code { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 10px 12px; margin: 0 0 8px; overflow-x: auto; white-space: pre; }
