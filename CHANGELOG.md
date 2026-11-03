@@ -16,21 +16,37 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - **First-run setup in a browser.** A new install no longer starts in a text editor. Start Shepherd
   with no configuration file and it brings up a setup page, prints the addresses to open (with a
   one-time token, since the page listens on every address so it can be reached from the machine you
-  are actually sitting at), asks what it has to and writes a commented `shepherd.toml` — then shuts
-  the page down and carries straight on with what you chose, in the same process. `shepherd setup`
-  runs it again later. The address question is the reason it exists: it lists every address this host
-  has with its interface and ticks them all, because a device asks one specific address and a host
-  serving only its Wi-Fi address while the router hands out the wired one is a network with no DNS,
-  with nothing in the configuration looking wrong. Each chosen resolver is probed from this host
-  before it is written (twice before it is called a failure, since public resolvers drop the odd
-  query), a held port is explained rather than refused, only the keys it asked about are written so
-  every other default keeps following Shepherd's own, and an existing `shepherd.toml` is kept as
-  `.bak`. The optional last step connects a UniFi controller and verifies it by reading it once; its
-  credentials go to `<data_dir>/secrets.json` (0600), never into the configuration, and eero is
-  pointed at the portal's Bandwidth screen, which has the emailed-code flow. If the preferred port is
-  taken, setup moves to a free one and says so; if it cannot come up at all, that is logged and
-  Shepherd starts on its defaults rather than refusing. It complements `scripts/shepherd-doctor` (the
-  read-only host preflight) rather than repeating it. See [docs/SETUP.md](docs/SETUP.md).
+  are actually sitting at), asks what it has to, writes a commented `shepherd.toml` and starts on it
+  in the same process. `shepherd setup` runs it again later. It listens on 8788 rather than the
+  portal's 8787, because it keeps serving while Shepherd starts.
+
+  What it asks is deliberately short, and two of the answers it works out rather than asking for.
+  The data directory is `data` beside the configuration file, created and checked while the page
+  loads. **Upstream resolvers are measured, not guessed**: every candidate is asked the same
+  uncached question several times from this host, and the recommendation prefers an encrypted (DoT)
+  resolver that also blocks known-malicious names — but only while it answers every probe and stays
+  under 250ms from here, so a flaky or slow one loses to a plain resolver that works. The numbers
+  are shown, so the recommendation can be checked. The address question is still the reason the
+  whole thing exists: every address with its interface, all ticked, because a device asks one
+  specific address and a host serving only its Wi-Fi address while the router hands out the wired
+  one is a network with no DNS, with nothing in the configuration looking wrong. A few catalog
+  categories can be blocked network-wide from the page, switched on in the running policy the portal
+  owns rather than copied into the configuration file.
+
+  **The page stays with you after the file is written**, for the part that needs Shepherd running:
+  it asks Shepherd's own listeners over UDP and TCP for a name that must resolve and one that must
+  be blocked (the self-test from docs/DNS-QA.md, run on demand, not a second implementation), hands
+  over the portal token concealed and asks you to confirm you have kept it, says what to set in your
+  router's DHCP settings and to give the Shepherd host a fixed address, and offers the UniFi
+  connection for per-device bandwidth. It does not reconfigure your router: the eero and UniFi APIs
+  Shepherd speaks are the read-only ones, and neither vendor publishes a supported way to set a
+  network's DNS server. Closing the page is the last step, and the listener stops there.
+
+  An existing `shepherd.toml` is kept as `.bak`; only the keys setup asked about are written, so
+  every other default keeps following Shepherd's own; a held port is explained rather than refused;
+  and a setup listener that cannot come up at all is logged while Shepherd starts on its defaults.
+  It complements `scripts/shepherd-doctor` (the read-only host preflight) rather than repeating it.
+  See [docs/SETUP.md](docs/SETUP.md).
 
 ### Changed
 - **Watch mode is deprecated.** Per-device bandwidth now comes from the router over its own API

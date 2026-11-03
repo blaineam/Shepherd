@@ -41,6 +41,8 @@ type rig struct {
 	connErr  error
 	connSeen []RouterConn
 	connDirs []string
+	catsSet  [][]string
+	catsErr  error
 }
 
 // newRig builds a setup server whose every outside edge is a fake, so the
@@ -213,8 +215,8 @@ func TestStateDescribesThisHostAndTheDefaults(t *testing.T) {
 	if got["config_exists"] != false || got["can_router"] != true || got["dns_port_free"] != true {
 		t.Errorf("state = %+v", got)
 	}
-	if presets, _ := got["presets"].([]any); len(presets) != len(Presets) {
-		t.Errorf("presets = %v", got["presets"])
+	if cands, _ := got["candidates"].([]any); len(cands) != len(Candidates) {
+		t.Errorf("candidates = %v", got["candidates"])
 	}
 }
 
@@ -448,9 +450,10 @@ func TestFinishRefusesABackupItCannotWrite(t *testing.T) {
 	}
 }
 
-func TestRunServesUntilSetupFinishesAndThenStops(t *testing.T) {
-	// This is the whole flow cmd/shepherd relies on: serve, wait, hand
-	// back the file that was written.
+func TestRunHandsBackTheFileAndKeepsServing(t *testing.T) {
+	// This is the flow cmd/shepherd relies on: serve, hand back the file
+	// the moment it is written, and stay up -- the second half of the
+	// page needs Shepherd running, which has not happened yet.
 	dir := t.TempDir()
 	t.Chdir(dir)
 	s, err := NewServer(&Server{ConfigPath: filepath.Join(dir, "shepherd.toml"), Token: testToken,
@@ -502,9 +505,10 @@ func TestRunServesUntilSetupFinishesAndThenStops(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return after setup finished")
 	}
-	if !reachableFails(base) {
-		t.Error("the setup listener should be closed once setup is done")
+	if !reachable(base) {
+		t.Error("the setup page must stay up for the second half of the flow")
 	}
+	s.Close()
 }
 
 func reachable(base string) bool {
@@ -516,8 +520,6 @@ func reachable(base string) bool {
 	res.Body.Close()
 	return res.StatusCode == 200
 }
-
-func reachableFails(base string) bool { return !reachable(base) }
 
 func TestRunStopsWhenTheProcessIsAskedTo(t *testing.T) {
 	dir := t.TempDir()
@@ -628,5 +630,196 @@ func TestRunLogsThroughTheStandardLoggerWhenGivenNoLogger(t *testing.T) {
 	defer cancel()
 	if written, err := s.Run(ctx, "127.0.0.1:0", nil); err != nil || written != "" {
 		t.Errorf("Run = %q %v", written, err)
+	}
+}
+
+// ---- after the file is written -------------------------------------------
+
+// started hands the rig's server a fake running Shepherd, the way
+// cmd/shepherd hands it the real one.
+func (r *rig) started(checks []ListenerCheck) {
+	r.s.Started(Running{
+		PortalURL: "http://127.0.0.1:8787",
+		Token:     "portal-token-for-the-test", // leakcheck:allow fixture: a made-up token, not a real one
+		Verify:    func(context.Context) []ListenerCheck { return checks },
+		SetCategories: func(ids []string) error {
+			r.catsSet = append(r.catsSet, ids)
+			return r.catsErr
+		},
+	})
+}
+
+func TestNothingOfTheSecondHalfWorksBeforeShepherdIsUp(t *testing.T) {
+	// "shepherd setup" on its own starts nothing afterwards, and the page
+	// has to say so rather than pretend.
+	r := newRig(t)
+	if got := r.json("GET", "/api/setup/running", "", 200); got["running"] != false {
+		t.Errorf("running = %+v", got)
+	}
+	if got := r.json("POST", "/api/setup/verify", "", 200); got["ready"] != false {
+		t.Errorf("verify = %+v", got)
+	}
+	if code, _ := r.do("GET", "/api/setup/token", ""); code != 404 {
+		t.Error("there is no token to show before Shepherd is up")
+	}
+	if code, _ := r.do("POST", "/api/setup/categories", `{"ids":["adult"]}`); code != 404 {
+		t.Error("there is no policy to change before Shepherd is up")
+	}
+}
+
+func TestTheSecondHalfProvesFilteringAndHandsOverTheToken(t *testing.T) {
+	r := newRig(t)
+	r.started([]ListenerCheck{
+		{Addr: "192.0.2.10:53", Proto: "udp", Answers: true, Resolve: true, Blocks: true},
+		{Addr: "192.0.2.10:53", Proto: "tcp", Answers: true, Resolve: true, Blocks: true},
+	})
+	got := r.json("GET", "/api/setup/running", "", 200)
+	if got["running"] != true || got["portal"] != "http://127.0.0.1:8787" || got["can_block"] != true {
+		t.Errorf("running = %+v", got)
+	}
+	v := r.json("POST", "/api/setup/verify", "", 200)
+	if v["ready"] != true || v["ok"] != true {
+		t.Errorf("verify = %+v", v)
+	}
+	if checks, _ := v["checks"].([]any); len(checks) != 2 {
+		t.Errorf("checks = %v", v["checks"])
+	}
+	tok := r.json("GET", "/api/setup/token", "", 200)
+	if tok["token"] != "portal-token-for-the-test" {
+		t.Errorf("token = %+v", tok)
+	}
+}
+
+func TestVerifyIsNotOKUntilEveryListenerResolvesAndBlocks(t *testing.T) {
+	// A listener that answers but does not block is the failure worth
+	// catching here: filtering that is not filtering looks fine from the
+	// outside.
+	for _, c := range []ListenerCheck{
+		{Addr: "192.0.2.10:53", Proto: "udp", Answers: false},
+		{Addr: "192.0.2.10:53", Proto: "udp", Answers: true, Resolve: false, Blocks: true},
+		{Addr: "192.0.2.10:53", Proto: "udp", Answers: true, Resolve: true, Blocks: false},
+	} {
+		r := newRig(t)
+		r.started([]ListenerCheck{c})
+		if got := r.json("POST", "/api/setup/verify", "", 200); got["ok"] != false {
+			t.Errorf("%+v should not count as working: %+v", c, got)
+		}
+	}
+	// And no listeners at all is not "fine", it is nothing checked.
+	r := newRig(t)
+	r.started(nil)
+	if got := r.json("POST", "/api/setup/verify", "", 200); got["ok"] != false {
+		t.Errorf("no listeners = %+v", got)
+	}
+}
+
+func TestCategoriesChosenDuringSetupReachTheRunningPolicy(t *testing.T) {
+	r := newRig(t)
+	r.started(nil)
+	got := r.json("POST", "/api/setup/categories", `{"ids":["malware-phishing","adult"]}`, 200)
+	if ids, _ := got["blocked"].([]any); len(ids) != 2 {
+		t.Errorf("blocked = %v", got["blocked"])
+	}
+	if len(r.catsSet) != 1 || len(r.catsSet[0]) != 2 || r.catsSet[0][0] != "malware-phishing" {
+		t.Errorf("applied = %v", r.catsSet)
+	}
+	r.catsErr = errors.New("blocking adult: no such catalog item")
+	if code, out := r.do("POST", "/api/setup/categories", `{"ids":["nope"]}`); code != 400 || !strings.Contains(out, "no such catalog item") {
+		t.Errorf("a refused category = %d %s", code, out)
+	}
+	if code, _ := r.do("POST", "/api/setup/categories", "not json"); code != 400 {
+		t.Error("a body that is not JSON should be refused")
+	}
+}
+
+func TestTheOfferedCategoriesAreOnThePage(t *testing.T) {
+	r := newRig(t)
+	r.s.Categories = []Category{{ID: "adult", Name: "Adult", Description: "…", Suggested: false}}
+	got := r.json("GET", "/api/setup/state", "", 200)
+	cats, _ := got["categories"].([]any)
+	if len(cats) != 1 {
+		t.Fatalf("categories = %v", got["categories"])
+	}
+	if first, _ := cats[0].(map[string]any); first["id"] != "adult" {
+		t.Errorf("category = %v", cats[0])
+	}
+}
+
+func TestDoneClosesTheSetupListener(t *testing.T) {
+	// Closing it is the owner's call: it stays up through the whole of the
+	// second half, which is the part that needs Shepherd running.
+	dir := t.TempDir()
+	t.Chdir(dir)
+	s, err := NewServer(&Server{ConfigPath: filepath.Join(dir, "shepherd.toml"), Token: testToken,
+		HostAddrs: twoAddrs, PortFree: func(string, int) bool { return true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		if _, err := s.Run(context.Background(), "127.0.0.1:0", func(string, ...any) {}); err != nil {
+			t.Error(err)
+		}
+	}()
+	var base string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if p := s.Port(); p != "" {
+			base = "http://127.0.0.1:" + p
+			if reachable(base) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if base == "" || !reachable(base) {
+		t.Fatal("setup never came up")
+	}
+	res, err := http.Post(base+"/api/setup/done?token="+testToken, "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	for i := 0; i < 100 && reachable(base); i++ {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if reachable(base) {
+		t.Error("the setup listener should be gone after the owner is done with it")
+	}
+	s.Close() // a second close must not panic
+}
+
+func TestFinishRefusesThePortTheSetupPageIsUsing(t *testing.T) {
+	// Setup keeps serving while Shepherd starts, so the portal cannot
+	// have this port -- and finding that out at startup, after the owner
+	// has walked away, would be the worst place to find it out.
+	dir := t.TempDir()
+	t.Chdir(dir)
+	s, err := NewServer(&Server{ConfigPath: filepath.Join(dir, "shepherd.toml"), Token: testToken,
+		HostAddrs: twoAddrs, PortFree: func(string, int) bool { return true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	go func() { _, _ = s.Run(context.Background(), "127.0.0.1:0", func(string, ...any) {}) }()
+	var base string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && base == "" {
+		if p := s.Port(); p != "" && reachable("http://127.0.0.1:"+p) {
+			base = "http://127.0.0.1:" + p
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if base == "" {
+		t.Fatal("setup never came up")
+	}
+	body := `{"dns_listen":["192.0.2.10"],"dns_port":53,"upstreams":["9.9.9.10"],` +
+		`"portal_host":"127.0.0.1","portal_port":` + s.Port() + `}`
+	res, err := http.Post(base+"/api/setup/finish?token="+testToken, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 400 {
+		t.Errorf("finish on the setup page's own port = %d, want 400", res.StatusCode)
 	}
 }

@@ -92,7 +92,10 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	// address to open and waits. Once the page is finished the file is
 	// loaded below like any other, so one process start is all the owner
 	// needs (docs/SETUP.md).
-	setupIfUnconfigured(ctx, cfgPath)
+	setupSrv := setupIfUnconfigured(ctx, cfgPath)
+	if setupSrv != nil {
+		defer setupSrv.Close()
+	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return err
@@ -425,6 +428,14 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		}()
 		defer httpsSrv.Shutdown(context.Background())
 		log.Printf("shepherd %s: portal also on https://%s (%s)", version, cfg.TLS.Listen, cfg.TLS.Hostname)
+	}
+
+	// The setup page is still open in the owner's browser when this is a
+	// first run: hand it the Shepherd it just configured, so the rest of
+	// the flow (proving DNS filters, the portal token, network-wide
+	// blocking, pointing the router here) happens where they already are.
+	if setupSrv != nil {
+		setupSrv.Started(runningSetup(cfg, token, policy, &skipped))
 	}
 
 	log.Printf("shepherd %s: dns on %v, portal on http://%s", version, cfg.DNS.ListenAddrs(), cfg.Portal.Listen)

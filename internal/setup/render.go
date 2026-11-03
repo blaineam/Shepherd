@@ -58,28 +58,6 @@ func (a Answers) validate() error {
 	return nil
 }
 
-// Preset is one offered upstream choice. Note says what the resolver does
-// and does not do rather than selling it, because this choice decides who
-// sees every name the network looks up.
-type Preset struct {
-	Name  string   `json:"name"`
-	Note  string   `json:"note"`
-	Addrs []string `json:"addrs"`
-}
-
-// Presets are the offered upstreams. Quad9's unfiltered pair is first
-// because it is what config.Default() already uses: Shepherd's own lists are
-// then the only filter, which keeps one answer in one place. The rest are
-// here because they are the resolvers people actually name.
-var Presets = []Preset{
-	{"Quad9", "no blocking of its own, so Shepherd's lists are the only filter", []string{"9.9.9.10", "149.112.112.10"}},
-	{"Quad9 with malware blocking", "a second filter, run by someone else", []string{"9.9.9.9", "149.112.112.112"}},
-	{"Cloudflare", "fast and widely reachable", []string{"1.1.1.1", "1.0.0.1"}},
-	{"Google", "fast and widely reachable", []string{"8.8.8.8", "8.8.4.4"}},
-	{"Quad9 over TLS", "encrypted to the resolver (docs/UPSTREAMS.md)", []string{"tls://dns.quad9.net"}},
-	{"Cloudflare over TLS", "encrypted to the resolver", []string{"tls://cloudflare-dns.com"}},
-}
-
 // listenAddrs is dns.listen: each chosen address with the chosen port.
 func (a Answers) listenAddrs() []string {
 	out := make([]string, 0, len(a.DNSListen))

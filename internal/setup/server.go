@@ -87,6 +87,12 @@ type Server struct {
 	// change it.
 	DataDir string
 
+	// Categories are the network-wide blocking choices the page offers.
+	// They come from the shipped catalog, which is known before anything
+	// starts; switching them on needs the running policy, which arrives
+	// later in Running.SetCategories.
+	Categories []Category
+
 	// Token gates every request. Empty means NewServer generates one.
 	Token string
 
@@ -96,8 +102,44 @@ type Server struct {
 	// written is the path actually written, for the log line.
 	written string
 
-	mu   sync.Mutex
-	port string // the port Run is actually listening on
+	mu      sync.Mutex
+	port    string // the port Run is actually listening on
+	running *Running
+	closed  chan struct{}
+	srv     *http.Server
+}
+
+// Started hands setup the Shepherd that is now running on the file it
+// wrote. Everything the second half of the page does needs it.
+func (s *Server) Started(r Running) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.running = &r
+}
+
+func (s *Server) runningNow() *Running {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.running
+}
+
+// Close stops serving. Safe to call more than once, and from any
+// goroutine: cmd/shepherd defers it, and the page's "I am done" calls it.
+func (s *Server) Close() {
+	s.mu.Lock()
+	srv, closed := s.srv, s.closed
+	s.srv = nil
+	s.mu.Unlock()
+	if srv != nil {
+		_ = srv.Close()
+	}
+	if closed != nil {
+		select {
+		case <-closed:
+		default:
+			close(closed)
+		}
+	}
 }
 
 // Port is the port setup is serving on, empty before Run has started. It is
@@ -106,6 +148,55 @@ func (s *Server) Port() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.port
+}
+
+// Running is what cmd/shepherd hands setup once Shepherd itself is up on
+// the configuration just written. It is what turns the second half of the
+// page from instructions into something that can be checked: DNS is proved
+// by asking Shepherd's own listeners, the portal token is shown where the
+// owner already is, and a category switched on here is switched on in the
+// running policy.
+//
+// It is nil for "shepherd setup" run on its own, where nothing starts
+// afterwards; the page then says so instead of pretending.
+type Running struct {
+	// PortalURL is where the portal is listening, for the link.
+	PortalURL string
+	// Token is the portal's access token. It is shown on the page behind
+	// a reveal, and the page makes the owner say they have kept it before
+	// it moves on: it is the only way back in, and a fresh install's
+	// owner has no other copy of it yet.
+	Token string
+	// Verify asks Shepherd's own listeners a known-good and a
+	// known-blocked name, over UDP and TCP (internal/selftest). It is how
+	// the page proves filtering works rather than telling the owner to go
+	// and run dig.
+	Verify func(ctx context.Context) []ListenerCheck
+	// SetCategories switches the chosen categories on at network scope.
+	// Nil when there is no policy store to put them in.
+	SetCategories func(ids []string) error
+}
+
+// ListenerCheck is one address's verification: whether it answered at all,
+// resolved a name that must resolve, and blocked a name that must be
+// blocked.
+type ListenerCheck struct {
+	Addr    string `json:"addr"`
+	Proto   string `json:"proto"`
+	Answers bool   `json:"answers"`
+	Resolve bool   `json:"resolve"`
+	Blocks  bool   `json:"blocks"`
+	Detail  string `json:"detail,omitempty"`
+}
+
+// Category is one network-wide blocking choice offered during setup.
+type Category struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// Suggested marks the ones a new install usually wants, which the
+	// page ticks for them.
+	Suggested bool `json:"suggested"`
 }
 
 // RouterConn is the UniFi controller the optional bandwidth step collects.
@@ -143,13 +234,19 @@ func NewServer(s *Server) (*Server, error) {
 		s.Token = hex.EncodeToString(raw)
 	}
 	s.done = make(chan struct{})
+	s.closed = make(chan struct{})
 	return s, nil
 }
 
-// Run serves setup until the configuration has been written (or ctx ends)
-// and returns the path it wrote. It listens on addr — every address of this
-// host, by convention, since the whole point is being reachable from the
-// machine the owner is sitting at — and prints the URLs to open.
+// Run serves setup and returns the path it wrote as soon as the owner
+// presses Finish. It keeps serving afterwards, because the second half of
+// the page -- proving DNS works, handing over the portal token, switching
+// categories on, pointing the router here -- can only happen once Shepherd
+// is running on that file. The caller starts Shepherd, calls Started, and
+// defers Close.
+//
+// It listens on addr: every address of this host, by convention, since the
+// whole point is being reachable from the machine the owner is sitting at.
 //
 // An empty return with no error means ctx ended first: the caller should
 // carry on with whatever configuration it already had.
@@ -162,24 +259,32 @@ func (s *Server) Run(ctx context.Context, addr string, logf func(string, ...any)
 		return "", fmt.Errorf("setup: cannot listen on %s: %w", addr, err)
 	}
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
-	s.mu.Lock()
-	s.port = port
-	s.mu.Unlock()
 	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	s.mu.Lock()
+	s.port, s.srv = port, srv
+	s.mu.Unlock()
 	errc := make(chan error, 1)
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}
 	}()
-	defer srv.Close()
+	go func() {
+		// Whatever ends first -- the owner finishing the whole flow, or
+		// the process being asked to stop -- the listener goes.
+		select {
+		case <-ctx.Done():
+			s.Close()
+		case <-s.closed:
+		}
+	}()
 
 	logf("setup: no configuration yet, so Shepherd is waiting for you to finish setting it up.")
 	logf("setup: open one of these in a browser (the token is what proves it is you):")
 	for _, u := range s.URLs(port) {
 		logf("setup:   %s", u)
 	}
-	logf("setup: nothing is written until you finish, and this listener stops as soon as you do.")
+	logf("setup: nothing is written until you finish, and this page stays up until you are done with it.")
 
 	select {
 	case <-s.done:
@@ -217,9 +322,15 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /", s.gate(http.HandlerFunc(s.page)))
 	mux.Handle("GET /api/setup/state", s.gate(http.HandlerFunc(s.state)))
 	mux.Handle("POST /api/setup/upstream-test", s.gate(http.HandlerFunc(s.upstreamTest)))
+	mux.Handle("POST /api/setup/upstream-rank", s.gate(http.HandlerFunc(s.upstreamRank)))
 	mux.Handle("POST /api/setup/port-check", s.gate(http.HandlerFunc(s.portCheck)))
 	mux.Handle("POST /api/setup/router", s.gate(http.HandlerFunc(s.router)))
 	mux.Handle("POST /api/setup/finish", s.gate(http.HandlerFunc(s.finish)))
+	mux.Handle("GET /api/setup/running", s.gate(http.HandlerFunc(s.runningState)))
+	mux.Handle("POST /api/setup/verify", s.gate(http.HandlerFunc(s.verify)))
+	mux.Handle("GET /api/setup/token", s.gate(http.HandlerFunc(s.portalToken)))
+	mux.Handle("POST /api/setup/categories", s.gate(http.HandlerFunc(s.categories)))
+	mux.Handle("POST /api/setup/done", s.gate(http.HandlerFunc(s.finished)))
 	return mux
 }
 
@@ -268,24 +379,25 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 // stateJSON is everything the page needs to draw itself: what this host
 // looks like, and the defaults every field starts on.
 type stateJSON struct {
-	ConfigPath   string   `json:"config_path"`
-	ConfigExists bool     `json:"config_exists"`
-	Addrs        []Addr   `json:"addrs"`
-	AddrsError   string   `json:"addrs_error,omitempty"`
-	Presets      []Preset `json:"presets"`
-	DataDir      string   `json:"data_dir"`
-	DataDirError string   `json:"data_dir_error,omitempty"`
-	DNSPort      int      `json:"dns_port"`
-	PortalPort   int      `json:"portal_port"`
-	PortalHost   string   `json:"portal_host"`
-	DNSPortFree  bool     `json:"dns_port_free"`
-	CanRouter    bool     `json:"can_router"`
+	ConfigPath   string      `json:"config_path"`
+	ConfigExists bool        `json:"config_exists"`
+	Addrs        []Addr      `json:"addrs"`
+	AddrsError   string      `json:"addrs_error,omitempty"`
+	Candidates   []Candidate `json:"candidates"`
+	DataDir      string      `json:"data_dir"`
+	DataDirError string      `json:"data_dir_error,omitempty"`
+	DNSPort      int         `json:"dns_port"`
+	PortalPort   int         `json:"portal_port"`
+	PortalHost   string      `json:"portal_host"`
+	DNSPortFree  bool        `json:"dns_port_free"`
+	CanRouter    bool        `json:"can_router"`
+	Categories   []Category  `json:"categories"`
 }
 
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
-	out := stateJSON{ConfigPath: s.ConfigPath, Presets: Presets,
+	out := stateJSON{ConfigPath: s.ConfigPath, Candidates: Candidates,
 		DataDir: s.DataDir, DNSPort: 53, PortalPort: 8787, PortalHost: "127.0.0.1",
-		CanRouter: s.ConnectRouter != nil}
+		CanRouter: s.ConnectRouter != nil, Categories: s.Categories}
 	// Checked here rather than left for the owner to discover at the end:
 	// a directory Shepherd cannot write is the one thing about this step
 	// that can go wrong, and it is better said on the page than in a
@@ -344,6 +456,17 @@ func (s *Server) upstreamTest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "ms": time.Since(start).Milliseconds()})
 }
 
+// upstreamRank measures every candidate from this host and returns them
+// ranked, with the numbers the ranking was made from. The page shows those
+// numbers: a recommendation nobody can check is just another opinion.
+func (s *Server) upstreamRank(w http.ResponseWriter, r *http.Request) {
+	// Bounded, because the page is waiting on it: a candidate that is
+	// simply unreachable must not hold the whole measurement open.
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	writeJSON(w, map[string]any{"results": Measure(ctx, Candidates, s.TestUpstream)})
+}
+
 // portCheck is what the page calls when the port is changed, so "something
 // already answers there" is said while it can still be acted on.
 func (s *Server) portCheck(w http.ResponseWriter, r *http.Request) {
@@ -376,7 +499,7 @@ func (s *Server) router(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.ConnectRouter == nil {
-		http.Error(w, "this build cannot read bandwidth from a router", http.StatusNotFound)
+		notFound(w, "this build cannot read bandwidth from a router")
 		return
 	}
 	// The directory is Shepherd's own, never one the request names.
@@ -398,6 +521,12 @@ func (s *Server) finish(w http.ResponseWriter, r *http.Request) {
 	// Whatever the page sent, the state goes where this process decided
 	// it goes: nothing a request carries becomes a path Shepherd creates.
 	a.DataDir = s.DataDir
+	// Setup keeps serving while Shepherd starts, so the two listeners
+	// exist at once and the portal cannot have this port.
+	if p := s.Port(); p != "" && p == strconv.Itoa(a.PortalPort) {
+		http.Error(w, "the setup page is using port "+p+" while it walks you through the rest; give the portal another port", http.StatusBadRequest)
+		return
+	}
 	if err := a.validate(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -442,6 +571,88 @@ func (s *Server) finish(w http.ResponseWriter, r *http.Request) {
 		close(s.done)
 	}
 }
+
+// runningState is what the second half of the page polls after Finish: it
+// is how it knows Shepherd came up, and what it can offer.
+func (s *Server) runningState(w http.ResponseWriter, r *http.Request) {
+	run := s.runningNow()
+	if run == nil {
+		writeJSON(w, map[string]any{"running": false})
+		return
+	}
+	writeJSON(w, map[string]any{
+		"running":     true,
+		"portal":      run.PortalURL,
+		"can_verify":  run.Verify != nil,
+		"can_block":   run.SetCategories != nil,
+		"token_ready": run.Token != "",
+	})
+}
+
+// verify asks Shepherd's own listeners a name that must resolve and one
+// that must be blocked, over UDP and TCP. Proving it here is the point: a
+// listener that works for this host and not for the network is the failure
+// everything else in this page is arranged to prevent, and "run dig from
+// another machine" is advice most people will not take.
+func (s *Server) verify(w http.ResponseWriter, r *http.Request) {
+	run := s.runningNow()
+	if run == nil || run.Verify == nil {
+		writeJSON(w, map[string]any{"ready": false})
+		return
+	}
+	checks := run.Verify(r.Context())
+	ok := len(checks) > 0
+	for _, c := range checks {
+		if !c.Answers || !c.Resolve || !c.Blocks {
+			ok = false
+		}
+	}
+	writeJSON(w, map[string]any{"ready": true, "ok": ok, "checks": checks})
+}
+
+// portalToken hands over the portal's access token. It is behind the setup
+// token like everything else here, and the page says plainly that it is
+// coming over plain HTTP on the LAN, so an owner who would rather read it
+// out of the data directory can.
+func (s *Server) portalToken(w http.ResponseWriter, r *http.Request) {
+	run := s.runningNow()
+	if run == nil || run.Token == "" {
+		notFound(w, "Shepherd is not running yet, so it has no token to show")
+		return
+	}
+	writeJSON(w, map[string]any{"token": run.Token, "portal": run.PortalURL})
+}
+
+// categories switches the chosen network-wide blocking on, in the policy
+// the portal owns from now on, so the choice made here is the same object
+// the Blocking screen edits later rather than a copy in the config file.
+func (s *Server) categories(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		IDs []string `json:"ids"`
+	}
+	if !decodeBody(w, r, &b) {
+		return
+	}
+	run := s.runningNow()
+	if run == nil || run.SetCategories == nil {
+		notFound(w, "Shepherd is not running yet, so there is no policy to change")
+		return
+	}
+	if err := run.SetCategories(b.IDs); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"blocked": b.IDs})
+}
+
+// finished is the owner saying they are done with this page, which is the
+// only thing that takes the setup listener down once Shepherd is up.
+func (s *Server) finished(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"closed": true})
+	go s.Close() // after the answer has been written
+}
+
+func notFound(w http.ResponseWriter, msg string) { http.Error(w, msg, http.StatusNotFound) }
 
 // Done reports the channel Run waits on, for a caller that wants to know
 // setup finished without owning the listener.

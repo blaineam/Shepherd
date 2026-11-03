@@ -11,8 +11,9 @@
 <main class="wrap">
   <header class="head">
     <h1>Set up Shepherd</h1>
-    <p class="sub">Five answers and Shepherd writes its own configuration, then starts on it. Nothing is
-      written until you press Finish, and you can come back to all of this in the portal afterwards.</p>
+    <p class="sub">Shepherd writes its own configuration from what you choose here, starts on it, and
+      then proves it is working before you point anything at it. Nothing is written until you press
+      Finish.</p>
   </header>
 
   <div id="load" class="card muted">Reading this host…</div>
@@ -44,21 +45,31 @@
     <section class="card" id="s-up">
       <h2>3. Which resolvers should Shepherd ask?</h2>
       <p class="note">Shepherd filters, it does not resolve: whatever it does not block, it asks one of
-        these. They see every name this network looks up, so this is a privacy decision as much as a
-        technical one. Each one is tested from this host before it is written.</p>
-      <div id="presets" class="presets"></div>
+        these. Rather than make you guess, setup asks each one the same question a few times from this
+        host and shows what came back — encrypted resolvers that block known-malicious names are
+        preferred, but only when they answer reliably and quickly from here.</p>
+      <div class="row">
+        <button type="button" id="measure" class="ghost">Test them from this host</button>
+        <span id="measure-result" class="result"></span>
+      </div>
+      <div id="candidates" class="presets"></div>
       <label class="field">
-        <span>Or type them yourself, one per line</span>
+        <span>Or type your own, one per line</span>
         <textarea id="custom" rows="3" spellcheck="false" placeholder="9.9.9.10&#10;tls://dns.example.com&#10;https://dns.example.com/dns-query"></textarea>
       </label>
-      <div class="row">
-        <button type="button" id="test-up" class="ghost">Test these resolvers</button>
-        <span id="up-result" class="result"></span>
-      </div>
+    </section>
+
+    <section class="card" id="s-block">
+      <h2>4. What should be blocked for the whole network?</h2>
+      <p class="note">Shepherd already starts with its recommended blocklists on. These are categories
+        on top of that, applied to every device; you can change all of it in the portal afterwards, per
+        device or per group, and this is only the starting point.</p>
+      <div id="categories" class="addrs"></div>
+      <p class="note small" id="cat-note"></p>
     </section>
 
     <section class="card" id="s-portal">
-      <h2>4. Where should the portal listen?</h2>
+      <h2>5. Where should the portal listen?</h2>
       <p class="note">The portal is Shepherd's own interface. It is locked behind a token and shows demo
         data until you sign in, but a LAN address still means anyone on the network can reach the
         sign-in page. Loopback plus an SSH tunnel is the private answer; a LAN address is the
@@ -68,34 +79,6 @@
         <span>Portal port</span>
         <input id="portal-port" name="portal-port" type="number" min="1" max="65535" inputmode="numeric">
       </label>
-    </section>
-
-    <section class="card" id="s-router">
-      <h2>5. Read per-device bandwidth from your router? <span class="opt">optional</span></h2>
-      <p class="note">Shepherd can ask your router how much each device has moved, which is how the
-        Bandwidth screen gets real numbers without touching any traffic. Skipping this changes nothing
-        else, and you can connect a router later from the portal.</p>
-      <div class="radios" id="router-choice"></div>
-      <div id="unifi" hidden>
-        <label class="field"><span>Controller address</span>
-          <input id="u-url" spellcheck="false" autocomplete="off" placeholder="https://unifi.example.com"></label>
-        <label class="field"><span>Username (a read-only local account is enough)</span>
-          <input id="u-user" spellcheck="false" autocomplete="off"></label>
-        <label class="field"><span>Password</span>
-          <input id="u-pass" type="password" autocomplete="new-password"></label>
-        <label class="field short"><span>Site name (not its label)</span>
-          <input id="u-site" spellcheck="false" autocomplete="off" value="default"></label>
-        <label class="check"><input id="u-self" type="checkbox" checked>
-          <span>Accept the controller's self-signed certificate (usual on a LAN address)</span></label>
-        <div class="row">
-          <button type="button" id="u-connect" class="ghost">Check and connect</button>
-          <span id="u-result" class="result"></span>
-        </div>
-        <p class="note small">The password is kept in your data directory's <code>secrets.json</code>
-          (0600), never in <code>shepherd.toml</code>.</p>
-      </div>
-      <p id="eero-note" class="note small" hidden>eero signs in with a code it emails you while you
-        wait, so that one is done from the portal's Bandwidth screen after Shepherd starts.</p>
     </section>
 
     <section class="card finish">
@@ -111,19 +94,94 @@
     </section>
   </form>
 
-  <section id="done" class="card done" hidden>
-    <h2>Shepherd is starting</h2>
-    <p id="done-written"></p>
-    <ol>
-      <li>Check it answers, from this host and from another one:
-        <code id="done-dig"></code></li>
-      <li>Open the portal: <a id="done-portal" href="#"></a></li>
-      <li>Sign in with the token in <code id="done-token"></code>, or run
-        <code>shepherd -print-token</code>.</li>
-      <li>Only once all three work, hand the DNS address out to the network — in your router's DHCP
-        settings, or on one device first if you would rather try it small.</li>
-    </ol>
-    <p class="note small">This setup page is already shut down.</p>
+  <!-- Everything below happens after the file is written, with Shepherd running on it. -->
+  <section id="after" hidden>
+    <section class="card" id="a-start">
+      <h2>Shepherd is starting</h2>
+      <p id="a-written"></p>
+      <p id="a-waiting" class="result">Waiting for it to come up…</p>
+    </section>
+
+    <section class="card" id="a-verify" hidden>
+      <h2>Is it actually filtering?</h2>
+      <p class="note">This asks Shepherd's own listeners, over UDP and TCP, for a name that must resolve
+        and a name it must block — the same check the portal's Upstreams screen runs later.</p>
+      <div class="row">
+        <button type="button" id="verify" class="ghost">Check again</button>
+        <span id="verify-result" class="result"></span>
+      </div>
+      <div id="verify-rows" class="checks"></div>
+    </section>
+
+    <section class="card" id="a-token" hidden>
+      <h2>Your portal sign-in token</h2>
+      <p class="note">This is how you get into the portal. There is no password reset: keep it in your
+        password manager now. It is also in <code id="a-token-file"></code> on the Shepherd host, and
+        <code>shepherd -print-token</code> prints it.</p>
+      <div class="row">
+        <input id="token" type="password" readonly spellcheck="false" aria-label="Portal token">
+        <button type="button" id="token-show" class="ghost">Show</button>
+        <button type="button" id="token-copy" class="ghost">Copy</button>
+      </div>
+      <p class="note small">Shown over plain HTTP on your network, because setup has no certificate yet.
+        If that is not acceptable on this network, read it from the file instead.</p>
+      <label class="check"><input id="token-saved" type="checkbox">
+        <span>I have saved this token somewhere safe</span></label>
+      <div class="row">
+        <button type="button" id="token-ok" class="primary" disabled>Continue</button>
+        <a id="a-portal" href="#" target="_blank" rel="noopener">Open the portal</a>
+      </div>
+    </section>
+
+    <section class="card" id="a-router" hidden>
+      <h2>Point your network at Shepherd</h2>
+      <p class="note">Until you do this, Shepherd sees nothing: devices keep asking whatever resolver
+        they were given. Do it in one of these two places.</p>
+      <ol>
+        <li><strong>Your router's DHCP settings</strong> — set the DNS server it hands out to
+          <code id="r-addr"></code>, then reconnect a device (or wait out its lease) and come back to
+          the check above. This covers every device at once.</li>
+        <li><strong>One device first</strong>, if you would rather try it small: set its DNS server to
+          the same address by hand, confirm it still browses normally, then move the router over.</li>
+      </ol>
+      <p class="note">Give the Shepherd host a fixed address while you are in there — a DHCP
+        reservation for <code id="r-self"></code> is enough. If its address moves, every device is
+        pointed at nothing.</p>
+      <div id="r-bandwidth">
+        <h3>Per-device bandwidth (optional)</h3>
+        <p class="note">Shepherd can ask your router how much each device has moved, which is how the
+          Bandwidth screen gets real numbers without touching any traffic. Skipping this changes nothing
+          else.</p>
+        <div class="radios" id="router-choice"></div>
+        <div id="unifi" hidden>
+          <label class="field"><span>Controller address</span>
+            <input id="u-url" spellcheck="false" autocomplete="off" placeholder="https://unifi.example.com"></label>
+          <label class="field"><span>Username (a read-only local account is enough)</span>
+            <input id="u-user" spellcheck="false" autocomplete="off"></label>
+          <label class="field"><span>Password</span>
+            <input id="u-pass" type="password" autocomplete="new-password"></label>
+          <label class="field short"><span>Site name (not its label)</span>
+            <input id="u-site" spellcheck="false" autocomplete="off" value="default"></label>
+          <label class="check"><input id="u-self" type="checkbox" checked>
+            <span>Accept the controller's self-signed certificate (usual on a LAN address)</span></label>
+          <div class="row">
+            <button type="button" id="u-connect" class="ghost">Check and connect</button>
+            <span id="u-result" class="result"></span>
+          </div>
+          <p class="note small">The password is kept in your data directory's <code>secrets.json</code>
+            (0600), never in <code>shepherd.toml</code>.</p>
+        </div>
+        <p id="eero-note" class="note small" hidden>eero signs in with a code it emails you while you
+          wait, so that one is done from the portal's Bandwidth screen.</p>
+      </div>
+      <div class="row">
+        <button type="button" id="all-done" class="primary">I'm done — close setup</button>
+        <span id="done-result" class="result"></span>
+      </div>
+      <p class="note small">Closing this stops the setup page. Shepherd keeps running, and everything
+        here is in the portal from now on. A passkey or a PIN, so you do not have to paste that token
+        every time, is on the portal's Locking screen.</p>
+    </section>
   </section>
 </main>
 <script src="setup.js" type="module"></script>

@@ -10,12 +10,18 @@ setup:   http://127.0.0.1:8787/?token=…
 setup:   http://192.0.2.10:8787/?token=…
 ```
 
-Open one of them from any machine on the network, answer five questions, press **Finish**. Shepherd
-writes `shepherd.toml`, shuts the setup page down and carries straight on with what you chose —
-same process, no restart, no editing TOML by hand.
+Open one of them from any machine on the network and answer what it asks. Press **Finish** and
+Shepherd writes `shepherd.toml` and starts on it — same process, no restart, no editing TOML by
+hand. The page then stays with you for the part that can only happen once it is running: it proves
+DNS is filtering, hands over the portal token, and tells you what to change on your router. Closing
+it is the last step, and it is yours to take.
+
+Setup listens on port 8788, not the portal's 8787: it is still serving while Shepherd starts, so the
+two cannot share a port (and it says so if you try to give the portal 8788).
 
 `shepherd setup` runs the same flow deliberately, for an install that already has a configuration
-file. `-config /etc/shepherd/shepherd.toml` writes somewhere else, and `-port` moves the setup page.
+file. Nothing starts after that subcommand, so the second half has nothing to show and says so.
+`-config /etc/shepherd/shepherd.toml` writes somewhere else, and `-port` moves the setup page.
 
 Run it on the host that will serve DNS, since the addresses it offers are that host's own. In the
 container deployment ([`deploy/docker/`](../deploy/docker/)) that means running Shepherd with the
@@ -58,28 +64,59 @@ A setup page that cannot come up at all is logged, not fatal — Shepherd then s
    because nothing can be pointed at one. The port is checked as you change it, and something already
    holding it is explained rather than refused — the holder is usually the resolver being replaced.
 
-3. **Which resolvers to ask** (`dns.upstreams`). Presets that say what each resolver does and does
-   not block, because this choice decides who sees every name the network looks up, or your own list
-   typed in. **Test these resolvers** probes each one from this host — the same check the portal
-   makes before it will add one — twice before calling one a failure, since public resolvers drop the
-   odd uncached query.
+3. **Which resolvers to ask** (`dns.upstreams`) — measured, not guessed. Setup asks every candidate
+   the same uncached question several times from this host and shows what came back, then
+   recommends one. What it prefers, in order: encrypted (DoT) **and** filtering known-malicious
+   names upstream; then reliability, because a resolver that lost any probe here is a device that
+   waits and then falls back to something else; then the median latency of the probes that
+   answered. An encrypted filtering resolver that is slower than 250ms from here loses to a quick
+   plain one — that preference is not worth paying for on every uncached lookup. The numbers are on
+   the page, so the recommendation can be checked rather than taken on faith, and you can pick any
+   of them or type your own.
 
-4. **Where the portal listens** (`portal.listen`). Loopback by default, with the `ssh -L` line
+4. **What to block for the whole network.** A handful of categories from the shipped catalog
+   ([POLICY.md](POLICY.md)) on top of the recommended blocklists Shepherd already starts with:
+   malware and phishing, and ads and trackers, are ticked; adult, gambling, piracy, drugs and dating
+   are offered. They are switched on in the running policy once Shepherd is up, so they are the same
+   object the portal's Blocking screen edits afterwards — not a copy in the configuration file.
+   Everything finer (per device, per group, schedules, the rest of the catalog) is the portal's job.
+
+5. **Where the portal listens** (`portal.listen`). Loopback by default, with the `ssh -L` line
    written into the file as a comment. A LAN address is offered, and what it means — the sign-in page
    reachable from anywhere on the network, the token still gating everything behind it — is said
    plainly.
 
-5. **Whether to read per-device bandwidth from your router** ([TRAFFIC.md](TRAFFIC.md)). Optional and
-   skipped by default: filtered DNS, devices, alarms and the rest work without it. A UniFi controller
-   is collected here and verified by reading it once, so a password typo surfaces now instead of days
-   later as an empty Bandwidth screen; its credentials go into `<data_dir>/secrets.json` (0600),
-   never into `shepherd.toml`. eero signs in from the portal's Bandwidth screen instead, because it
-   needs a code eero emails while you wait.
+## What it does once Shepherd is running
 
-Everything else keeps its default and is deliberately left out of the file, so a default that
-improves in a later version improves for your install too.
-[`shepherd.example.toml`](../shepherd.example.toml) documents the full set if you would rather take
-one over.
+**It proves DNS is filtering.** The page asks Shepherd's own listeners, over UDP and TCP, for a name
+that must resolve and a name that must be blocked, and shows the result per address. That is the
+self-test from [DNS-QA.md](DNS-QA.md) run on demand, not a second implementation, so setup cannot
+call something working that the portal will call broken an hour later. "Run `dig` from another
+machine" is advice most people will not take; this is the same check, taken for them.
+
+**It hands over the portal token**, concealed, with Show and Copy, and asks you to say you have kept
+it before it moves on. There is no password reset: that token is the way in. It is also in
+`<data_dir>/portal-token` and from `shepherd -print-token`, and the page says plainly that it is
+being shown over plain HTTP on your network — setup has no certificate and cannot have one, so if
+that is not acceptable on your network, read it from the file instead.
+
+**It tells you how to point the network at Shepherd**: the DNS server to hand out in your router's
+DHCP settings (with the port, when it is not 53), the alternative of moving one device first, and a
+reminder to give the Shepherd host a fixed address, since every device would otherwise be pointed at
+nothing the day its address moves. Shepherd does not change your router for you: the APIs it speaks
+to eero and UniFi are the read-only ones it uses for per-device bandwidth, and those vendors do not
+publish a supported way to set a network's DNS server. Saying so is better than a button that works
+on one firmware and silently does nothing on the next.
+
+**It connects a router for bandwidth, if you want it.** UniFi is collected here and verified by
+reading the controller once, so a password typo surfaces now instead of days later as an empty
+Bandwidth screen; its credentials go into `<data_dir>/secrets.json` (0600), never into
+`shepherd.toml`. eero signs in from the portal's Bandwidth screen instead, because it needs a code
+eero emails while you wait.
+
+**Then you close it.** The setup listener stops; Shepherd keeps running. A passkey or a PIN, so the
+token is not what you type every time, is on the portal's Locking screen
+([PASSKEYS.md](PASSKEYS.md), [LOCKING.md](LOCKING.md)).
 
 ## What it does not do
 
@@ -87,24 +124,11 @@ It does not check the host. `scripts/shepherd-doctor` is the read-only preflight
 held, whether IPv6 works, link speeds, Thread border routers, the container runtime — and it changes
 nothing. Setup is the other half: it asks what only you can answer and writes the file.
 
-It writes nothing but the configuration file (plus the data directory, and `secrets.json` if you
-connect a router). It installs no service and changes no system setting. An existing
+It writes nothing but the configuration file (plus the data directory, the policy it was told to
+set, and `secrets.json` if you connect a router). It installs no service, changes no system setting,
+and touches nothing on your router. An existing
 `shepherd.toml` is kept as `shepherd.toml.bak`, because it may hold settings this page never asked
 about.
-
-## After it finishes
-
-The page ends with the three things to check, in this order:
-
-1. Query Shepherd from this host **and from another one**: `dig @<address> example.com`. A listener
-   that works locally and not from the network is the failure this is looking for.
-2. Open the portal and sign in with the token (`shepherd -print-token`, or
-   `<data_dir>/portal-token`).
-3. Only then hand the address out as the network's DNS server.
-
-[WAVE-2.md](WAVE-2.md) walks through that last step. The built-in self-test ([DNS-QA.md](DNS-QA.md))
-also warns on the Upstreams screen when this host has a LAN address with no DNS listener, which is
-the same failure caught from the inside.
 
 ## Re-running it
 

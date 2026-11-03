@@ -20,7 +20,9 @@ import (
 	"github.com/miekg/dns"
 
 	"shepherd/internal/config"
+	"shepherd/internal/dnsengine"
 	"shepherd/internal/secrets"
+	"shepherd/internal/selftest"
 	"shepherd/internal/setup"
 )
 
@@ -147,9 +149,14 @@ func TestAnInstallWithNoConfigIsSetUpFirstAndThenStartsOnIt(t *testing.T) {
 	done := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	srv, err := newSetupServer(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
 	go func() {
-		ok, err := runSetup(ctx, cfgPath, port)
-		if err == nil && !ok {
+		written, err := serveSetup(ctx, srv, port)
+		if err == nil && written == "" {
 			err = fmt.Errorf("setup reported nothing written")
 		}
 		done <- err
@@ -161,7 +168,12 @@ func TestAnInstallWithNoConfigIsSetUpFirstAndThenStartsOnIt(t *testing.T) {
 			t.Fatal(err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("runSetup did not return after the page finished")
+		t.Fatal("serveSetup did not return after the page finished")
+	}
+	// It is still serving: the second half of the page happens while
+	// Shepherd starts.
+	if _, err := http.Get("http://127.0.0.1:" + srv.Port() + "/"); err != nil {
+		t.Errorf("the setup page should still be up: %v", err)
 	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
@@ -193,8 +205,13 @@ func TestSetupMovesToAFreePortRatherThanRefusingToStart(t *testing.T) {
 	dir := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if ok, err := runSetup(ctx, filepath.Join(dir, "shepherd.toml"), taken); ok || err != nil {
-		t.Fatalf("runSetup = %v %v", ok, err)
+	srv, err := newSetupServer(filepath.Join(dir, "shepherd.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	if written, err := serveSetup(ctx, srv, taken); written != "" || err != nil {
+		t.Fatalf("serveSetup = %q %v", written, err)
 	}
 	if !strings.Contains(logs.String(), "taking a free port instead") {
 		t.Errorf("it should say why the port moved:\n%s", logs.String())
@@ -328,4 +345,126 @@ func fakeController(t *testing.T, user, pass string) string {
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL
+}
+
+func TestTheSetupPageIsHandedTheRunningShepherd(t *testing.T) {
+	// What the second half of the page needs: a portal to link to and
+	// sign into, a way to prove filtering works, and the catalog
+	// categories it offered being real.
+	dir := tempDir(t)
+	cfg := config.Default()
+	cfg.DataDir = dir
+	cfg.Portal.Listen = "127.0.0.1:8787"
+	port := freeTCPPort(t)
+	cfg.DNS.Listen = []string{fmt.Sprintf("127.0.0.1:%d", port)}
+
+	filter := dnsengine.NewFilter()
+	policy, err := dnsengine.OpenPolicyStore(filepath.Join(dir, "policy.json"), filter, dnsengine.PolicyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := runningSetup(cfg, "a-token", policy, &skipSet{})
+	if run.PortalURL != "http://127.0.0.1:8787" || run.Token != "a-token" {
+		t.Errorf("running = %+v", run)
+	}
+	if run.Verify == nil || run.SetCategories == nil {
+		t.Fatal("the page needs both to do its second half")
+	}
+	// A category chosen on the page is switched on in the policy the
+	// portal owns from now on, not copied into the config file.
+	if err := run.SetCategories([]string{"adult"}); err != nil {
+		t.Fatal(err)
+	}
+	snap := policy.Snapshot()
+	if !snap.Network.Items["adult"] {
+		t.Errorf("adult was not switched on at network scope: %+v", snap.Network.Items)
+	}
+	if err := run.SetCategories([]string{"no-such-category"}); err == nil {
+		t.Error("a category the catalog does not have should be reported")
+	}
+}
+
+func TestVerifyDNSAsksShepherdsOwnListeners(t *testing.T) {
+	// Not a second implementation: it runs the same self-test the portal
+	// shows later, so setup cannot call something working that the portal
+	// will call broken an hour from now.
+	cfg := config.Default()
+	cfg.DNS.Listen = []string{"127.0.0.1:1"} // nothing is listening there
+	checks := verifyDNS(cfg, &skipSet{})(context.Background())
+	if len(checks) == 0 {
+		t.Fatal("a listener that answers nothing is still a result")
+	}
+	for _, c := range checks {
+		if c.Answers {
+			t.Errorf("%+v should not have answered", c)
+		}
+		if c.Proto != "udp" && c.Proto != "tcp" {
+			t.Errorf("both protocols are checked, got %q", c.Proto)
+		}
+	}
+	// An address Shepherd could not bind is left out rather than reported
+	// as broken: startup already tolerated it on purpose.
+	skipped := &skipSet{}
+	// Including the loopback addresses Shepherd adds by itself, which are
+	// part of what it tried to bind.
+	for _, a := range cfg.DNS.ListenAddrs() {
+		skipped.add(a)
+	}
+	if got := verifyDNS(cfg, skipped)(context.Background()); len(got) != 0 {
+		t.Errorf("a skipped address should not be checked: %+v", got)
+	}
+}
+
+func TestChecksFromFlattensASelfTestReport(t *testing.T) {
+	got := checksFrom(selftest.Report{Listeners: []selftest.ListenerResult{{
+		Addr: "192.0.2.10:53",
+		Probes: []selftest.Probe{
+			{Proto: "udp", Check: "listener", OK: true},
+			{Proto: "udp", Check: "resolve", OK: true},
+			{Proto: "udp", Check: "block", OK: false, Detail: "it answered an address"},
+			{Proto: "tcp", Check: "listener", OK: true},
+			{Proto: "tcp", Check: "resolve", OK: true},
+			{Proto: "tcp", Check: "block", OK: true},
+		},
+	}}})
+	if len(got) != 2 {
+		t.Fatalf("checks = %+v", got)
+	}
+	if got[0].Proto != "udp" || got[0].Blocks || got[0].Detail != "it answered an address" {
+		t.Errorf("udp = %+v", got[0])
+	}
+	if got[1].Proto != "tcp" || !got[1].Blocks || !got[1].Resolve {
+		t.Errorf("tcp = %+v", got[1])
+	}
+}
+
+func TestTheOfferedCategoriesExistInTheShippedCatalog(t *testing.T) {
+	cats := setupCategories()
+	if len(cats) < 5 {
+		t.Fatalf("only %d categories offered", len(cats))
+	}
+	suggested := 0
+	for _, c := range cats {
+		e, ok := dnsengine.CatalogByID(c.ID)
+		if !ok || e.Kind != dnsengine.KindCategory {
+			t.Errorf("%s is not a category in the shipped catalog", c.ID)
+		}
+		if c.Name == "" || c.Description == "" {
+			t.Errorf("%+v needs something to show", c)
+		}
+		if c.Suggested {
+			suggested++
+		}
+	}
+	// The ticked ones are the two nobody argues with; everything else is
+	// the owner's call.
+	if suggested != 2 {
+		t.Errorf("%d suggested, want 2", suggested)
+	}
+}
+
+func TestApplyCategoriesWithoutAPolicyIsNothingToOffer(t *testing.T) {
+	if applyCategories(nil) != nil {
+		t.Error("no policy store means the page should not offer blocking")
+	}
 }

@@ -94,6 +94,13 @@ button[disabled] { opacity: .6; cursor: progress; }
 .result { font-size: .9rem; color: var(--muted); }
 .result.good { color: var(--good); }
 .result.bad { color: var(--bad); }
+.checks { display: grid; gap: .35rem; margin: .6rem 0 0; }
+.check { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; font-size: .9rem; }
+.check.good code { color: var(--good); }
+.check.bad code { color: var(--bad); }
+.dim { opacity: .55; }
+#token { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-width: 26rem; }
+h3 { margin: 1.2rem 0 .3rem; font-size: .95rem; }
 .warn { color: var(--warn); }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
 .done ol { padding-left: 1.2rem; }
