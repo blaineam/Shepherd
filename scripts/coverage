@@ -13,6 +13,14 @@ go test -race -count=1 -coverprofile=coverage.out ./...
 #                        CAP_NET_ADMIN and live hardware to exercise most of
 #                        its own logic (docs/INTERCEPT.md).
 #
+#   dhcp sockets         Binding UDP port 67 needs CAP_NET_BIND_SERVICE, and
+#                        SO_BROADCAST and SO_BINDTODEVICE need the socket
+#                        itself, so an unprivileged runner cannot reach a line
+#                        of internal/dhcp's socket files. They are deliberately
+#                        thin: everything that decides anything sits behind
+#                        dhcp.Conn and dhcp.Opener, which the tests drive with
+#                        fakes (docs/DHCP.md).
+#
 #   *_linux.go, below    The operating-system boundary of Watch mode: raw
 #                        AF_PACKET sockets, PACKET_FANOUT capture, loading and
 #                        attaching the XDP program, and the ethtool ioctl. None
@@ -35,7 +43,10 @@ floor_excludes='^shepherd/cmd/intercept-trial/
 ^shepherd/internal/intercept/xdp_linux\.go
 ^shepherd/internal/intercept/xdp_probe_linux\.go
 ^shepherd/internal/watch/platform_linux\.go
-^shepherd/internal/watch/gro_linux\.go'
+^shepherd/internal/watch/gro_linux\.go
+^shepherd/internal/dhcp/sock_unix\.go
+^shepherd/internal/dhcp/sock_bindtodevice_linux\.go
+^shepherd/internal/dhcp/sock_bindtodevice_other\.go'
 grep -vE "$(printf '%s' "$floor_excludes" | paste -sd'|' -)" coverage.out > coverage.floor.out
 total=$(go tool cover -func=coverage.floor.out | awk '/^total:/ { sub("%", "", $3); print $3 }')
 echo "coverage: ${total}% (floor ${floor}%)"

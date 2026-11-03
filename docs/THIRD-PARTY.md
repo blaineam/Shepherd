@@ -9,6 +9,7 @@ Shepherd is AGPL-3.0-or-later. It includes or uses the following, under their ow
 | [DB-IP](https://db-ip.com) IP to City Lite database (downloaded at runtime, never bundled) | placing destinations and home on the globe | CC BY 4.0, attribution shown in the portal |
 | [miekg/dns](https://github.com/miekg/dns) | the DNS server and client | BSD-3-Clause |
 | [BurntSushi/toml](https://github.com/BurntSushi/toml) | configuration | MIT |
+| [insomniacslk/dhcp](https://github.com/insomniacslk/dhcp) | the DHCPv4 wire format for DHCP mode ([DHCP.md](DHCP.md)); only its `dhcpv4` encoder, decoder and option accessors, never its server loop | BSD-3-Clause |
 | [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto) | Argon2id key derivation | BSD-3-Clause |
 | [oschwald/maxminddb-golang](https://github.com/oschwald/maxminddb-golang) | reading the GeoIP database | ISC |
 | [maxmind/mmdbwriter](https://github.com/maxmind/mmdbwriter) | building small GeoIP databases for tests only | Apache-2.0 |

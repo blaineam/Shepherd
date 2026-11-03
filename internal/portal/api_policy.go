@@ -417,9 +417,14 @@ func (s *Server) refreshPolicy(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// refreshAsync refreshes in the background, outliving the request.
+// refreshAsync refreshes in the background, outliving the request. The
+// goroutine is tracked in s.bg so that something can wait for it: a refresh
+// writes list files under the data directory, and a caller that tears that
+// directory down while the write is in flight races it.
 func (s *Server) refreshAsync(item string) {
+	s.bg.Add(1)
 	go func() {
+		defer s.bg.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
 		defer cancel()
 		if item == "" {
@@ -429,3 +434,12 @@ func (s *Server) refreshAsync(item string) {
 		}
 	}()
 }
+
+// waitBackground blocks until the background work started by refreshAsync has
+// finished. Each refresh is bounded by refreshTimeout, so this returns.
+//
+// Tests use it: a refresh outlives the request by design, so a test that posts
+// to /api/lists/refresh and then returns leaves a goroutine writing into the
+// t.TempDir() being removed, which fails the test with "directory not empty"
+// well away from the line that caused it.
+func (s *Server) waitBackground() { s.bg.Wait() }

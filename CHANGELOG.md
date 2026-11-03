@@ -71,6 +71,29 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   upload bar, and a trend line per busy device.
 
 ### Added
+- **DHCP mode, off by default ([docs/DHCP.md](docs/DHCP.md)).** Shepherd can serve the LAN's DHCP and
+  masquerade the traffic of the devices it routes, so both directions of those devices' traffic pass
+  through it -- downloads *measured* rather than estimated from acknowledgements, and QUIC no longer a
+  blind spot. One NIC, one flat segment, the router still routing. `[dhcp] mode` has three positions
+  rather than two: `off` opens no socket, **`observe` opens a listener with no send path at all** (it
+  feeds the device registry from every DHCP packet on the segment and records what Shepherd *would*
+  have answered, which is how the whole household's awkward devices get exercised before anything is
+  at stake), and `serve` answers. Serving is gated on a typed confirmation in the portal and on no
+  other DHCP server having replied on the segment for a settling period -- and it stops, with a
+  critical alarm, if one appears later. Routing is a separate switch from serving, so
+  `mode = "serve"` with `route = false` leases the whole house with the router's own address in
+  option 3 and puts nothing on Shepherd's data path. The portal's new DHCP screen shows the leases,
+  the addressing, what is blocking it, and **address reservations you can add, edit and remove**;
+  each device gains its own routing opt-out beside its Watch switch, and a **Reserve this address**
+  switch that pins it to the address it already holds. **The LAN's range is yours to choose** — the
+  prefix, Shepherd's address, the router's address and the pool — and a chosen range is checked
+  against the network as Shepherd can actually see it: this host's addresses, the gateway, and every
+  address the device registry knows is in use. A range the router does not use yet is stored, not
+  refused, with a list of what has to change first; serving stops until the list is empty, because
+  Shepherd serves the leases and the router still routes. Failure is deliberately
+  fail-*open*, departing from the fail-closed decision in [docs/GATEWAY.md](docs/GATEWAY.md) for a
+  stated reason: an unhealthy Shepherd hands out the router's address instead of its own, so routed
+  devices drift back on their own within one renewal interval without anything having to work.
 - **Every loop-brake trip is kept, with its raw evidence.** `last_loop_stop` in `watch.json` now also
   records the relay's counts over the mirrored seconds, the echo-delay histogram (local, switch or
   wireless) and the sampled frames as hex, and each trip is appended to `watch-stops.jsonl` beside it
@@ -125,6 +148,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   row turn them off, and each change is logged. Filtered answers show as `ipv6-filtered` in the log.
 
 ### Fixed
+
+- **A list refresh started from the portal was untracked once its request returned.** `POST
+  /api/lists/refresh` answers `202` and refreshes in the background by design, but nothing held a
+  handle on that goroutine, so nothing could wait for it to finish writing its list files. In the
+  test suite it raced the temporary directory being removed and made CI fail intermittently
+  (`TempDir RemoveAll cleanup: directory not empty`). The server now tracks background refreshes and
+  can drain them. No change to how refreshing behaves for you: the request still returns at once.
 
 - **Filtered AAAA answers, and blocked names, could make a device query without end.** A synthesized
   NODATA or NXDOMAIN carried no SOA in its authority section, and RFC 2308 negative caching needs
