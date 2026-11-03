@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -70,6 +71,26 @@ type Options struct {
 	Logf func(string, ...any)
 }
 
+// LiveDevice is one device as of the last poll, for the Bandwidth
+// screen's "Right now" card. Rates are the router's latest reading, not an
+// average, and are zero for a device the last poll did not mention.
+// Totals are what this collector has recorded since it started, so they
+// begin again at zero on every restart; the lasting figures are the ones
+// in internal/traffic.
+type LiveDevice struct {
+	DeviceID           string
+	Name               string
+	DownBitsPerSecond  float64
+	UpBitsPerSecond    float64
+	DownBytes, UpBytes uint64
+}
+
+type live struct {
+	name               string
+	downRate, upRate   float64
+	downBytes, upBytes uint64
+}
+
 type prior struct {
 	at                   time.Time
 	downRate, upRate     float64 // KindRates, bits per second
@@ -84,6 +105,7 @@ type Collector struct {
 
 	mu     sync.Mutex
 	last   map[string]prior
+	live   map[string]live // keyed by device id, not MAC: two interfaces, one device
 	status Status
 }
 
@@ -111,6 +133,7 @@ func New(opt Options) *Collector {
 	return &Collector{
 		opt:  opt,
 		last: map[string]prior{},
+		live: map[string]live{},
 		status: Status{
 			Source:          opt.Source.Name(),
 			Enabled:         true,
@@ -118,6 +141,30 @@ func New(opt Options) *Collector {
 			IntervalSeconds: int(opt.Interval / time.Second),
 		},
 	}
+}
+
+// Live is every device the last poll saw, busiest first. It is empty
+// until a poll has landed, and empty for a device the registry does not
+// know.
+func (c *Collector) Live() []LiveDevice {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]LiveDevice, 0, len(c.live))
+	for id, l := range c.live {
+		out = append(out, LiveDevice{
+			DeviceID: id, Name: l.name,
+			DownBitsPerSecond: l.downRate, UpBitsPerSecond: l.upRate,
+			DownBytes: l.downBytes, UpBytes: l.upBytes,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i].DownBitsPerSecond+out[i].UpBitsPerSecond, out[j].DownBitsPerSecond+out[j].UpBitsPerSecond
+		if a != b {
+			return a > b
+		}
+		return out[i].DeviceID < out[j].DeviceID
+	})
+	return out
 }
 
 // Status is a snapshot for the portal.
@@ -190,6 +237,13 @@ func (c *Collector) convert(samples []Sample, now time.Time) (rows map[string]tr
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	fresh := make(map[string]prior, len(samples))
+	// Totals accumulate across polls; rates describe this poll only, so
+	// every device starts the poll at zero and only those in it move.
+	freshLive := make(map[string]live, len(c.live))
+	for id, l := range c.live {
+		l.downRate, l.upRate = 0, 0
+		freshLive[id] = l
+	}
 	for _, s := range samples {
 		mac := NormalizeMAC(s.MAC)
 		if mac == "" {
@@ -214,17 +268,38 @@ func (c *Collector) convert(samples []Sample, now time.Time) (rows map[string]tr
 		if c.opt.Skip != nil && c.opt.Skip(id) {
 			continue
 		}
-		if !had {
-			continue // the first reading is a baseline, never a measurement
+		l := freshLive[id]
+		if l.name == "" {
+			l.name = s.Name
 		}
-		d, ok := delta(kind, was, cur, c.opt.MaxGap)
-		if !ok || (d.Up == 0 && d.Down == 0) {
-			continue
+		var d traffic.Delta
+		var measured bool
+		if had {
+			d, measured = delta(kind, was, cur, c.opt.MaxGap)
 		}
-		prev := rows[id]
-		rows[id] = traffic.Delta{Up: prev.Up + d.Up, Down: prev.Down + d.Down}
+		if measured {
+			prev := rows[id]
+			rows[id] = traffic.Delta{Up: prev.Up + d.Up, Down: prev.Down + d.Down}
+			l.downBytes += d.Down
+			l.upBytes += d.Up
+		}
+		// The rate to show right now: what the router just said for a rate
+		// source, or what the last interval worked out to for a counter one.
+		switch kind {
+		case KindCounters:
+			if measured {
+				secs := cur.at.Sub(was.at).Seconds()
+				l.downRate += float64(d.Down) * 8 / secs
+				l.upRate += float64(d.Up) * 8 / secs
+			}
+		default:
+			l.downRate += cur.downRate
+			l.upRate += cur.upRate
+		}
+		freshLive[id] = l
 	}
 	c.last = fresh // a device absent from this poll loses its baseline
+	c.live = freshLive
 	return rows, seen, matched
 }
 

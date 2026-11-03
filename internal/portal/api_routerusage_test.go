@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"shepherd/internal/secrets"
 
@@ -18,12 +19,19 @@ type fakeUsage struct {
 	mu      sync.Mutex
 	reloads int
 	st      routerusage.Status
+	live    []routerusage.LiveDevice
 }
 
 func (f *fakeUsage) Status() routerusage.Status {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.st
+}
+
+func (f *fakeUsage) Live() []routerusage.LiveDevice {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.live
 }
 
 func (f *fakeUsage) Reload() {
@@ -227,4 +235,54 @@ func TestRouterUsageConnectReportsAConnectionItCouldNotSave(t *testing.T) {
 	sid := signedInSession(t, h)
 	wedgeSecrets(t, h)
 	h.expect("POST", "/api/routerusage/connect", fmt.Sprintf(`{"session_id":%q,"network_id":"3001"}`, sid), 500)
+}
+
+// With Watch mode not measuring, the "Right now" card has to come from the
+// router reader, or the screen shows zeros while the reader is working.
+func TestTheLiveCardComesFromTheRouterWhenWatchModeIsNotMeasuring(t *testing.T) {
+	h := newHarness(t)
+	at := time.Now()
+	h.srv.RouterUsage = &fakeUsage{
+		st: routerusage.Status{Source: "eero", Enabled: true, Estimated: true, LastPoll: &at, DevicesSeen: 2, Matched: 2},
+		live: []routerusage.LiveDevice{
+			{DeviceID: "d-busy", Name: "Living Room TV", DownBitsPerSecond: 80e6, UpBitsPerSecond: 8e6, DownBytes: 1000, UpBytes: 100},
+			{DeviceID: "d-quiet", Name: "Printer"},
+		},
+	}
+	out := h.ok("GET", "/api/traffic", "", 200)
+	live := out["live"].(map[string]any)
+	// 80 Mbit/s down and 8 Mbit/s up, as bytes per second.
+	if live["down_bytes_per_second"] != 10_000_000.0 || live["up_bytes_per_second"] != 1_000_000.0 {
+		t.Fatalf("live = %v, want the rates summed and converted to bytes", live)
+	}
+	devs := out["devices"].([]any)
+	if len(devs) != 2 {
+		t.Fatalf("devices = %v", devs)
+	}
+	first := devs[0].(map[string]any)
+	if first["device_id"] != "d-busy" || first["name"] != "Living Room TV" || first["down_bytes_per_second"] != 10_000_000.0 {
+		t.Fatalf("first device = %v", first)
+	}
+}
+
+// Anything that means "not reading right now" must leave the card alone
+// rather than show a stale or empty reading as if it were live.
+func TestTheLiveCardIgnoresARouterReaderThatIsNotReading(t *testing.T) {
+	at := time.Now()
+	for name, st := range map[string]routerusage.Status{
+		"never polled": {Source: "eero", Enabled: true},
+		"switched off": {Source: "eero", Enabled: false, LastPoll: &at},
+		"failing":      {Source: "eero", Enabled: true, LastPoll: &at, LastError: "the router did not answer"},
+		"no source":    {Enabled: true, LastPoll: &at},
+	} {
+		h := newHarness(t)
+		h.srv.RouterUsage = &fakeUsage{st: st, live: []routerusage.LiveDevice{{DeviceID: "d-busy", DownBitsPerSecond: 80e6}}}
+		out := h.ok("GET", "/api/traffic", "", 200)
+		if live := out["live"].(map[string]any); live["down_bytes_per_second"] != 0.0 {
+			t.Errorf("%s: live = %v, want zeros", name, live)
+		}
+		if n := len(out["devices"].([]any)); n != 0 {
+			t.Errorf("%s: %d devices, want none", name, n)
+		}
+	}
 }

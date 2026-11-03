@@ -15,6 +15,19 @@ export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {
   let signin = null;
   let busy = false;
   let router = null;
+  // What the owner has typed so far. The Bandwidth screen polls every two
+  // seconds, and a repaint replaces the input element, so without this the
+  // field empties itself under them mid-word.
+  const draft = { login: '', code: '' };
+
+  // field builds an input that remembers what is in it across repaints.
+  function field(key, attrs) {
+    const input = el('input');
+    Object.assign(input, attrs);
+    input.value = draft[key];
+    input.addEventListener('input', () => { draft[key] = input.value; });
+    return input;
+  }
 
   const run = async (fn) => {
     if (busy) return;
@@ -38,11 +51,7 @@ export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {
   // ------------------------------------------------------------- sign-in
   function signInForm() {
     const form = el('form', 'ru-form');
-    const input = el('input');
-    input.type = 'text';
-    input.placeholder = 'eero account email or phone';
-    input.autocomplete = 'username';
-    input.required = true;
+    const input = field('login', { type: 'text', placeholder: 'eero account email or phone', autocomplete: 'username', required: true });
     const go = el('button', '', 'Send me a code');
     go.disabled = busy;
     form.append(input, go);
@@ -53,6 +62,7 @@ export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {
       run(async () => {
         const r = await mgmt.importEeroStart(login);
         signin = { sessionId: r.session_id, networks: null };
+        draft.code = '';
         notify('eero sent a verification code');
       });
     });
@@ -61,17 +71,14 @@ export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {
 
   function codeForm() {
     const form = el('form', 'ru-form');
-    const input = el('input');
-    input.type = 'text';
-    input.inputMode = 'numeric';
-    input.placeholder = 'verification code';
-    input.autocomplete = 'one-time-code';
-    input.required = true;
+    const input = field('code', { type: 'text', inputMode: 'numeric', placeholder: 'verification code', autocomplete: 'one-time-code', required: true });
     const go = el('button', '', 'Verify');
     go.disabled = busy;
     const cancel = button('Cancel', 'ghost', () => run(async () => {
       const id = signin.sessionId;
       signin = null;
+      draft.login = '';
+      draft.code = '';
       await mgmt.importEeroCancel(id);
     }));
     form.append(input, go, cancel);
@@ -82,6 +89,8 @@ export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {
       run(async () => {
         const r = await mgmt.importEeroVerify(signin.sessionId, code);
         signin = { sessionId: r.session_id, networks: r.networks || [] };
+        draft.login = '';
+        draft.code = '';
       });
     });
     return form;
@@ -168,7 +177,20 @@ export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {
     // every poll, so the status line stays live without its own timer.
     render(next) {
       router = next;
-      if (!busy) paint();
+      if (busy) return;
+      // Repainting while the owner is typing in this section would take
+      // the caret with it, so only the status line moves until they are
+      // done. field() keeps what they have typed either way.
+      if (root.contains(document.activeElement)) {
+        const line = routerConnection(router);
+        const p = root.querySelector('.ru-line');
+        if (p) {
+          p.textContent = line.text;
+          p.className = 'ru-line ' + line.tone;
+        }
+        return;
+      }
+      paint();
     },
   };
 }

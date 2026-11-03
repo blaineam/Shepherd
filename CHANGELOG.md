@@ -31,7 +31,10 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   which reuses the existing sign-in and keeps the session in `secrets.json`. It is unofficial --
   eero publishes no API for this -- and it reports rates only, so its totals are close rather than
   exact. Nothing is put in the path of your traffic, and no setting on your router is changed.
-  See [docs/TRAFFIC.md](docs/TRAFFIC.md).
+  See [docs/TRAFFIC.md](docs/TRAFFIC.md). The "Right now" card and the per-device rows are fed by
+  the reader too while Watch mode is not measuring, so the live view is not left at zero; the
+  rolling chart's caption says how often the router is actually read, since the line steps rather
+  than curves.
 - **`dns.filter_aaaa`** (`"auto"` by default, or `"on"` / `"off"`). On a network whose devices have no
   IPv6 route to the internet (only private `fd..` or link-local addresses) every AAAA answer is an
   unreachable address, and a device that tries it first or handles the failure badly reports a network

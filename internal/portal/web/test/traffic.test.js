@@ -161,7 +161,7 @@ test('rateStats reports peak and average', () => {
   assert.deepEqual(rateStats([2, 4, 6, 'x']), { peak: 6, avg: 3 });
 });
 
-import { routerConnection, readingNow, measurementNote } from '../js/traffic.js';
+import { routerConnection, readingNow, measurementNote, liveChartCaption } from '../js/traffic.js';
 
 const reading = {
   available: true, connected: true, enabled: true, source: 'eero',
@@ -225,4 +225,12 @@ test('the headline says when the numbers come from the router instead of Watch m
   const off = statusHeadline({ enabled: false, measuring: false, router: { available: true, connected: false } });
   assert.equal(off.tone, 'muted');
   assert.match(off.text, /Connect your router below/);
+});
+
+test('liveChartCaption does not overstate how often the line moves', () => {
+  const plain = liveChartCaption({ measuring: true }, 90, 2000);
+  assert.match(plain, /one sample every 2 seconds/);
+  const router = liveChartCaption({ measuring: false, router: reading }, 90, 2000);
+  assert.match(router, /read every 30 seconds, so the line steps rather than curves/);
+  assert.match(router, /The last 3 minutes/);
 });

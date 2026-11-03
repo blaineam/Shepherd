@@ -618,3 +618,95 @@ func TestStatusOmitsTheLastPollUntilThereHasBeenOne(t *testing.T) {
 		t.Fatalf("after a poll the time is missing: %s", b)
 	}
 }
+
+// The Bandwidth screen's "Right now" card reads Live(), so a rate source
+// has to surface the router's latest reading, not only the history.
+func TestLiveShowsTheLatestRatesAndRunningTotals(t *testing.T) {
+	h := newHarness(t, KindRates, nil,
+		samples(
+			Sample{MAC: "aa:bb:cc:00:00:20", Name: "TV", DownBitsPerSecond: 8e6},
+			Sample{MAC: "aa:bb:cc:00:00:21", Name: "Phone", DownBitsPerSecond: 80e6},
+		),
+		samples(
+			Sample{MAC: "aa:bb:cc:00:00:20", Name: "TV", DownBitsPerSecond: 8e6},
+			Sample{MAC: "aa:bb:cc:00:00:21", Name: "Phone", DownBitsPerSecond: 80e6},
+		),
+		samples(Sample{MAC: "aa:bb:cc:00:00:20", Name: "TV", DownBitsPerSecond: 0}),
+	)
+	if len(h.c.Live()) != 0 {
+		t.Fatal("Live before any poll should be empty")
+	}
+	h.step(0)
+	// The first poll is a baseline, but the rates are already worth showing.
+	first := h.c.Live()
+	if len(first) != 2 || first[0].Name != "Phone" || first[0].DownBitsPerSecond != 80e6 {
+		t.Fatalf("after the first poll = %+v, want the busiest first", first)
+	}
+	if first[0].DownBytes != 0 {
+		t.Fatalf("the baseline poll counted bytes: %+v", first[0])
+	}
+
+	h.step(10 * time.Second)
+	byID := map[string]LiveDevice{}
+	for _, l := range h.c.Live() {
+		byID[l.DeviceID] = l
+	}
+	if got := byID["d-aabbcc000021"].DownBytes; got != 100_000_000 {
+		t.Fatalf("Phone total = %d, want 100000000", got)
+	}
+
+	// A device the next poll leaves out keeps its total but drops to idle.
+	h.step(10 * time.Second)
+	byID = map[string]LiveDevice{}
+	for _, l := range h.c.Live() {
+		byID[l.DeviceID] = l
+	}
+	gone := byID["d-aabbcc000021"]
+	if gone.DownBitsPerSecond != 0 {
+		t.Fatalf("a device absent from the poll is not moving traffic: %+v", gone)
+	}
+	if gone.DownBytes != 100_000_000 {
+		t.Fatalf("its total was lost: %+v", gone)
+	}
+}
+
+// A counter source has no rate of its own, so the card shows what the last
+// interval worked out to.
+func TestLiveDerivesARateFromCounters(t *testing.T) {
+	h := newHarness(t, KindCounters, nil,
+		samples(Sample{MAC: "aa:bb:cc:00:00:22", DownBytes: 0}),
+		samples(Sample{MAC: "aa:bb:cc:00:00:22", DownBytes: 10_000_000}),
+	)
+	h.step(0)
+	if r := h.c.Live()[0].DownBitsPerSecond; r != 0 {
+		t.Fatalf("a baseline counter implied a rate of %v", r)
+	}
+	h.step(10 * time.Second)
+	// 10 MB in 10s is 8 Mbit/s.
+	if r := h.c.Live()[0].DownBitsPerSecond; r != 8e6 {
+		t.Fatalf("rate = %v, want 8e6", r)
+	}
+}
+
+// Two interfaces of one machine are one device on the screen.
+func TestLiveSumsTheInterfacesOfOneDevice(t *testing.T) {
+	h := newHarness(t, KindRates, func(o *Options) {
+		o.Resolve = func(string) (string, bool) { return "d-one", true }
+	}, samples(
+		Sample{MAC: "aa:bb:cc:00:00:23", Name: "Laptop", DownBitsPerSecond: 8e6},
+		Sample{MAC: "aa:bb:cc:00:00:24", DownBitsPerSecond: 2e6},
+	))
+	h.step(0)
+	l := h.c.Live()
+	if len(l) != 1 || l[0].DownBitsPerSecond != 10e6 || l[0].Name != "Laptop" {
+		t.Fatalf("live = %+v, want one device at 10e6 named Laptop", l)
+	}
+}
+
+func TestManagerLiveIsEmptyWhileNothingIsRunning(t *testing.T) {
+	m, _ := newManagerHarness(t, func() (*Collector, bool, error) { return nil, false, nil })
+	m.Reload()
+	if got := m.Live(); len(got) != 0 {
+		t.Fatalf("Live = %+v, want nothing", got)
+	}
+}

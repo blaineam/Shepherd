@@ -277,3 +277,16 @@ export function measurementNote(status) {
     ? 'These figures are read from ' + src + ', which reports only the rate at each moment. Shepherd samples it and fills in the time between, so totals are close but not exact, and a short burst between two readings is missed entirely.'
     : 'These figures are byte counts read from ' + src + '.';
 }
+
+// liveChartCaption says what the rolling chart is actually showing. The
+// screen polls every pollMs, but when the numbers come from a router that
+// is read every 30 seconds the line is a staircase, and saying "every two
+// seconds" would overstate it.
+export function liveChartCaption(status, samples, pollMs) {
+  const mins = Math.max(0.1, Math.round((samples * pollMs) / 6000) / 10);
+  const span = 'The last ' + mins + ' minutes';
+  if (!readingNow((status || {}).router)) return span + ', one sample every ' + Math.round(pollMs / 1000) + ' seconds.';
+  const every = ((status.router.status || {}).interval_seconds) || 0;
+  return span + '. Your ' + (status.router.source || 'router') + ' is read every ' + every
+    + ' seconds, so the line steps rather than curves.';
+}

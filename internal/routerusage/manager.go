@@ -82,6 +82,18 @@ func (m *Manager) stopCurrent() {
 	<-done
 }
 
+// Live is the running collector's last poll, or nothing when none is
+// running.
+func (m *Manager) Live() []LiveDevice {
+	m.mu.Lock()
+	c := m.cur
+	m.mu.Unlock()
+	if c == nil {
+		return nil
+	}
+	return c.Live()
+}
+
 // Status reports the running collector's state, or an empty Status with
 // Enabled false when nothing is running.
 func (m *Manager) Status() Status {

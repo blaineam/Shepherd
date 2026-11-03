@@ -11,7 +11,7 @@ import { unavailable } from './mgmt.js';
 import { createRouterUsage } from './routerusageview.js';
 import {
   RANGE_PRESETS, rangeWindow, scopeOptions, scopeLabel, fillSeries, sumPoints, bucketRate, timeLabels,
-  shareOf, statusHeadline, liveRows, DOWNLOAD_CAVEAT, measurementNote, fmtBytes, fmtBitsPerSecond,
+  shareOf, statusHeadline, liveRows, DOWNLOAD_CAVEAT, measurementNote, liveChartCaption, fmtBytes, fmtBitsPerSecond,
   niceCeil, yTicks, lineArea, nearestIndex, pushSample, shareSlices, arcPath, rateStats,
 } from './traffic.js';
 
@@ -181,7 +181,7 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, watch =
       // per-second "bytes" so bucketRate's x8 lands back on the same value.
       const pts = live.map((p) => ({ time: p.time, down: p.down / 8, up: p.up / 8 }));
       const c = rateChart({ points: pts, bucket: 'second', height: 110, hover: true, ticks: 2, timeText: (t) => new Date(t).toLocaleTimeString() });
-      liveChartHolder.append(c.node, el('p', 'muted small tf-cap', 'The last ' + Math.max(1, Math.round((live.length * POLL_MS) / 60000 * 10) / 10) + ' minutes, one sample every 2 seconds.'));
+      liveChartHolder.append(c.node, el('p', 'muted small tf-cap', liveChartCaption(status, live.length, POLL_MS)));
     }
 
     const rows = liveRows(status);

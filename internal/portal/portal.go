@@ -225,6 +225,9 @@ type Deps struct {
 type UsageReader interface {
 	// Status is the current state, for the Bandwidth screen.
 	Status() routerusage.Status
+	// Live is every device as of the last poll, busiest first, for the
+	// screen's "Right now" card while the reader is the source.
+	Live() []routerusage.LiveDevice
 	// Reload re-reads the stored connection and starts, stops or restarts
 	// the collector to match.
 	Reload()
