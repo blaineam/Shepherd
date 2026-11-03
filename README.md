@@ -165,7 +165,7 @@ privately through [SECURITY.md](SECURITY.md). Releases follow [SemVer](https://s
 
 ## Docs
 
-[Design](docs/DESIGN.md) · [Roadmap](docs/ROADMAP.md) · [Testing](docs/TESTING.md) · [IPv6 and Thread](docs/IPV6.md) ·
+[Design](docs/DESIGN.md) · [Roadmap](docs/ROADMAP.md) · [Testing](docs/TESTING.md) · [DNS QA and self-test](docs/DNS-QA.md) · [IPv6 and Thread](docs/IPV6.md) ·
 [Wave 2 guide](docs/WAVE-2.md) · [Raspberry Pi](docs/RASPBERRY-PI.md) · [Releasing](docs/RELEASING.md) ·
 [Public development](docs/PUBLIC-DEV.md)
 

@@ -567,19 +567,19 @@ func TestXDPMeterAgreesWithAckMeter(t *testing.T) {
 	remote := netip.AddrFrom4([4]byte{203, 0, 113, 7})
 
 	frames := [][]byte{
-		tcpFrame4(devIP, remote, 50000, 443, 1000, tcpFlagACK),               // baseline
-		tcpFrame4(devIP, remote, 50000, 443, 2460, tcpFlagACK),               // +1460
-		tcpFrame4(devIP, remote, 50000, 443, 2460, tcpFlagACK),               // dup
-		tcpFrame4(devIP, remote, 50001, 443, 10, tcpFlagACK),                 // second flow
-		tcpFrame4(devIP, remote, 50001, 443, 10+MaxAdvance, tcpFlagACK),      // jump: re-baseline
-		tcpFrame4(devIP, remote, 50001, 443, 15+MaxAdvance, tcpFlagACK),      // +5
-		tcpFrame4(devIP, remote, 50001, 443, 20+MaxAdvance, tcpFlagACK|0x01), // +5 then FIN
-		tcpFrame4(devIP, remote, 50001, 443, 99+MaxAdvance, tcpFlagACK),      // new baseline after FIN
-		tcpFrame4(devIP, remote, 50000, 443, 2460, tcpFlagACK|0x04),          // RST
-		tcpFrame4(devIP, remote, 50000, 443, 5000, tcpFlagACK),               // baseline again
-		tcpFrame4(devIP, remote, 50002, 443, 0, 0x02),                        // SYN: ignored
-		tcpFrame6(devIP6, someV6, 40000, 80, 10, tcpFlagACK),
-		tcpFrame6(devIP6, someV6, 40000, 80, 110, tcpFlagACK), // +100 on v6
+		wire4(tcpFrame4(devIP, remote, 50000, 443, 1000, tcpFlagACK), 0),               // baseline
+		wire4(tcpFrame4(devIP, remote, 50000, 443, 2460, tcpFlagACK), 0),               // +1460
+		wire4(tcpFrame4(devIP, remote, 50000, 443, 2460, tcpFlagACK), 0),               // dup
+		wire4(tcpFrame4(devIP, remote, 50001, 443, 10, tcpFlagACK), 0),                 // second flow
+		wire4(tcpFrame4(devIP, remote, 50001, 443, 10+MaxAdvance, tcpFlagACK), 0),      // jump: re-baseline
+		wire4(tcpFrame4(devIP, remote, 50001, 443, 15+MaxAdvance, tcpFlagACK), 0),      // +5
+		wire4(tcpFrame4(devIP, remote, 50001, 443, 20+MaxAdvance, tcpFlagACK|0x01), 0), // +5 then FIN
+		wire4(tcpFrame4(devIP, remote, 50001, 443, 99+MaxAdvance, tcpFlagACK), 0),      // new baseline after FIN
+		wire4(tcpFrame4(devIP, remote, 50000, 443, 2460, tcpFlagACK|0x04), 0),          // RST
+		wire4(tcpFrame4(devIP, remote, 50000, 443, 5000, tcpFlagACK), 0),               // baseline again
+		wire4(tcpFrame4(devIP, remote, 50002, 443, 0, 0x02), 0),                        // SYN: ignored
+		wire6(tcpFrame6(devIP6, someV6, 40000, 80, 10, tcpFlagACK), 0),
+		wire6(tcpFrame6(devIP6, someV6, 40000, 80, 110, tcpFlagACK), 0), // +100 on v6
 	}
 	var wantV4, wantV6 uint64
 	for i, f := range frames {
@@ -617,5 +617,37 @@ func TestXDPMeterAgreesWithAckMeter(t *testing.T) {
 	dp.harvest(c)
 	if got := c.Stats().BytesReceivedEst; got != wantV4+wantV6 {
 		t.Fatalf("second harvest double-credited: %d", got)
+	}
+}
+
+// A receiver that sees a gap repeats the same ACK for every segment that
+// follows, and TCP's fast retransmit needs those to reach the sender. The
+// kernel brake relays a repeated pure ACK up to PURE_ACK_REPEATS times, then
+// treats it as a loop; a data segment is dropped on its first repeat.
+func TestXDPRelayLetsDuplicateAcksThrough(t *testing.T) {
+	objs := loadXDPForTest(t)
+	dp := &xdpDataPlane{objs: objs}
+	if err := dp.configure(shepherdMAC, gwMAC, []netip.Addr{ip(2)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	dp.resync([]steeredEntry{{devMAC, SteerV4}})
+	remote := netip.AddrFrom4([4]byte{203, 0, 113, 7})
+
+	ack := wire4(tcpFrame4(devIP, remote, 50000, 443, 1000, tcpFlagACK), 0)
+	for i := 0; i <= PureACKRepeats; i++ {
+		if verdict, _ := runXDP(t, objs, ack); verdict != xdpTX {
+			t.Fatalf("copy %d of a pure ACK: verdict = %d, want XDP_TX", i+1, verdict)
+		}
+	}
+	if verdict, _ := runXDP(t, objs, ack); verdict != xdpDrop {
+		t.Fatalf("a pure ACK repeated past the allowance: verdict = %d, want XDP_DROP", verdict)
+	}
+
+	data := wire4(tcpFrame4(devIP, remote, 50001, 443, 1000, tcpFlagACK), 1200)
+	if verdict, _ := runXDP(t, objs, data); verdict != xdpTX {
+		t.Fatal("the first copy of a data segment must be relayed")
+	}
+	if verdict, _ := runXDP(t, objs, data); verdict != xdpDrop {
+		t.Fatalf("a repeated data segment: verdict = %d, want XDP_DROP", verdict)
 	}
 }

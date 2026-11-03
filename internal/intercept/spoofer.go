@@ -32,6 +32,14 @@ type SpooferConfig struct {
 	TargetMAC arp.MAC // the steered device
 	TargetIP  netip.Addr
 
+	// CorrectiveRepeats is how many more times, after the first, the
+	// corrective is re-sent in the background, CorrectiveGap apart. One frame
+	// on a busy segment is easily lost or lands before the device has let go
+	// of the claim, and a device left believing the claim sends everything to
+	// Shepherd until its ARP entry expires. Zero sends it once.
+	CorrectiveRepeats int
+	CorrectiveGap     time.Duration // default DefaultCorrectiveGap
+
 	// OnSendError, when set, is called with the error from a claim or
 	// corrective send that failed or timed out. Optional.
 	OnSendError func(error)
@@ -44,8 +52,18 @@ func (c SpooferConfig) withDefaults() SpooferConfig {
 	if c.SendTimeout <= 0 {
 		c.SendTimeout = DefaultSendTimeout
 	}
+	if c.CorrectiveGap <= 0 {
+		c.CorrectiveGap = DefaultCorrectiveGap
+	}
 	return c
 }
+
+// DefaultCorrectiveGap spaces the repeated corrective replies.
+const DefaultCorrectiveGap = 500 * time.Millisecond
+
+// DefaultCorrectiveRepeats is how many extra corrective ARP replies follow the
+// first: about two seconds of insistence at the default gap.
+const DefaultCorrectiveRepeats = 4
 
 // Spoofer periodically tells one device that Shepherd's MAC owns the
 // gateway's IP, and restores the real mapping the moment it stops, so the
@@ -116,14 +134,33 @@ func (s *Spoofer) Run(ctx context.Context) {
 	}()
 
 	s.sendCorrective()
+	if s.cfg.CorrectiveRepeats > 0 {
+		// Detached: unsteering must not wait out the repeats.
+		go func() {
+			defer func() { recover() }()
+			for i := 0; i < s.cfg.CorrectiveRepeats; i++ {
+				<-s.cfg.Clock.After(s.cfg.CorrectiveGap)
+				s.sendCorrective()
+			}
+		}()
+	}
 }
 
 func (s *Spoofer) sendClaim() {
 	s.send(arp.NewReply(s.cfg.ShepherdMAC, s.cfg.GatewayIP, s.cfg.TargetMAC, s.cfg.TargetIP))
 }
 
+// sendCorrective tells the device the gateway's real MAC again. The ARP
+// body says "the gateway is at GatewayMAC", but the Ethernet frame still
+// leaves from Shepherd's own MAC: a frame sourced from the gateway's MAC is
+// a forged link-layer address, which switches and wired docks drop (the
+// device then kept the claim until its entry expired, sending everything to
+// Shepherd), while an ARP reply whose sender field differs from the frame's
+// source is accepted everywhere it was tried.
 func (s *Spoofer) sendCorrective() {
-	s.send(arp.NewReply(s.cfg.GatewayMAC, s.cfg.GatewayIP, s.cfg.TargetMAC, s.cfg.TargetIP))
+	f := arp.NewReply(s.cfg.GatewayMAC, s.cfg.GatewayIP, s.cfg.TargetMAC, s.cfg.TargetIP)
+	f.SrcMAC = s.cfg.ShepherdMAC
+	s.send(f)
 }
 
 // send marshals f with internal/arp's own codec and transmits it with a

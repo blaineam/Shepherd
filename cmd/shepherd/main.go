@@ -311,6 +311,11 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	deps.NethealthEnabled = cfg.Nethealth.Enabled
 	deps.NethealthBufferbloatEnabled = cfg.Nethealth.BufferbloatEnabled
 
+	var skipped skipSet
+	if st := startSelftest(ctx, cfg, engine, &skipped, deps.Alarms); st != nil {
+		deps.Selftest = st
+	}
+
 	if cfg.History.Mode == "encrypted" {
 		store, err := openHistory(cfg)
 		if err != nil {
@@ -411,6 +416,7 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	if err := dnsengine.Serve(ctx, cfg.DNS.ListenAddrs(), engine,
 		dnsengine.TolerateMissingAddresses(func(addr string, err error) {
 			log.Printf("dns: WARNING: not listening on %s: %v (this host does not have that address)", addr, err)
+			skipped.add(addr)
 		}),
 		// The loopback listeners are Shepherd's own idea, not the owner's,
 		// so anything at all can go wrong with one without stopping
@@ -418,6 +424,7 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		// whose system resolver owns 127.0.0.1:53 is the normal case.
 		dnsengine.Optional(cfg.DNS.AddedLoopbackAddrs(), func(addr string, err error) {
 			log.Printf("dns: not listening on %s: %v (dns.listen_loopback; something else on this host already answers there)", addr, err)
+			skipped.add(addr)
 		})); err != nil {
 		return err
 	}

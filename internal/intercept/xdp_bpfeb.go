@@ -32,6 +32,8 @@ type xdpDupEntry struct {
 	_           structs.HostLayout
 	Fingerprint uint64
 	Ts          uint64
+	Repeats     uint32
+	Pad         uint32
 }
 
 type xdpFlowKey struct {

@@ -197,11 +197,15 @@ type ControllerConfig struct {
 	// Shepherd host's own other interfaces) checked alongside Excluder.
 	ExcludedMACs []arp.MAC
 
-	SpoofInterval  time.Duration // default DefaultSpoofInterval
-	HealthInterval time.Duration // default DefaultHealthInterval
-	IdleGrace      time.Duration // default DefaultIdleGrace: silence grace for an established device
-	StartupGrace   time.Duration // default DefaultStartupGrace: grace for a device that has never once relayed
-	SendTimeout    time.Duration // default DefaultSendTimeout
+	SpoofInterval time.Duration // default DefaultSpoofInterval
+	// CorrectiveRepeats re-sends each device's corrective ARP reply this
+	// many more times in the background after it is unsteered (see
+	// SpooferConfig). Default DefaultCorrectiveRepeats; negative sends once.
+	CorrectiveRepeats int
+	HealthInterval    time.Duration // default DefaultHealthInterval
+	IdleGrace         time.Duration // default DefaultIdleGrace: silence grace for an established device
+	StartupGrace      time.Duration // default DefaultStartupGrace: grace for a device that has never once relayed
+	SendTimeout       time.Duration // default DefaultSendTimeout
 
 	// OnUnsteer is called whenever a device stops being steered, for any
 	// reason (the caller's own Unsteer, a health failure, trial expiry,
@@ -227,6 +231,11 @@ func (c ControllerConfig) withDefaults() ControllerConfig {
 	}
 	if c.SendTimeout <= 0 {
 		c.SendTimeout = DefaultSendTimeout
+	}
+	if c.CorrectiveRepeats == 0 {
+		c.CorrectiveRepeats = DefaultCorrectiveRepeats
+	} else if c.CorrectiveRepeats < 0 {
+		c.CorrectiveRepeats = 0
 	}
 	return c
 }
@@ -869,6 +878,8 @@ func (c *Controller) runSpoofer(ds *deviceState, dev DeviceRef, fam Family, fctx
 			GatewayMAC:  c.cfg.GatewayMAC,
 			TargetMAC:   dev.MAC,
 			TargetIP:    ds.ip,
+
+			CorrectiveRepeats: c.cfg.CorrectiveRepeats,
 		})
 		run = sp.Run
 	}

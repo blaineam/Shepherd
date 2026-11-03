@@ -110,6 +110,8 @@ export function createMgmt(api) {
     scanVulns: (deviceId) => post('/api/vulnscan/scan', deviceId ? { device_id: deviceId } : {}),
     vulnscanFeedRefresh: () => post('/api/vulnscan/feed/refresh', {}),
 
+    selftest: () => api('/api/selftest'),
+    selftestRun: () => post('/api/selftest/run', {}),
     nethealthStatus: () => api('/api/nethealth'),
     nethealthSeries: (params) => api('/api/nethealth/series' + Q(params)),
     nethealthBufferbloat: (params) => api('/api/nethealth/bufferbloat' + Q(params)),
