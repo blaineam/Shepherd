@@ -29,6 +29,12 @@ type Engine struct {
 	// first, or handle the failure badly, report a network problem. Nil
 	// means never. IPv6Probe.Filtering is the automatic form.
 	FilterAAAA func() bool
+	// Quiet, when set, is asked about every query name; a true answer keeps
+	// that query out of the log, the statistics, the device registry and
+	// OnEntry. It is for the built-in DNS self-test (internal/selftest),
+	// which asks a few names on every address every minute and must not
+	// show up as a device or as traffic. Must be cheap; nil means never.
+	Quiet func(name string) bool
 	// Geo places answer addresses on the globe. Nil disables geolocation.
 	Geo Geo
 	// Clients maps a client address to its device and groups for scoped
@@ -78,6 +84,12 @@ type Engine struct {
 	// fast and must not block.
 	CountryBlock func(clientIP string, dests []Dest) (country string, blocked bool)
 }
+
+// CanaryBlockedName is a name the engine always blocks (A queries from
+// anyone, honoring dns.block_mode). The DNS self-test asks for it on every
+// listening address to prove the filter is in the path, whatever lists the
+// owner has chosen. It is under .invalid, which never resolves anywhere.
+const CanaryBlockedName = "blocked.selftest.shepherd.invalid"
 
 // AccessInfo is what OnAccess receives for one query matching a watched
 // catalog or custom list item.
@@ -240,6 +252,9 @@ func (e *Engine) destsOf(ips []net.IP) []Dest {
 // moment the write syscall returns, regardless of what Go code follows it.
 // Recording first closes that race entirely rather than narrowing it.
 func (e *Engine) done(entry Entry, start time.Time) {
+	if e.Quiet != nil && e.Quiet(entry.Name) {
+		return
+	}
 	entry.Ms = float64(time.Since(start).Microseconds()) / 1000
 	e.Log.Add(entry)
 	e.Stats.Record(entry)
@@ -309,7 +324,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		entry.Type = fmt.Sprintf("TYPE%d", q.Qtype)
 	}
 
-	if e.ClientSeen != nil {
+	if e.ClientSeen != nil && (e.Quiet == nil || !e.Quiet(entry.Name)) {
 		e.ClientSeen(entry.Client)
 	}
 	var d Decision
@@ -324,6 +339,9 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 	if d.Reason == "" {
 		d = e.Filter.CheckFor(entry.Client, entry.Name, e.Clients)
+	}
+	if entry.Name == CanaryBlockedName && !wander && q.Qtype == dns.TypeA {
+		d = Decision{Blocked: true, Reason: "selftest"} // the self-test's always-blocked name
 	}
 	if wander { // answer everything, but remember what filtering would have done
 		if d.Blocked {

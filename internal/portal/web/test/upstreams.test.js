@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isIPv4, isIPv6, isIP, classifyAddr, move, presetVariants, parseBootstrap, healthLabel, isEncrypted, KIND_LABEL } from '../js/upstreams.js';
+import { isIPv4, isIPv6, isIP, classifyAddr, move, presetVariants, parseBootstrap, healthLabel, isEncrypted, KIND_LABEL, selftestSummary } from '../js/upstreams.js';
 
 test('IP detection', () => {
   assert.ok(isIPv4('9.9.9.10') && isIPv4('255.255.255.255'));
@@ -74,4 +74,20 @@ test('healthLabel', () => {
   assert.equal(healthLabel({ healthy: true }), 'ok');
   assert.equal(healthLabel({ healthy: false, consecutive_failures: 3 }), 'failing (3)');
   assert.equal(healthLabel({ healthy: false }), 'down');
+});
+
+test('selftestSummary: off, waiting, healthy, failing', () => {
+  assert.equal(selftestSummary(null).state, 'off');
+  assert.equal(selftestSummary({ enabled: false }).state, 'off');
+  assert.equal(selftestSummary({ enabled: true }).state, 'wait');
+  const probes = (ok) => ['udp', 'tcp'].map((proto) => ({ proto, check: 'listener', ok, detail: ok ? '' : 'i/o timeout' }));
+  const good = selftestSummary({ enabled: true, report: { status: 'ok', listeners: [{ addr: 'a:53', ok: true, probes: probes(true) }], problems: [] } });
+  assert.equal(good.state, 'ok');
+  assert.match(good.headline, /All 1 listening address answer/);
+  const bad = selftestSummary({ enabled: true, report: { status: 'fail', listeners: [{ addr: 'a:53', ok: true, probes: probes(true) }, { addr: '10.0.0.20:53', ok: false, probes: probes(false) }], problems: [{ severity: 'fail', message: 'Nothing answers' }, { severity: 'warn', message: 'x' }] } }); // leakcheck:allow fixture
+  assert.equal(bad.state, 'fail');
+  assert.equal(bad.headline, '2 problems found.');
+  assert.equal(bad.listeners[1].ok, false);
+  assert.match(bad.listeners[1].detail, /UDP listener: i\/o timeout; TCP listener/);
+  assert.equal(selftestSummary({ enabled: true, report: { status: 'warn', problems: [{ message: 'm' }] } }).headline, '1 problem found.');
 });

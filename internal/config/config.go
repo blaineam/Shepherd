@@ -45,6 +45,7 @@ type Config struct {
 	Retention      Retention      `toml:"retention"`
 	TLS            TLS            `toml:"tls"`
 	Nethealth      Nethealth      `toml:"nethealth"`
+	Selftest       Selftest       `toml:"selftest"`
 	ReverseProxy   ReverseProxy   `toml:"reverseproxy"`
 	Watch          Watch          `toml:"watch"`
 }
@@ -472,6 +473,31 @@ type Nethealth struct {
 	BufferbloatIntervalSeconds int `toml:"bufferbloat_interval_seconds"`
 }
 
+// Selftest is the built-in DNS self-test (internal/selftest, docs/DNS-QA.md):
+// every interval it asks canary names of every address Shepherd listens on,
+// over UDP and TCP, checks upstream error rates and latency, and warns about
+// LAN addresses with no listener. On by default: it only ever talks to
+// Shepherd's own listeners.
+type Selftest struct {
+	Enabled bool `toml:"enabled"`
+	// IntervalSeconds is how often a round runs (minimum 10).
+	IntervalSeconds int `toml:"interval_seconds"`
+	// GoodName must resolve; BlockedName must be blocked. An empty
+	// BlockedName uses a synthetic name the engine always blocks.
+	GoodName    string `toml:"good_name"`
+	BlockedName string `toml:"blocked_name"`
+	// NotServed lists this host's LAN addresses that deliberately have no
+	// DNS listener, so they are not warned about.
+	NotServed []string `toml:"not_served"`
+	// MaxErrorPercent flags an upstream whose error rate over WindowMinutes
+	// is above it.
+	MaxErrorPercent float64 `toml:"max_error_percent"`
+	WindowMinutes   int     `toml:"window_minutes"`
+	// AlarmCooldownMinutes is the least time between two alarms for the
+	// same finding.
+	AlarmCooldownMinutes int `toml:"alarm_cooldown_minutes"`
+}
+
 // History controls what is remembered after the fact. "memory" (the default)
 // keeps recent queries in RAM only and writes nothing to disk. "encrypted"
 // keeps a searchable, AES-256-GCM encrypted record on disk.
@@ -591,6 +617,7 @@ func Default() Config {
 		Threats:        Threats{Enabled: true, IntervalHours: 6},
 		Update:         Update{Enabled: true, Channel: "stable", CheckHours: 24},
 		Nethealth:      Nethealth{Enabled: false, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
+		Selftest:       Selftest{Enabled: true, IntervalSeconds: 60, GoodName: "example.com", MaxErrorPercent: 5, WindowMinutes: 15, AlarmCooldownMinutes: 30},
 		ReverseProxy:   ReverseProxy{Listen: ":8443"},
 		// Watch mode is opt-in. It was on, under the protect-by-default
 		// decision in docs/DESIGN.md, until 2026-11-01; it is kept off by
@@ -742,6 +769,23 @@ func (c Config) Validate() error {
 	}
 	if c.Nethealth.BufferbloatEnabled && c.Nethealth.BufferbloatIntervalSeconds < 600 {
 		return errors.New("nethealth.bufferbloat_interval_seconds must be at least 600")
+	}
+	if st := c.Selftest; st.Enabled {
+		switch {
+		case st.IntervalSeconds < 10:
+			return errors.New("selftest.interval_seconds must be at least 10")
+		case st.GoodName == "":
+			return errors.New("selftest.good_name must not be empty")
+		case st.MaxErrorPercent <= 0 || st.MaxErrorPercent > 100:
+			return errors.New("selftest.max_error_percent must be between 0 and 100")
+		case st.WindowMinutes < 1 || st.AlarmCooldownMinutes < 1:
+			return errors.New("selftest.window_minutes and selftest.alarm_cooldown_minutes must be at least 1")
+		}
+		for _, a := range st.NotServed {
+			if net.ParseIP(a) == nil {
+				return fmt.Errorf("selftest.not_served: %q is not an IP address", a)
+			}
+		}
 	}
 	if s := c.Devices.ReverseDNSServer; s != "" {
 		host := s
