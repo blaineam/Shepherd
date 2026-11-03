@@ -168,6 +168,7 @@ h2 .accent { color: var(--teal-bright); }
 .pill-state { font: 700 10.5px/1 var(--mono); padding: 3px 7px; border-radius: 999px; letter-spacing: .04em; }
 .pill-state.planned { background: #ffffff10; color: var(--muted); }
 .pill-state.trial { background: #f0b64a22; color: var(--amber); }
+.pill-state.shipped { background: #16c7bd22; color: var(--teal-bright); }
 .watch-callout {
   margin-top: 28px; border: 1px solid #f0b64a3a; background: #f0b64a0f; border-radius: 14px; padding: 20px 22px;
 }

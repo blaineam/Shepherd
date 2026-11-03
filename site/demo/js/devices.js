@@ -7,13 +7,16 @@ import { Selection } from './selection.js';
 import { parseQuery, stringifyQuery, addFilter, removeFilter, formatFilter, hasGroupFilter, FILTER_HELP } from './search.js';
 import { applyBulkLocal, planUndo, describeBulk, parseTags, normTag } from './bulk.js';
 import { TYPES, typeLabel, typeIcon, GROUP_COLORS } from './devtypes.js';
-import { icon, iconButton, button, chip, segmented, emptyState, openPopover, openMenu, confirmDialog, relTime, unavailableCard, debounce } from './ui.js';
+import { icon, iconButton, button, chip, segmented, toggle, emptyState, openPopover, openMenu, confirmDialog, relTime, unavailableCard, debounce } from './ui.js';
 import { unavailable } from './mgmt.js';
+import { rangeWindow, fillSeries, sumPoints, areaPaths, axisLabels, timeLabels, fmtBytes } from './traffic.js';
 import { TIMER_CHOICES, MODES, deviceMode, countdown, countdownShort, modePatch, applyModeLocal } from './wander.js';
+import { reservedLabel } from './dhcp.js';
 import { createImportModal } from './importview.js';
 import { severityLabel, severityBadgeClass } from './alarms.js';
-import { WATCH_CHOICES, watchSwitchOf, deviceBadge, fmtBitsPerSecond, fmtPacketsPerSecond, fmtTotalBytes } from './watch.js';
 import { activeFindings, resolvedFindings, findingTooltip } from './vulnscan.js';
+import { mergeAttention, attentionReasonLabel } from './attention.js';
+import { WATCH_CHOICES, watchSwitchOf, deviceBadge, fmtBitsPerSecond, fmtPacketsPerSecond, fmtTotalBytes } from './watch.js';
 
 const OVER = 6;
 const rowHeight = () => (window.matchMedia && window.matchMedia('(max-width: 760px)').matches ? 88 : 56);
@@ -21,6 +24,14 @@ const rowHeight = () => (window.matchMedia && window.matchMedia('(max-width: 760
 export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onOpenHistory, onGroupsChanged = () => {} }) {
   let groups = [];
   let allTotal = null;
+  let attention = []; // mergeAttention() result: devices needing a look, worst-first
+  let attentionGen = 0;
+  // Collapsed by default: with enough flagged devices (new installs,
+  // mostly) the full chip grid alone can run many screens long on a phone,
+  // pushing the actual device table below the fold with no way back up to
+  // it short of scrolling past all of it first. The header and count stay
+  // visible either way, so this never hides that something needs a look.
+  let attnExpanded = false;
   let chips = []; // committed filters: [{key,value,neg}]
   let sort = 'recent';
   let active = -1;
@@ -62,6 +73,14 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
   const importBtn = button('Import', 'ghost only-md', () => importModal.open(), 'import');
   head.append(title, sbox, sortSeg.root, groupsToggle, importBtn);
 
+  // "Needs attention": devices that are brand new/quarantined, wandering or
+  // excluded, surfaced above the (alphabetical- or recency-sorted) main
+  // list instead of mixed into it - with 91 real devices the maintainer
+  // should not have to scan the whole table to spot these. See attention.js.
+  const attnWrap = el('section', 'dv-attn panel-lite');
+  attnWrap.hidden = true;
+  attnWrap.setAttribute('aria-label', 'Needs attention');
+
   const main = el('div', 'dv-main');
   const side = el('aside', 'dv-groups panel-lite');
   side.setAttribute('aria-label', 'Groups');
@@ -101,7 +120,7 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
   drawer.setAttribute('aria-label', 'Device details');
   const scrim = el('div', 'drawer-scrim');
   scrim.hidden = true;
-  root.append(head, main, scrim, drawer);
+  root.append(head, attnWrap, main, scrim, drawer);
 
   // ------------------------------------------------------------- list
   const list = createDeviceList({
@@ -301,6 +320,49 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     const r = await mgmt.groups();
     groups = Array.isArray(r && r.groups) ? r.groups : [];
     paintGroups();
+    loadAttention().catch(() => {});
+  }
+
+  // ------------------------------------------------------------- attention
+  async function loadAttention() {
+    const gen = ++attentionGen;
+    const quarantine = groups.find((g) => g.name.toLowerCase() === 'quarantine');
+    const q = (filters) => mgmt.devices({ q: stringifyQuery({ text: '', filters }), sort: 'recent', offset: 0, limit: 50 });
+    const jobs = [
+      q([{ key: 'wandering', value: 'true', neg: false }]).then((r) => ({ reason: 'wandering', devices: (r && r.devices) || [] })),
+      q([{ key: 'excluded', value: 'true', neg: false }]).then((r) => ({ reason: 'excluded', devices: (r && r.devices) || [] })),
+    ];
+    if (quarantine) jobs.push(q([{ key: 'group', value: quarantine.name, neg: false }]).then((r) => ({ reason: 'quarantine', devices: (r && r.devices) || [] })));
+    const settled = await Promise.allSettled(jobs);
+    if (gen !== attentionGen) return; // a newer load (or a reload of groups) superseded this one
+    attention = mergeAttention(settled.filter((s) => s.status === 'fulfilled').map((s) => s.value));
+    paintAttention();
+  }
+
+  function paintAttention() {
+    attnWrap.hidden = attention.length === 0;
+    if (!attention.length) { attnWrap.replaceChildren(); return; }
+    attnWrap.replaceChildren();
+    const h = el('div', 'dv-attn-head');
+    const toggle = el('button', 'dv-attn-toggle', attnExpanded ? 'Hide' : 'Show');
+    toggle.type = 'button';
+    toggle.setAttribute('aria-expanded', attnExpanded ? 'true' : 'false');
+    toggle.addEventListener('click', () => { attnExpanded = !attnExpanded; paintAttention(); });
+    h.append(el('h3', 'ph', 'Needs attention'), el('span', 'pg-count mono', String(attention.length)), toggle);
+    attnWrap.append(h);
+    if (!attnExpanded) return;
+    const row = el('div', 'dv-attn-row');
+    const shown = attention.slice(0, 16);
+    for (const { device: d, reasons } of shown) {
+      const b = el('button', 'dv-attn-chip');
+      b.type = 'button';
+      b.append(el('span', 'dv-attn-nm', d.name), el('span', 'dv-attn-reason', reasons.map(attentionReasonLabel).join(' · ')));
+      b.title = 'Open ' + d.name;
+      b.addEventListener('click', () => openDrawer(d.id, null));
+      row.append(b);
+    }
+    attnWrap.append(row);
+    if (attention.length > shown.length) attnWrap.append(el('p', 'muted small dv-attn-more', '+' + (attention.length - shown.length) + ' more - search wandering:true, excluded:true or group:Quarantine to see them all'));
   }
 
   // ------------------------------------------------------------- rows
@@ -331,22 +393,23 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     const cGrp = el('div', 'c-grp');
     const cSeen = el('div', 'c-seen');
     // What Watch mode is doing with this device (watchview.js has the
-    // whole picture). The cell stays empty when the server reported no
-    // Watch state, so nothing is ever guessed.
+    // whole picture). The cell stays empty when the server did not report
+    // any Watch state, so an install without Watch mode shows nothing
+    // rather than a guess.
     const cWatch = el('div', 'c-watch');
-    const wmb = el('span', 'badge');
-    cWatch.append(wmb);
+    const wb = el('span', 'badge');
+    cWatch.append(wb);
     const cExc = el('div', 'c-exc');
     const mb = el('button', 'mode-btn');
     mb.type = 'button';
     mb.setAttribute('aria-haspopup', 'menu');
     cExc.append(mb);
-    const wb = el('span', 'wbadge', 'Wandering');
-    wb.hidden = true;
-    nameWrap.after(wb);
     row.append(cSel, cName, cIp, cGrp, cSeen, cWatch, cExc);
     for (const c of row.children) c.setAttribute('role', 'cell');
-    const s = { row, cb, ico, nm, sub, pen, cIp, cGrp, cSeen, mb, wb, wmb, nameWrap, _i: -1, _d: null, _sig: '' };
+    // Wandering is announced once, by the Mode button below (it already
+    // carries the countdown, e.g. "Wandering 36m"); a second badge next to
+    // the name duplicated the same state on every row.
+    const s = { row, cb, ico, nm, sub, pen, cIp, cGrp, cSeen, wb, mb, nameWrap, _i: -1, _d: null, _sig: '' };
     return s;
   }
 
@@ -382,11 +445,11 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     const seen = relTime(d.last_seen);
     if (s.cSeen.textContent !== seen) { s.cSeen.textContent = seen; s.cSeen.title = d.last_seen ? new Date(d.last_seen).toLocaleString() : ''; }
     const w = deviceBadge(d);
-    s.wmb.hidden = !w;
+    s.wb.hidden = !w;
     if (w) {
-      if (s.wmb.textContent !== w.label) s.wmb.textContent = w.label;
-      s.wmb.className = 'badge wm-' + w.cls;
-      s.wmb.title = w.title;
+      if (s.wb.textContent !== w.label) s.wb.textContent = w.label;
+      s.wb.className = 'badge wm-' + w.cls;
+      s.wb.title = w.title;
     }
     const mode = deviceMode(d);
     const short = countdownShort(d);
@@ -394,7 +457,6 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     if (s.mb.textContent !== mt) s.mb.textContent = mt;
     s.mb.className = 'mode-btn m-' + mode;
     s.mb.setAttribute('aria-label', 'Mode for ' + d.name + ': ' + mt + '. Change');
-    s.wb.hidden = mode !== 'wandering';
     s.row.classList.toggle('excl', mode === 'excluded');
     s.row.classList.toggle('wand', mode === 'wandering');
     s.row.tabIndex = i === active ? 0 : -1;
@@ -409,7 +471,7 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     s.nm.textContent = '';
     s.sub.textContent = '';
     s.cIp.textContent = ''; s.cGrp.replaceChildren(); s.cSeen.textContent = ''; s.ico.replaceChildren();
-    s.wmb.hidden = true;
+    s.wb.hidden = true;
     s.cb.checked = false;
   }
 
@@ -760,7 +822,7 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     const tg = button('Tags', 'bb', (e) => tagsPopover(e.currentTarget), 'tag');
     const del = button('Delete', 'bb danger', () => runBulk({ op: 'delete' }, { confirmDelete: true }), 'trash');
     const clear = iconButton('x', 'Clear selection', () => { sel.clear(); renderAll(); }, 'bulk-x');
-    for (const b of [g1, g2, tg, wd]) b.setAttribute('aria-haspopup', 'true');
+    for (const b of [g1, g2, tg, wd, wm]) b.setAttribute('aria-haspopup', 'true');
     bulk.append(label, g1, g2, wd, wm, ex, inc, tg, del, clear);
   }
 
@@ -803,6 +865,60 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
   };
   const portLabel = (p) => (PORT_NAMES[p] ? p + ' (' + PORT_NAMES[p] + ')' : String(p));
 
+  // EXPOSURE_NOTES explains portscan's WAN-exposure check (docs/PORTSCAN.md):
+  // a best-effort read of the router's own UPnP IGD port-mapping table,
+  // never a guess. A port with no note at all (the exposure key absent)
+  // means the check is disabled, or the server predates it.
+  const EXPOSURE_NOTES = {
+    wan_forwarded: 'Forwarded from the WAN by the router (checked via UPnP)',
+    lan_only: "Not forwarded from the WAN, per the router's own UPnP port-mapping table",
+    unknown: 'WAN exposure unknown: the router did not answer the UPnP port-mapping check',
+  };
+
+  // renderBandwidth paints one device's last 24 hours of traffic into
+  // holder: the same two-area chart as the Bandwidth page, scoped to this
+  // device. Like renderPorts it repaints only while the drawer still shows
+  // this device. Traffic is only measured while watch mode is steering the
+  // device, so an empty chart says that instead of looking broken.
+  function renderBandwidth(holder, id) {
+    if (!mgmt.trafficSeries) return;
+    const NS = 'http://www.w3.org/2000/svg';
+    const w = rangeWindow('24h');
+    holder.replaceChildren(el('p', 'muted small', 'Loading…'));
+    mgmt.trafficSeries({ from: w.from, to: w.to, scope: 'device:' + id }).then((s) => {
+      if (drawerId !== id || !holder.isConnected) return;
+      const bucket = s.bucket || 'minute';
+      const filled = fillSeries(s.points || [], s.from || w.from, s.to || w.to, bucket);
+      const any = filled.some((p) => p.up > 0 || p.down > 0);
+      holder.replaceChildren();
+      if (!any) {
+        holder.append(el('p', 'muted small', 'No traffic measured in the last 24 hours. It is measured while Watch mode is on for this device.'));
+        return;
+      }
+      const paths = areaPaths(filled, bucket);
+      const svg = document.createElementNS(NS, 'svg');
+      svg.setAttribute('viewBox', '0 0 600 140');
+      svg.setAttribute('preserveAspectRatio', 'none');
+      svg.setAttribute('class', 'tf-svg');
+      svg.setAttribute('role', 'img');
+      svg.setAttribute('aria-label', 'Bandwidth over the last 24 hours');
+      for (const [cls, d] of [['tf-down', paths.down], ['tf-up', paths.up]]) {
+        const path = document.createElementNS(NS, 'path');
+        path.setAttribute('class', cls);
+        path.setAttribute('d', d);
+        svg.append(path);
+      }
+      const t = sumPoints(filled);
+      const totals = el('div', 'dr-bw-totals small');
+      totals.append(el('span', 'tf-key tf-key-down', 'Download ' + fmtBytes(t.down) + ' (estimated)'), el('span', 'tf-key tf-key-up', 'Upload ' + fmtBytes(t.up)));
+      const axis = el('p', 'muted small', 'Peak ' + axisLabels(paths.max)[0] + ' · ' + timeLabels(filled, bucket).join(' → '));
+      holder.append(svg, totals, axis);
+    }).catch((e) => {
+      if (drawerId !== id || !holder.isConnected) return;
+      holder.replaceChildren(unavailable(e) ? el('p', 'muted small', 'Bandwidth history is not available on this version.') : el('p', 'err small', e.message));
+    });
+  }
+
   // renderPorts fetches and paints one device's port-scan panel into holder,
   // with a manual "Scan now" button. It guards every repaint on the drawer
   // still showing this same device, since its own fetch and scan calls are
@@ -836,7 +952,9 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
         const c = el('span', cls);
         c.append(document.createTextNode(portLabel(p.port)));
         if (p.newly_opened) c.append(el('span', 'port-flag', 'NEW'));
-        const why = [p.risky ? p.risk_note : '', p.newly_opened ? 'Newly opened since the last scan' : ''].filter(Boolean).join(' — ');
+        if (p.exposure === 'wan_forwarded') c.append(el('span', 'port-flag wan', 'WAN'));
+        const why = [p.risky ? p.risk_note : '', p.newly_opened ? 'Newly opened since the last scan' : '', EXPOSURE_NOTES[p.exposure] || '']
+          .filter(Boolean).join(' — ');
         if (why) c.title = why;
         list.append(c);
       }
@@ -982,6 +1100,13 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     sNet.append(field('Last seen', d.last_seen ? new Date(d.last_seen).toLocaleString() + '  (' + relTime(d.last_seen) + ')' : 'Unknown'));
     drawer.append(sNet);
 
+    // Bandwidth over the last 24 hours
+    const sBw = section('Bandwidth');
+    const bwHolder = el('div', 'dr-bw');
+    sBw.append(bwHolder);
+    drawer.append(sBw);
+    renderBandwidth(bwHolder, d.id);
+
     // Ports and exposure
     const sPorts = section('Ports');
     const portsHolder = el('div', 'dr-ports');
@@ -1062,8 +1187,9 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     sM.append(modeText, timerRow);
     drawer.append(sM);
 
-    // Watch mode (docs/WATCH.md). Only drawn when the server actually
-    // reported Watch state for this device.
+    // Watch mode (docs/WATCH.md). The section is only drawn when the
+    // server actually reported Watch state for this device: on an install
+    // without Watch mode there is nothing true to say here.
     if (d.watch_state) {
       const sW = section('Watch');
       const curW = watchSwitchOf(d);
@@ -1078,17 +1204,50 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
       const wrow = (k, v) => { live.append(el('dt', '', k)); live.append(el('dd', '', v)); };
       if (badge) wrow('Now', badge.label);
       if (st.reason) wrow('Why', st.reason);
-      if ((st.families || []).length) wrow('Families', st.families.map((f) => (f === 'ipv6' ? 'IPv6' : 'IPv4')).join(' + '));
-      if (st.ipv6_reason) wrow('IPv4 only', st.ipv6_reason);
       if (st.state === 'steered') {
         wrow('Sending', fmtBitsPerSecond(st.bytes_per_second) + '  \u00b7  ' + fmtPacketsPerSecond(st.packets_per_second));
-        wrow('Relayed', fmtTotalBytes(st.bytes_relayed));
+        wrow('Receiving', fmtBitsPerSecond(st.rx_bytes_per_second) + ' (estimated)');
+        wrow('Relayed', fmtTotalBytes(st.bytes_relayed) + ' up  \u00b7  ' + fmtTotalBytes(st.bytes_received_est) + ' down (est.)');
         const addrs = (st.steered || []).map((x) => x.ip + ' \u00b7 ' + x.mac).join('   ');
         if (addrs) wrow('Steering', addrs);
       }
       if (live.childNodes.length) sW.append(live);
-      sW.append(el('p', 'muted small', 'Watch mode sees only what this device sends out, never what it downloads, and blocks nothing on its own.'));
+      sW.append(el('p', 'muted small', 'Watch mode carries only what this device sends out; its downloads are estimated from its own TCP acknowledgements (QUIC, other UDP and VPN traffic are invisible to that). It blocks nothing on its own.'));
       drawer.append(sW);
+    }
+
+    // The DHCP reservation (docs/DHCP.md). Only drawn when the server
+    // reported one, which means DHCP mode is wired in and this device has a
+    // hardware address to key a reservation on.
+    if (d.reserved) {
+      const res = d.reserved;
+      const sR = section('Address');
+      const lbl = reservedLabel(res);
+      const line = el('p', 'muted small', lbl.text);
+      const sw = toggle({
+        checked: res.on,
+        label: 'Reserve this address',
+        disabled: !res.on && !res.candidate,
+        title: res.on ? 'Stop pinning this device to an address' : 'Pin this device to the address it holds now',
+        onChange: async (on) => {
+          try {
+            if (on) await mgmt.dhcpSetReservation({ mac: res.mac, ip: res.candidate, hostname: '', note: '' });
+            else await mgmt.dhcpDeleteReservation(res.mac);
+            const fresh = await mgmt.device(d.id);
+            d.reserved = fresh.reserved;
+            const next = reservedLabel(d.reserved);
+            line.textContent = next.text;
+          } catch (err) {
+            notify(err.message || String(err));
+            line.textContent = lbl.text;
+          }
+        },
+      });
+      sR.append(sw, line);
+      sR.append(el('p', 'muted small',
+        'A reservation pins this hardware to one address, whatever else is going on. It is held back from the pool for '
+        + 'this device only, so it keeps working if the device is away for a week. It takes effect at the next renewal.'));
+      drawer.append(sR);
     }
 
     // Blocking

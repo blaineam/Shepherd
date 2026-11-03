@@ -1,14 +1,13 @@
-// The Details view: everything the original dashboard did (stat tiles, live
-// query table with per-row allow/block, upstream and blocklist health, user
-// rules, the Private Relay switch, top devices and top blocked). Names,
-// devices and reasons come from the network, so every value is placed with
-// textContent, never innerHTML.
+// The System view: software updates, blocklist health, the user's own
+// allow and block rules and the Private Relay switch. The query totals, live
+// list and top lists that used to share this screen live on the Map,
+// History and Bandwidth screens. Names and reasons come from the network,
+// so every value is placed with textContent, never innerHTML.
 import { $, el } from './dom.js';
 import { fmtNum, fmtUptime } from './format.js';
+import { updateLine, rollbackLine, dataDirLine, overBudget } from './update.js';
 
-export function createDetails({ api, getRows, notify, onRulesChanged = () => {}, names = null }) {
-  let filter = '';
-
+export function createDetails({ api, notify, onRulesChanged = () => {} }) {
   function fillList(id, items, build) {
     const ul = $(id);
     ul.replaceChildren();
@@ -16,26 +15,53 @@ export function createDetails({ api, getRows, notify, onRulesChanged = () => {},
     items.forEach((it) => ul.append(build(it)));
   }
 
+  // The Software card (docs/UPDATE.md): where this build stands against
+  // the latest release, and the one button that applies it.
+  let updateInfo = null;
+  function renderUpdate(u) {
+    updateInfo = u;
+    const line = updateLine(u);
+    const lineEl = $('#sw-line');
+    lineEl.textContent = line.text;
+    lineEl.className = 'sw-line ' + line.tone;
+    const s = (u && u.status) || {};
+    const reason = $('#sw-reason');
+    reason.textContent = s.available && !s.can_apply && s.reason ? 'Cannot update from here: ' + s.reason : '';
+    reason.hidden = !reason.textContent;
+    const rb = $('#sw-rollback');
+    rb.textContent = rollbackLine(u);
+    rb.hidden = !rb.textContent;
+    const dd = $('#sw-data');
+    dd.textContent = dataDirLine(u);
+    dd.hidden = !dd.textContent;
+    dd.className = overBudget(u) ? 'small warn' : 'muted small';
+    $('#sw-apply').hidden = !(s.available && s.can_apply && !s.applying && !s.applied);
+    $('#sw-check').hidden = !(u && u.enabled);
+  }
+  $('#sw-check').addEventListener('click', async () => {
+    $('#sw-check').disabled = true;
+    try { renderUpdate(await api('/api/update/check', { method: 'POST', body: '{}' })); } catch (e) { notify('Could not check: ' + e.message); }
+    $('#sw-check').disabled = false;
+  });
+  $('#sw-apply').addEventListener('click', async () => {
+    const s = (updateInfo && updateInfo.status) || {};
+    if (!window.confirm('Install ' + (s.latest_version || 'the update') + ' and restart Shepherd? The current binary is kept and comes back on its own if the new one does not stay up.')) return;
+    $('#sw-apply').disabled = true;
+    try {
+      await api('/api/update/apply', { method: 'POST', body: '{}' });
+      notify('Update installed; Shepherd is restarting');
+      renderUpdate({ enabled: true, status: { ...s, applied: s.latest_version } });
+    } catch (e) { notify('Could not update: ' + e.message); $('#sw-apply').disabled = false; }
+  });
+  async function loadUpdate() {
+    try { renderUpdate(await api('/api/update')); } catch { renderUpdate(null); }
+  }
+
   function renderStatus(s) {
     $('#version').textContent = s.version || '';
     $('#uptime').textContent = fmtUptime(s.uptime_seconds || 0);
-    const st = s.stats || {};
-    $('#d-total').textContent = fmtNum(st.total);
-    $('#d-blocked').textContent = fmtNum(st.blocked);
-    $('#d-pct').textContent = st.total ? (100 * st.blocked / st.total).toFixed(1) + '% of queries' : '';
-    $('#d-cached').textContent = fmtNum(st.cached);
-    $('#d-errors').textContent = fmtNum(st.errors);
-    $('#d-listed').textContent = fmtNum(s.listed_domains);
     $('#p-relay').checked = !!(s.policies && s.policies['apple-private-relay']);
 
-    fillList('#upstreams', s.upstreams, (u) => {
-      const li = el('li');
-      li.append(el('span', u.healthy ? 'dot' : 'dot bad'));
-      const name = el('span', 'grow', u.addr);
-      name.title = u.last_error || '';
-      li.append(name, el('span', 'num', u.rtt_ms ? u.rtt_ms.toFixed(0) + ' ms' : '-'));
-      return li;
-    });
     fillList('#lists', s.lists, (l) => {
       const li = el('li');
       li.append(el('span', l.error ? 'dot bad' : 'dot'));
@@ -44,16 +70,6 @@ export function createDetails({ api, getRows, notify, onRulesChanged = () => {},
       li.append(name, el('span', 'num', l.error ? 'rejected' : fmtNum(l.count)));
       return li;
     });
-    const countRow = (c) => {
-      const li = el('li');
-      const label = names && names.has(c.key) ? names.label(c.key) : c.key;
-      const nm = el('span', 'grow', label);
-      if (label !== c.key) nm.title = c.key;
-      li.append(nm, el('span', 'num', fmtNum(c.n)));
-      return li;
-    };
-    fillList('#top-clients', st.top_clients, countRow);
-    fillList('#top-blocked', st.top_blocked, countRow);
   }
 
   function renderRules(r) {
@@ -79,39 +95,6 @@ export function createDetails({ api, getRows, notify, onRulesChanged = () => {},
     return r;
   }
 
-  function renderRows() {
-    const f = filter.toLowerCase();
-    const body = $('#rows');
-    body.replaceChildren();
-    const rows = getRows();
-    let shown = 0;
-    for (const e of rows) {
-      if (f && !(`${e.device || ''} ${e.client} ${e.name} ${e.action} ${e.reason || ''}`.toLowerCase().includes(f))) continue;
-      if (++shown > 300) break;
-      const tr = el('tr');
-      const time = new Date(e.t).toLocaleTimeString();
-      const dev = el('td', '', e.device || e.client);
-      if (e.device) dev.title = e.client;
-      tr.append(el('td', 'muted', time), dev, el('td', 'dom', e.name), el('td', 'muted', e.type || ''));
-      const res = el('td');
-      const pill = el('span', 'act ' + e.action, e.action);
-      if (e.reason) pill.title = e.reason;
-      res.append(pill);
-      if (e.wandering) res.append(' ', el('span', 'wbadge', 'wandering'));
-      if (e.shadow) res.append(' ', el('span', 'muted small shadow-note', 'would have blocked: ' + e.shadow));
-      else if (e.reason && e.action !== 'error' && e.reason !== 'wandering') res.append(' ', el('span', 'muted small', e.reason));
-      tr.append(res, el('td', 'muted', e.upstream || ''), el('td', 'num', Number(e.ms || 0).toFixed(1)));
-      const act = el('td');
-      const kind = e.action === 'blocked' ? 'allow' : 'block';
-      const b = el('button', 'mini', kind);
-      b.addEventListener('click', () => rule('POST', kind, e.name).catch((err) => notify(err.message)));
-      act.append(b);
-      tr.append(act);
-      body.append(tr);
-    }
-  }
-
-  $('#filter').addEventListener('input', (e) => { filter = e.target.value; renderRows(); });
   $('#rule-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     try { await rule('POST', $('#rule-kind').value, $('#rule-domain').value); $('#rule-domain').value = ''; }
@@ -123,5 +106,6 @@ export function createDetails({ api, getRows, notify, onRulesChanged = () => {},
     catch (err) { notify(err.message); e.target.checked = !e.target.checked; }
   });
 
-  return { renderStatus, renderRules, renderRows, rule, refreshRules: () => api('/api/rules').then(renderRules).catch(() => {}) };
+  return {
+    loadUpdate, renderStatus, renderRules, rule, refreshRules: () => api('/api/rules').then(renderRules).catch(() => {}) };
 }

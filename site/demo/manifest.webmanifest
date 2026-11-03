@@ -1,0 +1,11 @@
+{
+  "name": "Shepherd",
+  "short_name": "Shepherd",
+  "description": "The guardian your home network never had.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b1116",
+  "theme_color": "#0b1116",
+  "icons": [{ "src": "icon.png", "sizes": "512x512", "type": "image/png" }]
+}

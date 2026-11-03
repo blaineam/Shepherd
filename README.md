@@ -91,9 +91,11 @@ Also built: a **passive ARP monitor** that learns real MAC addresses and raises 
 ([ARP.md](docs/ARP.md)), whose gateway-changed event Watch mode listens to; an **alarm engine** with Web Push
 and ntfy delivery, mute rules and batch actions ([ALARMS.md](docs/ALARMS.md)); **router importers** for eero
 and CSV ([IMPORT.md](docs/IMPORT.md)); and **passkey unlock** for the portal
-([PASSKEYS.md](docs/PASSKEYS.md)). Coming next: inbound protection, the mesh, signed self-updates, the local
-AI and one-click installers. A dual-NIC router profile is a stated future direction, not yet scheduled. See the
-[roadmap](docs/ROADMAP.md).
+([PASSKEYS.md](docs/PASSKEYS.md)); **first-run setup in a browser** rather than a text editor
+([SETUP.md](docs/SETUP.md)); and **signed releases**, so a running Shepherd can verify an update before
+applying it ([UPDATE.md](docs/UPDATE.md)). Coming next: inbound protection, the mesh and the local AI. Serving
+the LAN's own addresses is in, as alpha and off by default ([DHCP.md](docs/DHCP.md)) — on one network card, not
+two. See the [roadmap](docs/ROADMAP.md).
 
 ## How it fits together
 

@@ -1,0 +1,112 @@
+#!/bin/sh
+# sync-site-demo copies the portal's front end into site/demo, which is what
+# the marketing site serves as its live demo.
+#
+# Why this exists: site/demo was hand-copied once and then drifted. By
+# 2026-11-03 it was fourteen files behind internal/portal/web -- no Bandwidth,
+# no Network health, no Reverse proxy, no vulnerabilities view -- and its
+# index.html had become a different, older page with element ids the portal no
+# longer has. The site was advertising a Shepherd that no longer existed, and
+# nothing anywhere would have said so. Copying it by hand again would only
+# restart that clock, so CI runs this with --check.
+#
+#   scripts/sync-site-demo            update site/demo in place
+#   scripts/sync-site-demo --check    fail if site/demo is not what this
+#                                     script would write (used by CI)
+#
+# The demo is the portal's own files, not a second implementation: app.js
+# already has demo mode built in (?demo=), so the only thing site/demo needs
+# beyond a copy is to turn it on. Everything here is a verbatim copy except
+# index.html, which gets the two changes below.
+#
+# Deliberately NOT copied:
+#   sw.js         a service worker on the marketing origin, registered for Web
+#                 Push, is not something a visitor to a demo should acquire.
+#   package.json  belongs to the test setup, not to the served page.
+#   test/         likewise.
+set -eu
+
+check=0
+if [ "${1:-}" = "--check" ]; then
+	check=1
+elif [ $# -ne 0 ]; then
+	echo "usage: sync-site-demo [--check]" >&2
+	exit 2
+fi
+
+cd "$(dirname "$0")/.."
+src=internal/portal/web
+dst=site/demo
+
+for p in "$src/index.html" "$src/app.js" "$src/style.css" "$src/icon.png" "$src/js" "$src/vendor" "$src/manifest.webmanifest"; do
+	if [ ! -e "$p" ]; then
+		echo "sync-site-demo: $p is missing; the portal's layout changed and this script needs updating" >&2
+		exit 1
+	fi
+done
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+out="$tmp/demo"
+mkdir -p "$out"
+
+cp "$src/app.js" "$src/style.css" "$src/icon.png" "$src/manifest.webmanifest" "$out/"
+cp -R "$src/js" "$src/vendor" "$out/"
+
+# index.html is the one generated file. Both edits are anchored on text that
+# must exist; if the portal's page changes shape, this fails loudly rather
+# than quietly publishing a demo that opens on a live portal with no backend.
+title='<title>Shepherd</title>'
+anchor='<script type="module" src="app.js"></script>'
+for needle in "$title" "$anchor"; do
+	if ! grep -qF "$needle" "$src/index.html"; then
+		echo "sync-site-demo: could not find in $src/index.html:" >&2
+		echo "  $needle" >&2
+		echo "The page changed shape. Update this script rather than hand-editing $dst." >&2
+		exit 1
+	fi
+done
+
+# The site links to demo/index.html with no query string, so the page has to
+# turn demo mode on itself. This runs before app.js: a classic script executes
+# at once, while the module is deferred.
+boot='<script>
+    // This copy of the portal is the public demo (scripts/sync-site-demo).
+    // app.js reads ?demo=, and there is no backend here, so arrive with it
+    // set or the page would ask a server that does not exist.
+    (function () {
+      var p = new URLSearchParams(location.search);
+      if (p.get("demo") === null) {
+        p.set("demo", "1");
+        location.replace(location.pathname + "?" + p.toString() + location.hash);
+      }
+    })();
+  </script>
+  '
+
+export TITLE='<title>Shepherd — Live Demo</title>
+  <meta name="description" content="Shepherd'"'"'s real portal, running entirely in your browser on synthetic data. No backend, no network calls, nothing leaves this page.">'
+export BOOT="$boot"
+export ANCHOR="$anchor"
+export OLDTITLE="$title"
+perl -0pe '
+  my $t = $ENV{TITLE}; my $b = $ENV{BOOT}; my $a = $ENV{ANCHOR}; my $o = $ENV{OLDTITLE};
+  s/\Q$o\E/$t/;
+  s/\Q$a\E/$b$a/;
+' "$src/index.html" >"$out/index.html"
+
+if [ "$check" = "1" ]; then
+	if diff -ru "$dst" "$out" >"$tmp/diff" 2>&1; then
+		exit 0
+	fi
+	echo "site/demo is out of step with $src." >&2
+	echo "Run scripts/sync-site-demo and commit the result." >&2
+	echo >&2
+	head -60 "$tmp/diff" >&2
+	exit 1
+fi
+
+rm -rf "$dst"
+mkdir -p "$(dirname "$dst")"
+cp -R "$out" "$dst"
+echo "site/demo synced from $src"

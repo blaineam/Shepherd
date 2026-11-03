@@ -148,6 +148,7 @@ export function createInspector({ api, notify, onRule, names = null }) {
     domains: $('#i-domains'), block: $('#i-block'), allow: $('#i-allow'), fb: $('#i-fb'), fbText: $('#i-fb-text'), undo: $('#i-undo'),
     panel: $('#inspector'),
     modeK: $('#i-mode-k'), mode: $('#i-mode'), shadowK: $('#i-shadow-k'), shadow: $('#i-shadow'),
+    reasonK: $('#i-reason-k'), reason: $('#i-reason'),
   };
   let sel = null; // {lane, entry, domain}
   let lastRule = null;
@@ -170,6 +171,12 @@ export function createInspector({ api, notify, onRule, names = null }) {
     const note = e && e.shadow && sel.domain === e.name ? shadowNote(e) : '';
     R.shadowK.hidden = R.shadow.hidden = !note;
     R.shadow.textContent = note;
+    // Names what blocked it: a catalog/custom list id, "custom rule",
+    // "allowlist", a geo block or a policy name (dnsengine.Entry.Reason).
+    // Only meaningful for one specific blocked query, not an aggregated lane.
+    const reason = action === 'blocked' && e && e.reason ? e.reason : '';
+    R.reasonK.hidden = R.reason.hidden = !reason;
+    R.reason.textContent = reason;
     R.loc.textContent = dest ? `${dest.lat.toFixed(2)}, ${dest.lon.toFixed(2)}` + (dest.ip ? '  ' + dest.ip : '') : 'Not geolocated';
     if (lane) {
       const bytes = model.mode === 'bytes';

@@ -29,6 +29,8 @@ jobs:
         run: scripts/test-leakcheck
       - name: Leak guard on the whole tree
         run: scripts/leakcheck --all
+      - name: The site's demo is the portal it advertises
+        run: scripts/sync-site-demo --check
       - name: Docs travel with code (push)
         if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
         run: scripts/doccheck --range "${{ github.event.before }}..${{ github.sha }}"
