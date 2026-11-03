@@ -34,9 +34,11 @@ and retires with it.
 
 What it would need beyond everything above:
 - **Full L3 forwarding and NAT** for every device, not just steered ones — a different order of
-  engineering and risk than relaying one device's traffic beside the existing router.
-- **DHCP server** (today Shepherd deliberately avoids this; see the DHCP takeover method below,
-  which is a stopgap, not this).
+  engineering and risk than relaying one device's traffic beside the existing router. DHCP mode's
+  own forwarding and NAT configuration is the same code with a different output interface.
+- **DHCP server** — ~~today Shepherd deliberately avoids this~~ **built, off by default**
+  ([DHCP.md](DHCP.md)). It is the same code with a different pool and a different gateway, so this
+  line of the list is already done.
 - **WAN handling**: PPPoE/DHCP client, failover, and reporting uplink health.
 - **Two-sided or full routing visibility**, which also closes the Watch-mode inbound blind spot
   described below (a router sees both directions of every flow by construction).
