@@ -8,11 +8,13 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,14 +27,65 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// Ports for the tests that run the whole daemon are handed out from here,
+// counting upwards from a per-process base, rather than by asking the kernel
+// for one with :0.
+//
+// Asking with :0 is the obvious way and it is what this used to do, but it
+// cannot work here. The port has to be written into a configuration file and
+// bound some milliseconds later by the daemon, so the probe listener must be
+// closed first, and in that gap the port is anybody's. Worse, the gap is most
+// likely to be lost to this same test binary: :0 allocates from the kernel's
+// ephemeral range (32768-60999 on Linux), so one test's probe can take the
+// very port another test's daemon is about to bind. That shows up as a DNS
+// query refused on a port the test picked itself -- which is what reddened CI
+// on the 1.0.0 release commit, in TestNewDevicesAreQuarantinedUntilMovedToARealGroup.
+//
+// Counting from a base below the ephemeral range means no :0 anywhere can
+// collide with a port handed out here, and the counter means this binary
+// never hands the same one out twice. Each candidate is still checked free,
+// because nothing stops an unrelated process from already holding it.
+var (
+	portMu   sync.Mutex
+	nextPort = 20000 + rand.IntN(4000)
+)
+
 func freePort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	portMu.Lock()
+	defer portMu.Unlock()
+	for range 2000 {
+		port := nextPort
+		nextPort++
+		if nextPort > 30000 {
+			nextPort = 20000
+		}
+		if portIsFree(port) {
+			return port
+		}
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
+	t.Fatal("no free port")
+	return 0
+}
+
+// portIsFree reports whether a port can be bound on both loopback families,
+// for TCP and UDP: the daemon serves DNS over both, so a port free for only
+// one of them is not free for this.
+func portIsFree(port int) bool {
+	for _, host := range []string{"127.0.0.1", "[::1]"} {
+		addr := fmt.Sprintf("%s:%d", host, port)
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			return false
+		}
+		l.Close()
+		pc, err := net.ListenPacket("udp", addr)
+		if err != nil {
+			return false
+		}
+		pc.Close()
+	}
+	return true
 }
 
 // tempDir is t.TempDir for a test that runs the whole daemon. run starts

@@ -143,25 +143,11 @@ url = %q
 }
 
 // freeBothPort finds a port free on 127.0.0.1 and [::1] for UDP and TCP.
+// freePort now checks both families and both protocols itself, so this is
+// just its name at the call sites that care why.
 func freeBothPort(t *testing.T) int {
 	t.Helper()
-	for range 50 {
-		port := freePort(t)
-		ok := true
-		for _, addr := range []string{"127.0.0.1", "[::1]"} {
-			pc, err := net.ListenPacket("udp", fmt.Sprintf("%s:%d", addr, port))
-			if err != nil {
-				ok = false
-				break
-			}
-			pc.Close()
-		}
-		if ok {
-			return port
-		}
-	}
-	t.Fatal("no free port")
-	return 0
+	return freePort(t)
 }
 
 func (c e2eConfig) startRun(t *testing.T) *running {
