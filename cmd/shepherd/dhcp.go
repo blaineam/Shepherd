@@ -136,15 +136,67 @@ func startDHCP(ctx context.Context, cfg config.Config, reg *devices.Registry, al
 		return nil, nil
 	}
 
+	// The addressing is worked out for every mode, including off. With the
+	// mode off nothing is served, but the portal still needs it: a
+	// reservation has to be refused when it lands inside the dynamic pool,
+	// and that check is the whole reason the screen is usable before the
+	// mode is ever switched on.
+	host := dhcpHost()
+	iface := cfg.DHCP.Interface
+	gateway, _ := netip.ParseAddr(cfg.DHCP.Gateway)
+	var addrs []netip.Addr
+	var nets []netip.Prefix
+	var macs []string
+	var ips []netip.Addr
+
+	if iface == "" || !gateway.IsValid() {
+		routeIface, routeGW, err := host.DefaultRoute()
+		switch {
+		case err != nil && mode != dhcp.ModeOff:
+			log.Printf("dhcp: cannot work out the LAN interface and gateway (%v); DHCP mode will not start", err)
+			return nil, nil
+		case err != nil:
+			// Off: the file's own values are all there is, and that is
+			// enough for the screen.
+			log.Printf("dhcp: cannot work out the LAN interface and gateway (%v); with the mode off this only means the DHCP screen shows less", err)
+		default:
+			if iface == "" {
+				iface = routeIface
+			}
+			if !gateway.IsValid() {
+				gateway = routeGW
+			}
+		}
+	}
+
+	if iface != "" {
+		var err error
+		addrs, nets, err = host.Addrs(iface)
+		if err != nil {
+			if mode != dhcp.ModeOff {
+				log.Printf("dhcp: %v; DHCP mode will not start", err)
+				return nil, nil
+			}
+			log.Printf("dhcp: %v; with the mode off this only means the DHCP screen shows less", err)
+		}
+	}
+
+	settings, err := dhcpSettings(cfg.DHCP, gateway, addrs, nets)
+	if err != nil && mode != dhcp.ModeOff {
+		// A mode that is switched on but cannot describe the network is a
+		// configuration mistake, and the portal is where it should be read
+		// rather than the log alone. The server is built anyway so the
+		// status carries the reason.
+		log.Printf("dhcp: %v; DHCP mode will not serve until this is fixed", err)
+	}
+
 	if mode == dhcp.ModeOff {
-		// A server is still built, with no socket, so the portal can show
-		// and edit reservations before the mode is ever turned on. That
-		// is the point of being able to prepare the whole thing while it
-		// is off.
+		// No socket, no kernel configuration, no routing: only the stored
+		// reservations and the addressing they are checked against.
 		srv := &dhcp.Server{
 			Mode: func() dhcp.Mode { return dhcp.ModeOff }, State: state,
 			Store: dhcp.NewLeases(), Peers: dhcp.NewPeers(),
-			Settings: func() dhcp.Settings { return dhcp.Settings{} },
+			Settings: func() dhcp.Settings { return settings },
 			Log:      log.Default(),
 		}
 		if err := srv.Prepare(); err != nil {
@@ -154,39 +206,7 @@ func startDHCP(ctx context.Context, cfg config.Config, reg *devices.Registry, al
 		return srv, nil
 	}
 
-	host := dhcpHost()
-	iface := cfg.DHCP.Interface
-	gateway, _ := netip.ParseAddr(cfg.DHCP.Gateway)
-	if iface == "" || !gateway.IsValid() {
-		routeIface, routeGW, err := host.DefaultRoute()
-		if err != nil {
-			log.Printf("dhcp: cannot work out the LAN interface and gateway (%v); DHCP mode will not start", err)
-			return nil, nil
-		}
-		if iface == "" {
-			iface = routeIface
-		}
-		if !gateway.IsValid() {
-			gateway = routeGW
-		}
-	}
-
-	addrs, nets, err := host.Addrs(iface)
-	if err != nil {
-		log.Printf("dhcp: %v; DHCP mode will not start", err)
-		return nil, nil
-	}
-
-	settings, err := dhcpSettings(cfg.DHCP, gateway, addrs, nets)
-	if err != nil {
-		// A mode that is switched on but cannot describe the network is a
-		// configuration mistake, and the portal is where it should be read
-		// rather than the log alone. The server is built anyway so the
-		// status carries the reason.
-		log.Printf("dhcp: %v; DHCP mode will not serve until this is fixed", err)
-	}
-
-	macs, ips, err := host.LocalAddrs()
+	macs, ips, err = host.LocalAddrs()
 	if err != nil {
 		log.Printf("dhcp: cannot list this host's own addresses (%v); DHCP mode will not start, because it could otherwise route Shepherd through itself", err)
 		return nil, nil

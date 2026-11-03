@@ -472,6 +472,47 @@ What stays from the hand-rolled plan, because it was never really about the code
   collects, so what is fuzzed is the decision layer rather than the library's parser.
 - **Stage C's awkward-device list** from GATEWAY.md, unchanged and still required.
 
+## What has been verified, and what has only been reasoned about
+
+Worth separating, because this is the kind of feature where the difference
+matters more than usual.
+
+**Verified in software, with tests that run in CI:**
+
+- A whole lease over real UDP sockets with the real encoder on both sides:
+  `DISCOVER` → `OFFER` → `REQUEST` → `ACK`, a renewal, a refusal of somebody
+  else's address, and a release.
+- The allocator's order of preference, the reservation rules (including the
+  one that refuses an address inside the dynamic pool), the lease store's
+  persistence and its recovery from a corrupt file.
+- The serve gate refusing for each of its reasons, including another DHCP
+  server answering — and stopping, with a critical alarm, when one appears
+  while it is already serving.
+- The fail-open path: a kernel that will not take the rules makes routing
+  stop by itself, and the next lease carries the router's own address in
+  option 3 while leasing carries on.
+- The exact nftables rule set, as a string, before it is applied.
+- The portal screen against a running build on loopback, including the
+  reservation form refusing an address inside the pool.
+
+**Not verified, and only reasoned about:**
+
+- **Port 67 itself.** Every test binds a high port; nothing here has bound 67
+  or 68, or set `SO_BROADCAST` or `SO_BINDTODEVICE`.
+- **Broadcasting to a client that has no address yet**, which is every client
+  the first time. See the note on `replyTo` in the code: a UDP socket cannot
+  unicast to an unconfigured client, so Shepherd broadcasts, and a raw frame
+  socket is the proper fix.
+- **Any real client.** No printer, television, console or phone has spoken to
+  this code. That is what observe mode on the live LAN is for, and it is why
+  it comes before serving.
+- **The hairpin under a household's load.** The NAT measurement was one host
+  on one evening. It establishes that the reflection stops; it does not
+  establish that a whole household's traffic through one NIC behaves well.
+- **nft on the target host.** The reconciler is tested through an injected
+  command runner, so what is verified is what Shepherd would run, not that
+  the NAS accepts it.
+
 ## Staging
 
 Each stage is finishable and verifiable on its own, and the first three carry no risk to the

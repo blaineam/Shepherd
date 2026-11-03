@@ -316,3 +316,58 @@ func TestStartDHCPStartsWithUnusableSettingsSoTheReasonIsVisible(t *testing.T) {
 		t.Fatal("it should still start, so the portal can say what is wrong")
 	}
 }
+
+// With the mode off the screen still needs the addressing, because a
+// reservation has to be refused when it lands inside the dynamic pool. The
+// first live run of this had empty settings, and the form could not have
+// caught that mistake.
+func TestTheModeBeingOffStillCarriesTheAddressingForTheScreen(t *testing.T) {
+	withHost(t, goodHost())
+	cfg := dhcpConfig(t, "off")
+	cfg.DHCP.Subnet = "192.0.2.0/24"
+	cfg.DHCP.ServerIP = "192.0.2.20"
+	cfg.DHCP.Gateway = "192.0.2.1"
+	srv, err := startDHCP(context.Background(), cfg, devices.New(devices.Options{NodeID: "test"}), nil)
+	if err != nil {
+		t.Fatalf("startDHCP: %v", err)
+	}
+	set := srv.SettingsView()
+	if set.Subnet != "192.0.2.0/24" || set.PoolStart != "192.0.2.100" || set.PoolSize != 11 {
+		t.Fatalf("SettingsView = %+v", set)
+	}
+	// And the pool rule is enforced against it.
+	if err := srv.SetReservation(dhcp.Reservation{MAC: "02:00:5e:01:02:03", IP: netip.MustParseAddr("192.0.2.105")}); err == nil {
+		t.Error("an address inside the pool must be refused with the mode off too")
+	}
+}
+
+// A host that cannot be read is only a smaller screen while the mode is off,
+// not a reason to show nothing.
+func TestTheModeBeingOffSurvivesAHostItCannotRead(t *testing.T) {
+	withHost(t, fakeHost{routeErr: errors.New("no /proc/net/route"), addrErr: errors.New("no such interface")})
+	cfg := dhcpConfig(t, "off")
+	srv, err := startDHCP(context.Background(), cfg, devices.New(devices.Options{NodeID: "test"}), nil)
+	if err != nil {
+		t.Fatalf("startDHCP: %v", err)
+	}
+	if srv == nil {
+		t.Fatal("the mode being off should still give the portal a handle")
+	}
+	// The file's own pool is still there, which is what the form needs most.
+	if got := srv.SettingsView().PoolStart; got != "192.0.2.100" {
+		t.Errorf("PoolStart = %q", got)
+	}
+}
+
+func TestAnInterfaceThatCannotBeReadStopsAModeThatIsOn(t *testing.T) {
+	host := goodHost()
+	host.addrErr = errors.New("no such interface")
+	withHost(t, host)
+	srv, err := startDHCP(context.Background(), dhcpConfig(t, "serve"), devices.New(devices.Options{NodeID: "test"}), nil)
+	if err != nil {
+		t.Fatalf("startDHCP = %v; it must not stop Shepherd", err)
+	}
+	if srv != nil {
+		t.Error("but a mode that is on cannot run without the interface")
+	}
+}
