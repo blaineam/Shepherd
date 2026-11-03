@@ -1186,3 +1186,29 @@ button.tf-trend { cursor: pointer; } button.tf-trend:hover { border-color: var(-
 .al-ntfy > summary { cursor: pointer; font-weight: 600; }
 .al-ntfy-steps { margin: 8px 0 12px 20px; padding: 0; display: grid; gap: 6px; max-width: 70ch; color: var(--text-2); }
 .al-ntfy-code { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 10px 12px; margin: 0 0 8px; overflow-x: auto; white-space: pre; }
+
+/* The DHCP screen (docs/DHCP.md). The consequences list is a definition
+   list rather than prose because each line is a separate thing that can go
+   wrong, and the leases and reservations are real tables: every column is
+   something the owner compares against their router's own screen. */
+.dhcp-what { margin: 0; display: grid; gap: 4px 0; max-width: 90ch; }
+.dhcp-what dt { font-weight: 600; margin-top: 10px; }
+.dhcp-what dd { margin: 0; }
+.dhcp-tbl { margin-top: 12px; }
+.dhcp-tbl th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); font-weight: 600; font-size: 13px; color: var(--text-2); }
+.dhcp-tbl td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.dhcp-tbl tr:last-child td { border-bottom: 0; }
+.dhcp-act { white-space: nowrap; text-align: right; }
+.dhcp-act button { margin-left: 6px; }
+.dhcp-search { max-width: 240px; }
+@media (max-width: 760px) {
+  /* One row per card on a phone: the horizontal scroll a six-column table
+     needs is worse than the repetition of a label per cell. */
+  .dhcp-tbl, .dhcp-tbl tbody, .dhcp-tbl tr, .dhcp-tbl td { display: block; }
+  .dhcp-tbl thead { display: none; }
+  .dhcp-tbl tr { border-bottom: 1px solid var(--line); padding: 10px 0; }
+  .dhcp-tbl td { border: 0; padding: 2px 0; }
+  .dhcp-act { text-align: left; white-space: normal; }
+  .dhcp-act button { margin: 6px 6px 0 0; }
+  .dhcp-search { max-width: none; }
+}
