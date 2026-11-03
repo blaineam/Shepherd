@@ -10,6 +10,8 @@ require (
 
 require github.com/cilium/ebpf v0.22.0
 
+require github.com/insomniacslk/dhcp v0.0.0-20261014062924-c6bb46ad3f3a // indirect
+
 require (
 	github.com/maxmind/mmdbwriter v1.2.0
 	github.com/oschwald/maxminddb-golang/v2 v2.8.0
