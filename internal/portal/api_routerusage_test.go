@@ -3,7 +3,10 @@
 package portal
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
@@ -458,4 +461,115 @@ func TestTheLiveCardIsUntouchedWithoutARouterReader(t *testing.T) {
 	if n := len(out["devices"].([]any)); n != 0 {
 		t.Fatalf("%d devices with no reader", n)
 	}
+}
+
+// ---- UniFi ------------------------------------------------------------------
+
+// unifiController is enough of a controller for the portal to connect to.
+func unifiController(t *testing.T, user, pass string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/auth/login":
+			var in struct{ Username, Password string }
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			if in.Username != user || in.Password != pass {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("X-Csrf-Token", "c")
+			fmt.Fprint(w, `{"meta":{"rc":"ok"}}`)
+		case "/proxy/network/api/s/default/stat/sta":
+			fmt.Fprint(w, `{"data":[{"mac":"02:00:5e:00:00:41","name":"TV","tx_bytes":10,"rx_bytes":2}]}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestConnectingAUniFiControllerChecksItBeforeStoringIt(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	h.srv.RouterUsage = &fakeUsage{}
+	srv := unifiController(t, "ro", "pw")
+
+	// A controller that refuses the credentials is reported, not stored.
+	h.expect("POST", "/api/routerusage/unifi", fmt.Sprintf(`{"base_url":%q,"username":"ro","password":"wrong"}`, srv.URL), 400)
+	if _, ok := h.srv.Secrets.UniFi(); ok {
+		t.Fatal("bad credentials were stored anyway")
+	}
+	// So is an address that is not a controller at all.
+	h.expect("POST", "/api/routerusage/unifi", `{"base_url":"not-a-url","username":"ro","password":"pw"}`, 400)
+
+	out := h.ok("POST", "/api/routerusage/unifi", fmt.Sprintf(`{"base_url":%q,"username":"ro","password":"pw"}`, srv.URL), 200)
+	if out["source"] != "unifi" || out["enabled"] != true || out["connected"] != true {
+		t.Fatalf("after connecting = %v", out)
+	}
+	u, ok := h.srv.Secrets.UniFi()
+	if !ok || u.Password != "pw" {
+		t.Fatalf("stored = %+v", u)
+	}
+	for k, v := range out {
+		if s, isStr := v.(string); isStr && s == "pw" {
+			t.Fatalf("the password leaked through %q", k)
+		}
+	}
+}
+
+func TestUniFiSwitchesOffAndIsForgotten(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	usage := &fakeUsage{}
+	h.srv.RouterUsage = usage
+	srv := unifiController(t, "ro", "pw")
+	h.ok("POST", "/api/routerusage/unifi", fmt.Sprintf(`{"base_url":%q,"username":"ro","password":"pw"}`, srv.URL), 200)
+
+	if out := h.ok("POST", "/api/routerusage/unifi/enabled", `{"enabled":false}`, 200); out["enabled"] != false {
+		t.Fatalf("after switching off = %v", out)
+	}
+	if u, _ := h.srv.Secrets.UniFi(); u.Password == "" {
+		t.Fatal("switching off forgot the credentials")
+	}
+	if out := h.ok("DELETE", "/api/routerusage/unifi", "", 200); out["connected"] != false {
+		t.Fatalf("after forgetting = %v", out)
+	}
+	h.expect("POST", "/api/routerusage/unifi/enabled", `{"enabled":true}`, 404)
+	h.expect("POST", "/api/routerusage/unifi", "{bad", 400)
+}
+
+func TestWithoutAReaderTheUniFiEndpointsSaySo(t *testing.T) {
+	h := newHarness(t)
+	h.expect("POST", "/api/routerusage/unifi", `{"base_url":"https://192.0.2.10","username":"a","password":"b"}`, 404)
+	h.expect("POST", "/api/routerusage/unifi/enabled", `{"enabled":true}`, 404)
+	h.expect("DELETE", "/api/routerusage/unifi", "", 404)
+}
+
+func TestUniFiConnectRefusesCredentialsTheStoreWouldNotAccept(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	h.srv.RouterUsage = &fakeUsage{}
+	srv := unifiController(t, "ro", "pw")
+	// The controller accepts it, but the store will not keep a username
+	// with a control character in it.
+	h.expect("POST", "/api/routerusage/unifi", fmt.Sprintf(`{"base_url":%q,"username":"ro","password":"pw","site":"a\nb"}`, srv.URL), 400)
+	if _, ok := h.srv.Secrets.UniFi(); ok {
+		t.Fatal("it was stored anyway")
+	}
+}
+
+func TestUniFiReportsAControllerItCouldNotSave(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	h.srv.RouterUsage = &fakeUsage{}
+	srv := unifiController(t, "ro", "pw")
+	wedgeSecrets(t, h)
+	h.expect("POST", "/api/routerusage/unifi", fmt.Sprintf(`{"base_url":%q,"username":"ro","password":"pw"}`, srv.URL), 500)
+}
+
+func TestUniFiChangesThatCouldNotBeSavedAreReported(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	h.srv.RouterUsage = &fakeUsage{}
+	srv := unifiController(t, "ro", "pw")
+	h.ok("POST", "/api/routerusage/unifi", fmt.Sprintf(`{"base_url":%q,"username":"ro","password":"pw"}`, srv.URL), 200)
+	wedgeSecrets(t, h)
+	h.expect("POST", "/api/routerusage/unifi/enabled", `{"enabled":false}`, 500)
+	h.expect("DELETE", "/api/routerusage/unifi", "", 500)
 }

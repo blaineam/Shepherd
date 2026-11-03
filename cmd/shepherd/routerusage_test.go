@@ -123,3 +123,65 @@ func TestRouterUsageStaysIdleUntilItIsConnectedAndSwitchedOn(t *testing.T) {
 		t.Fatalf("status after forgetting = %+v", st)
 	}
 }
+
+// A UniFi controller keeps real counters, so when both are connected it
+// is the one that runs.
+func TestAControllerWinsOverAnEeroSession(t *testing.T) {
+	sec := testSecrets(t)
+	reg := devices.New(devices.Options{NodeID: "test", Vendor: func(string) string { return "" }})
+	store := traffic.NewStore(traffic.Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := startRouterUsage(ctx, sec, reg, store, nil)
+	defer m.Stop()
+
+	// eero alone.
+	if _, err := sec.SetEero(secrets.Eero{Token: "eero-token-abc", NetworkID: "3001", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	m.Reload()
+	if st := m.Status(); st.Source != "eero" {
+		t.Fatalf("with only eero = %+v", st)
+	}
+
+	// Add a controller and it takes over, with counters rather than rates.
+	if _, err := sec.SetUniFi(secrets.UniFi{BaseURL: "https://192.0.2.10", Username: "ro", Password: "pw", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	m.Reload()
+	st := m.Status()
+	if st.Source != "unifi" || st.Estimated {
+		t.Fatalf("with both connected = %+v, want unifi and not estimated", st)
+	}
+
+	// Switched off, eero takes over again.
+	if _, err := sec.SetUniFiEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	m.Reload()
+	if st := m.Status(); st.Source != "eero" {
+		t.Fatalf("with the controller off = %+v", st)
+	}
+}
+
+func TestAControllerAddressThatCannotBeUsedIsReported(t *testing.T) {
+	sec := testSecrets(t)
+	// Stored directly, since the portal would have refused it.
+	if _, err := sec.SetUniFi(secrets.UniFi{BaseURL: "https://192.0.2.10", Username: "ro", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sec.SetEeroNetwork("x"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := startRouterUsage(ctx, sec, testRegistry(), traffic.NewStore(traffic.Options{}), nil)
+	defer m.Stop()
+	if st := m.Status(); st.Source != "unifi" {
+		t.Fatalf("a usable controller did not start: %+v", st)
+	}
+}
+
+func testRegistry() *devices.Registry {
+	return devices.New(devices.Options{NodeID: "test", Vendor: func(string) string { return "" }})
+}

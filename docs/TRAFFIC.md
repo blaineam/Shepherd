@@ -127,6 +127,33 @@ never automatic. Running it twice changes nothing the second time.
 `POST /api/routerusage/names` takes `dry_run` and `overwrite_names` and returns the same report the
 import does.
 
+### UniFi
+
+A UniFi Network controller keeps **real byte counters** per client, so it is a `KindCounters`
+source: differencing consecutive reads is exact, and none of eero's sampling error applies. If you
+have the choice, this is the one to use.
+
+Connecting one is a single form -- a controller address, an account on it and the site -- because
+unlike eero there is no verification code. **A read-only account is enough**; Shepherd only reads.
+The credentials are checked against the controller before they are stored, so a typo is a message
+on the screen rather than a collector that never works, and the password is kept in `secrets.json`
+and never returned by any endpoint.
+
+Two shapes of controller exist and both work. A UniFi OS console (a Dream Machine, a Cloud
+Gateway, a UDR) answers under `/proxy/network` and wants a CSRF token; a self-hosted Network
+Application answers directly. Which one is in front is discovered at login rather than configured.
+
+The counters come from `stat/sta`, the endpoint the controller's own web interface uses:
+Ubiquiti's documented API lists clients but does not expose their traffic. **Mind the direction** --
+the controller reports from its own point of view, so its `tx_bytes` is what it sent *to* the
+client, which is that device's download.
+
+Controllers ship with a self-signed certificate, so a LAN address usually needs **Accept its
+self-signed certificate**. It is off unless the owner turns it on.
+
+When both a controller and an eero are connected, the controller wins: its numbers are
+measurements and eero's are estimates.
+
 ### Adding another router
 
 A new source is one type with three methods -- `Name`, `Kind` and `Poll` -- plus a constructor.

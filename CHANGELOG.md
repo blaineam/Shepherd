@@ -22,6 +22,12 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   upload bar, and a trend line per busy device.
 
 ### Added
+- **UniFi as a bandwidth source.** A UniFi Network controller keeps real byte counters per client,
+  so unlike eero its figures are measurements rather than sampled estimates, and when both are
+  connected the controller wins. Connecting one is a single form (address, a read-only account,
+  site) with no verification code; the credentials are checked against the controller before they
+  are stored. Both a UniFi OS console and a self-hosted Network Application work, discovered at
+  login. See [docs/TRAFFIC.md](docs/TRAFFIC.md).
 - **Per-device bandwidth read from your router**, for networks where Watch mode cannot run. A new
   `internal/routerusage` package reads what the router already knows and records it as the same
   per-device byte counts Watch mode produces, so the Bandwidth screen, the per-device chart and the

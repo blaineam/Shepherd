@@ -23,6 +23,14 @@ import (
 // the Manager is returned so the portal can restart it when they do.
 func startRouterUsage(ctx context.Context, sec *secrets.Store, reg *devices.Registry, store *traffic.Store, watchEngine *watch.Engine) *routerusage.Manager {
 	build := func() (*routerusage.Collector, bool, error) {
+		// A UniFi controller keeps real byte counters, so it wins over
+		// eero's sampled rates when both are connected and on.
+		if src, ok, err := unifiSource(sec); ok || err != nil {
+			if err != nil {
+				return nil, false, err
+			}
+			return newCollector(src, routerusage.UniFiNeedsSignIn, reg, store, watchEngine), true, nil
+		}
 		e, ok := sec.Eero()
 		if !ok || !e.Enabled || e.NetworkID == "" {
 			return nil, false, nil
@@ -40,18 +48,42 @@ func startRouterUsage(ctx context.Context, sec *secrets.Store, reg *devices.Regi
 		if !resumed {
 			return nil, false, nil // the token was cleared from under us
 		}
-		return routerusage.New(routerusage.Options{
-			Source:      routerusage.NewEero(client, e.NetworkID),
-			Recorder:    store,
-			Resolve:     resolveByMAC(reg),
-			Skip:        skipWatched(watchEngine),
-			NeedsSignIn: routerusage.EeroNeedsSignIn,
-			Logf:        log.Printf,
-		}), true, nil
+		return newCollector(routerusage.NewEero(client, e.NetworkID), routerusage.EeroNeedsSignIn, reg, store, watchEngine), true, nil
 	}
 	m := routerusage.NewManager(ctx, build, log.Printf)
 	m.Reload()
 	return m
+}
+
+// unifiSource builds the UniFi source, if the owner has connected a
+// controller and left it on. ok is false when they have not.
+func unifiSource(sec *secrets.Store) (routerusage.Source, bool, error) {
+	u, ok := sec.UniFi()
+	if !ok || !u.Enabled {
+		return nil, false, nil
+	}
+	src, err := routerusage.NewUniFi(routerusage.UniFiConfig{
+		BaseURL:         u.BaseURL,
+		Username:        u.Username,
+		Password:        u.Password,
+		Site:            u.Site,
+		AllowSelfSigned: u.AllowSelfSigned,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return src, true, nil
+}
+
+func newCollector(src routerusage.Source, needsSignIn func(error) bool, reg *devices.Registry, store *traffic.Store, watchEngine *watch.Engine) *routerusage.Collector {
+	return routerusage.New(routerusage.Options{
+		Source:      src,
+		Recorder:    store,
+		Resolve:     resolveByMAC(reg),
+		Skip:        skipWatched(watchEngine),
+		NeedsSignIn: needsSignIn,
+		Logf:        log.Printf,
+	})
 }
 
 // resolveByMAC turns a router's MAC into the device the registry knows by

@@ -18,7 +18,10 @@ export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {
   // What the owner has typed so far. The Bandwidth screen polls every two
   // seconds, and a repaint replaces the input element, so without this the
   // field empties itself under them mid-word.
-  const draft = { login: '', code: '' };
+  const draft = { login: '', code: '', url: '', user: '', pass: '', site: '' };
+  // Which router the owner is setting up, before one is connected.
+  let kind = 'eero';
+  let selfSigned = false;
   // The name sync: null when idle, otherwise the preview awaiting a yes.
   let names = null;
   let overwrite = false;
@@ -125,6 +128,49 @@ export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {
     return wrap;
   }
 
+  // ---------------------------------------------------------------- unifi
+  // A controller needs no verification code, just an account on it, so
+  // this is one form. A read-only account is enough; Shepherd only reads.
+  function unifiForm() {
+    const form = el('form', 'ru-form ru-grid');
+    const url = field('url', { type: 'text', placeholder: 'https://192.0.2.10 or https://unifi.example.com:8443', required: true });
+    const user = field('user', { type: 'text', placeholder: 'controller username', autocomplete: 'username', required: true });
+    const pass = field('pass', { type: 'password', placeholder: 'password', autocomplete: 'current-password', required: true });
+    const site = field('site', { type: 'text', placeholder: 'site (default)' });
+    const over = el('label', 'switch');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = selfSigned;
+    box.addEventListener('change', () => { selfSigned = box.checked; });
+    over.append(box, el('span', '', 'Accept its self-signed certificate'));
+    const go = el('button', '', 'Connect');
+    go.disabled = busy;
+    form.append(url, user, pass, site, over, go);
+    form.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      run(async () => {
+        router = await mgmt.unifiConnect({
+          base_url: url.value.trim(), username: user.value.trim(),
+          password: pass.value, site: site.value.trim(), allow_self_signed: selfSigned,
+        });
+        draft.url = ''; draft.user = ''; draft.pass = ''; draft.site = '';
+        notify('Shepherd is now reading bandwidth from your UniFi controller');
+        onChanged();
+      });
+    });
+    return form;
+  }
+
+  function kindPicker() {
+    const wrap = el('div', 'ru-kinds');
+    for (const [id, label] of [['eero', 'eero'], ['unifi', 'UniFi']]) {
+      const b = button(label, id === kind ? 'primary' : 'ghost', () => { kind = id; names = null; paint(); });
+      b.disabled = busy;
+      wrap.append(b);
+    }
+    return wrap;
+  }
+
   // --------------------------------------------------------- device names
   // eero already knows what the household calls each device, and the kept
   // sign-in means asking costs no new verification code. The owner's own
@@ -182,15 +228,16 @@ export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {
   // ------------------------------------------------------------ connected
   function controls() {
     const wrap = el('div', 'ru-acts');
+    const isUniFi = router.source === 'unifi';
     const toggle = button(router.enabled ? 'Stop reading' : 'Start reading', router.enabled ? 'ghost' : 'primary', () =>
       run(async () => {
-        router = await mgmt.routerUsageEnabled(!router.enabled);
+        router = isUniFi ? await mgmt.unifiEnabled(!router.enabled) : await mgmt.routerUsageEnabled(!router.enabled);
         onChanged();
       }));
     toggle.disabled = busy;
     const forget = button('Disconnect', 'ghost', () => run(async () => {
-      router = await mgmt.routerUsageForget();
-      notify('The eero sign-in has been forgotten');
+      router = isUniFi ? await mgmt.unifiForget() : await mgmt.routerUsageForget();
+      notify(isUniFi ? 'The controller has been forgotten' : 'The eero sign-in has been forgotten');
       onChanged();
     }));
     forget.disabled = busy;
@@ -215,10 +262,18 @@ export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {
         root.append(el('p', 'muted small', 'Signing in again keeps the network you already chose.'), signInForm());
         return;
       }
-      root.append(nameSync());
+      // Syncing names is eero's; UniFi's client list has no profiles.
+      if (router.source !== 'unifi') root.append(nameSync());
       return;
     }
     if (!signin) {
+      root.append(kindPicker());
+      if (kind === 'unifi') {
+        root.append(el('p', 'muted small ru-note',
+          'A UniFi controller keeps real byte counts per device, so its figures are measurements rather than estimates. A read-only account on the controller is enough.'));
+        root.append(unifiForm());
+        return;
+      }
       root.append(signInForm());
     } else if (!signin.networks) {
       root.append(codeForm());

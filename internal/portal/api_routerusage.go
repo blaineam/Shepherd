@@ -3,6 +3,7 @@
 package portal
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -34,6 +35,15 @@ func (s *Server) routerUsageJSON() map[string]any {
 		out["source"] = "eero"
 		out["network"] = e.NetworkID
 		out["enabled"] = e.Enabled
+	}
+	// A UniFi controller keeps real byte counters, so when both are
+	// connected it is the one in effect, and the one the screen shows.
+	if u, ok := s.Secrets.UniFi(); ok {
+		out["connected"] = true
+		out["source"] = "unifi"
+		out["network"] = u.Site
+		out["enabled"] = u.Enabled
+		out["controller"] = u.BaseURL
 	}
 	if s.RouterUsage != nil {
 		out["status"] = s.RouterUsage.Status()
@@ -220,4 +230,93 @@ func (s *Server) syncRouterNames(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, toImportReport(rep))
+}
+
+// ---- UniFi ------------------------------------------------------------------
+
+// A UniFi controller needs no verification code, just an account on the
+// controller, so connecting one is a single form rather than eero's
+// two-step sign-in. A read-only account is enough: nothing here writes to
+// the controller.
+
+func (s *Server) connectUniFi(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		BaseURL         string `json:"base_url"`
+		Username        string `json:"username"`
+		Password        string `json:"password"`
+		Site            string `json:"site"`
+		AllowSelfSigned bool   `json:"allow_self_signed"`
+	}
+	if !decode(w, r, &b, smallBody) {
+		return
+	}
+	if s.RouterUsage == nil {
+		notFound(w, "this build cannot read bandwidth from a router")
+		return
+	}
+	cfg := routerusage.UniFiConfig{
+		BaseURL: b.BaseURL, Username: b.Username, Password: b.Password,
+		Site: b.Site, AllowSelfSigned: b.AllowSelfSigned,
+	}
+	src, err := routerusage.NewUniFi(cfg)
+	if err != nil {
+		bad(w, err.Error())
+		return
+	}
+	// Check it before storing it, so a typo is a message here rather than
+	// a collector that never works.
+	if _, err := src.Poll(r.Context()); err != nil {
+		bad(w, err.Error())
+		return
+	}
+	if _, err := s.Secrets.SetUniFi(secrets.UniFi{
+		BaseURL: b.BaseURL, Username: b.Username, Password: b.Password,
+		Site: b.Site, AllowSelfSigned: b.AllowSelfSigned, Enabled: true,
+	}); err != nil {
+		if errors.Is(err, secrets.ErrInvalid) {
+			bad(w, err.Error())
+			return
+		}
+		serverFault(w, "the controller could not be saved")
+		return
+	}
+	s.RouterUsage.Reload()
+	writeJSON(w, s.routerUsageJSON())
+}
+
+func (s *Server) setUniFiEnabled(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !decode(w, r, &b, smallBody) {
+		return
+	}
+	if s.RouterUsage == nil {
+		notFound(w, "this build cannot read bandwidth from a router")
+		return
+	}
+	ok, err := s.Secrets.SetUniFiEnabled(b.Enabled)
+	if err != nil {
+		serverFault(w, "the setting could not be saved")
+		return
+	}
+	if !ok {
+		notFound(w, "no controller is connected")
+		return
+	}
+	s.RouterUsage.Reload()
+	writeJSON(w, s.routerUsageJSON())
+}
+
+func (s *Server) forgetUniFi(w http.ResponseWriter, r *http.Request) {
+	if s.RouterUsage == nil {
+		notFound(w, "this build cannot read bandwidth from a router")
+		return
+	}
+	if err := s.Secrets.ClearUniFi(); err != nil {
+		serverFault(w, "the controller could not be forgotten")
+		return
+	}
+	s.RouterUsage.Reload()
+	writeJSON(w, s.routerUsageJSON())
 }

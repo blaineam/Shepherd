@@ -621,6 +621,9 @@ func (s *Server) routes() {
 	h("POST /api/routerusage/enabled", s.setRouterUsageEnabled)
 	h("DELETE /api/routerusage", s.forgetRouterUsage)
 	h("POST /api/routerusage/names", s.syncRouterNames)
+	h("POST /api/routerusage/unifi", s.connectUniFi)
+	h("POST /api/routerusage/unifi/enabled", s.setUniFiEnabled)
+	h("DELETE /api/routerusage/unifi", s.forgetUniFi)
 	h("POST /api/import/csv/preview", s.importCSVPreview)
 	h("POST /api/import/csv/apply", s.importCSVApply)
 

@@ -1178,3 +1178,6 @@ button.tf-trend { cursor: pointer; } button.tf-trend:hover { border-color: var(-
 .ru-names { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .ru-sub { margin: 0 0 6px; font: 600 14px var(--sans); }
 .ru-names .switch { margin: 0 0 12px; }
+.ru-kinds { display: flex; gap: 8px; margin: 0 0 12px; }
+.ru-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); align-items: center; }
+.ru-grid .switch, .ru-grid button { grid-column: 1 / -1; justify-self: start; }

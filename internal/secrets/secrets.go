@@ -216,12 +216,59 @@ func (e Eero) validate() error {
 	return checkField("eero network id", e.NetworkID, true)
 }
 
+// UniFi is a UniFi Network controller Shepherd reads per-device byte
+// counters from. Unlike the eero session this is a username and password
+// the owner holds; a read-only controller account is enough.
+type UniFi struct {
+	BaseURL         string `json:"base_url"`
+	Username        string `json:"username"`
+	Password        string `json:"password"`
+	Site            string `json:"site"`
+	AllowSelfSigned bool   `json:"allow_self_signed"`
+	Enabled         bool   `json:"enabled"`
+	Meta
+}
+
+// Configured reports whether a controller is actually set.
+func (u UniFi) Configured() bool { return u.BaseURL != "" }
+
+// String never includes the password.
+func (u UniFi) String() string {
+	if !u.Configured() {
+		return "unifi controller (not set)"
+	}
+	return fmt.Sprintf("unifi controller %s (site %s, enabled %v, from %s)", u.BaseURL, u.Site, u.Enabled, u.Source)
+}
+
+// GoString redacts the same way for %#v.
+func (u UniFi) GoString() string { return u.String() }
+
+func (u UniFi) validate() error {
+	if u.BaseURL == "" {
+		return fmt.Errorf("%w: the controller address is required", ErrInvalid)
+	}
+	if !strings.HasPrefix(u.BaseURL, "http://") && !strings.HasPrefix(u.BaseURL, "https://") {
+		return fmt.Errorf("%w: the controller address must start with http:// or https://", ErrInvalid)
+	}
+	if u.Username == "" {
+		return fmt.Errorf("%w: the controller username is required", ErrInvalid)
+	}
+	for name, v := range map[string]string{"controller address": u.BaseURL, "username": u.Username, "site": u.Site} {
+		if err := checkField(name, v, true); err != nil {
+			return err
+		}
+	}
+	// A password may contain spaces, never a control character.
+	return checkField("password", u.Password, false)
+}
+
 type file struct {
 	Version int `json:"version"`
 	// A nil record means "never owned": shepherd.toml may still seed it.
 	DNSProvider *DNSProvider `json:"dns_provider,omitempty"`
 	SMTP        *SMTP        `json:"smtp,omitempty"`
 	Eero        *Eero        `json:"eero,omitempty"`
+	UniFi       *UniFi       `json:"unifi,omitempty"`
 }
 
 // Store owns secrets.json. It is safe for concurrent use. An empty path
@@ -271,6 +318,11 @@ func Open(path string) (*Store, error) {
 	if e := f.Eero; e != nil && e.Configured() {
 		if err := e.validate(); err != nil {
 			return nil, fmt.Errorf("%s: eero: %w", path, err)
+		}
+	}
+	if u := f.UniFi; u != nil && u.Configured() {
+		if err := u.validate(); err != nil {
+			return nil, fmt.Errorf("%s: unifi: %w", path, err)
 		}
 	}
 	s.data = f
@@ -502,6 +554,51 @@ func (s *Store) ClearEero() error {
 	})
 }
 
+// UniFi returns the stored controller and whether one is actually set.
+func (s *Store) UniFi() (UniFi, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.data.UniFi == nil {
+		return UniFi{}, false
+	}
+	u := *s.data.UniFi
+	return u, u.Configured()
+}
+
+// SetUniFi validates and saves u as the owner's choice from the portal.
+func (s *Store) SetUniFi(u UniFi) (UniFi, error) {
+	u.BaseURL = strings.TrimRight(strings.TrimSpace(u.BaseURL), "/")
+	u.Username = strings.TrimSpace(u.Username)
+	u.Site = strings.TrimSpace(u.Site)
+	if u.Site == "" {
+		u.Site = "default"
+	}
+	if err := u.validate(); err != nil {
+		return UniFi{}, err
+	}
+	u.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return u, s.mutate(func(f *file) { f.UniFi = &u })
+}
+
+// SetUniFiEnabled flips the switch without disturbing the credentials.
+// It returns false when no controller is stored.
+func (s *Store) SetUniFiEnabled(on bool) (bool, error) {
+	u, ok := s.UniFi()
+	if !ok {
+		return false, nil
+	}
+	u.Enabled = on
+	u.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return true, s.mutate(func(f *file) { f.UniFi = &u })
+}
+
+// ClearUniFi forgets the controller and its credentials.
+func (s *Store) ClearUniFi() error {
+	return s.mutate(func(f *file) {
+		f.UniFi = &UniFi{Meta: Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}}
+	})
+}
+
 // EeroTokenStore adapts the stored session to the eero client's TokenStore,
 // so a signed-in client can keep or resume its token across restarts. Saving
 // a token keeps the stored network and switch.
@@ -549,6 +646,10 @@ func (s *Store) mutate(fn func(*file), want ...func() bool) error {
 	if next.Eero != nil {
 		e := *next.Eero
 		next.Eero = &e
+	}
+	if next.UniFi != nil {
+		u := *next.UniFi
+		next.UniFi = &u
 	}
 	fn(&next)
 	for _, w := range want {

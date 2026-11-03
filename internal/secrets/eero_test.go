@@ -184,3 +184,74 @@ func TestSetEeroConnectionRecordsBothInOneWrite(t *testing.T) {
 		t.Fatalf("a refused write changed the stored network: %+v", e)
 	}
 }
+
+func TestUniFiControllerIsStoredSwitchedAndForgotten(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	s := openAt(t, path)
+	if _, ok := s.UniFi(); ok {
+		t.Fatal("a fresh store holds no controller")
+	}
+	got, err := s.SetUniFi(UniFi{BaseURL: " https://192.0.2.10:8443/ ", Username: " readonly ", Password: "pw with spaces", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.BaseURL != "https://192.0.2.10:8443" || got.Username != "readonly" || got.Site != "default" {
+		t.Fatalf("saved %+v, want it trimmed with a default site", got)
+	}
+	if again, ok := openAt(t, path).UniFi(); !ok || again.Password != "pw with spaces" {
+		t.Fatalf("after reload = %+v, %v", again, ok)
+	}
+	if ok, err := s.SetUniFiEnabled(false); !ok || err != nil {
+		t.Fatalf("= %v, %v", ok, err)
+	}
+	if u, _ := s.UniFi(); u.Enabled || u.Password == "" {
+		t.Fatalf("switching off disturbed the credentials: %+v", u)
+	}
+	if err := s.ClearUniFi(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.UniFi(); ok {
+		t.Fatal("the controller is still stored")
+	}
+	if ok, err := s.SetUniFiEnabled(true); ok || err != nil {
+		t.Fatalf("with nothing stored = %v, %v", ok, err)
+	}
+}
+
+func TestUniFiRefusesWhatItCouldNotUse(t *testing.T) {
+	s := openAt(t, "")
+	for name, u := range map[string]UniFi{
+		"no address":        {Username: "a"},
+		"no scheme":         {BaseURL: "192.0.2.10", Username: "a"},
+		"no username":       {BaseURL: "https://192.0.2.10"},
+		"control character": {BaseURL: "https://192.0.2.10", Username: "a\nb"},
+		"newline password":  {BaseURL: "https://192.0.2.10", Username: "a", Password: "x\ny"},
+	} {
+		if _, err := s.SetUniFi(u); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+}
+
+func TestUniFiNeverFormatsItsPassword(t *testing.T) {
+	var unset UniFi
+	if !strings.Contains(unset.String(), "not set") {
+		t.Fatalf("unset = %q", unset.String())
+	}
+	u := UniFi{BaseURL: "https://192.0.2.10", Username: "ro", Password: "super-secret", Site: "default"}
+	for _, out := range []string{u.String(), u.GoString()} {
+		if strings.Contains(out, "super-secret") {
+			t.Fatalf("the password leaked into %q", out)
+		}
+	}
+}
+
+func TestAStoredControllerThatIsNotValidRefusesToLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	if err := os.WriteFile(path, []byte(`{"version":1,"unifi":{"base_url":"nonsense","username":"a"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path); err == nil {
+		t.Fatal("Open accepted an unusable controller")
+	}
+}
