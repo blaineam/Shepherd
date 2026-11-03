@@ -12,6 +12,14 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+- **Releases are signed.** The Ed25519 release key pair exists now: the public half is built into
+  Shepherd (`update.ReleasePublicKeyB64`) and the private half is the `SHEPHERD_SIGNING_KEY`
+  repository secret, so both workflows write `SHA256SUMS.sig` beside the checksums and a running
+  Shepherd verifies it before applying an update. Until now every release was published unsigned and
+  self-update could only report that a newer version existed. A binary built before this commit has
+  no key built in and still refuses to apply anything; it has to be replaced by hand once.
+
 ### Changed
 - **Watch mode is deprecated.** Per-device bandwidth now comes from the router over its own API
   (eero and UniFi), which measures both directions instead of estimating downloads, puts nothing in
