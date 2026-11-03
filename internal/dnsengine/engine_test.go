@@ -380,3 +380,65 @@ func TestCacheExpiresAndSkipsErrors(t *testing.T) {
 		t.Error("entry should have expired")
 	}
 }
+
+// A negative answer with no SOA cannot be cached by the client, so a
+// device that keeps asking never stops. One solar inverter asked for the
+// same filtered AAAA forty-eight times a second until this was fixed.
+func TestEverySynthesizedNegativeAnswerCarriesAnSOA(t *testing.T) {
+	soaOf := func(t *testing.T, m *dns.Msg) *dns.SOA {
+		t.Helper()
+		if len(m.Ns) != 1 {
+			t.Fatalf("authority section = %v, want one SOA so the answer can be cached", m.Ns)
+		}
+		soa, ok := m.Ns[0].(*dns.SOA)
+		if !ok {
+			t.Fatalf("authority record = %T, want *dns.SOA", m.Ns[0])
+		}
+		if soa.Minttl == 0 || soa.Hdr.Ttl == 0 {
+			t.Fatalf("a zero TTL caches nothing: %+v", soa)
+		}
+		return soa
+	}
+
+	e := &Engine{Filter: NewFilter(), Cache: NewCache(4), Log: NewQueryLog(8), Stats: NewStats()}
+
+	// The AAAA filter's NODATA.
+	e.FilterAAAA = func() bool { return true }
+	q := dns.Question{Name: "clients3.google.com.", Qtype: dns.TypeAAAA, Qclass: dns.ClassINET}
+	req := new(dns.Msg)
+	req.SetQuestion(q.Name, dns.TypeAAAA)
+	rec := udpWriter()
+	e.ServeDNS(rec, req)
+	if len(rec.msgs) != 1 {
+		t.Fatalf("replies = %d, want one", len(rec.msgs))
+	}
+	got := rec.msgs[0]
+	if got.Rcode != dns.RcodeSuccess || len(got.Answer) != 0 {
+		t.Fatalf("reply = %v, want NODATA", got)
+	}
+	if soa := soaOf(t, got); soa.Hdr.Name != q.Name {
+		t.Fatalf("SOA owner = %q, want the question's name", soa.Hdr.Name)
+	}
+
+	// A blocked name, as NXDOMAIN and as a zero-address answer.
+	e.FilterAAAA = nil
+	nx := e.sinkhole(req, q, true)
+	if nx.Rcode != dns.RcodeNameError {
+		t.Fatalf("rcode = %v", dns.RcodeToString[nx.Rcode])
+	}
+	soaOf(t, nx)
+
+	// A blocked type that gets neither an A nor an AAAA is a NODATA too.
+	mx := dns.Question{Name: "ads.example.", Qtype: dns.TypeMX, Qclass: dns.ClassINET}
+	mreq := new(dns.Msg)
+	mreq.SetQuestion(mx.Name, dns.TypeMX)
+	soaOf(t, e.sinkhole(mreq, mx, false))
+
+	// A sinkholed A still answers with the zero address, not an SOA.
+	aq := dns.Question{Name: "ads.example.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
+	areq := new(dns.Msg)
+	areq.SetQuestion(aq.Name, dns.TypeA)
+	if a := e.sinkhole(areq, aq, false); len(a.Answer) != 1 || len(a.Ns) != 0 {
+		t.Fatalf("a sinkholed A = %v, want the zero address and no SOA", a)
+	}
+}

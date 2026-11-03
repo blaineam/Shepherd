@@ -56,6 +56,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Fixed
 
+- **Filtered AAAA answers, and blocked names, could make a device query without end.** A synthesized
+  NODATA or NXDOMAIN carried no SOA in its authority section, and RFC 2308 negative caching needs
+  one: with nothing to cache against, a client that prefers IPv6 just asks again. A solar inverter
+  here asked for the same filtered `AAAA` **forty-eight times a second**, indefinitely, and never
+  fell back to IPv4. Every synthesized negative answer now carries an SOA with a one-minute
+  negative TTL, which matches how often the IPv6 probe runs.
+
 - The Bandwidth charts overflowed the left edge of their card on a phone. An axis label wider than
   the gutter ("100 Mbit/s") was positioned from the right with no left bound, so it grew out of the
   card; it is now bounded on both sides, the gutter is wide enough to hold it, and the live, trend
