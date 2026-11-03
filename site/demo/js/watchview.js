@@ -1,4 +1,4 @@
-// The Watch screen: what Watch mode is doing right now, how much traffic
+// The Watch mode section of the Bandwidth screen: what Watch mode is doing right now, how much traffic
 // is actually moving through Shepherd, which devices are watched and why
 // the rest are not, and the kill switch. It polls while visible so the
 // throughput numbers are live, and stops the moment the screen is hidden.
@@ -14,7 +14,7 @@ import {
 
 const POLL_MS = 2000;
 
-export function createWatch({ root, mgmt, notify, onOpenDevice = null }) {
+export function createWatch({ root, mgmt, notify, onOpenDevice = null, embedded = false }) {
   let status = null;
   let loadError = null;
   let timer = 0;
@@ -22,15 +22,25 @@ export function createWatch({ root, mgmt, notify, onOpenDevice = null }) {
   let showAll = false;
 
   root.replaceChildren();
-  const head = el('div', 'pg-head stack');
-  const title = el('h2', 'pg-title');
-  title.append(el('span', '', 'Watch'));
-  head.append(title, el('p', 'pg-sub muted', 'Watch mode steers each device’s outbound traffic through Shepherd on its way to your router, so Shepherd sees what a device actually connects to even when it never asks Shepherd to look up a name. It only ever sees the outbound half: what a device sends, not what it downloads. Nothing here blocks anything.'));
   const body = el('div', 'wm-body');
-  root.append(head, body);
+  if (embedded) {
+    const title = el('h3', 'sec-t', 'Watch mode');
+    title.append(el('span', 'flag-tag', 'Deprecated'));
+    root.append(
+      title,
+      el('p', 'muted small sec-sub', 'Watch mode steers each device’s outbound traffic through Shepherd on its way to your router, so Shepherd sees connections that never ask it for a name. Nothing here blocks anything.'),
+      el('p', 'flag-note', 'Read your bandwidth from your router instead, above: it measures downloads as well as uploads, puts nothing in the path of your traffic, and works on networks where steering cannot. Watch mode is kept for setups already using it and gets no new features.'),
+      body,
+    );
+  } else {
+    const head = el('div', 'pg-head stack');
+    const title = el('h2', 'pg-title');
+    title.append(el('span', '', 'Watch'));
+    head.append(title);
+    root.append(head, body);
+  }
 
   const statusCard = el('section', 'card');
-  const liveCard = el('section', 'card');
   const devicesCard = el('section', 'card');
   const historyCard = el('section', 'card');
 
@@ -108,26 +118,6 @@ export function createWatch({ root, mgmt, notify, onOpenDevice = null }) {
     } catch (e) { notify(e.message); }
   }
 
-  function paintLive() {
-    liveCard.replaceChildren(cardHead('Traffic through Shepherd'));
-    const st = status.stats || {};
-    const tiles = el('div', 'wm-tiles');
-    const tile = (label, value, sub) => {
-      const t = el('div', 'wm-tile');
-      t.append(el('div', 'wm-tile-v', value), el('div', 'wm-tile-k', label));
-      if (sub) t.append(el('div', 'wm-tile-s muted', sub));
-      tiles.append(t);
-    };
-    tile('Relayed now', fmtBitsPerSecond(st.bytes_per_second), fmtPacketsPerSecond(st.packets_per_second));
-    tile('Relayed in total', fmtTotalBytes(st.bytes_relayed), Number(st.frames_relayed || 0).toLocaleString() + ' packets');
-    tile('Devices watched', String(Number(status.steered) || 0), (summarize(status.devices).unhealthy || 0) + ' with no traffic yet');
-    liveCard.append(tiles);
-    if (Number(st.frames_for_shepherd_itself)) {
-      liveCard.append(el('p', 'muted small wm-note', Number(st.frames_for_shepherd_itself).toLocaleString() + ' packets were left alone because a watched device was talking to Shepherd itself (a DNS lookup, this portal) rather than to the internet.'));
-    }
-    liveCard.append(el('p', 'muted small wm-note', 'This is the outbound direction only, so it is always less than a device’s real traffic: downloads come straight back from your router and never pass through Shepherd.'));
-  }
-
   // One device row. It is a button when the Devices screen can be opened
   // on that device, the same pattern the Vulnerabilities screen uses, so
   // the whole row is the target rather than a link inside it.
@@ -142,7 +132,7 @@ export function createWatch({ root, mgmt, notify, onOpenDevice = null }) {
     const main = el('div', 'lr-main');
     main.append(el('div', 'lr-name', d.name || d.device_id || 'Unknown device'));
     if (withRate) {
-      const parts = [fmtBitsPerSecond(d.bytes_per_second), fmtPacketsPerSecond(d.packets_per_second), fmtTotalBytes(d.bytes_relayed) + ' so far'];
+      const parts = [fmtBitsPerSecond(d.bytes_per_second) + ' up', fmtBitsPerSecond(d.rx_bytes_per_second) + ' down (est.)', fmtPacketsPerSecond(d.packets_per_second), fmtTotalBytes(d.bytes_relayed) + ' so far'];
       main.append(el('p', 'lr-desc mono', parts.join('  ·  ')));
       const addrs = (d.steered || []).map((s) => s.ip + ' · ' + s.mac).join('   ');
       if (addrs) main.append(el('p', 'lr-desc mono muted small', addrs));
@@ -218,9 +208,8 @@ export function createWatch({ root, mgmt, notify, onOpenDevice = null }) {
       return;
     }
     if (!status) return;
-    body.append(statusCard, liveCard, devicesCard, historyCard);
+    body.append(statusCard, devicesCard, historyCard);
     paintStatus();
-    paintLive();
     paintDevices();
     paintHistory();
   }
@@ -247,6 +236,7 @@ export function createWatch({ root, mgmt, notify, onOpenDevice = null }) {
   }
 
   return {
+    root,
     show() { startPolling(); return load(); },
     hide() { stopPolling(); },
   };

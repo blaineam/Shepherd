@@ -9,6 +9,8 @@ import { buildDevices, fallbackName, DEMO_GROUPS, DEMO_CATALOG, DEMO_SWITCHES, D
 import { GROUP_COLORS } from './devtypes.js';
 import { classifyAddr, isIP } from './upstreams.js';
 import { normalizeDomain, scopeKey } from './scope.js';
+import { hostBody, formatTarget, sortHosts } from './reverseproxy.js';
+import { tokenBody, relayBody } from './secrets.js';
 
 const err = (status, msg) => new ApiError(msg, status);
 const strHashDemo = (s) => { let h = 0; for (let i = 0; i < String(s).length; i++) h = (h * 31 + String(s).charCodeAt(i)) >>> 0; return h; };
@@ -35,89 +37,6 @@ const LIST_STATUS = {
   cryptojacking: { count: 1790, size_bytes: 39000, ago: 26 }, 'adult-core': { count: 411980, size_bytes: 9100000, ago: 6 }, 'gambling-core': { count: 18188, size_bytes: 402000, ago: 6 },
 };
 
-// MARKETING-SITE DEMO BUILD ADDITION: the shipped demo mgmt fake (above)
-// never implemented /api/alarms - alarmsview.js handles a 404 there
-// gracefully with an "Alarms is not available on this version" card, which
-// is correct behavior against an older real server but makes a poor first
-// impression on a marketing site built specifically to show the feature
-// off. This block is local to the marketing site's copy of this file only
-// (internal/portal/web/js/demomgmt.js, which cmd/shepherd actually embeds,
-// is untouched) and gives the Alarms screen a small, realistic synthetic
-// data set so it demonstrates the real alarm engine's UI faithfully.
-const SEVERITY_ORDER = ['info', 'low', 'medium', 'high', 'critical'];
-
-function initialAlarms(now) {
-  const mk = (id, severity, type, title, body, deviceId, state, agoMin, count = 1) => ({
-    id, severity, type, title, body, device_id: deviceId || '', state, count,
-    last_seen: new Date(now - agoMin * 60000).toISOString(),
-    first_seen: new Date(now - (agoMin + 180) * 60000).toISOString(),
-  });
-  return [
-    mk('al-1', 'critical', 'vulnerability-found', 'Anonymous FTP login allowed', 'A device accepts anonymous FTP logins on port 21.', 'dev-0003', 'new', 6),
-    mk('al-2', 'high', 'vulnerability-found', 'SMBv1 still enabled', 'A device is still answering SMBv1 negotiate requests.', 'dev-0012', 'new', 24),
-    mk('al-3', 'high', 'arp-spoof', 'Gateway MAC address changed', "The gateway's MAC address changed unexpectedly — possible ARP spoofing.", '', 'new', 48),
-    mk('al-4', 'medium', 'port-opened', 'New port opened: 23 (Telnet)', 'A device opened Telnet, a specifically risky port.', 'dev-0010', 'acknowledged', 95, 2),
-    mk('al-5', 'medium', 'new-device', 'New device joined the network', 'An unrecognized device landed in Quarantine and is waiting for review.', 'dev-0038', 'new', 12),
-    mk('al-6', 'high', 'vulnerability-found', 'Outdated OpenSSH build', 'A device is running an OpenSSH version missing a named security fix.', 'dev-0008', 'acknowledged', 210),
-    mk('al-7', 'low', 'upstream-down', 'All DNS upstreams went unhealthy', 'Every configured upstream failed health checks for about 2 minutes.', '', 'resolved', 540),
-    mk('al-8', 'info', 'upstream-recovered', 'Upstream recovered', 'tls://dns1.example.net is healthy again.', '', 'resolved', 538),
-    mk('al-9', 'medium', 'geo-block', 'Blocked a connection to a geo-blocked country', 'A device attempted a connection answered from a blocked country.', 'dev-0004', 'muted', 300, 14),
-    mk('al-10', 'low', 'wandering-shadow', 'Would have been blocked, while wandering', "A device's wandering mode let a tracker domain through unfiltered.", 'dev-0006', 'new', 20, 5),
-  ];
-}
-
-// MARKETING-SITE DEMO BUILD ADDITION: port and vulnerability scanning, and a
-// device's starting findings, matching the alarms above by device id so a
-// visitor who opens, say, dev-0012's drawer after seeing its alarm finds
-// the exact same SMBv1 finding there — the cross-feature cohesion the
-// Devices, Alarms, Ports and Vulnerabilities panels are supposed to show.
-// "Scan now" on any other device has a real (seeded, so repeatable) chance
-// of discovering something new and raising a fresh alarm for it live.
-const RISK_NOTE = {
-  21: 'FTP sends credentials and data unencrypted.', 23: 'Telnet is unencrypted and a common default-credential target.',
-  445: 'SMB exposed beyond the devices that actually need it.', 3389: 'RDP exposed on the LAN is a common ransomware entry point.',
-  5900: 'VNC is often left with a weak or no password.', 2375: 'The Docker API with no TLS/auth means anyone on the LAN can run containers.',
-};
-function strHash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
-
-function initialPortscan(now) {
-  const mk = (id, ports, agoMin) => [id, { device_id: id, last_scanned: new Date(now - agoMin * 60000).toISOString(), ports }];
-  return new Map([
-    mk('dev-0010', [{ port: 80, open: true, risky: false, risk_note: '', newly_opened: false }, { port: 23, open: true, risky: true, risk_note: RISK_NOTE[23], newly_opened: true }], 95),
-    mk('dev-0008', [{ port: 22, open: true, risky: false, risk_note: '', newly_opened: false }, { port: 9100, open: true, risky: false, risk_note: '', newly_opened: false }], 210),
-    mk('dev-0012', [{ port: 445, open: true, risky: true, risk_note: RISK_NOTE[445], newly_opened: false }], 24),
-    mk('dev-0003', [{ port: 21, open: true, risky: true, risk_note: RISK_NOTE[21], newly_opened: false }], 6),
-  ]);
-}
-
-function initialVulnscan(now) {
-  const mk = (id, findings, agoMin) => [id, { device_id: id, last_scanned: new Date(now - agoMin * 60000).toISOString(), findings: findings.map((f) => ({ active: true, resolved_at: null, ...f })) }];
-  return new Map([
-    mk('dev-0003', [{ severity: 'critical', name: 'Anonymous FTP login allowed', port: 21, description: 'The FTP server accepts the "anonymous" account with no password.', evidence: '230 Login successful (anonymous / <blank>)' }], 6),
-    mk('dev-0012', [{ severity: 'high', name: 'SMBv1 still enabled', port: 445, description: 'The device still negotiates the obsolete, insecure SMBv1 dialect.', evidence: 'SMB1 dialect "NT LM 0.12" negotiated' }], 24),
-    mk('dev-0008', [{ severity: 'high', name: 'Outdated OpenSSH build', port: 22, description: 'This OpenSSH build is missing a named security fix.', evidence: 'banner: SSH-2.0-OpenSSH_7.2' }], 210),
-  ]);
-}
-
-const DISCOVERABLE_VULNS = [
-  { severity: 'high', name: 'Outdated web server banner', port: 8080, description: 'The HTTP banner reports an end-of-life server build.', evidence: 'banner: Server: lighttpd/1.4.28' },
-  { severity: 'critical', name: 'Unauthenticated Docker API', port: 2375, description: 'The Docker remote API answers with no authentication at all.', evidence: 'GET /version succeeded with no credentials' },
-  { severity: 'medium', name: 'Unencrypted FTP control channel', port: 21, description: 'FTP credentials are sent in the clear.', evidence: 'USER/PASS observed unencrypted' },
-];
-const DISCOVERABLE_PORTS = [
-  { port: 3389, risky: true }, { port: 5900, risky: true }, { port: 2375, risky: true }, { port: 8080, risky: false }, { port: 554, risky: false },
-];
-
-function alarmMatches(a, f) {
-  if (f.min_severity && SEVERITY_ORDER.indexOf(a.severity) < SEVERITY_ORDER.indexOf(f.min_severity)) return false;
-  if (f.states && f.states.length && !f.states.includes(a.state)) return false;
-  if (f.text) {
-    const t = f.text;
-    if (!(a.title.toLowerCase().includes(t) || (a.body || '').toLowerCase().includes(t) || (a.device_id || '').toLowerCase().includes(t))) return false;
-  }
-  return true;
-}
-
 export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', now = () => Date.now() } = {}) {
   let devices = buildDevices(count, now());
   let groups = DEMO_GROUPS.map((g) => ({ ...g }));
@@ -130,19 +49,18 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
     { config: '203.0.113.53', kind: 'udp', healthy: false, rtt_ms: 0, consecutive_failures: 4, last_error: 'read udp: i/o timeout', queries: 412, errors: 380 },
   ];
   let bootstrap = ['198.51.100.2', '198.51.100.3'];
+  let proxyHosts = [
+    { id: 'rp-1', domain: 'media.example.com', target_scheme: 'http', target_host: '192.0.2.20', target_port: 8096, skip_tls_verify: false, enabled: true },
+    { id: 'rp-2', domain: 'photos.example.com', target_scheme: 'http', target_host: '192.0.2.21', target_port: 2283, skip_tls_verify: false, enabled: true },
+    { id: 'rp-3', domain: 'nas.example.com', target_scheme: 'https', target_host: '192.0.2.22', target_port: 5001, skip_tls_verify: true, allow: ['local'], hsts: true, enabled: true },
+    { id: 'rp-4', domain: 'old.wiki.example.com', target_scheme: 'http', target_host: '192.0.2.23', target_port: 3000, skip_tls_verify: false, enabled: false },
+  ];
+  let nextProxyId = 5;
+  // Secrets are write-only in demo mode too: only whether one is set is kept.
+  let dnsProvider = { provider: 'cloudflare', configured: true, source: 'portal', updated_at: new Date(now() - 9 * 86400000).toISOString(), used_by: ['reverseproxy'], providers: ['cloudflare'] };
+  let relay = { enabled: true, configured: true, active: true, host: 'smtp.example.com', port: 587, username: 'shepherd@example.com', password_set: true, from: 'shepherd@example.com', tls: 'starttls', source: 'portal', updated_at: new Date(now() - 9 * 86400000).toISOString() };
   const hist = { mode: history === 'memory' ? 'memory' : 'encrypted', locked: history === 'locked' || history === 'fresh', initialized: history !== 'fresh' };
   let lastBulk = 0;
-  // MARKETING-SITE DEMO BUILD ADDITION: see initialAlarms() above. IDs below
-  // 100 are reserved for the seeded alarms (al-1..al-10); live-created ones
-  // start at al-100 so they can never collide with a seed id.
-  let alarms = initialAlarms(now());
-  let alarmRules = [];
-  let alarmNextId = 100;
-  let lastAlarmUndo = null;
-  // MARKETING-SITE DEMO BUILD ADDITION: see initialPortscan/initialVulnscan above.
-  let portscanData = initialPortscan(now());
-  let vulnscanData = initialVulnscan(now());
-  let upstreamDownAlarm = new Map(); // upstream config -> currently-open 'upstream-down' alarm id
 
   // Watch mode, synthesized (docs/WATCH.md). The demo has no kernel and
   // no network, so this stands in for the engine: it decides each demo
@@ -183,12 +101,110 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
     st.packets_per_second = r.pps;
     st.bytes_relayed = Math.round(r.bps * secs * 0.6);
     st.packets_relayed = Math.round(r.pps * secs * 0.6);
+    st.rx_bytes_per_second = r.bps * (3 + (strHashDemo(d.id) % 9));
+    st.bytes_received_est = st.bytes_relayed * (3 + (strHashDemo(d.id) % 9));
     st.families = ['ipv4'];
     st.ipv6_reason = 'this network has no global IPv6 route (unique-local addresses only), so there is no off-link IPv6 traffic to steer';
     st.steered = [{ mac: d.macs[0], ip: (d.ips || []).find((ip) => ip.includes('.')) || '192.0.2.0', families: ['ipv4'], since: new Date(watchSince).toISOString(), healthy: r.healthy, last_verified: new Date(now() - 500).toISOString() }];
     return st;
   };
   const withWatch = (d) => ({ ...d, watch_state: watchStateFor(d) });
+
+  // Bandwidth (docs/TRAFFIC.md): the same per-device rates the Watch
+  // screen shows, with a download estimate several times the upload as a
+  // home network's is, and a deterministic history so charts look the
+  // same on every visit.
+  const downFactor = (d) => 3 + (strHashDemo(d.id) % 9);
+  function trafficStatus() {
+    const steered = devices.map((d) => [d, watchStateFor(d)]).filter(([, s]) => s.state === 'steered');
+    const rows = steered.map(([d, s]) => ({
+      device_id: d.id, name: d.name, groups: d.groups,
+      up_bytes_per_second: s.bytes_per_second, down_bytes_per_second: s.bytes_per_second * downFactor(d),
+      bytes_relayed: s.bytes_relayed, bytes_received_est: s.bytes_relayed * downFactor(d),
+    })).sort((a, b) => (b.up_bytes_per_second + b.down_bytes_per_second) - (a.up_bytes_per_second + a.down_bytes_per_second));
+    const sum = (k) => rows.reduce((n, r) => n + r[k], 0);
+    return {
+      enabled: true, measuring: watchArmed,
+      // The demo shows the reader connected and working, so the whole
+      // section is exercised: status, the switch and the name sync.
+      router: {
+        available: true, connected: true, enabled: true, source: 'eero', network: 'demo-net',
+        status: {
+          source: 'eero', enabled: true, estimated: true, interval_seconds: 30,
+          last_poll: new Date().toISOString(), devices_seen: devices.length, matched: devices.length,
+        },
+      },
+      retention: { minute_hours: 48, hour_days: 90, day_days: 0, max_bytes: 8388608 },
+      devices_tracked: devices.length,
+      live: { up_bytes_per_second: sum('up_bytes_per_second'), down_bytes_per_second: sum('down_bytes_per_second'), bytes_relayed: sum('bytes_relayed'), bytes_received_est: sum('bytes_received_est') },
+      devices: rows,
+    };
+  }
+  const trafficBucket = (from, to) => { const span = to - from; return span <= 86400000 ? 'minute' : span <= 60 * 86400000 ? 'hour' : 'day'; };
+  const bucketMs = { minute: 60000, hour: 3600000, day: 86400000 };
+  // One device's bytes in one bucket: a daily rhythm (busy evenings) on a
+  // per-device base, zero while it is "asleep".
+  const bucketBytes = (d, t, bucket) => {
+    const h = strHashDemo(d.id);
+    const hour = new Date(t).getUTCHours();
+    const rhythm = 0.25 + 0.75 * Math.max(0, Math.sin(((hour - 6) / 24) * Math.PI));
+    const noise = 0.6 + ((h * 7 + Math.floor(t / 60000)) % 13) / 15;
+    const perSec = (12000 + (h % 900000)) * 0.5;
+    const up = Math.round(perSec * rhythm * noise * (bucketMs[bucket] / 1000));
+    return { up, down: up * downFactor(d) };
+  };
+  const trafficDevicesFor = (scope) => {
+    if (!scope || scope === 'network') return devices;
+    if (scope.startsWith('group:')) {
+      const gid = scope.slice(6);
+      if (!groups.some((g) => g.id === gid)) throw err(404, 'group not found');
+      return devices.filter((d) => d.groups.includes(gid));
+    }
+    if (scope.startsWith('device:')) {
+      const d = devices.find((x) => x.id === scope.slice(7));
+      if (!d) throw err(404, 'device not found');
+      return [d];
+    }
+    throw err(404, 'unknown scope');
+  };
+  function trafficSeries(params) {
+    const to = params.to ? Date.parse(params.to) : now();
+    const from = params.from ? Date.parse(params.from) : to - 86400000;
+    const bucket = ['minute', 'hour', 'day'].includes(params.bucket) ? params.bucket : trafficBucket(from, to);
+    const devs = trafficDevicesFor(params.scope).filter((d) => watchDecide(d).state !== 'skipped');
+    const step = bucketMs[bucket];
+    const points = [];
+    for (let t = Math.floor(from / step) * step; t <= to; t += step) {
+      let up = 0; let down = 0;
+      for (const d of devs) { const b = bucketBytes(d, t, bucket); up += b.up; down += b.down; }
+      if (up || down) points.push({ time: new Date(t).toISOString(), up, down });
+    }
+    return { scope: params.scope || 'network', bucket, from: new Date(from).toISOString(), to: new Date(to).toISOString(), points };
+  }
+  function trafficTop(params) {
+    const to = params.to ? Date.parse(params.to) : now();
+    const from = params.from ? Date.parse(params.from) : to - 86400000;
+    const bucket = trafficBucket(from, to);
+    const step = bucketMs[bucket];
+    const rows = [];
+    const byGroup = {};
+    const net = { up: 0, down: 0 };
+    for (const d of devices.filter((x) => watchDecide(x).state !== 'skipped')) {
+      let up = 0; let down = 0;
+      for (let t = Math.floor(from / step) * step; t <= to; t += step) { const b = bucketBytes(d, t, bucket); up += b.up; down += b.down; }
+      if (!up && !down) continue;
+      rows.push({ device_id: d.id, name: d.name, groups: d.groups, up, down });
+      net.up += up; net.down += down;
+      for (const g of d.groups) { byGroup[g] = byGroup[g] || { group_id: g, name: gname(g), up: 0, down: 0 }; byGroup[g].up += up; byGroup[g].down += down; }
+    }
+    rows.sort((a, b) => (b.up + b.down) - (a.up + a.down));
+    const limit = Number(params.limit) || 0;
+    return {
+      from: new Date(from).toISOString(), to: new Date(to).toISOString(), network: net,
+      devices: limit > 0 ? rows.slice(0, limit) : rows,
+      groups: Object.values(byGroup).sort((a, b) => (b.up + b.down) - (a.up + a.down)),
+    };
+  }
   function watchStatus() {
     const states = devices.map(watchStateFor);
     const steered = states.filter((s) => s.state === 'steered');
@@ -212,6 +228,8 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
         frames_not_for_shepherd: 0,
         packets_per_second: sum((s) => s.packets_per_second),
         bytes_per_second: sum((s) => s.bytes_per_second),
+        rx_bytes_per_second: sum((s) => s.rx_bytes_per_second || 0),
+        bytes_received_est: sum((s) => s.bytes_received_est || 0),
       },
       devices: states,
       history: watchHistory,
@@ -226,50 +244,6 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
   const withCount = (g) => ({ ...g, count: devices.filter((d) => d.groups.includes(g.id)).length });
   const dev = (id) => { const d = devices.find((x) => x.id === id); if (!d) throw err(404, 'device not found'); return d; };
   const setDev = (id, fn) => { const i = devices.findIndex((x) => x.id === id); if (i < 0) throw err(404, 'device not found'); devices[i] = fn(devices[i]); return devices[i]; };
-  const deviceLabel = (id) => { const d = devices.find((x) => x.id === id); return d ? d.name : id; };
-
-  // MARKETING-SITE DEMO BUILD ADDITION: a new alarm a live event (a scan
-  // finding something, an upstream flapping) raises, not a seeded one.
-  function pushAlarm({ severity, type, title, body, deviceId }) {
-    const id = 'al-' + alarmNextId++;
-    const t = now();
-    alarms.unshift({
-      id, severity, type, title, body, device_id: deviceId || '', state: 'new', count: 1,
-      last_seen: new Date(t).toISOString(), first_seen: new Date(t).toISOString(),
-    });
-    return id;
-  }
-
-  // MARKETING-SITE DEMO BUILD ADDITION: makes the Alarms tab feel like a
-  // live system reacting to the network, not a frozen dataset, even if a
-  // visitor never touches the Upstreams or Devices screens. The upstream
-  // seeded unhealthy in `upstreams` above recovers on the very first tick
-  // (guaranteed, not left to chance) so something real visibly happens
-  // within a few seconds of the page loading; later ticks are random and
-  // spaced out so a longer visit doesn't get noisy. See upstreamsview.js's
-  // own 4s poll (unchanged) for why the Upstreams tab picks this up live too.
-  function flapUpstreams() {
-    const healthy = upstreams.filter((u) => u.healthy);
-    const unhealthy = upstreams.filter((u) => !u.healthy);
-    if (unhealthy.length && (healthy.length < 2 || Math.random() < 0.55)) {
-      const u = unhealthy[(Math.random() * unhealthy.length) | 0];
-      u.healthy = true; u.consecutive_failures = 0; u.last_error = '';
-      const openId = upstreamDownAlarm.get(u.config);
-      if (openId) {
-        const i = alarms.findIndex((a) => a.id === openId);
-        if (i >= 0) alarms[i] = { ...alarms[i], state: 'resolved' };
-        upstreamDownAlarm.delete(u.config);
-      }
-      pushAlarm({ severity: 'info', type: 'upstream-recovered', title: 'Upstream recovered', body: u.config + ' is healthy again.' });
-    } else if (healthy.length > 1) {
-      const u = healthy[(Math.random() * healthy.length) | 0];
-      u.healthy = false; u.consecutive_failures = (u.consecutive_failures || 0) + 1; u.last_error = 'read udp: i/o timeout';
-      const id = pushAlarm({ severity: 'high', type: 'upstream-down', title: 'Upstream went unhealthy', body: u.config + ' failed its health check and was marked down.' });
-      upstreamDownAlarm.set(u.config, id);
-    }
-  }
-  function scheduleFlap(delayMs) { setTimeout(() => { flapUpstreams(); scheduleFlap(22000 + Math.random() * 23000); }, delayMs); }
-  scheduleFlap(7000 + Math.random() * 5000);
 
   function policyDoc() {
     return {
@@ -342,6 +316,51 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
     devices = devices.map((d) => (d.wandering && d.wandering_until && Date.parse(d.wandering_until) <= t ? (({ wandering_until, ...rest }) => ({ ...rest, wandering: false }))(d) : d));
   }
 
+
+  // ---- network health (synthetic, deterministic in time so reloads agree)
+  // A plausible home uplink: ~12ms baseline, a gentle evening bump, a
+  // little noise, one visible spike every ~9 hours and one short outage
+  // window about two days ago so the charts and the pill have something
+  // to show. Values are a pure function of the timestamp.
+  const nhTargets = ['dns1.example.net', 'dns2.example.org', '1.1.1.1', '8.8.8.8'];
+  const nhWave = (t, period, phase = 0) => Math.sin((t / period + phase) * 2 * Math.PI);
+  function nhSample(t) {
+    const hour = new Date(t).getHours();
+    const evening = hour >= 19 && hour <= 23 ? 3 : 0;
+    const noise = ((strHashDemo(Math.floor(t / 120000)) % 1000) / 1000 - 0.5) * 2.4;
+    const spike = ((t / 3600000) % 9) < 0.08 ? 25 + (strHashDemo(Math.floor(t / 3600000)) % 40) : 0;
+    const outageAt = now() - 2 * 86400000 - 5 * 3600000;
+    const outage = t >= outageAt && t < outageAt + 9 * 60000;
+    const latency = outage ? 0 : 12 + evening + noise + spike + nhWave(t, 86400000 * 7) * 1.5;
+    const jitter = outage ? 0 : 0.6 + Math.abs(noise) * 0.5 + spike / 6;
+    const loss = outage ? 100 : spike ? 2 + (strHashDemo(Math.floor(t / 60000)) % 4) : 0;
+    const reachable = outage ? 0 : nhTargets.length;
+    return { latency, jitter, loss, reachable };
+  }
+  function nhPoint(t, bucketMs) {
+    if (bucketMs <= 120000) {
+      const v = nhSample(t);
+      return { time: new Date(t).toISOString(), avg_latency_ms: v.latency, min_latency_ms: v.latency, max_latency_ms: v.latency, avg_jitter_ms: v.jitter, avg_loss_pct: v.loss, reachable_targets: v.reachable };
+    }
+    // roll up a bucket from a handful of samples inside it
+    const n = 12, acc = { latency: 0, jitter: 0, loss: 0, reachable: 0, lo: Infinity, hi: 0, k: 0 };
+    for (let i = 0; i < n; i++) {
+      const v = nhSample(t + (i * bucketMs) / n);
+      acc.latency += v.latency; acc.jitter += v.jitter; acc.loss += v.loss; acc.reachable += v.reachable; acc.k++;
+      if (v.latency > 0) { acc.lo = Math.min(acc.lo, v.latency); acc.hi = Math.max(acc.hi, v.latency); }
+    }
+    return { time: new Date(t).toISOString(), avg_latency_ms: acc.latency / acc.k, min_latency_ms: acc.lo === Infinity ? 0 : acc.lo, max_latency_ms: acc.hi, avg_jitter_ms: acc.jitter / acc.k, avg_loss_pct: acc.loss / acc.k, reachable_targets: acc.reachable / acc.k };
+  }
+  function nhCurrent(t) {
+    const v = nhSample(t);
+    return { time: new Date(t).toISOString(), latency_ms: v.latency, jitter_ms: v.jitter, loss_pct: v.loss, reachable_targets: v.reachable, total_targets: nhTargets.length };
+  }
+  let nhLastProbe = Math.floor(now() / 120000) * 120000;
+  let bufferbloatHist = [4, 3, 2, 1].map((d, i) => {
+    const inc = [9, 14, 41, 11][i];
+    return { time: new Date(now() - d * 86400000 - (i * 7 + 3) * 3600000).toISOString(), idle_ms: 12, loaded_ms: 12 + inc, increase_ms: inc, grade: inc < 30 ? 'A' : inc < 60 ? 'B' : 'C' };
+  });
+
   async function handle(method, path, url, body) {
     expire();
     const q = url.searchParams;
@@ -402,6 +421,22 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       }
     }
     // ---- watch
+    if (path === '/api/routerusage' && method === 'GET') return trafficStatus().router;
+    if (path === '/api/routerusage/names' && method === 'POST') {
+      const dry = !!(body && body.dry_run);
+      return {
+        dry_run: dry, source: 'eero', changed: true,
+        created: 0, matched_by_mac: devices.length, matched_by_ip: 0, updated: 0,
+        named: 3, renamed: body && body.overwrite_names ? 2 : 0,
+        skipped: 0, unchanged: devices.length - 3,
+        groups_created: 0, memberships_added: 2, tags_added: 0,
+        marked_excluded: 0, notes_set: 0, types_set: 0,
+        lines: [], conflicts: [], warnings: [],
+      };
+    }
+    if (path === '/api/traffic' && method === 'GET') return trafficStatus();
+    if (path === '/api/traffic/series' && method === 'GET') return trafficSeries(Object.fromEntries(q));
+    if (path === '/api/traffic/top' && method === 'GET') return trafficTop(Object.fromEntries(q));
     if (path === '/api/watch' && method === 'GET') return watchStatus();
     if (path === '/api/watch/kill' && method === 'POST') {
       // Whose steering the kill switch stopped has to be read before it is
@@ -466,13 +501,6 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
         delete s.rule_schedules[other][d];
         if (!s.rules[body.kind].includes(d)) s.rules[body.kind].push(d);
         if (body.schedule) s.rule_schedules[body.kind][d] = body.schedule; else delete s.rule_schedules[body.kind][d];
-        // MARKETING-SITE DEMO BUILD ADDITION: a whole-network rule (no
-        // schedule — a scheduled rule's "sometimes on" nature doesn't map
-        // cleanly onto the generator) actually changes the live feed, the
-        // same way a rule set from the HUD Inspector does. Per-group/
-        // per-device rules are left alone: the generator has no per-scope
-        // traffic model to apply them to.
-        if (gen && s.scope.kind === 'network' && !body.schedule) gen.setOverride(d, body.kind);
         return policyDoc();
       }
       if (method === 'DELETE') {
@@ -480,7 +508,6 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
         const k = q.get('kind');
         if (s.rules[k]) s.rules[k] = s.rules[k].filter((x) => x !== q.get('domain'));
         if (s.rule_schedules[k]) delete s.rule_schedules[k][q.get('domain')];
-        if (gen && s.scope.kind === 'network') gen.setOverride(q.get('domain'), null);
         return policyDoc();
       }
     }
@@ -516,148 +543,11 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       return { ok: true };
     }
     if (path === '/api/policy/refresh' && method === 'POST') { await delay(250); return null; }
-    // ---- alarms (MARKETING-SITE DEMO BUILD ADDITION — see initialAlarms() above)
-    if (path === '/api/alarms' && method === 'GET') {
-      const f = { min_severity: q.get('min_severity') || '', states: q.get('states') ? [q.get('states')] : [], text: (q.get('text') || '').toLowerCase() };
-      const offset = Math.max(0, Number(q.get('offset')) || 0), limit = Math.min(200, Math.max(1, Number(q.get('limit')) || 50));
-      const all = alarms.filter((a) => alarmMatches(a, f)).sort((a, b) => Date.parse(b.last_seen) - Date.parse(a.last_seen));
-      return { alarms: all.slice(offset, offset + limit).map((a) => ({ ...a })), total: all.length };
-    }
-    if (path === '/api/alarms/summary' && method === 'GET') {
-      const by_severity = {}, by_state = {};
-      for (const a of alarms) { by_severity[a.severity] = (by_severity[a.severity] || 0) + 1; by_state[a.state] = (by_state[a.state] || 0) + 1; }
-      return { total: alarms.length, by_severity, by_state };
-    }
-    if (path === '/api/alarms/types' && method === 'GET') return { types: [...new Set(alarms.map((a) => a.type))] };
-    if (path === '/api/alarms/rules' && method === 'GET') return { rules: alarmRules.map((r) => ({ ...r })) };
-    if (path === '/api/alarms/rules' && method === 'POST') {
-      const r = { id: 'rule-' + alarmNextId++, name: String(body.name || '').trim() || '(unnamed rule)', match: body.match || {}, reason: body.reason || '', expires_at: null };
-      alarmRules.push(r);
-      return r;
-    }
-    if ((m = /^\/api\/alarms\/rules\/([^/]+)$/.exec(path)) && method === 'DELETE') {
-      alarmRules = alarmRules.filter((r) => r.id !== decodeURIComponent(m[1]));
-      return { ok: true };
-    }
-    if (path === '/api/alarms/bulk' && method === 'POST') {
-      let ids;
-      if (Array.isArray(body.ids)) ids = body.ids;
-      else if (body.all) {
-        const bf = body.filter || {};
-        const ff = { min_severity: bf.min_severity || '', states: bf.states ? [bf.states] : [], text: (bf.text || '').toLowerCase() };
-        ids = alarms.filter((a) => alarmMatches(a, ff)).map((a) => a.id);
-      } else ids = [];
-      const set = new Set(ids);
-      const snapshot = alarms.filter((a) => set.has(a.id)).map((a) => ({ ...a }));
-      let changed = 0;
-      if (body.op === 'delete') {
-        const before = alarms.length;
-        alarms = alarms.filter((a) => !set.has(a.id));
-        changed = before - alarms.length;
-      } else {
-        alarms = alarms.map((a) => {
-          if (!set.has(a.id)) return a;
-          changed++;
-          if (body.op === 'acknowledge') return { ...a, state: 'acknowledged' };
-          if (body.op === 'resolve') return { ...a, state: 'resolved' };
-          if (body.op === 'mute') return { ...a, state: 'muted' };
-          return a;
-        });
-      }
-      const handle = 'undo-' + alarmNextId++;
-      lastAlarmUndo = { handle, op: body.op, snapshot };
-      return { changed, skipped: 0, handle };
-    }
-    if (path === '/api/alarms/undo' && method === 'POST') {
-      if (!lastAlarmUndo || lastAlarmUndo.handle !== body.handle) return { ok: false };
-      const { op, snapshot } = lastAlarmUndo;
-      if (op === 'delete') {
-        const have = new Set(alarms.map((a) => a.id));
-        for (const a of snapshot) if (!have.has(a.id)) alarms.push(a);
-      } else {
-        const byId = new Map(snapshot.map((a) => [a.id, a]));
-        alarms = alarms.map((a) => (byId.has(a.id) ? byId.get(a.id) : a));
-      }
-      lastAlarmUndo = null;
-      return { ok: true };
-    }
-    if ((m = /^\/api\/alarms\/([^/]+)\/mute$/.exec(path)) && method === 'POST') {
-      const id = decodeURIComponent(m[1]);
-      const i = alarms.findIndex((x) => x.id === id);
-      if (i < 0) throw err(404, 'alarm not found');
-      alarms[i] = { ...alarms[i], state: 'muted' };
-      return { ...alarms[i] };
-    }
-    if ((m = /^\/api\/alarms\/([^/]+)$/.exec(path))) {
-      const id = decodeURIComponent(m[1]);
-      if (method === 'GET') { const a = alarms.find((x) => x.id === id); if (!a) throw err(404, 'alarm not found'); return { ...a }; }
-      if (method === 'PATCH') {
-        const i = alarms.findIndex((x) => x.id === id);
-        if (i < 0) throw err(404, 'alarm not found');
-        alarms[i] = { ...alarms[i], state: body.state || alarms[i].state };
-        return { ...alarms[i] };
-      }
-      if (method === 'DELETE') {
-        const before = alarms.length;
-        alarms = alarms.filter((x) => x.id !== id);
-        if (alarms.length === before) throw err(404, 'alarm not found');
-        return { ok: true };
-      }
-    }
-    // ---- portscan / vulnscan (MARKETING-SITE DEMO BUILD ADDITION — see
-    // initialPortscan()/initialVulnscan() above). "Scan now" on a device
-    // with no active finding has a real, seeded (so repeatable per device)
-    // chance of discovering something and raising a matching alarm live —
-    // the point being a visitor can cause this, not just watch it happen.
-    if (path === '/api/portscan' && method === 'GET') return { enabled: true, devices_scanned: portscanData.size };
-    if (path === '/api/portscan/devices' && method === 'GET') return { devices: [...portscanData.values()] };
-    if ((m = /^\/api\/portscan\/devices\/([^/]+)$/.exec(path)) && method === 'GET') {
-      const id = decodeURIComponent(m[1]);
-      return portscanData.get(id) || { device_id: id, last_scanned: null, ports: [] };
-    }
-    if (path === '/api/portscan/scan' && method === 'POST') {
-      await delay(500);
-      const targets = body.device_id ? [body.device_id] : devices.map((d) => d.id);
-      const results = [];
-      for (const id of targets) {
-        if (!devices.some((d) => d.id === id)) continue;
-        let rec = portscanData.get(id) || { device_id: id, last_scanned: null, ports: [] };
-        rec = { ...rec, last_scanned: new Date(now()).toISOString(), ports: rec.ports.map((p) => ({ ...p, newly_opened: false })) };
-        const h = strHash(id + ':port');
-        if (!rec.ports.some((p) => p.risky) && h % 100 < 30) {
-          const pick = DISCOVERABLE_PORTS[h % DISCOVERABLE_PORTS.length];
-          rec.ports.push({ port: pick.port, open: true, risky: pick.risky, risk_note: pick.risky ? (RISK_NOTE[pick.port] || 'Unexpected for a device like this.') : '', newly_opened: true });
-          if (pick.risky) pushAlarm({ severity: 'medium', type: 'port-opened', title: 'New port opened: ' + pick.port, body: deviceLabel(id) + ' opened a specifically risky port during a manual scan.', deviceId: id });
-        }
-        portscanData.set(id, rec);
-        results.push(rec);
-      }
-      return { devices: results };
-    }
-    if (path === '/api/vulnscan' && method === 'GET') return { enabled: true, devices_scanned: vulnscanData.size };
-    if (path === '/api/vulnscan/devices' && method === 'GET') return { devices: [...vulnscanData.values()] };
-    if ((m = /^\/api\/vulnscan\/devices\/([^/]+)$/.exec(path)) && method === 'GET') {
-      const id = decodeURIComponent(m[1]);
-      return vulnscanData.get(id) || { device_id: id, last_scanned: null, findings: [] };
-    }
-    if (path === '/api/vulnscan/scan' && method === 'POST') {
-      await delay(650);
-      const targets = body.device_id ? [body.device_id] : devices.map((d) => d.id);
-      const results = [];
-      for (const id of targets) {
-        if (!devices.some((d) => d.id === id)) continue;
-        let rec = vulnscanData.get(id) || { device_id: id, last_scanned: null, findings: [] };
-        rec = { ...rec, last_scanned: new Date(now()).toISOString() };
-        const h = strHash(id + ':vuln');
-        if (!rec.findings.some((f) => f.active) && h % 100 < 32) {
-          const pick = DISCOVERABLE_VULNS[h % DISCOVERABLE_VULNS.length];
-          rec.findings = [...rec.findings, { ...pick, active: true, resolved_at: null }];
-          pushAlarm({ severity: pick.severity, type: 'vulnerability-found', title: pick.name, body: deviceLabel(id) + ' — found during a manual scan.', deviceId: id });
-        }
-        vulnscanData.set(id, rec);
-        results.push(rec);
-      }
-      return { devices: results };
+    // ---- DNS self-test
+    if (path === '/api/selftest' || path === '/api/selftest/run') {
+      const probe = (proto, check) => ({ proto, check, ok: true, ms: 1.2 });
+      const ok = (addr) => ({ addr, ok: true, probes: ['udp', 'tcp'].flatMap((pr) => ['listener', 'resolve', 'block'].map((c) => probe(pr, c))) });
+      return { enabled: true, report: { time: new Date(now()).toISOString(), duration_ms: 18, status: 'ok', listeners: [ok('10.0.0.20:53'), ok('127.0.0.1:53')], lan: [], upstreams: [], problems: [] } }; // leakcheck:allow demo fixture
     }
     // ---- upstreams
     if (path === '/api/upstreams') {
@@ -693,6 +583,59 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       bootstrap = [...body.servers];
       return upstreamDoc();
     }
+    // ---- reverse proxy
+    if (path === '/api/reverseproxy' && method === 'GET') {
+      return { enabled: true, listen: ':443', wildcard: '*.example.com', certificate: { names: ['*.example.com'], not_after: new Date(now() + 54 * 86400000).toISOString() } };
+    }
+    if (path === '/api/reverseproxy/hosts' && method === 'GET') return { hosts: sortHosts(proxyHosts) };
+    if (path.startsWith('/api/reverseproxy/hosts')) {
+      const id = decodeURIComponent(path.slice('/api/reverseproxy/hosts/'.length));
+      const i = proxyHosts.findIndex((h) => h.id === id);
+      if (method === 'DELETE') {
+        if (i < 0) throw err(404, 'no such proxy host');
+        proxyHosts.splice(i, 1);
+        return { ok: true };
+      }
+      if (method === 'PUT' && i < 0) throw err(404, 'no such proxy host');
+      const target = body.target_host ? formatTarget(body) : '';
+      const r = hostBody({ domain: body.domain, target, skipVerify: body.skip_tls_verify, enabled: body.enabled });
+      if (!r.ok) throw err(400, r.error);
+      if (proxyHosts.some((h, j) => h.domain === r.body.domain && j !== i)) throw err(409, 'another proxy host already uses that domain');
+      if (method === 'POST') {
+        const h = { id: 'rp-' + nextProxyId++, enabled: true, ...r.body };
+        proxyHosts.push(h);
+        return h;
+      }
+      if (method === 'PUT') {
+        proxyHosts[i] = { id, enabled: proxyHosts[i].enabled, ...r.body };
+        return proxyHosts[i];
+      }
+    }
+    // ---- secrets (never stored here: the demo only remembers "set or not")
+    if (path === '/api/dns-provider') {
+      if (method === 'GET') return { ...dnsProvider };
+      const stamp = { source: 'portal', updated_at: new Date(now()).toISOString() };
+      if (method === 'DELETE') { dnsProvider = { ...dnsProvider, ...stamp, configured: false }; return { ...dnsProvider }; }
+      if (method === 'PUT') {
+        const r = tokenBody(body.api_token, body.provider || 'cloudflare');
+        if (!r.ok) throw err(400, r.error);
+        if (r.body.api_token === 'bad') throw err(422, 'Cloudflare did not accept that token: 9109: Invalid access token. Nothing was saved.');
+        dnsProvider = { ...dnsProvider, ...stamp, configured: true };
+        return { ...dnsProvider };
+      }
+    }
+    if (path === '/api/accountability/smtp') {
+      if (method === 'GET') return { ...relay };
+      const stamp = { source: 'portal', updated_at: new Date(now()).toISOString() };
+      if (method === 'DELETE') { relay = { ...relay, ...stamp, configured: false, active: false, host: '', username: '', password_set: false, from: '', port: 587, tls: 'starttls' }; return { ...relay }; }
+      if (method === 'PUT') {
+        const r = relayBody({ ...body, clearPassword: body.clear_password }, relay);
+        if (!r.ok) throw err(400, r.error);
+        const b = r.body;
+        relay = { ...relay, ...stamp, configured: true, active: true, host: b.host, port: b.port, username: b.username, from: b.from, tls: b.tls, password_set: b.clear_password ? false : (!!b.password || relay.password_set) };
+        return { ...relay };
+      }
+    }
     // ---- history
     if (path === '/api/history' && method === 'GET') {
       if (hist.mode === 'encrypted' && hist.locked) {
@@ -715,6 +658,36 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       if (!pass || pass === 'wrong') throw err(401, 'wrong passphrase');
       hist.locked = false;
       return { ok: true, locked: false };
+    }
+    // ---- network health
+    if (path === '/api/nethealth' && method === 'GET') {
+      return { enabled: true, bufferbloat_enabled: false, degraded: false, current: nhCurrent(nhLastProbe), targets: [...nhTargets] };
+    }
+    if (path === '/api/nethealth/series' && method === 'GET') {
+      const to = Date.parse(q.get('to')) || now();
+      const from = Date.parse(q.get('from')) || to - 86400000;
+      const span = to - from;
+      const bucket = q.get('bucket') || (span <= 3 * 86400000 ? 'raw' : span <= 60 * 86400000 ? 'hour' : 'day');
+      const step = bucket === 'raw' ? 120000 : bucket === 'hour' ? 3600000 : 86400000;
+      const points = [];
+      for (let t = Math.ceil(from / step) * step; t <= to && points.length < 5000; t += step) points.push(nhPoint(t, step));
+      return { bucket, points };
+    }
+    if (path === '/api/nethealth/bufferbloat' && method === 'GET') {
+      const from = Date.parse(q.get('from')) || 0, to = Date.parse(q.get('to')) || Infinity;
+      return { points: bufferbloatHist.filter((b) => { const t = Date.parse(b.time); return t >= from && t <= to; }) };
+    }
+    if (path === '/api/nethealth/probe' && method === 'POST') {
+      await delay(400);
+      nhLastProbe = now();
+      return nhCurrent(nhLastProbe);
+    }
+    if (path === '/api/nethealth/bufferbloat/run' && method === 'POST') {
+      await delay(900);
+      const inc = 8 + (strHashDemo(String(now())) % 18);
+      const rec = { time: new Date(now()).toISOString(), idle_ms: 12, loaded_ms: 12 + inc, increase_ms: inc, grade: inc < 30 ? 'A' : 'B' };
+      bufferbloatHist = [...bufferbloatHist, rec];
+      return rec;
     }
     if (path === '/api/demo/history-lock' && method === 'POST') { hist.locked = !!body.locked; return { ...hist }; }
     return undefined;

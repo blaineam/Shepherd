@@ -2,7 +2,8 @@
 // in-browser demo), the model, the globe and the HUD chrome together. Pure
 // logic lives in js/*.js and is unit tested; this file is the glue.
 import { $ } from './js/dom.js';
-import { ApiError } from './js/api.js'; // MARKETING-SITE DEMO BUILD: createApi (the real-backend client) is unused here.
+import { createApi } from './js/api.js';
+import { startActivityReports } from './js/activity.js';
 import { createDemoApi } from './js/demoapi.js';
 import { DemoGenerator, DEMO_HOME } from './js/demo.js';
 import { normalizeEntry, destKey, placeName } from './js/entry.js';
@@ -22,28 +23,27 @@ import { createPolicyStore } from './js/policystore.js';
 import { createDevices } from './js/devices.js';
 import { createBlocking, createDevicePolicy } from './js/blocking.js';
 import { createUpstreams } from './js/upstreamsview.js';
-import { createWatch } from './js/watchview.js';
 import { createAlarms } from './js/alarmsview.js';
+import { createVulnscan } from './js/vulnscanview.js';
+import { createNethealth } from './js/nethealthview.js';
+import { createWatch } from './js/watchview.js';
+import { createTraffic } from './js/trafficview.js';
+import { createReverseProxy } from './js/reverseproxyview.js';
+import { createDhcp } from './js/dhcpview.js';
 import { createHistory } from './js/historyview.js';
 import { createAccountability } from './js/accountability.js';
 import { createDemoMgmt } from './js/demomgmt.js';
 import { DEVICE_BY_IP } from './js/demodata.js';
 import { createLocking } from './js/lockingview.js';
-import { lockedURL, unlockedURL } from './js/locking.js';
+import { lockedURL, unlockedURL, signInOrder, autoTryPasskey, methodLabel } from './js/locking.js';
+import { requestOptions, assertionJSON, ceremonyError } from './js/passkeys.js';
 
 const params = new URLSearchParams(location.search);
 const demoParam = params.get('demo');
-// ---------------------------------------------------------------------------
-// MARKETING-SITE DEMO BUILD: this copy of the real portal frontend is served
-// statically (GitHub Pages) with no Shepherd backend behind it at all. DEMO
-// and LOCKED are hardcoded rather than read from the query string, so every
-// code path that would otherwise talk to a real server (`createApi`, the
-// login/PIN forms, the Lock button) is permanently unreachable - not just
-// defaulted. See the "MARKETING-SITE DEMO BUILD" notes below for the other
-// no-ops this forces.
-const DEMO = true;
-const LOCKED = false;
-// ---------------------------------------------------------------------------
+const DEMO = demoParam !== null && demoParam !== '0' && demoParam !== 'false';
+// LOCKED means the portal put itself here (first visit, idle relock, or the
+// Lock button), rather than someone choosing the demo-data toggle by hand.
+const LOCKED = params.get('locked') === '1';
 const DEBUG = params.get('debug') === '1';
 const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -74,25 +74,32 @@ function notify(msg) { toaster.show(msg); }
 // ---------------------------------------------------------------- api
 let api;
 let sources = null;
-// MARKETING-SITE DEMO BUILD: the real-backend branch (`createApi` against a
-// live Shepherd server, and the reload-to-locked-demo bounce that used to
-// follow a lost session) is removed entirely - there is nothing for it to
-// talk to here. `api` is always the in-browser demo fake.
-api = createDemoApi({
-  mgmt: (demoMgmt = createDemoMgmt({ count: Math.min(20000, Math.max(9, Number(params.get('devices')) || 38)), gen, history: params.get('history') || 'encrypted' })),
-  getCounters: () => model.counters,
-  topClients: () => [...model.clients.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([key, n]) => ({ key, n })),
-  home: DEMO_HOME,
-  gen, // MARKETING-SITE DEMO BUILD ADDITION: lets a block/allow rule from the HUD Inspector or Details view actually change the live feed.
-});
-// Login, PIN login and the Lock button have no real backend to reach in this
-// static build. `realApi` is a no-op stub (never performs a network
-// request) so the forms below fail softly instead of leaking a fetch to a
-// relative /api/... URL that GitHub Pages would answer with a 404 page.
-const realApi = async () => { throw new ApiError('this is a static demo; there is no server to sign in to', 404); };
+// Losing a real session (idle relock, or the server restarting) bounces the
+// whole page into the locked demo view by reloading with ?demo=1&locked=1 -
+// the same "reload to switch modes" trick the manual demo toggle already
+// uses (see the demo-toggle listener below), rather than rewiring every
+// place DEMO is read at module load into something reactive.
+function showLogin() {
+  location.assign(lockedURL(location.href));
+}
+if (DEMO) {
+  api = createDemoApi({
+    mgmt: (demoMgmt = createDemoMgmt({ count: Math.min(20000, Math.max(9, Number(params.get('devices')) || 38)), gen, history: params.get('history') || 'encrypted' })),
+    getCounters: () => model.counters,
+    topClients: () => [...model.clients.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([key, n]) => ({ key, n })),
+    home: DEMO_HOME,
+  });
+} else {
+  api = createApi({ onUnauthorized: showLogin });
+  startActivityReports({ target: document, send: () => api('/api/activity', { method: 'POST', body: '{}' }) });
+}
+// Login, PIN login and the explicit Lock always talk to the real backend,
+// never the in-browser demo fake, even while DEMO is showing the lock
+// screen's synthetic data behind it.
+const realApi = createApi({ onUnauthorized: () => {} });
 
 // ---------------------------------------------------------------- UI pieces
-const details = createDetails({ api, getRows: () => model.recentNewestFirst(400), notify, onRulesChanged: () => {}, names });
+const details = createDetails({ api, notify });
 const setTiles = createTiles();
 const legend = createLegend();
 const filters = createFilters({ model, onChange: onFiltersChanged });
@@ -460,7 +467,7 @@ async function pollStatus() {
 // ---------------------------------------------------------------- management screens
 const mgmt = createMgmt(api);
 const policyStore = createPolicyStore({ mgmt });
-const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'watch', 'upstreams', 'history', 'accountability', 'locking', 'details'];
+const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'vulnscan', 'network', 'traffic', 'upstreams', 'dhcp', 'proxy', 'history', 'accountability', 'locking', 'details'];
 
 const blocking = createBlocking({
   root: $('#view-blocking'), mgmt, store: policyStore, notify,
@@ -473,14 +480,28 @@ const devicesView = createDevices({
   onGroupsChanged: () => { blocking.onGroupsChanged(); accountabilityView.onGroupsChanged(); },
 });
 const alarmsView = createAlarms({ root: $('#view-alarms'), mgmt, notify, toaster });
+const vulnscanView = createVulnscan({
+  root: $('#view-vulnscan'), mgmt, notify, toaster,
+  onOpenDevice: (id) => { showView('devices'); devicesView.openDevice(id); },
+});
+const networkView = createNethealth({ root: $('#view-network'), mgmt, notify });
 const watchView = createWatch({
-  root: $('#view-watch'), mgmt, notify,
+  root: document.createElement('section'), mgmt, notify, embedded: true,
+  onOpenDevice: (id) => { showView('devices'); devicesView.openDevice(id); },
+});
+const trafficView = createTraffic({
+  root: $('#view-traffic'), mgmt, notify, watch: watchView,
   onOpenDevice: (id) => { showView('devices'); devicesView.openDevice(id); },
 });
 const upstreamsView = createUpstreams({ root: $('#view-upstreams'), mgmt, notify });
+const proxyView = createReverseProxy({ root: $('#view-proxy'), mgmt, notify });
+const dhcpView = createDhcp({
+  root: $('#view-dhcp'), mgmt, notify,
+  onOpenDevice: (id) => { showView('devices'); devicesView.openDevice(id); },
+});
 const lockingView = createLocking({ root: $('#view-locking'), mgmt, notify });
 const historyView = createHistory({
-  root: $('#view-history'), mgmt, notify,
+  root: $('#view-history'), mgmt, notify, api,
   onReplay: (t) => { showView('hud'); enterReplay(Math.max(0, t - 20000)); },
   demo: DEMO ? { setLocked: (locked) => api('/api/demo/history-lock', { method: 'POST', body: JSON.stringify({ locked }) }) } : null,
 });
@@ -507,22 +528,49 @@ function showView(name) {
   document.body.classList.toggle('on-details', name === 'details');
   document.body.classList.toggle('on-page', !hud);
   try { history.replaceState(null, '', location.pathname + location.search + (hud ? '' : '#' + name)); } catch { /* ignore */ }
-  if (name === 'details') details.renderRows();
+  if (name === 'details') details.loadUpdate();
   if (name !== 'upstreams') upstreamsView.hide();
-  if (name !== 'watch') watchView.hide();
+  if (name !== 'proxy') proxyView.hide();
+  if (name !== 'dhcp') dhcpView.hide();
   if (name !== 'alarms') alarmsView.hide();
+  if (name !== 'vulnscan') vulnscanView.hide();
+  if (name !== 'network') networkView.hide();
+  if (name !== 'traffic') trafficView.hide();
   if (name !== 'locking') lockingView.hide();
   if (name === 'devices') devicesView.show();
   else if (name === 'blocking') devicesView.reloadGroups().catch(() => {}).finally(() => blocking.show());
   else if (name === 'alarms') alarmsView.show();
-  else if (name === 'watch') watchView.show();
+  else if (name === 'vulnscan') vulnscanView.show();
+  else if (name === 'traffic') trafficView.show().catch(() => {});
+  else if (name === 'network') networkView.show();
   else if (name === 'upstreams') upstreamsView.show();
+  else if (name === 'proxy') proxyView.show();
+  else if (name === 'dhcp') dhcpView.show();
   else if (name === 'history') historyView.show();
   else if (name === 'accountability') devicesView.reloadGroups().catch(() => {}).finally(() => accountabilityView.show());
   else if (name === 'locking') lockingView.show();
 }
-for (const v of VIEWS) $('#tab-' + v).addEventListener('click', () => showView(v));
-window.addEventListener('hashchange', () => { const h = location.hash.slice(1) || 'hud'; if (VIEWS.includes(h) && $('#view-' + h).hidden) showView(h); });
+// On narrow screens the side navigation is a slide-in menu behind the
+// Menu button in the top bar (CSS does the sliding; this only toggles the
+// classes, the scrim and focus). On wide screens it is always visible and
+// these are no-ops that nothing observes. showView, hash routing and the
+// arrow-key navigation below are the same either way.
+function navOpen() { return $('#sidenav').classList.contains('open'); }
+function setNavMenu(on) {
+  $('#sidenav').classList.toggle('open', on);
+  $('#nav-scrim').hidden = !on;
+  $('#btn-navmenu').setAttribute('aria-expanded', on ? 'true' : 'false');
+  $('#btn-navmenu').setAttribute('aria-label', on ? 'Close menu' : 'Open menu');
+  document.body.classList.toggle('nav-open', on);
+  if (on) { const cur = $('.tabs [aria-selected="true"]'); (cur || $('.tabs button')).focus(); }
+  else if (document.activeElement && $('#sidenav').contains(document.activeElement)) $('#btn-navmenu').focus();
+}
+function closeNavMenu() { if (navOpen()) setNavMenu(false); }
+$('#btn-navmenu').addEventListener('click', () => setNavMenu(!navOpen()));
+$('#btn-navclose').addEventListener('click', () => setNavMenu(false));
+$('#nav-scrim').addEventListener('click', () => setNavMenu(false));
+for (const v of VIEWS) $('#tab-' + v).addEventListener('click', () => { showView(v); closeNavMenu(); });
+window.addEventListener('hashchange', () => { const h = location.hash.slice(1) || 'hud'; if (VIEWS.includes(h) && $('#view-' + h).hidden) showView(h); closeNavMenu(); });
 $('.tabs').addEventListener('keydown', (e) => {
   if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
   const cur = VIEWS.findIndex((v) => $('#tab-' + v).getAttribute('aria-selected') === 'true');
@@ -530,7 +578,6 @@ $('.tabs').addEventListener('keydown', (e) => {
   showView(next);
   $('#tab-' + next).focus();
 });
-setInterval(() => { if (!$('#view-details').hidden) details.renderRows(); }, 1000);
 
 // ---------------------------------------------------------------- toolbar
 $('#btn-home').addEventListener('click', () => setHomeMode(!homeMode));
@@ -549,17 +596,30 @@ for (const [btn, panel] of [['#btn-feed', '#panel-feed'], ['#btn-filters', '#pan
     if (on) { $(panel).classList.add('show'); e.currentTarget.setAttribute('aria-pressed', 'true'); }
   });
 }
+// The Legend panel is its own toggle, independent of the Feed/Filters pair
+// above (it lives in the opposite rail and does not need to exclude them):
+// on mobile it otherwise takes up a disproportionate share of the screen, so
+// it starts hidden there and opens only behind this small "i" button.
+$('#btn-legend').addEventListener('click', (e) => {
+  const on = e.currentTarget.getAttribute('aria-pressed') !== 'true';
+  e.currentTarget.setAttribute('aria-pressed', on ? 'true' : 'false');
+  $('#legend').classList.toggle('show', on);
+});
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (homeMode) setHomeMode(false);
+  if (navOpen()) closeNavMenu();
+  else if (homeMode) setHomeMode(false);
   else if (inspector.selection) { inspector.clear(); if (globe) globe.setSelected(null); dirty = true; }
 });
 
-// MARKETING-SITE DEMO BUILD: there is no real mode to switch to, so the
-// switch is always on and disabled in the HTML (see index.html) rather than
-// wired to reload the page.
+// Demo toggle reloads with or without ?demo=1 so the two modes never mix.
 const demoToggle = $('#demo-toggle');
 demoToggle.checked = DEMO;
+demoToggle.addEventListener('change', () => {
+  const u = new URL(location.href);
+  if (demoToggle.checked) u.searchParams.set('demo', '1'); else { u.searchParams.delete('demo'); u.searchParams.delete('rate'); u.searchParams.delete('bytes'); }
+  location.assign(u.toString());
+});
 
 // ---------------------------------------------------------------- login
 // Both forms reload into the real, unlocked view on success (the same
@@ -581,6 +641,70 @@ $('#pin-form').addEventListener('submit', async (e) => {
     location.assign(unlockedURL(location.href));
   } catch (err) { $('#pin-err').textContent = err.message === 'unauthorized' ? 'Wrong PIN.' : err.message; }
 });
+// ---- which way in the lock screen leads with -------------------------
+//
+// Three forms at once made the owner choose between things only one of
+// which they can usually use. The server says which are actually available
+// to this browser (GET /api/login/methods), the best one is expanded, and
+// the rest become a line of links. The token is always in that line: it is
+// the way back in when the passkey and the PIN are gone.
+let signinTried = false;
+
+function showMethod(name, order) {
+  for (const m of ['passkey', 'pin', 'token']) {
+    $('#signin-' + m).hidden = m !== name;
+  }
+  const alts = $('#signin-alts');
+  alts.replaceChildren();
+  for (const other of order.filter((m) => m !== name)) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'linky';
+    b.textContent = methodLabel(other);
+    b.addEventListener('click', () => showMethod(other, order));
+    alts.append(b);
+  }
+  // Put the cursor where the typing happens, but never steal focus for a
+  // passkey: the browser's own prompt is about to take over.
+  if (name === 'pin') $('#pin').focus();
+  else if (name === 'token') $('#token').focus();
+}
+
+async function prepareSignIn() {
+  let methods = {};
+  try {
+    methods = await realApi('/api/login/methods');
+  } catch { /* the token form alone is a working lock screen */ }
+  const order = signInOrder(methods, {
+    secureContext: window.isSecureContext,
+    hasWebAuthn: !!window.PublicKeyCredential,
+  });
+  showMethod(order[0] || 'token', order);
+  if (autoTryPasskey({ order, visible: document.visibilityState === 'visible', tried: signinTried })) {
+    tryPasskey();
+  }
+}
+
+// tryPasskey runs the ceremony. It is called by the button and, when a
+// passkey is the way in, once by itself: an owner who set one up to avoid
+// typing should not have to press a button first. A failure leaves the
+// button and the alternatives rather than prompting again.
+async function tryPasskey() {
+  signinTried = true;
+  $('#passkey-err').textContent = '';
+  try {
+    const opts = await realApi('/api/login/passkey/begin', { method: 'POST' });
+    const cred = await navigator.credentials.get({ publicKey: requestOptions(opts) });
+    if (!cred) throw new Error('Cancelled.');
+    await realApi('/api/login/passkey/finish', { method: 'POST', body: JSON.stringify(assertionJSON(cred)), keep401: true });
+    location.assign(unlockedURL(location.href));
+  } catch (err) {
+    $('#passkey-err').textContent = ceremonyError(err);
+    $('#passkey-hint').hidden = true;
+  }
+}
+$('#btn-passkey').addEventListener('click', tryPasskey);
+
 $('#btn-lock').addEventListener('click', async () => {
   try { await realApi('/api/lock', { method: 'POST' }); } catch { /* lock locally regardless of what the server says */ }
   location.assign(lockedURL(location.href));
@@ -652,9 +776,9 @@ async function main() {
   $('#tab-locking').hidden = DEMO;
   $('#btn-lock').hidden = DEMO;
   $('.demo-switch').hidden = LOCKED;
-  if (LOCKED) $('#login').hidden = false;
+  if (LOCKED) { $('#login').hidden = false; prepareSignIn(); }
   if (params.get('setup_pin') === '1') { try { history.replaceState(null, '', location.pathname + location.search.replace(/[?&]setup_pin=1/, '').replace(/^&/, '?') + location.hash); } catch { /* ignore */ } showView('locking'); }
-  { const h = location.hash.slice(1); if (VIEWS.includes(h) && h !== 'hud') showView(h); }
+  { const h = location.hash.slice(1); if (VIEWS.includes(h) && h !== 'hud') showView(h); else if (h === 'watch') showView('traffic'); }
   try {
     await initGlobe();
   } catch (err) {
@@ -664,7 +788,7 @@ async function main() {
     const b = $('#details-banner');
     b.textContent = 'The map needs WebGL or canvas, and neither is available in this browser. Everything else works here.';
     b.hidden = false;
-    if (location.hash !== '#hud' && !VIEWS.includes(location.hash.slice(1))) showView('details');
+    if (location.hash !== '#hud' && !VIEWS.includes(location.hash.slice(1))) showView('traffic');
     if (DEBUG) console.warn('globe disabled:', err && err.message);
   }
   bootData();

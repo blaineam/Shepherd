@@ -2,55 +2,71 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <!-- Pinch-to-zoom is deliberately disabled and scale pinned to 1: the maintainer
+       uses this on a phone daily and asked for it explicitly, since an accidental
+       pinch mid-tap was worse than losing zoom. This is a real accessibility
+       tradeoff for anyone who relies on pinch-zoom; every text input on this page
+       is kept at an effective 16px+ (see style.css) specifically so iOS Safari
+       never force-zooms on focus instead, which was the usual reason to want zoom. -->
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <title>Shepherd — Live Demo</title>
-  <meta name="description" content="Shepherd's real portal UI, running entirely in your browser with synthetic data. No backend, no network calls, nothing leaves this page.">
+  <meta name="description" content="Shepherd's real portal, running entirely in your browser on synthetic data. No backend, no network calls, nothing leaves this page.">
   <link rel="icon" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
+  <!-- The manifest and the two Apple metas are what let iOS add this portal
+       to the Home Screen as a web app, which is the only way Safari on iOS
+       delivers Web Push (docs/ALARMS.md, "Web Push in the browser"). -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Shepherd">
   <link rel="stylesheet" href="style.css">
-  <style>
-    /* Marketing-site-only: a small "this is a demo" wayfinding bar above the
-       real portal chrome. Nothing below this line changes the portal itself. */
-    .demo-banner {
-      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-      padding: 8px 14px; background: #0a2e2e; border-bottom: 1px solid #1d4d4d;
-      font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #bfe9e4;
-    }
-    .demo-banner a { color: #5eead4; text-decoration: none; font-weight: 600; }
-    .demo-banner a:hover { text-decoration: underline; }
-    .demo-banner strong { color: #fff; }
-  </style>
 </head>
 <body>
-  <div class="demo-banner">
-    <a href="../index.html">&larr; Shepherd</a>
-    <span><strong>Live demo.</strong> This is the real portal UI, generating synthetic traffic entirely in your browser. No backend, no account, nothing leaves this page.</span>
-  </div>
-  <header class="top">
-    <img src="icon.png" alt="" class="logo">
-    <h1 class="wordmark">SHEPHERD</h1>
+  <a class="skip" href="#content">Skip to content</a>
+  <header class="topbar">
+    <button type="button" class="menu-btn" id="btn-navmenu" aria-expanded="false" aria-controls="sidenav" aria-label="Open menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></svg><span>Menu</span></button>
+    <span class="wordmark-sm only-sm"><img src="icon.png" alt="" class="logo"><span class="wordmark">Shepherd</span></span>
     <span class="pill live" id="live" role="status">connecting</span>
-    <nav class="tabs" role="tablist" aria-label="View">
-      <button type="button" role="tab" id="tab-hud" aria-selected="true" aria-controls="view-hud">HUD</button>
-      <button type="button" role="tab" id="tab-devices" aria-selected="false" aria-controls="view-devices">Devices</button>
-      <button type="button" role="tab" id="tab-blocking" aria-selected="false" aria-controls="view-blocking">Blocking</button>
-      <button type="button" role="tab" id="tab-alarms" aria-selected="false" aria-controls="view-alarms">Alarms</button>
-      <button type="button" role="tab" id="tab-watch" aria-selected="false" aria-controls="view-watch">Watch</button>
-      <button type="button" role="tab" id="tab-upstreams" aria-selected="false" aria-controls="view-upstreams">Upstreams</button>
-      <button type="button" role="tab" id="tab-history" aria-selected="false" aria-controls="view-history">History</button>
-      <button type="button" role="tab" id="tab-accountability" aria-selected="false" aria-controls="view-accountability">Accountability</button>
-      <button type="button" role="tab" id="tab-locking" aria-selected="false" aria-controls="view-locking">Locking</button>
-      <button type="button" role="tab" id="tab-details" aria-selected="false" aria-controls="view-details">Details</button>
-    </nav>
     <span class="spacer"></span>
     <span class="clock mono" id="clock" aria-label="Clock"></span>
-    <button type="button" class="tbtn" id="btn-lock" title="Lock the portal now" hidden>Lock</button>
-    <label class="switch demo-switch" title="Synthetic data generated in your browser. Makes no API calls."><input type="checkbox" id="demo-toggle" checked disabled><span>Demo data</span></label>
-    <span class="muted mono small hide-sm" id="version"></span>
-    <span class="muted mono small hide-sm" id="uptime"></span>
+    <div class="tb-actions">
+      <label class="switch demo-switch" title="Synthetic data generated in your browser. Makes no API calls."><input type="checkbox" id="demo-toggle"><span>Demo<span class="hide-sm"> data</span></span></label>
+      <button type="button" class="ghost" id="btn-lock" title="Lock the portal now"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 11h12v10H6z"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span>Lock</span></button>
+    </div>
   </header>
+  <div class="shell">
+    <div class="nav-scrim" id="nav-scrim" hidden></div>
+    <aside class="sidenav" id="sidenav" aria-label="Main menu">
+      <div class="brand"><img src="icon.png" alt="" class="logo"><h1 class="wordmark">Shepherd</h1></div>
+      <button type="button" class="ibtn nav-close" id="btn-navclose" aria-label="Close menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      <nav class="tabs nav" role="tablist" aria-label="View">
+        <div class="nav-h">Monitor</div>
+        <button type="button" role="tab" id="tab-hud" aria-selected="true" aria-controls="view-hud"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"/><path d="M3 12h18"/><path d="M12 3c3 3.5 3 14.5 0 18"/><path d="M12 3c-3 3.5-3 14.5 0 18"/></svg><span>Map</span></button>
+        <button type="button" role="tab" id="tab-history" aria-selected="false" aria-controls="view-history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M4 4v4h4"/><path d="M12 8v4l3 2"/></svg><span>History</span></button>
+        <button type="button" role="tab" id="tab-alarms" aria-selected="false" aria-controls="view-alarms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span>Alarms</span></button>
+        <button type="button" role="tab" id="tab-vulnscan" aria-selected="false" aria-controls="view-vulnscan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M12 8v4"/><path d="M12 15h.01"/></svg><span>Vulnerabilities</span></button>
+        <button type="button" role="tab" id="tab-network" aria-selected="false" aria-controls="view-network"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span>Network health</span></button>
+        <button type="button" role="tab" id="tab-traffic" aria-selected="false" aria-controls="view-traffic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V11"/><path d="M9 19V5"/><path d="M14 19v-8"/><path d="M19 19V8"/><path d="M3 19h18"/></svg><span>Bandwidth</span></button>
+        <div class="nav-h">Protect</div>
+        <button type="button" role="tab" id="tab-devices" aria-selected="false" aria-controls="view-devices"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18v11H3z"/><path d="M8 20h8M12 16v4"/></svg><span>Devices</span></button>
+        <button type="button" role="tab" id="tab-blocking" aria-selected="false" aria-controls="view-blocking"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"/><path d="M5.6 5.6l12.8 12.8"/></svg><span>Blocking</span></button>
+        <div class="nav-h">Settings</div>
+        <button type="button" role="tab" id="tab-upstreams" aria-selected="false" aria-controls="view-upstreams"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v5H4z"/><path d="M4 14h16v5H4z"/><path d="M8 7.5h.01M8 16.5h.01"/></svg><span>Upstream DNS</span></button>
+        <button type="button" role="tab" id="tab-dhcp" aria-selected="false" aria-controls="view-dhcp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16v5H4z"/><path d="M4 15h7"/><path d="M15 15h5"/><path d="M8 8.5h.01"/></svg><span>DHCP</span></button>
+        <button type="button" role="tab" id="tab-proxy" aria-selected="false" aria-controls="view-proxy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg><span>Reverse proxy</span></button>
+        <button type="button" role="tab" id="tab-accountability" aria-selected="false" aria-controls="view-accountability"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18v12H3z"/><path d="M3 7l9 6 9-6"/></svg><span>Accountability</span></button>
+        <button type="button" role="tab" id="tab-locking" aria-selected="false" aria-controls="view-locking"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 11h12v10H6z"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span>Locking</span></button>
+        <button type="button" role="tab" id="tab-details" aria-selected="false" aria-controls="view-details"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><span>System</span></button>
+      </nav>
+      <div class="nav-foot">
+        <span class="mono" id="version"></span>
+        <span id="uptime"></span>
+      </div>
+    </aside>
+    <div class="content" id="content">
 
-  <main id="view-hud" class="hud" role="tabpanel" aria-labelledby="tab-hud">
+<main id="view-hud" class="hud" role="tabpanel" aria-labelledby="tab-hud">
     <div id="stage" class="stage"></div>
     <div class="vignette" aria-hidden="true"></div>
 
@@ -74,6 +90,7 @@
       <button type="button" class="tbtn" id="btn-recenter">Recenter</button>
       <button type="button" class="tbtn only-sm" id="btn-feed" aria-pressed="false">Feed</button>
       <button type="button" class="tbtn only-sm" id="btn-filters" aria-pressed="false">Filters</button>
+      <button type="button" class="tbtn only-sm" id="btn-legend" aria-pressed="false">Legend</button>
     </div>
 
     <aside class="rail left" id="rail-left">
@@ -118,6 +135,7 @@
             <dt id="i-mode-k" hidden>Mode</dt><dd id="i-mode" hidden><span class="wbadge">Wandering</span> <span class="muted small">not filtered, still watched</span></dd>
             <dt>Domain</dt><dd class="mono" id="i-domain"></dd>
             <dt id="i-shadow-k" hidden>Shadow</dt><dd class="small shadow-note" id="i-shadow" hidden></dd>
+            <dt id="i-reason-k" hidden>Blocked by</dt><dd class="mono" id="i-reason" hidden></dd>
             <dt>Location</dt><dd id="i-loc"></dd>
             <dt id="i-count-k">Lookups</dt><dd class="mono" id="i-count"></dd>
             <dt>Last seen</dt><dd id="i-last"></dd>
@@ -127,8 +145,8 @@
             <button type="button" class="btn red" id="i-block">Block domain</button>
             <button type="button" class="btn teal" id="i-allow">Allow domain</button>
           </div>
-          <span class="tip-wrap" title="Blocking a whole country needs Watch mode, which sees the actual connections. DNS-only Guard mode cannot do this reliably.">
-            <button type="button" class="btn ghost" id="i-country" disabled>Block country (needs Watch mode)</button>
+          <span class="tip-wrap" title="Blocking a whole country from the globe needs Watch mode to enforce it on the connection itself. Watch mode now ships and gives Shepherd that outbound view; wiring this button to it is still to come. Blocking a country by network, group or device works today on the Blocking screen&#39;s Countries tab.">
+            <button type="button" class="btn ghost" id="i-country" disabled>Block country (on the Blocking screen)</button>
           </span>
           <p class="insp-fb small" id="i-fb" role="status" aria-live="polite" hidden>
             <span id="i-fb-text"></span> <button type="button" class="linkbtn" id="i-undo">Undo</button>
@@ -152,7 +170,7 @@
 
     <div class="notice" id="no-map" hidden>
       <strong>Map data is not available yet</strong>
-      <span>Queries are arriving, but none carry a location. The Details view has everything meanwhile.</span>
+      <span>Queries are arriving, but none carry a location. Bandwidth, Devices and the other screens work without it.</span>
     </div>
     <div class="notice prompt" id="no-home" hidden>
       <strong>Where is home?</strong>
@@ -161,7 +179,7 @@
     </div>
     <div class="notice" id="no-gl" hidden>
       <strong>The map is not available</strong>
-      <span>The map needs WebGL or canvas, and this browser has neither. The Details view works without it.</span>
+      <span>The map needs WebGL or canvas, and this browser has neither. Every other screen works without it.</span>
     </div>
     <div class="homebanner" id="home-banner" hidden>Click the globe to place home. Esc to cancel.</div>
 
@@ -185,41 +203,37 @@
   <main id="view-devices" class="page page-fill" role="tabpanel" aria-labelledby="tab-devices" hidden></main>
   <main id="view-blocking" class="page" role="tabpanel" aria-labelledby="tab-blocking" hidden></main>
   <main id="view-alarms" class="page page-fill" role="tabpanel" aria-labelledby="tab-alarms" hidden></main>
-  <main id="view-watch" class="page" role="tabpanel" aria-labelledby="tab-watch" hidden></main>
+  <main id="view-vulnscan" class="page page-fill" role="tabpanel" aria-labelledby="tab-vulnscan" hidden></main>
+  <main id="view-network" class="page" role="tabpanel" aria-labelledby="tab-network" hidden></main>
+  <main id="view-traffic" class="page" role="tabpanel" aria-labelledby="tab-traffic" hidden></main>
   <main id="view-upstreams" class="page" role="tabpanel" aria-labelledby="tab-upstreams" hidden></main>
+  <main id="view-dhcp" class="page" role="tabpanel" aria-labelledby="tab-dhcp" hidden></main>
+  <main id="view-proxy" class="page" role="tabpanel" aria-labelledby="tab-proxy" hidden></main>
   <main id="view-history" class="page" role="tabpanel" aria-labelledby="tab-history" hidden></main>
   <main id="view-accountability" class="page" role="tabpanel" aria-labelledby="tab-accountability" hidden></main>
   <main id="view-locking" class="page" role="tabpanel" aria-labelledby="tab-locking" hidden></main>
 
-  <main id="view-details" role="tabpanel" aria-labelledby="tab-details" hidden>
+  <main id="view-details" class="page" role="tabpanel" aria-labelledby="tab-details" hidden>
+    <div class="pg-head stack">
+      <h2 class="pg-title">System</h2>
+      <p class="pg-sub muted">Software updates, blocklist health, your own allow and block rules and the privacy policy.</p>
+    </div>
     <p class="banner" id="details-banner" hidden></p>
-    <section class="tiles">
-      <div class="tile"><span class="k">Queries</span><span class="v" id="d-total">0</span></div>
-      <div class="tile"><span class="k">Blocked</span><span class="v" id="d-blocked">0</span><span class="sub" id="d-pct"></span></div>
-      <div class="tile"><span class="k">Cached</span><span class="v" id="d-cached">0</span></div>
-      <div class="tile"><span class="k">Errors</span><span class="v" id="d-errors">0</span></div>
-      <div class="tile"><span class="k">Listed domains</span><span class="v" id="d-listed">0</span></div>
+    <section class="card sw-card" id="sw-card">
+      <div class="card-h">
+        <h2>Software</h2>
+        <div class="sw-acts">
+          <button type="button" class="ghost" id="sw-check">Check now</button>
+          <button type="button" class="primary" id="sw-apply" hidden>Update now</button>
+        </div>
+      </div>
+      <p class="sw-line" id="sw-line"></p>
+      <p class="muted small" id="sw-reason" hidden></p>
+      <p class="muted small" id="sw-rollback" hidden></p>
+      <p class="muted small" id="sw-data" hidden></p>
     </section>
 
     <section class="grid">
-      <div class="card wide">
-        <div class="card-h">
-          <h2>Live queries</h2>
-          <input id="filter" type="search" placeholder="Filter by device, domain or action" autocomplete="off">
-        </div>
-        <div class="scroll">
-          <table>
-            <thead><tr><th>Time</th><th>Device</th><th>Domain</th><th>Type</th><th>Result</th><th>Via</th><th>ms</th><th></th></tr></thead>
-            <tbody id="rows"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Upstreams</h2>
-        <ul class="list" id="upstreams"></ul>
-      </div>
-
       <div class="card">
         <div class="card-h"><h2>Blocklists</h2><button id="refresh" class="ghost">Refresh now</button></div>
         <ul class="list" id="lists"></ul>
@@ -241,41 +255,62 @@
         <ul class="list" id="rules"></ul>
       </div>
 
-      <div class="card">
-        <h2>Top devices</h2>
-        <ul class="list" id="top-clients"></ul>
-      </div>
-
-      <div class="card">
-        <h2>Top blocked</h2>
-        <ul class="list" id="top-blocked"></ul>
-      </div>
     </section>
     <p class="muted small attrib-foot">Locations: <a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">IP geolocation by DB-IP</a> (CC BY 4.0). Land: Natural Earth.</p>
   </main>
+
+    </div>
+  </div>
 
   <div id="toasts" class="toasts" role="status" aria-live="polite" hidden></div>
 
   <div id="login" class="overlay" hidden>
     <div class="modal">
       <img src="icon.png" alt="" class="logo big">
-      <h2>Locked</h2>
+      <h2>Shepherd is locked</h2>
       <p class="muted small">Shepherd is showing synthetic demo data, made up in your browser. Unlock to see your real network.</p>
-      <form id="pin-form">
-        <input id="pin" type="password" inputmode="numeric" placeholder="PIN" autocomplete="off">
-        <button>Unlock with PIN</button>
-      </form>
-      <p class="err" id="pin-err"></p>
-      <hr>
-      <form id="login-form">
-        <input id="token" type="password" placeholder="Portal token" autocomplete="current-password">
-        <button>Unlock with token</button>
-      </form>
-      <p class="muted small">The token is in the data directory, or run <code>shepherd -print-token</code>.</p>
+      <!-- One way in is expanded, the rest are a line of links below
+           (docs/LOCKING.md). Which one leads is decided at runtime:
+           passkey where one is registered and this is its HTTPS address,
+           then a PIN on a browser that is already trusted, then the token,
+           which is always reachable because it is the way back in when the
+           other two are gone. -->
+      <div id="signin-passkey" class="signin" hidden>
+        <button type="button" id="btn-passkey">Sign in with a passkey</button>
+        <p class="muted small" id="passkey-hint">Your device should ask for Face ID, Touch ID or your device PIN.</p>
+        <p class="err" id="passkey-err"></p>
+      </div>
+      <div id="signin-pin" class="signin" hidden>
+        <form id="pin-form" class="inline-form">
+          <input id="pin" type="password" inputmode="numeric" placeholder="PIN" autocomplete="off">
+          <button>Unlock with PIN</button>
+        </form>
+        <p class="err" id="pin-err"></p>
+      </div>
+      <div id="signin-token" class="signin" hidden>
+        <form id="login-form">
+          <input id="token" type="password" placeholder="Portal token" autocomplete="current-password">
+          <button>Unlock with token</button>
+        </form>
+        <p class="muted small">The token is in the data directory, or run <code>shepherd -print-token</code>.</p>
+      </div>
+      <p class="signin-alts" id="signin-alts"></p>
       <p class="err" id="login-err"></p>
     </div>
   </div>
 
+  <script>
+    // This copy of the portal is the public demo (scripts/sync-site-demo).
+    // app.js reads ?demo=, and there is no backend here, so arrive with it
+    // set or the page would ask a server that does not exist.
+    (function () {
+      var p = new URLSearchParams(location.search);
+      if (p.get("demo") === null) {
+        p.set("demo", "1");
+        location.replace(location.pathname + "?" + p.toString() + location.hash);
+      }
+    })();
+  </script>
   <script type="module" src="app.js"></script>
 </body>
 </html>

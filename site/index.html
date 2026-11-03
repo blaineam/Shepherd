@@ -268,36 +268,42 @@
           English, without a byte leaving your house.</p>
       </div>
       <div class="rcard">
-        <h3>Packaging &amp; installers <span class="pill-state planned">planned</span></h3>
-        <p>A real setup wizard and release channels. Today it's a binary and a config file — see
-          <a href="#run-anywhere">running it</a> below.</p>
+        <h3>Packaging &amp; installers <span class="pill-state shipped">shipped</span></h3>
+        <p>Setup happens in a browser, not a text editor. Start Shepherd with no configuration file and
+          it prints a link, asks what it has to, measures the upstream resolvers rather than guessing
+          them, writes a commented config and carries on in the same process.</p>
       </div>
     </div>
 
     <div class="watch-callout">
-      <h3>About "Watch mode" (ARP interception) and the Bandwidth screen</h3>
-      <p><strong>Watch mode is opt-in and runs on the maintainer's own network.</strong> Shepherd steers
-        each eligible device's outbound traffic through itself on its way to your router, so you can see
-        what a device actually connects to even when it never asks Shepherd to look up a name. Where the
-        network card's driver allows it the relay runs inside the kernel (XDP), and on a real network it
-        held full gigabit Wi-Fi with no perceivable slowdown. The <strong>Bandwidth</strong> screen is
-        built on it: how much each device, each group and the whole network moves, live and over months,
-        with upload measured exactly and download <em>estimated</em> from each device's own TCP
-        acknowledgements, at no cost to the network.</p>
-      <p>Things to be honest about. The relay carries the <strong>outbound half only</strong>, so the
-        download figure is an estimate that cannot see QUIC, other UDP or VPN traffic, and a device's
-        connections that were open before it was steered can keep going to the router directly. It
-        <strong>blocks nothing</strong> on its own; DNS filtering still does that. Earlier on
-        2026-11-01 it was briefly retired over what looked like relay loops; those turned out to be
-        uploads misread by a check that judged packets by an IP identification field macOS leaves at
-        zero, and the loop brake now needs real evidence of frames circulating before it stops anything.
-        Your router, Shepherd itself, anything you have excluded and all network and smart-home gear
-        (mesh nodes, hubs, Thread border routers, Matter devices) are never steered, Ethernet is preferred
-        over Wi-Fi, every device has its own switch, and one button stops everything at once. Read
-        <a href="https://github.com/blaineam/shepherd/blob/main/docs/WATCH.md" target="_blank" rel="noopener">docs/WATCH.md</a>,
+      <h3>Where the Bandwidth screen gets its numbers</h3>
+      <p><strong>From the router you already own.</strong> Sign in to eero or a UniFi controller and
+        Shepherd records what the router already counts, per device, in both directions. Nothing is put
+        in the path of your traffic and no setting on your router is changed. A UniFi controller keeps
+        real byte counters, so its figures are measurements; eero reports only the rate at each moment,
+        so Shepherd samples it and the screen says plainly that those totals are a floor rather than a
+        measurement. Measured against a known transfer, eero's sampling recorded about a sixth of it —
+        the kind of thing worth telling you rather than quietly rounding over.</p>
+      <p><strong>"Watch mode" is deprecated.</strong> It steered each device's outbound traffic through
+        Shepherd by one-sided ARP, which is how bandwidth used to be measured. It is off by default,
+        gets no new features, and is kept only for installs already running it. On the eero mesh it was
+        developed against, the gateway reflects a forwarded frame back whenever it carries a foreign
+        source IP, which stopped the first full-size segment of every flow — reproduced with both relays
+        and with plain kernel forwarding, so not a bug in the relay. Source NAT ended it, and that is
+        what the DHCP mode below is built on instead.</p>
+      <p><strong>DHCP mode is alpha</strong>, off by default, and nothing offers it to you — you have to
+        go looking. Shepherd serves the LAN's addresses and masquerades what it routes, over a single
+        network card, so both directions of a device's traffic pass through it: downloads measured
+        rather than estimated, and QUIC no longer a blind spot. Alpha here means <em>no real device has
+        ever taken an address from it</em> — the lease exchange is tested end to end but only over
+        loopback sockets — and it is the one thing in Shepherd that can take a whole network off the
+        internet. The staged rollout starts with a listener that has no way to send. Read
         <a href="https://github.com/blaineam/shepherd/blob/main/docs/TRAFFIC.md" target="_blank" rel="noopener">docs/TRAFFIC.md</a>
-        and the row-by-row comparison in
-        <a href="https://github.com/blaineam/shepherd/blob/main/docs/WATCH-MODE-COMPARISON.md" target="_blank" rel="noopener">docs/WATCH-MODE-COMPARISON.md</a>.</p>
+        for where the numbers come from,
+        <a href="https://github.com/blaineam/shepherd/blob/main/docs/DHCP.md" target="_blank" rel="noopener">docs/DHCP.md</a>
+        for the staging, and
+        <a href="https://github.com/blaineam/shepherd/blob/main/docs/WATCH.md" target="_blank" rel="noopener">docs/WATCH.md</a>
+        for why steering was given up on.</p>
     </div>
   </div>
 </section>
@@ -315,8 +321,8 @@
         <ul class="run-list">
           <li><span class="dot2">●</span> <span><strong class="muted" style="color:var(--text)">DNS-only protection costs the network nothing</strong> — it never adds a hop to anyone's traffic, Pi included.</span></li>
           <li><span class="dot2">●</span> <span>Answering DNS against an in-memory blocklist, passive device learning, the catalog/policy engine and the portal itself are all light enough for a Pi&nbsp;3 or&nbsp;4 to handle a typical home's query volume without strain.</span></li>
-          <li><span class="dot2">●</span> <span>Watch mode's relay is the one piece that isn't free. On a NAS it runs inside the kernel and carries a gigabit device without strain; a Pi has far fewer cores and usually a USB network interface with no in-kernel support, so expect the software relay to be the limit there. It is on by default, so turn it off or steer only a few devices if your Pi is modest.</span></li>
-          <li><span class="dot2">●</span> <span>No formal installer yet — this is a binary-and-a-config-file setup today. See <a href="https://github.com/blaineam/shepherd/blob/main/docs/RASPBERRY-PI.md" target="_blank" rel="noopener">docs/RASPBERRY-PI.md</a> for the full systemd walkthrough.</span></li>
+          <li><span class="dot2">●</span> <span>Per-device bandwidth is read from your router's own API, so it costs a Pi nothing either. The relays that do touch traffic — the deprecated Watch mode, and DHCP mode's NAT — are both off by default, and a Pi with a USB network interface is the worst case for them.</span></li>
+          <li><span class="dot2">●</span> <span>Setup runs in a browser: start it with no configuration file and open the link it prints. See <a href="https://github.com/blaineam/shepherd/blob/main/docs/RASPBERRY-PI.md" target="_blank" rel="noopener">docs/RASPBERRY-PI.md</a> for the full systemd walkthrough.</span></li>
         </ul>
       </div>
       <div class="codeblock"><span class="c"># clone and build</span>

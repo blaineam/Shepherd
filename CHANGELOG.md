@@ -199,6 +199,16 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Fixed
 
+- **The site was advertising a Shepherd that no longer existed.** `site/demo/`, the live demo the
+  marketing site serves, was hand-copied once and then drifted: fourteen files behind the portal, with
+  no Bandwidth, Network health, Reverse proxy or vulnerabilities screen, and an `index.html` that had
+  become a different, older page. The README and the site still showed the old `HUD / WATCH / DETAILS`
+  navigation, the site called the installer "planned" and Watch mode "on by default", and both
+  described the Bandwidth screen as built on Watch mode. The demo is now generated from the portal's
+  own files by `scripts/sync-site-demo`, CI fails if the two drift again, the screenshots are
+  recaptured from the current portal, and the copy says what Shepherd actually does: bandwidth read
+  from your router, Watch mode deprecated, DHCP mode alpha, setup in a browser.
+
 - **The alarm engine's test-only tick hook could wedge the worker it runs on.** The hook is called
   inline by the worker loop, so one that blocks stops the worker, and `Close` then waits on it for
   ever: a hung test binary rather than a failing test, which costs the whole suite its ten-minute
