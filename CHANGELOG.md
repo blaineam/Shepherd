@@ -3,14 +3,26 @@
 All notable changes to Shepherd are documented here.
 
 The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) and the project
-follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). Before 1.0.0, a minor
-version may include breaking changes; they are always listed under **Changed** or **Removed**.
+follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). From 1.0.0 onwards, a
+breaking change to `shepherd.toml` or to the portal API means a new major version; anything that
+would break either is listed under **Changed** or **Removed**.
 
 Every push to `main` publishes one rolling beta (`X.Y.Z-beta.N`) and deletes the previous beta,
 so only the newest beta exists. Stable releases are tagged `vX.Y.Z` and their notes come from this
 file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-11-03
+
+The first stable release, and with it the promise 1.0.0 is for: **`shepherd.toml` and the portal API
+will not break under you within 1.x.** A key you set today keeps meaning what it means; anything that
+would change that waits for 2.0.0 and is written down here first.
+
+What made this the release rather than another 0.x: a new install no longer starts in a text editor,
+releases are signed so a running Shepherd can actually apply an update, per-device bandwidth comes
+from the router rather than from steering traffic, and the one feature that cannot yet be trusted —
+DHCP mode — says so on every surface and is off by default.
 
 ### Added
 - **First-run setup in a browser.** A new install no longer starts in a text editor. Start Shepherd
