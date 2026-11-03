@@ -42,7 +42,7 @@ scripts/dns-qa -v       # show every test
 scripts/dns-qa --count 5
 ```
 
-CI runs it as its own step. Every test is named `TestQA_...`; the harness is
+CI runs every one of these tests as part of `scripts/coverage` (they are ordinary Go tests); `scripts/dns-qa` runs just them, which is what to use while working on DNS code. Every test is named `TestQA_...`; the harness is
 `internal/dnsengine/qa_harness_test.go`: a fake resolver (`qaResolver`) that listens on one loopback port over
 UDP and TCP and can answer, SERVFAIL, NXDOMAIN, stall, drop everything, or truncate over UDP; and `qaEngine`,
 which serves a real `Engine` on real sockets in front of a pool of them. Tests query it as a device would and

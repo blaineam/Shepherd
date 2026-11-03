@@ -32,7 +32,7 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   `dns-lan-uncovered`, `dns-upstream-degraded`) fire after two failing rounds and not again within the
   cooldown. The test's queries are kept out of the query log and device list. See
   [docs/DNS-QA.md](docs/DNS-QA.md).
-- **`scripts/dns-qa`, an automated DNS QA suite** that also runs in CI: a real engine on real sockets in
+- **`scripts/dns-qa`, an automated DNS QA suite** (its tests run in CI with the rest): a real engine on real sockets in
   front of fake UDP, TCP, DoH and DoT upstreams, checking failover, hedging, stalled and blackholed upstreams,
   TCP fallback on truncation, the AAAA filter and `ipv6hint` stripping, blocklists and allowlist precedence,
   Private Relay NXDOMAIN, cache TTLs, and listener coverage on loopback aliases.
