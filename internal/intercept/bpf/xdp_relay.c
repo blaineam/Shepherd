@@ -81,7 +81,21 @@
 struct dup_entry {
 	__u64 fingerprint;
 	__u64 ts;
+	__u32 repeats; // sightings of this fingerprint in the window beyond the first
+	__u32 pad;
 };
+
+// A pure TCP acknowledgement (no payload, no SYN, FIN, RST or URG) is the
+// one frame two genuinely different packets can match byte for byte: a
+// receiver that sees a gap sends the same ACK again for every segment that
+// arrives, and TCP depends on those duplicate ACKs reaching the sender
+// (three of them start a fast retransmit; SACK recovery runs on them). The
+// brake used to drop every repeat, so one lost packet on the download path
+// cost the sender a full retransmission timeout instead of a quick resend.
+// A repeated pure ACK is therefore relayed up to this many times inside the
+// window before it is treated as a loop, which still bounds a runaway to a
+// handful of passes.
+#define PURE_ACK_REPEATS 8
 
 // Family bits, matching Go's intercept.SteerV4 / SteerV6.
 #define FAM_V4 1
@@ -439,6 +453,20 @@ static __attribute__((always_inline)) __u64 fingerprint6(struct ipv6hdr_min *ip6
 	return h | 1;
 }
 
+// is_pure_ack_tcp says whether the TCP segment at l4 carries no payload and
+// is a plain acknowledgement. total is the IP payload length including the
+// TCP header (IPv4: tot_len minus the IP header; IPv6: payload_len).
+static __attribute__((always_inline)) int is_pure_ack_tcp(void *l4, void *data_end, __u32 total)
+{
+	if (l4 + sizeof(struct tcphdr_min) > data_end)
+		return 0;
+	struct tcphdr_min *tcp = l4;
+	__u32 thl = (__u32)(tcp->doff_res >> 4) * 4;
+	if (thl < 20 || total != thl)
+		return 0;
+	return (tcp->flags & TCP_ACK) && !(tcp->flags & (TCP_FIN | TCP_RST | 0x02 | 0x20));
+}
+
 // is_duplicate reports whether this program already relayed this exact
 // frame inside DUP_WINDOW_NS, and records it either way. One slot per
 // fingerprint hash, overwritten freely: a collision costs one suppressed
@@ -450,16 +478,18 @@ static __attribute__((always_inline)) __u64 fingerprint6(struct ipv6hdr_min *ip6
 // frame and its echo must land on the same CPU to be matched, which the
 // receive hash guarantees for a given flow.
 static __attribute__((always_inline)) int is_duplicate(__u64 fp, __u64 now,
-						       struct relay_stats *st)
+						       struct relay_stats *st, int pure_ack)
 {
 	__u32 slot = (__u32)((fp >> 16) % DUP_SLOTS);
 	struct dup_entry *e = bpf_map_lookup_elem(&recent, &slot);
 	if (!e)
 		return 0;
-	int dup = e->fingerprint == fp && now >= e->ts && (now - e->ts) < DUP_WINDOW_NS;
+	int same = e->fingerprint == fp && now >= e->ts && (now - e->ts) < DUP_WINDOW_NS;
 	__u64 delay = now - e->ts;
+	e->repeats = same ? e->repeats + 1 : 0;
 	e->fingerprint = fp;
 	e->ts = now;
+	int dup = same && (!pure_ack || e->repeats > PURE_ACK_REPEATS);
 	if (dup && st) {
 		if (delay < 10000)
 			st->echo_under_10us++;
@@ -663,7 +693,8 @@ int xdp_relay(struct xdp_md *ctx)
 		// loop here would be exactly as severe, so the brake is not left
 		// to cover one family only.
 		__u64 fp6 = fingerprint6(ip6, (void *)(ip6 + 1), data_end, len);
-		if (is_duplicate(fp6, bpf_ktime_get_ns(), st)) {
+		int ack6 = ip6->next_hdr == 6 && is_pure_ack_tcp((void *)(ip6 + 1), data_end, bpf_ntohs(ip6->payload_len));
+		if (is_duplicate(fp6, bpf_ktime_get_ns(), st, ack6)) {
 			if (st)
 				st->duplicates++;
 			__sync_fetch_and_add(&dev->duplicates, 1);
@@ -688,7 +719,10 @@ int xdp_relay(struct xdp_md *ctx)
 	// route straight back out of this same interface.
 	__u64 now_ns = bpf_ktime_get_ns();
 	__u64 fp = fingerprint(ip, (void *)ip + ((ip->ver_ihl & 0x0f) * 4), data_end, len);
-	if (is_duplicate(fp, now_ns, st)) {
+	__u32 ihl = (ip->ver_ihl & 0x0f) * 4;
+	int ack4 = ip->protocol == 6 && bpf_ntohs(ip->tot_len) >= ihl &&
+		   is_pure_ack_tcp((void *)ip + ihl, data_end, bpf_ntohs(ip->tot_len) - ihl);
+	if (is_duplicate(fp, now_ns, st, ack4)) {
 		if (st)
 			st->duplicates++;
 		__sync_fetch_and_add(&dev->duplicates, 1);

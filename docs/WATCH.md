@@ -299,6 +299,8 @@ frame it has already relayed inside 100 ms. Dropped rather than passed up: IPv4 
 on many hosts, and passing it would hand the kernel a frame it would route straight back out of
 the interface it came from.
 
+A **pure TCP acknowledgement** is the exception, because two different packets can be byte for byte the same: a receiver that sees a gap repeats the same ACK for every segment that follows, and TCP needs those duplicate ACKs to reach the sender. A repeated pure ACK is relayed up to 8 times inside the window before it is dropped as a loop, so a loop of them is still contained within a handful of passes.
+
 The window is placed between two real numbers. A loop's round trip is microseconds. The shortest
 TCP retransmission timeout Linux will use is 200 ms. So a frame going round is caught the second
 time it is seen, and a genuine retransmission is never suppressed. A frame that really is a
