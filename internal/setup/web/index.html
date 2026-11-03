@@ -147,6 +147,10 @@
       <p class="note">Give the Shepherd host a fixed address while you are in there — a DHCP
         reservation for <code id="r-self"></code> is enough. If its address moves, every device is
         pointed at nothing.</p>
+      <p class="note small">Shepherd can also hand out the leases itself instead of your router
+        (DHCP mode, <code>docs/DHCP.md</code>). It is off, and it stays off until you turn it on in
+        the portal: it means turning your router's DHCP server off, which is not a thing to do from
+        a setup page before anything has been proven to work.</p>
       <div id="r-bandwidth">
         <h3>Per-device bandwidth (optional)</h3>
         <p class="note">Shepherd can ask your router how much each device has moved, which is how the

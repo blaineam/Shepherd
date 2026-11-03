@@ -104,7 +104,10 @@ that is not acceptable on your network, read it from the file instead.
 **It tells you how to point the network at Shepherd**: the DNS server to hand out in your router's
 DHCP settings (with the port, when it is not 53), the alternative of moving one device first, and a
 reminder to give the Shepherd host a fixed address, since every device would otherwise be pointed at
-nothing the day its address moves. Shepherd does not change your router for you: the APIs it speaks
+nothing the day its address moves. It mentions DHCP mode ([DHCP.md](DHCP.md)) and leaves it alone:
+turning it on means turning the router's DHCP server off, which is not a thing to do from a setup
+page before anything has been proven to work. Setup never writes a `[dhcp]` section, so that mode
+stays off at its default until the owner turns it on in the portal. Shepherd does not change your router for you: the APIs it speaks
 to eero and UniFi are the read-only ones it uses for per-device bandwidth, and those vendors do not
 publish a supported way to set a network's DNS server. Saying so is better than a button that works
 on one firmware and silently does nothing on the next.
