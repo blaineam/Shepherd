@@ -18,6 +18,9 @@ check:
 	scripts/test-leakcheck
 	scripts/leakcheck --all
 
+dns-qa:
+	scripts/dns-qa
+
 cross:
 	scripts/build-release "$$(cat VERSION)-dev"
 

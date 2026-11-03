@@ -72,3 +72,48 @@ export function deviceLine(d, now = Date.now()) {
 // the endpoint. The server computes it; the view passes the ID it was
 // given at subscribe time.
 export const isThisBrowser = (d, thisID) => !!thisID && d && d.id === thisID;
+
+// ------------------------------------------------------------------ ntfy
+// ntfy delivers alarms to a phone app without Web Push, which is how a
+// phone in Lockdown Mode or one that cannot reach the HTTPS portal gets
+// them. It is configured in shepherd.toml, so this is the walk-through the
+// Alarms screen shows, plus the one line saying where it stands.
+
+export const NTFY_DEFAULT_SERVER = 'https://ntfy.sh';
+
+// suggestTopic makes a topic nobody will guess. On a public ntfy server
+// anyone who knows the name can read it, so it ends in random letters.
+// bytes is any array of byte values (crypto.getRandomValues in the view).
+export function suggestTopic(bytes) {
+  const alphabet = 'abcdefghijkmnpqrstuvwxyz23456789';
+  let s = '';
+  for (const b of bytes || []) s += alphabet[(Number(b) || 0) % alphabet.length];
+  return 'shepherd-' + (s || 'alarms');
+}
+
+// ntfyStatusLine says whether ntfy is on, from the server's ntfy status.
+export function ntfyStatusLine(ntfy) {
+  const n = ntfy || {};
+  if (!n.enabled) return { tone: 'muted', text: 'ntfy is off. Follow the steps below to turn it on.' };
+  const where = (n.server || '') + (n.topic ? ' / ' + n.topic : '');
+  return { tone: 'good', text: 'ntfy is on and publishing alarms to ' + where + '. Subscribe to that topic in the ntfy app, then send a test notification.' };
+}
+
+// ntfySnippet is the shepherd.toml section to paste. Credentials are never
+// written for the owner; a protected server gets a commented hint.
+export function ntfySnippet({ server, topic } = {}) {
+  return [
+    '[alarms.ntfy]',
+    'enabled = true',
+    'server = "' + (server || NTFY_DEFAULT_SERVER) + '"',
+    'topic = "' + (topic || 'shepherd-alarms') + '"',
+    '# token = ""        # only for a server that needs a login',
+  ].join('\n');
+}
+
+export const NTFY_STEPS = [
+  'Install the ntfy app on your phone (App Store or Google Play), or open the ntfy web app. The free public server at ntfy.sh works with no account; you can also run your own.',
+  'In the app, tap + and subscribe to a topic name. Pick one nobody can guess: on a public server anyone who knows the topic can read it.',
+  'Paste the section below into shepherd.toml, using the same topic, and restart Shepherd.',
+  'Come back here and press Send a test notification. It should arrive in the ntfy app within a few seconds.',
+];

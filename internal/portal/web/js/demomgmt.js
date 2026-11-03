@@ -543,6 +543,12 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       return { ok: true };
     }
     if (path === '/api/policy/refresh' && method === 'POST') { await delay(250); return null; }
+    // ---- DNS self-test
+    if (path === '/api/selftest' || path === '/api/selftest/run') {
+      const probe = (proto, check) => ({ proto, check, ok: true, ms: 1.2 });
+      const ok = (addr) => ({ addr, ok: true, probes: ['udp', 'tcp'].flatMap((pr) => ['listener', 'resolve', 'block'].map((c) => probe(pr, c))) });
+      return { enabled: true, report: { time: new Date(now()).toISOString(), duration_ms: 18, status: 'ok', listeners: [ok('10.0.0.20:53'), ok('127.0.0.1:53')], lan: [], upstreams: [], problems: [] } }; // leakcheck:allow demo fixture
+    }
     // ---- upstreams
     if (path === '/api/upstreams') {
       if (method === 'GET') return upstreamDoc();

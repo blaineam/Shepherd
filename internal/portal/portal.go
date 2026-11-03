@@ -176,6 +176,14 @@ type Deps struct {
 	// the separate, less frequent bufferbloat check.
 	NethealthBufferbloatEnabled bool
 
+	// Ntfy describes the ntfy delivery channel for the Alarms screen; the
+	// zero value is "off".
+	Ntfy NtfyStatus
+
+	// Selftest is the built-in DNS self-test (internal/selftest,
+	// docs/DNS-QA.md). Nil means it is off: the endpoint says so.
+	Selftest SelftestSource
+
 	// ReverseProxy holds the hosts the [reverseproxy] listener forwards
 	// (docs/REVERSEPROXY.md). Nil gets a memory-only store, so the API
 	// still works but nothing persists.
@@ -707,6 +715,9 @@ func (s *Server) routes() {
 	h("GET /api/nethealth/bufferbloat", s.nethealthBufferbloat)
 	h("POST /api/nethealth/probe", s.nethealthProbeNow)
 	h("POST /api/nethealth/bufferbloat/run", s.nethealthBufferbloatNow)
+
+	h("GET /api/selftest", s.getSelftest)
+	h("POST /api/selftest/run", s.runSelftest)
 
 	h("GET /api/reverseproxy", s.getReverseProxy)
 	h("GET /api/reverseproxy/hosts", s.listProxyHosts)

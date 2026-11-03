@@ -967,3 +967,43 @@ func TestDNSAddedLoopbackAddrsAreOnlyTheOnesShepherdAdds(t *testing.T) {
 		t.Fatalf("added %v are not the tail of %v", added, all)
 	}
 }
+
+func TestSelftestDefaultsExampleAndValidation(t *testing.T) {
+	d := Default().Selftest
+	if !d.Enabled || d.IntervalSeconds != 60 || d.GoodName != "example.com" || d.BlockedName != "" {
+		t.Errorf("selftest defaults = %+v", d)
+	}
+	ex, err := Load("../../shepherd.example.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.Selftest.Enabled != d.Enabled || ex.Selftest.IntervalSeconds != d.IntervalSeconds || ex.Selftest.GoodName != d.GoodName ||
+		ex.Selftest.MaxErrorPercent != d.MaxErrorPercent || ex.Selftest.WindowMinutes != d.WindowMinutes || ex.Selftest.AlarmCooldownMinutes != d.AlarmCooldownMinutes {
+		t.Errorf("example %+v differs from the defaults %+v", ex.Selftest, d)
+	}
+	path := filepath.Join(t.TempDir(), "s.toml")
+	for body, want := range map[string]string{
+		"interval_seconds = 5":              "interval_seconds",
+		`good_name = ""`:                    "good_name",
+		"max_error_percent = 0":             "max_error_percent",
+		"max_error_percent = 101":           "max_error_percent",
+		"window_minutes = 0":                "window_minutes",
+		"alarm_cooldown_minutes = 0":        "alarm_cooldown_minutes",
+		`not_served = ["10.0.0.5", "nope"]`: "not_served",
+	} {
+		os.WriteFile(path, []byte("[selftest]\n"+body+"\n"), 0o600)
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want mention of %s", body, err, want)
+		}
+	}
+	// Off means nothing else is checked; a good override loads.
+	os.WriteFile(path, []byte("[selftest]\nenabled = false\ninterval_seconds = 1\n"), 0o600)
+	if _, err := Load(path); err != nil {
+		t.Errorf("disabled: %v", err)
+	}
+	os.WriteFile(path, []byte("[selftest]\nnot_served = [\"10.0.0.102\"]\nblocked_name = \"ads.example\"\n"), 0o600)
+	cfg, err := Load(path)
+	if err != nil || !slices.Equal(cfg.Selftest.NotServed, []string{"10.0.0.102"}) || cfg.Selftest.BlockedName != "ads.example" {
+		t.Errorf("overrides: %+v %v", cfg.Selftest, err)
+	}
+}

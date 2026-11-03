@@ -98,3 +98,21 @@ export function healthLabel(u) {
   if (u.healthy) return u.rtt_ms ? Math.round(u.rtt_ms) + ' ms' : 'ok';
   return u.consecutive_failures ? 'failing (' + u.consecutive_failures + ')' : 'down';
 }
+
+// Turns a /api/selftest answer into what the Self-test card shows. Pure.
+// {state: 'off'|'wait'|'ok'|'warn'|'fail', headline, problems: [{severity, message}], listeners: [{addr, ok, detail}]}
+export function selftestSummary(doc) {
+  if (!doc || doc.enabled === false) return { state: 'off', headline: 'The DNS self-test is off (selftest.enabled = false).', problems: [], listeners: [] };
+  const r = doc.report;
+  if (!r) return { state: 'wait', headline: 'The first round runs a few seconds after Shepherd starts.', problems: [], listeners: [] };
+  const problems = (r.problems || []).map((p) => ({ severity: p.severity, message: p.message }));
+  const listeners = (r.listeners || []).map((l) => {
+    const bad = (l.probes || []).filter((p) => !p.ok);
+    return { addr: l.addr, ok: !!l.ok, detail: l.ok ? 'UDP and TCP answer' : bad.map((p) => p.proto.toUpperCase() + ' ' + p.check + ': ' + (p.detail || 'failed')).join('; ') };
+  });
+  const n = problems.length;
+  const headline = r.status === 'ok'
+    ? 'All ' + listeners.length + ' listening address' + (listeners.length === 1 ? '' : 'es') + ' answer over UDP and TCP.'
+    : n + ' problem' + (n === 1 ? '' : 's') + ' found.';
+  return { state: r.status === 'fail' ? 'fail' : r.status === 'warn' ? 'warn' : 'ok', headline, problems, listeners };
+}

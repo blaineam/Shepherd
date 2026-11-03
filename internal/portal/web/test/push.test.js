@@ -61,3 +61,29 @@ test('deviceLine words each subscription state', () => {
   assert.equal(isThisBrowser({ id: 'x' }, 'x'), true);
   assert.equal(isThisBrowser({ id: 'x' }, ''), false);
 });
+
+import { suggestTopic, ntfyStatusLine, ntfySnippet, NTFY_STEPS, NTFY_DEFAULT_SERVER } from '../js/push.js';
+
+test('suggestTopic ends in random letters from bytes and falls back safely', () => {
+  assert.equal(suggestTopic([0, 1, 31, 32]), 'shepherd-ab9a');
+  assert.equal(suggestTopic([]), 'shepherd-alarms');
+  assert.equal(suggestTopic(null), 'shepherd-alarms');
+  assert.match(suggestTopic([200, 7, 99, 3, 250, 18, 5, 77]), /^shepherd-[a-z2-9]{8}$/);
+});
+
+test('ntfyStatusLine says off, or where alarms are published', () => {
+  assert.equal(ntfyStatusLine(null).tone, 'muted');
+  const on = ntfyStatusLine({ enabled: true, server: 'https://ntfy.example.com', topic: 'x' });
+  assert.equal(on.tone, 'good');
+  assert.match(on.text, /ntfy\.example\.com \/ x/);
+  assert.match(ntfyStatusLine({ enabled: true }).text, /publishing alarms to \./);
+});
+
+test('ntfySnippet is a ready-to-paste section with no credentials', () => {
+  const s = ntfySnippet({ topic: 'shepherd-abc' });
+  assert.ok(s.startsWith('[alarms.ntfy]\nenabled = true\nserver = "' + NTFY_DEFAULT_SERVER + '"\ntopic = "shepherd-abc"'));
+  assert.match(s, /# token = ""/);
+  assert.doesNotMatch(s, /password/);
+  assert.match(ntfySnippet(), /topic = "shepherd-alarms"/);
+  assert.equal(NTFY_STEPS.length, 4);
+});

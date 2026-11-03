@@ -1181,3 +1181,8 @@ button.tf-trend { cursor: pointer; } button.tf-trend:hover { border-color: var(-
 .ru-kinds { display: flex; gap: 8px; margin: 0 0 12px; }
 .ru-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); align-items: center; }
 .ru-grid .switch, .ru-grid button { grid-column: 1 / -1; justify-self: start; }
+
+.al-ntfy { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+.al-ntfy > summary { cursor: pointer; font-weight: 600; }
+.al-ntfy-steps { margin: 8px 0 12px 20px; padding: 0; display: grid; gap: 6px; max-width: 70ch; color: var(--text-2); }
+.al-ntfy-code { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 10px 12px; margin: 0 0 8px; overflow-x: auto; white-space: pre; }
