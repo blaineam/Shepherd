@@ -119,6 +119,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Fixed
 
+- **The alarm engine's test-only tick hook could wedge the worker it runs on.** The hook is called
+  inline by the worker loop, so one that blocks stops the worker, and `Close` then waits on it for
+  ever: a hung test binary rather than a failing test, which costs the whole suite its ten-minute
+  timeout instead of naming the problem. The contract is now written down on the hook, and the one
+  test that uses it signals without blocking. No change to the engine's behaviour -- nothing in the
+  public API sets the hook.
+
 - **A list refresh started from the portal was untracked once its request returned.** `POST
   /api/lists/refresh` answers `202` and refreshes in the background by design, but nothing held a
   handle on that goroutine, so nothing could wait for it to finish writing its list files. In the

@@ -141,6 +141,13 @@ type Engine struct {
 	// (never reassigned after): the worker reads it with no synchronization
 	// of its own, so changing it after New returns would race. Nothing in
 	// this package's public API sets it.
+	//
+	// It MUST NOT BLOCK. The worker calls it inline, so a hook that waits
+	// wedges the worker, and Close then wedges on wg.Wait() behind it --
+	// which is a hung test binary, not a failing test, and costs the whole
+	// suite its timeout. A hook that signals a channel must do so without
+	// blocking (a select with a default), because one Advance past several
+	// intervals delivers several ticks and so calls this several times.
 	afterTick func()
 }
 
