@@ -81,7 +81,8 @@ Shepherd is early and built in public. This is real, tested and running on a rea
 - [x] **Management screens** for all of the above (Devices, Blocking, Upstreams, History) alongside the HUD.
 - [x] **Tailscale integration** for private remote access, validated on a live exit node and subnet router.
 - [x] **Bandwidth per device, group and network** ([TRAFFIC.md](docs/TRAFFIC.md)), live and over months, **read from the router you already own**: sign in to eero or a UniFi controller under "Read from your router" on the Bandwidth screen and Shepherd records what the router already counts. Both directions, nothing in the path of your traffic, no setting changed on your router, and it works on mesh networks where steering cannot. UniFi keeps real byte counters, so its figures are measurements; eero reports rates only, so its totals are a floor rather than a measurement, and the screen says so. The same eero sign-in can copy device names and profiles across.
-- [x] **Watch mode**, **deprecated** ([WATCH.md](docs/WATCH.md)): steers a device's outbound traffic through Shepherd by one-sided ARP, to show what a device connects to even when it bypasses your DNS. Off by default, no new features, kept for the installs already running it. It is outbound-only by construction, so its download figure is an estimate from each device's own acknowledgements, and on the eero mesh it was developed against the gateway reflects forwarded frames back, which stops the first full-size segment of every flow. Source NAT fixed that when measured, so a revival belongs in [Gateway mode](docs/GATEWAY.md) as a DHCP/NAT mode rather than one-sided steering.
+- [x] **Watch mode**, **deprecated** ([WATCH.md](docs/WATCH.md)): steers a device's outbound traffic through Shepherd by one-sided ARP, to show what a device connects to even when it bypasses your DNS. Off by default, no new features, kept for the installs already running it. It is outbound-only by construction, so its download figure is an estimate from each device's own acknowledgements, and on the eero mesh it was developed against the gateway reflects forwarded frames back, which stops the first full-size segment of every flow. Source NAT fixed that when measured, which is what DHCP mode below is built on rather than one-sided steering.
+- [x] **DHCP mode**, **alpha** ([DHCP.md](docs/DHCP.md)): Shepherd serves the LAN's addresses and masquerades the traffic of the devices it routes, so both directions of their traffic pass through it — downloads *measured* rather than estimated, and QUIC no longer a blind spot. One network card, one flat segment, your router still routing. The LAN's range is yours to pick, and a chosen range is checked against the network as it actually is, so you are told what to change on the router instead of finding out at midnight. **Alpha means no real device has ever taken an address from it**: the lease exchange is tested end to end but only over loopback sockets, and it is the one thing here that can take a whole network off the internet. Off by default, nothing offers it to you, and the staged rollout starts with a listener that has no way to send.
 - [x] **Threat feeds** ([THREATS.md](docs/THREATS.md)): every lookup checked against curated lists of malware hosts, botnet controllers and hijacked networks, and an alarm naming the device that reached for one, blocked or not. A few map lookups per query, no model, no packet inspection.
 - [x] **Thread, Matter and IPv6 safe by design**, written down as hard rules ([IPV6.md](docs/IPV6.md)). IPv6 steering exists (unicast Neighbor Advertisements only, never Router Advertisements) but is off by default and never touches Thread or Matter gear ([IPV6-WATCH.md](docs/IPV6-WATCH.md)).
 - [x] **97% test coverage** with the race detector, enforced by a floor that only rises.
@@ -142,9 +143,16 @@ Grab the newest beta from [Releases](https://github.com/blaineam/shepherd/releas
 ```bash
 git clone https://github.com/blaineam/shepherd && cd shepherd
 make build
-cp shepherd.example.toml shepherd.toml      # set dns.listen and portal.listen
-bin/shepherd -config shepherd.toml
+bin/shepherd                                # prints a setup link; finish it in a browser
 ```
+
+With no configuration file, Shepherd brings up a setup page and prints the addresses to open. Answer
+five questions in the browser — where to keep state, which of this host's addresses answer DNS, which
+resolvers to ask (each one tested before it is written), where the portal listens, and optionally
+your router for per-device bandwidth — press Finish, and Shepherd writes a commented `shepherd.toml`
+and carries straight on with it in the same process. `shepherd setup` runs it again later. Copying
+[`shepherd.example.toml`](shepherd.example.toml) and editing it by hand still works.
+See [SETUP.md](docs/SETUP.md).
 
 Run it on a spare port beside your current resolver, check it with `dig`, and only then point your
 router at it. The [Wave 2 guide](docs/WAVE-2.md) walks through it and what to verify.
@@ -165,7 +173,7 @@ privately through [SECURITY.md](SECURITY.md). Releases follow [SemVer](https://s
 
 ## Docs
 
-[Design](docs/DESIGN.md) · [Roadmap](docs/ROADMAP.md) · [Testing](docs/TESTING.md) · [DNS QA and self-test](docs/DNS-QA.md) · [IPv6 and Thread](docs/IPV6.md) ·
+[First-run setup](docs/SETUP.md) · [Design](docs/DESIGN.md) · [Roadmap](docs/ROADMAP.md) · [Testing](docs/TESTING.md) · [DNS QA and self-test](docs/DNS-QA.md) · [IPv6 and Thread](docs/IPV6.md) ·
 [Wave 2 guide](docs/WAVE-2.md) · [Raspberry Pi](docs/RASPBERRY-PI.md) · [Releasing](docs/RELEASING.md) ·
 [Public development](docs/PUBLIC-DEV.md)
 

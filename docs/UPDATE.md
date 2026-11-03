@@ -40,8 +40,10 @@ The card says why instead of trying:
 - **A read-only container.** The usual Docker deployment copies the binary into an image with a
   read-only filesystem; the directory cannot take a new file. Rebuild the container with the
   release instead.
-- **No signing key built in.** `update.ReleasePublicKeyB64` in `internal/update/pubkey.go` is empty
-  until the maintainer generates the key pair (below). Checks and alarms still work.
+- **The signing key** is built in: `update.ReleasePublicKeyB64` in `internal/update/pubkey.go` holds
+  the public half, and the private half is the `SHEPHERD_SIGNING_KEY` repository secret (set
+  2026-11-03). A build from before that commit has no key: it still checks and alarms, but refuses to
+  apply any release, signed or not.
 - **Windows.** A running executable cannot be replaced in place there yet; the release is linked
   for a manual install.
 - **A development build.**

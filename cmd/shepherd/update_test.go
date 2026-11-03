@@ -77,15 +77,28 @@ func TestStartUpdateChecksRaisesAndReportsStatus(t *testing.T) {
 		t.Fatalf("update alarms = %+v", page.Alarms)
 	}
 	st := u.Status().(updateStatus)
-	if !st.Available || st.LatestVersion != "99.0.0" || st.Current != "1.0.0" || st.Channel != "stable" || st.CanApply {
+	if !st.Available || st.LatestVersion != "99.0.0" || st.Current != "1.0.0" || st.Channel != "stable" {
 		t.Fatalf("status = %+v", st)
 	}
-	if !strings.Contains(st.Reason, "signing key") {
-		t.Fatalf("without a built-in key the reason should say so: %q", st.Reason)
+	// A release signing key is built in (internal/update/pubkey.go), so a
+	// newer release is something this build can actually apply.
+	if !st.CanApply || st.Reason != "" {
+		t.Fatalf("with a key built in an update should be applicable: %+v", st)
 	}
-	if err := u.Apply(ctx); err == nil || !strings.Contains(err.Error(), "signing key") {
-		t.Fatalf("apply without a key: %v", err)
-	}
+	// A build from before the key existed reports the release and refuses
+	// to apply it, since it could not verify what it downloaded.
+	func() {
+		old := update.ReleasePublicKeyB64
+		update.ReleasePublicKeyB64 = ""
+		defer func() { update.ReleasePublicKeyB64 = old }()
+		st := u.Status().(updateStatus)
+		if st.CanApply || !strings.Contains(st.Reason, "signing key") {
+			t.Fatalf("without a built-in key: %+v", st)
+		}
+		if err := u.Apply(ctx); err == nil || !strings.Contains(err.Error(), "signing key") {
+			t.Fatalf("apply without a key: %v", err)
+		}
+	}()
 	// A dev build always sees the release as available and never applies.
 	u2 := &updater{cfg: cfg, current: "dev", exe: u.exe, checker: updateChecker}
 	u2.Check(ctx)
@@ -239,10 +252,10 @@ func TestRollbackFlagThroughMain(t *testing.T) {
 	cfgPath := filepath.Join(dir, "shepherd.toml")
 	os.WriteFile(cfgPath, []byte("data_dir = \""+filepath.Join(dir, "data")+"\"\n"), 0o600)
 	var out, errb strings.Builder
-	if code := realMain([]string{"-config", cfgPath, "-rollback"}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "nothing to roll back") {
+	if code := realMain([]string{"-config", cfgPath, "-rollback"}, nil, &out, &errb); code != 1 || !strings.Contains(errb.String(), "nothing to roll back") {
 		t.Fatalf("rollback with nothing to restore: exit %d, %q", code, errb.String())
 	}
-	if code := realMain([]string{"-config", filepath.Join(dir, "missing.toml"), "-rollback"}, &out, &errb); code != 1 {
+	if code := realMain([]string{"-config", filepath.Join(dir, "missing.toml"), "-rollback"}, nil, &out, &errb); code != 1 {
 		t.Fatalf("rollback with a missing config: exit %d", code)
 	}
 }

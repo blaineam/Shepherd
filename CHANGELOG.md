@@ -12,6 +12,74 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+- **First-run setup in a browser.** A new install no longer starts in a text editor. Start Shepherd
+  with no configuration file and it brings up a setup page, prints the addresses to open (with a
+  one-time token, since the page listens on every address so it can be reached from the machine you
+  are actually sitting at), asks what it has to, writes a commented `shepherd.toml` and starts on it
+  in the same process. `shepherd setup` runs it again later. It listens on 8788 rather than the
+  portal's 8787, because it keeps serving while Shepherd starts.
+
+  What it asks is deliberately short, and two of the answers it works out rather than asking for.
+  The data directory is `data` beside the configuration file, created and checked while the page
+  loads. **Upstream resolvers are measured, not guessed**: every candidate is asked the same
+  uncached question several times from this host, and the recommendation prefers an encrypted (DoT)
+  resolver that also blocks known-malicious names — but only while it answers every probe and stays
+  under 250ms from here, so a flaky or slow one loses to a plain resolver that works. The numbers
+  are shown, so the recommendation can be checked. The address question is still the reason the
+  whole thing exists: every address with its interface, all ticked, because a device asks one
+  specific address and a host serving only its Wi-Fi address while the router hands out the wired
+  one is a network with no DNS, with nothing in the configuration looking wrong. A few catalog
+  categories can be blocked network-wide from the page, switched on in the running policy the portal
+  owns rather than copied into the configuration file.
+
+  **The page stays with you after the file is written**, for the part that needs Shepherd running:
+  it asks Shepherd's own listeners over UDP and TCP for a name that must resolve and one that must
+  be blocked (the self-test from docs/DNS-QA.md, run on demand, not a second implementation), hands
+  over the portal token concealed and asks you to confirm you have kept it, says what to set in your
+  router's DHCP settings and to give the Shepherd host a fixed address, and offers the UniFi
+  connection for per-device bandwidth. It does not reconfigure your router: the eero and UniFi APIs
+  Shepherd speaks are the read-only ones, and neither vendor publishes a supported way to set a
+  network's DNS server. Closing the page is the last step, and the listener stops there.
+
+  **Setup can also put the portal on HTTPS**, which is what makes a passkey possible: WebAuthn binds
+  a passkey to one hostname, so Face ID or Touch ID for the portal works at that address and nowhere
+  else. The step is optional and skipped by leaving the hostname empty. Give it a name in a
+  Cloudflare zone and an API token scoped to **Zone → DNS → Edit** on it, and setup checks that token
+  against that zone before accepting it — the same read-only check the portal's Proxy tab makes — and
+  refuses to finish with a hostname whose token has not been checked, because a token without edit
+  rights is a certificate that never arrives. The token goes to `<data_dir>/secrets.json` (0600),
+  never into `shepherd.toml`. Afterwards the page waits for the certificate, saying which of the slow
+  parts it is on, then links to the portal at its own HTTPS name, where the passkey is registered on
+  the Locking screen. Setup does not register it itself: that page is served over plain HTTP from a
+  different origin, and a passkey belongs to the hostname's own.
+
+  An existing `shepherd.toml` is kept as `.bak`; only the keys setup asked about are written, so
+  every other default keeps following Shepherd's own; a held port is explained rather than refused;
+  and a setup listener that cannot come up at all is logged while Shepherd starts on its defaults.
+  It complements `scripts/shepherd-doctor` (the read-only host preflight) rather than repeating it.
+  See [docs/SETUP.md](docs/SETUP.md).
+- **ntfy is set up in the portal.** Alarms → Notifications → Set up ntfy is now a real form — server,
+  topic, access token or username and password, with Save, "send a test notification", a switch and
+  "forget server" — instead of a `shepherd.toml` section to copy and a restart. Shepherd's standing
+  rule is that no feature requires editing the configuration file, and the walk-through broke it.
+  The server lives in `<data_dir>/secrets.json` (0600) beside the mail relay and the router
+  connections (`internal/secrets`), is write-only like every other secret there (a saved token is
+  never sent back; a blank field keeps the stored one, and only for the same server, so a credential
+  can never be pointed at somewhere it was not entered for), and reaches the running delivery Router
+  through the new `Router.SetNtfy`, so nothing about ntfy needs a restart. Saving publishes one
+  notification as the check, which is also what the test button does: ntfy offers no way to ask
+  whether a server and token would work without sending something, and a refused server is reported
+  with nothing stored. `[alarms.ntfy]` in `shepherd.toml` is still read **once** and imported, so an
+  install already using it keeps working; after that the portal owns it and a startup line says so.
+  See [docs/ALARMS.md](docs/ALARMS.md).
+- **Releases are signed.** The Ed25519 release key pair exists now: the public half is built into
+  Shepherd (`update.ReleasePublicKeyB64`) and the private half is the `SHEPHERD_SIGNING_KEY`
+  repository secret, so both workflows write `SHA256SUMS.sig` beside the checksums and a running
+  Shepherd verifies it before applying an update. Until now every release was published unsigned and
+  self-update could only report that a newer version existed. A binary built before this commit has
+  no key built in and still refuses to apply anything; it has to be replaced by hand once.
+
 ### Changed
 - **The lock screen leads with one way in, and tries a passkey by itself.** It used to show the PIN
   and token forms together, plus a passkey button where one was available, leaving the owner to pick
@@ -47,7 +115,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   upload bar, and a trend line per busy device.
 
 ### Added
-- **DHCP mode, off by default ([docs/DHCP.md](docs/DHCP.md)).** Shepherd can serve the LAN's DHCP and
+- **DHCP mode — ALPHA, off by default ([docs/DHCP.md](docs/DHCP.md)).** Alpha means something
+  specific and the doc says it plainly: no real device has ever taken an address from it. The lease
+  exchange is tested end to end, but over loopback sockets on high ports, so the real port 67, the
+  broadcast a client needs before it has an address, and a household's traffic crossing one network
+  card twice have been reasoned about rather than measured. It is also the one thing here that can
+  take a whole network off the internet. Nothing offers it to you: it is off in the default
+  configuration, no first-run path mentions it, and the portal screen leads with all of this. Shepherd can serve the LAN's DHCP and
   masquerade the traffic of the devices it routes, so both directions of those devices' traffic pass
   through it -- downloads *measured* rather than estimated from acknowledgements, and QUIC no longer a
   blind spot. One NIC, one flat segment, the router still routing. `[dhcp] mode` has three positions
@@ -124,6 +198,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   row turn them off, and each change is logged. Filtered answers show as `ipv6-filtered` in the log.
 
 ### Fixed
+
+- **The alarm engine's test-only tick hook could wedge the worker it runs on.** The hook is called
+  inline by the worker loop, so one that blocks stops the worker, and `Close` then waits on it for
+  ever: a hung test binary rather than a failing test, which costs the whole suite its ten-minute
+  timeout instead of naming the problem. The contract is now written down on the hook, and the one
+  test that uses it signals without blocking. No change to the engine's behaviour -- nothing in the
+  public API sets the hook.
 
 - **A list refresh started from the portal was untracked once its request returned.** `POST
   /api/lists/refresh` answers `202` and refreshes in the background by design, but nothing held a

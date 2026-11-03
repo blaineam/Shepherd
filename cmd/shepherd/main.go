@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"shepherd/internal/alarms"
 	"shepherd/internal/arp"
 	"shepherd/internal/config"
 	"shepherd/internal/dnsengine"
@@ -37,10 +38,18 @@ func main() {
 	// Installed here, before anything runs, because it writes a global; run()
 	// then says which servers it asks.
 	dnsengine.InstallHostResolver()
-	os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(realMain(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-func realMain(args []string, stdout, stderr io.Writer) int {
+func realMain(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	_ = stdin // setup is a browser flow now; nothing reads the terminal
+	// "shepherd setup" serves the first-run setup page (docs/SETUP.md) and
+	// exits once it has written the file. It is dispatched before the
+	// flags because it is the one mode that runs before a configuration
+	// file exists and takes flags of its own.
+	if len(args) > 0 && args[0] == "setup" {
+		return setupOnly(args[1:], stderr)
+	}
 	fs := flag.NewFlagSet("shepherd", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	cfgPath := fs.String("config", "shepherd.toml", "path to the configuration file")
@@ -79,6 +88,15 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 
 // run starts every service and blocks until ctx ends or one fails to start.
 func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer) error {
+	// A new install has no configuration file, so the first thing Shepherd
+	// does is offer to write one: it brings up the setup page, prints the
+	// address to open and waits. Once the page is finished the file is
+	// loaded below like any other, so one process start is all the owner
+	// needs (docs/SETUP.md).
+	setupSrv := setupIfUnconfigured(ctx, cfgPath)
+	if setupSrv != nil {
+		defer setupSrv.Close()
+	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return err
@@ -163,12 +181,16 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		Token: token, Version: version, Settings: prefs, GeoBlock: geoBlock,
 		DataDir: cfg.DataDir, IdleLockMinutes: cfg.Portal.IdleLockMinutes}
 
+	// alarmRouter is kept so an ntfy server saved in the portal reaches the
+	// running Router (see secretsChanged); it is nil when alarms are off.
+	var alarmRouter *alarms.Router
 	if cfg.Alarms.Enabled {
-		alarmEngine, push, stopAlarms, err := startAlarms(ctx, cfg, pool)
+		alarmEngine, push, router, stopAlarms, err := startAlarms(ctx, cfg, pool, sec)
 		if err != nil {
 			return err
 		}
 		defer stopAlarms()
+		alarmRouter = router
 		deps.Alarms = alarmEngine
 		if push != nil { // avoid a non-nil interface over a nil *pushService
 			deps.Push = push
@@ -281,7 +303,8 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	deps.VerifyDNSProvider = verifyDNSProvider(cfg)
 	deps.VerifySMTP = verifySMTP
 	deps.DNSProviderUsers = dnsProviderUsers(cfg)
-	deps.OnSecretsChanged = secretsChanged(sec, acctRelay, kicker)
+	deps.OnSecretsChanged = secretsChanged(sec, acctRelay, kicker, alarmRouter)
+	deps.VerifyNtfy = verifyNtfy
 
 	// ---- Self-update (docs/UPDATE.md) -----------------------------------
 	startRetention(ctx, cfg, deps.Alarms)
@@ -369,9 +392,6 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		return err
 	}
 	deps.ReverseProxy = proxyHosts
-	if n := cfg.Alarms.Ntfy; cfg.Alarms.Enabled && n.Enabled {
-		deps.Ntfy = portal.NtfyStatus{Enabled: true, Server: n.Server, Topic: n.Topic}
-	}
 	deps.ReverseProxyStatus = portal.ReverseProxyStatus{Listen: cfg.ReverseProxy.Listen, Wildcard: cfg.ReverseProxy.Wildcard()}
 	proxySrv, err := startReverseProxy(ctx, cfg, proxyHosts, sec, stopOnFailure(portalErr, cancel))
 	if err != nil {
@@ -426,6 +446,14 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		}()
 		defer httpsSrv.Shutdown(context.Background())
 		log.Printf("shepherd %s: portal also on https://%s (%s)", version, cfg.TLS.Listen, cfg.TLS.Hostname)
+	}
+
+	// The setup page is still open in the owner's browser when this is a
+	// first run: hand it the Shepherd it just configured, so the rest of
+	// the flow (proving DNS filters, the portal token, network-wide
+	// blocking, pointing the router here) happens where they already are.
+	if setupSrv != nil {
+		setupSrv.Started(runningSetup(cfg, token, policy, &skipped, tlsMgr))
 	}
 
 	log.Printf("shepherd %s: dns on %v, portal on http://%s", version, cfg.DNS.ListenAddrs(), cfg.Portal.Listen)

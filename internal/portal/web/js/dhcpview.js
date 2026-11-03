@@ -7,7 +7,7 @@
 import { el } from './dom.js';
 import { button, emptyState, unavailableCard, confirmDialog, relTime } from './ui.js';
 import { unavailable } from './mgmt.js';
-import { validateReservation, validateRange, suggestRange, rangeSummary, conflictTone, modeLabel, stateSummary, consequences, sortLeases, filterLeases, leaseBody, originLabel, normalizeMAC } from './dhcp.js';
+import { validateReservation, validateRange, suggestRange, rangeSummary, conflictTone, alphaNote, modeLabel, stateSummary, consequences, sortLeases, filterLeases, leaseBody, originLabel, normalizeMAC } from './dhcp.js';
 
 // inPool is the note beside a reserved address that sits inside the dynamic
 // range. Not a problem; worth saying.
@@ -26,11 +26,15 @@ export function createDhcp({ root, mgmt, notify, onOpenDevice }) {
   const head = el('div', 'pg-head stack');
   const title = el('h2', 'pg-title');
   title.append(el('span', '', 'DHCP'));
+  // The same pill-and-note shape Watch mode's deprecation uses, in red: one
+  // idiom for "this screen is not ordinary", so neither gets skipped.
+  title.append(el('span', 'flag-tag danger', 'Alpha'));
+  const alpha = el('div', 'flag-note danger');
+  for (const line of alphaNote()) alpha.append(el('p', '', line));
   head.append(title, el('p', 'pg-sub muted',
     'Shepherd can serve this network\'s addresses, and route the devices it leases through itself so both directions of their '
     + 'traffic are measured rather than estimated. It is off until you turn it on, and it has three positions rather than two: '
-    + 'off, watching (it listens and cannot answer), and serving. Read docs/DHCP.md before serving: this is the one setting here '
-    + 'that can take the house off the internet.'));
+    + 'off, watching (it listens and cannot answer), and serving.'), alpha);
   const body = el('div', 'rp-body');
   root.append(head, body);
 

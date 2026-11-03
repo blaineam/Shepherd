@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Set up Shepherd</title>
+<link rel="stylesheet" href="setup.css">
+</head>
+<body>
+<main class="wrap">
+  <header class="head">
+    <h1>Set up Shepherd</h1>
+    <p class="sub">Shepherd writes its own configuration from what you choose here, starts on it, and
+      then proves it is working before you point anything at it. Nothing is written until you press
+      Finish.</p>
+  </header>
+
+  <div id="load" class="card muted">Reading this host…</div>
+
+  <form id="form" hidden>
+    <section class="card" id="s-data">
+      <h2>1. Where Shepherd keeps its state</h2>
+      <p class="note">The portal token, your rules, the device registry and the cached blocklists go
+        here, beside the configuration file. This is the directory to back up.</p>
+      <p class="fact"><code id="data-dir"></code> <span id="data-dir-state" class="result"></span></p>
+    </section>
+
+    <section class="card" id="s-dns">
+      <h2>2. Which addresses should answer DNS?</h2>
+      <p class="note">Pick every address a device or your router might be pointed at. All of them is the
+        safe answer: a device asks one specific address, so if your router hands out the wired address
+        while Shepherd listens only on the Wi-Fi one, that device has no DNS at all and nothing in the
+        configuration looks wrong.</p>
+      <div id="addrs" class="addrs"></div>
+      <p class="note small">Shepherd also answers on 127.0.0.1 and [::1] by itself, so this host can
+        always resolve even if an interface goes down.</p>
+      <label class="field short">
+        <span>DNS port</span>
+        <input id="dns-port" name="dns-port" type="number" min="1" max="65535" inputmode="numeric">
+      </label>
+      <p id="port-note" class="note small"></p>
+    </section>
+
+    <section class="card" id="s-up">
+      <h2>3. Which resolvers should Shepherd ask?</h2>
+      <p class="note">Shepherd filters, it does not resolve: whatever it does not block, it asks one of
+        these. Rather than make you guess, setup asks each one the same question a few times from this
+        host and shows what came back — encrypted resolvers that block known-malicious names are
+        preferred, but only when they answer reliably and quickly from here.</p>
+      <div class="row">
+        <button type="button" id="measure" class="ghost">Test them from this host</button>
+        <span id="measure-result" class="result"></span>
+      </div>
+      <div id="candidates" class="presets"></div>
+      <label class="field">
+        <span>Or type your own, one per line</span>
+        <textarea id="custom" rows="3" spellcheck="false" placeholder="9.9.9.10&#10;tls://dns.example.com&#10;https://dns.example.com/dns-query"></textarea>
+      </label>
+    </section>
+
+    <section class="card" id="s-block">
+      <h2>4. What should be blocked for the whole network?</h2>
+      <p class="note">Shepherd already starts with its recommended blocklists on. These are categories
+        on top of that, applied to every device; you can change all of it in the portal afterwards, per
+        device or per group, and this is only the starting point.</p>
+      <div id="categories" class="addrs"></div>
+      <p class="note small" id="cat-note"></p>
+    </section>
+
+    <section class="card" id="s-portal">
+      <h2>5. Where should the portal listen?</h2>
+      <p class="note">The portal is Shepherd's own interface. It is locked behind a token and shows demo
+        data until you sign in, but a LAN address still means anyone on the network can reach the
+        sign-in page. Loopback plus an SSH tunnel is the private answer; a LAN address is the
+        convenient one.</p>
+      <div id="portal-addrs" class="addrs"></div>
+      <label class="field short">
+        <span>Portal port</span>
+        <input id="portal-port" name="portal-port" type="number" min="1" max="65535" inputmode="numeric">
+      </label>
+    </section>
+
+    <section class="card" id="s-tls">
+      <h2>6. Reach the portal over HTTPS? <span class="opt">optional</span></h2>
+      <p class="note">A real certificate for a name of your own, issued by Let's Encrypt over a DNS
+        challenge against Cloudflare. It adds an HTTPS address beside the plain one above — nothing
+        you choose here takes anything away. <strong>Passkeys need it:</strong> a passkey is bound to
+        exactly one hostname, so Face ID or Touch ID for the portal is only possible at this address.</p>
+      <p class="note small">You need: a DNS name in a Cloudflare zone (it can point anywhere reachable,
+        even a tailnet address — the challenge only writes a TXT record), and a Cloudflare API token
+        with <strong>Zone → DNS → Edit</strong> on that zone and nothing else.</p>
+      <label class="field"><span>Hostname</span>
+        <input id="t-host" spellcheck="false" autocomplete="off" placeholder="shepherd.example.com"></label>
+      <div class="row">
+        <label class="field short"><span>HTTPS port</span>
+          <input id="t-port" type="number" min="1" max="65535" inputmode="numeric" value="8443"></label>
+        <label class="field"><span>Email for expiry notices (optional)</span>
+          <input id="t-email" type="email" spellcheck="false" autocomplete="off"></label>
+      </div>
+      <label class="field"><span>Cloudflare API token</span>
+        <input id="t-token" type="password" autocomplete="new-password"></label>
+      <div class="row">
+        <button type="button" id="t-check" class="ghost">Check this token</button>
+        <span id="t-result" class="result"></span>
+      </div>
+      <p class="note small">The token is checked against that zone with read-only lookups, then kept in
+        your data directory's <code>secrets.json</code> (0600) — never in <code>shepherd.toml</code>.
+        Leave the hostname empty to skip; the portal is still reachable over plain HTTP, and you can
+        set this up later on the portal's Proxy tab.</p>
+    </section>
+
+    <section class="card finish">
+      <p id="exists" class="warn" hidden></p>
+      <div class="row">
+        <button type="submit" id="finish" class="primary">Finish and start Shepherd</button>
+        <span id="finish-result" class="result"></span>
+      </div>
+      <p class="note small">Everything not asked about keeps its default, and
+        <code>shepherd.example.toml</code> documents the rest. For the state of the host itself —
+        which ports are held, whether IPv6 works, link speeds — run
+        <code>scripts/shepherd-doctor</code>; it changes nothing.</p>
+    </section>
+  </form>
+
+  <!-- Everything below happens after the file is written, with Shepherd running on it. -->
+  <section id="after" hidden>
+    <section class="card" id="a-start">
+      <h2>Shepherd is starting</h2>
+      <p id="a-written"></p>
+      <p id="a-waiting" class="result">Waiting for it to come up…</p>
+    </section>
+
+    <section class="card" id="a-verify" hidden>
+      <h2>Is it actually filtering?</h2>
+      <p class="note">This asks Shepherd's own listeners, over UDP and TCP, for a name that must resolve
+        and a name it must block — the same check the portal's Upstreams screen runs later.</p>
+      <div class="row">
+        <button type="button" id="verify" class="ghost">Check again</button>
+        <span id="verify-result" class="result"></span>
+      </div>
+      <div id="verify-rows" class="checks"></div>
+    </section>
+
+    <section class="card" id="a-token" hidden>
+      <h2>Your portal sign-in token</h2>
+      <p class="note">This is how you get into the portal. There is no password reset: keep it in your
+        password manager now. It is also in <code id="a-token-file"></code> on the Shepherd host, and
+        <code>shepherd -print-token</code> prints it.</p>
+      <div class="row">
+        <input id="token" type="password" readonly spellcheck="false" aria-label="Portal token">
+        <button type="button" id="token-show" class="ghost">Show</button>
+        <button type="button" id="token-copy" class="ghost">Copy</button>
+      </div>
+      <p class="note small">Shown over plain HTTP on your network, because setup has no certificate yet.
+        If that is not acceptable on this network, read it from the file instead.</p>
+      <label class="check"><input id="token-saved" type="checkbox">
+        <span>I have saved this token somewhere safe</span></label>
+      <div class="row">
+        <button type="button" id="token-ok" class="primary" disabled>Continue</button>
+        <a id="a-portal" href="#" target="_blank" rel="noopener">Open the portal</a>
+      </div>
+    </section>
+
+    <section class="card" id="a-router" hidden>
+      <h2>Point your network at Shepherd</h2>
+      <p class="note">Until you do this, Shepherd sees nothing: devices keep asking whatever resolver
+        they were given. Do it in one of these two places.</p>
+      <ol>
+        <li><strong>Your router's DHCP settings</strong> — set the DNS server it hands out to
+          <code id="r-addr"></code>, then reconnect a device (or wait out its lease) and come back to
+          the check above. This covers every device at once.</li>
+        <li><strong>One device first</strong>, if you would rather try it small: set its DNS server to
+          the same address by hand, confirm it still browses normally, then move the router over.</li>
+      </ol>
+      <p class="note">Give the Shepherd host a fixed address while you are in there — a DHCP
+        reservation for <code id="r-self"></code> is enough. If its address moves, every device is
+        pointed at nothing.</p>
+      <p class="note small">Shepherd can also hand out the leases itself instead of your router
+        (DHCP mode, <code>docs/DHCP.md</code>). It is off, and it stays off until you turn it on in
+        the portal: it means turning your router's DHCP server off, which is not a thing to do from
+        a setup page before anything has been proven to work.</p>
+      <div id="r-bandwidth">
+        <h3>Per-device bandwidth (optional)</h3>
+        <p class="note">Shepherd can ask your router how much each device has moved, which is how the
+          Bandwidth screen gets real numbers without touching any traffic. Skipping this changes nothing
+          else.</p>
+        <div class="radios" id="router-choice"></div>
+        <div id="unifi" hidden>
+          <label class="field"><span>Controller address</span>
+            <input id="u-url" spellcheck="false" autocomplete="off" placeholder="https://unifi.example.com"></label>
+          <label class="field"><span>Username (a read-only local account is enough)</span>
+            <input id="u-user" spellcheck="false" autocomplete="off"></label>
+          <label class="field"><span>Password</span>
+            <input id="u-pass" type="password" autocomplete="new-password"></label>
+          <label class="field short"><span>Site name (not its label)</span>
+            <input id="u-site" spellcheck="false" autocomplete="off" value="default"></label>
+          <label class="check"><input id="u-self" type="checkbox" checked>
+            <span>Accept the controller's self-signed certificate (usual on a LAN address)</span></label>
+          <div class="row">
+            <button type="button" id="u-connect" class="ghost">Check and connect</button>
+            <span id="u-result" class="result"></span>
+          </div>
+          <p class="note small">The password is kept in your data directory's <code>secrets.json</code>
+            (0600), never in <code>shepherd.toml</code>.</p>
+        </div>
+        <p id="eero-note" class="note small" hidden>eero signs in with a code it emails you while you
+          wait, so that one is done from the portal's Bandwidth screen.</p>
+      </div>
+      <div id="a-passkey" hidden>
+        <h3>Sign in without the token</h3>
+        <p class="note">Shepherd is asking Let's Encrypt for your certificate now. Once it has one, open
+          the portal at its own name and add a passkey on the Locking screen — then it is Face ID or
+          Touch ID instead of pasting that token.</p>
+        <p class="fact"><a id="pk-url" href="#" target="_blank" rel="noopener"></a>
+          <span id="pk-state" class="result"></span></p>
+        <p class="note small" id="pk-detail"></p>
+      </div>
+      <p class="note small" id="pin-note">A PIN works anywhere, including over plain HTTP: set one on the
+        portal's Locking screen and that is what you type from then on, not the token.</p>
+      <div class="row">
+        <button type="button" id="all-done" class="primary">I'm done — close setup</button>
+        <span id="done-result" class="result"></span>
+      </div>
+      <p class="note small">Closing this stops the setup page. Shepherd keeps running, and everything
+        here is in the portal from now on. A passkey or a PIN, so you do not have to paste that token
+        every time, is on the portal's Locking screen.</p>
+    </section>
+  </section>
+</main>
+<script src="setup.js" type="module"></script>
+</body>
+</html>

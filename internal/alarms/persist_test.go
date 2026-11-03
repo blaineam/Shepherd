@@ -208,10 +208,21 @@ func TestWorkerTickSweepsAndSaves(t *testing.T) {
 	// now fixed structurally (New registers the ticker itself, synchronously,
 	// before spawning the worker), so this no longer needs a generous
 	// timeout to paper over either race.
+	//
+	// The send below must not block. Advancing two hours against a
+	// one-minute interval delivers many ticks, not one, so a plain send on a
+	// buffered-by-one channel fills it and then wedges the worker inside the
+	// hook. Close waits for that worker, so the hang surfaced as the whole
+	// package timing out after ten minutes rather than as a failure here.
 	ticked := make(chan struct{}, 1)
 	e, clk, rec := newTestEngine(t, func(o *Options) {
 		o.TickEvery = time.Minute
-		o.afterTick = func() { ticked <- struct{}{} }
+		o.afterTick = func() {
+			select {
+			case ticked <- struct{}{}:
+			default: // a later tick: the test only needs to know one ran
+			}
+		}
 	})
 	a := mustRaise(t, e, Event{Type: "custom", Key: "k"})
 	e.Snooze(a.ID, MuteSpec{Preset: MuteHour})

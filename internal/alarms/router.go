@@ -273,6 +273,28 @@ func NewRouter(o RouterOptions) *Router {
 	return r
 }
 
+// SetNtfy replaces the ntfy channel, or removes it with nil. The portal
+// owns the ntfy server (docs/ALARMS.md), so a server saved, switched off or
+// forgotten there has to reach a Router that is already running; nothing
+// about ntfy delivery should need a restart. The channel's Configured flag
+// follows, which is what the Alarms screen reads.
+func (r *Router) SetNtfy(p NtfyPublisher) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ntfy = p
+	if st := r.status[ChannelNtfy]; st != nil {
+		st.Configured = p != nil
+	}
+}
+
+// ntfyPublisher reads the channel under the lock, since SetNtfy can replace
+// it while a delivery is being planned or attempted.
+func (r *Router) ntfyPublisher() NtfyPublisher {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ntfy
+}
+
 // Wait blocks until in-flight deliveries started by Handle finish.
 func (r *Router) Wait() { r.wg.Wait() }
 
@@ -322,7 +344,7 @@ func (r *Router) plan(a Alarm, p Preferences) (pushOn, ntfyOn bool) {
 		c, ok := p.Channels[name]
 		return ok && c.Enabled && contains(chans, name) && a.Severity.AtLeast(c.MinSeverity)
 	}
-	return on(ChannelPush) && r.pusher != nil, on(ChannelNtfy) && r.ntfy != nil
+	return on(ChannelPush) && r.pusher != nil, on(ChannelNtfy) && r.ntfyPublisher() != nil
 }
 
 // Handle consumes one engine Change. Subscribe it with eng.Subscribe(rt.Handle).
@@ -421,7 +443,15 @@ func (r *Router) attempt(ctx context.Context, j *job) outcome {
 		rep, err = r.pusher.Push(ctx, j.N)
 		out, errText, detail = classifyPush(rep, err)
 	default:
-		err = r.ntfy.Publish(ctx, j.N)
+		if pub := r.ntfyPublisher(); pub != nil {
+			err = pub.Publish(ctx, j.N)
+		} else {
+			// SetNtfy can remove the channel between planning a
+			// delivery and attempting it. Retrying cannot help, so
+			// it is recorded as a permanent failure rather than
+			// panicking on a nil channel.
+			err = Permanent(errors.New("ntfy delivery is not configured"))
+		}
 		switch {
 		case err == nil:
 			out = outOK
@@ -597,7 +627,7 @@ func (r *Router) flushDigest(ctx context.Context, now time.Time) {
 		return
 	}
 	pushOn = pushOn && r.pusher != nil
-	ntfyOn = ntfyOn && r.ntfy != nil
+	ntfyOn = ntfyOn && r.ntfyPublisher() != nil
 	r.dispatch(ctx, n, pushOn, ntfyOn, p.NtfyAlways)
 }
 

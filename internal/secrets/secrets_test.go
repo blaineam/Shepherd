@@ -339,3 +339,129 @@ func TestNormalizeValidatesWithoutStoring(t *testing.T) {
 		t.Errorf("empty relay: %v", err)
 	}
 }
+
+func TestNtfyIsStoredSwitchedAndForgotten(t *testing.T) {
+	s := openAt(t, filepath.Join(t.TempDir(), FileName))
+	if _, ok := s.Ntfy(); ok || s.NtfyManaged() {
+		t.Fatal("a new store holds no ntfy server")
+	}
+	saved, err := s.SetNtfy(Ntfy{Server: " https://ntfy.example.com/ ", Topic: " shepherd-abc ", Token: " tok-ntfy-1 ", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Server != "https://ntfy.example.com" || saved.Topic != "shepherd-abc" || saved.Token != "tok-ntfy-1" {
+		t.Errorf("saved = %+v (the fields should be trimmed)", saved)
+	}
+	if saved.Source != SourcePortal {
+		t.Errorf("source = %q", saved.Source)
+	}
+	// Switching off keeps the credentials, so turning it back on costs no
+	// re-typing.
+	if ok, err := s.SetNtfyEnabled(false); !ok || err != nil {
+		t.Fatalf("SetNtfyEnabled = %v %v", ok, err)
+	}
+	n, ok := s.Ntfy()
+	if !ok || n.Enabled || n.Token != "tok-ntfy-1" {
+		t.Errorf("after switching off = %s", n)
+	}
+	// It survives a reload, which is what "managed by the portal" means.
+	again := openAt(t, s.Path())
+	if n, ok := again.Ntfy(); !ok || n.Token != "tok-ntfy-1" || !again.NtfyManaged() {
+		t.Errorf("after reload = %s", n)
+	}
+	if err := s.ClearNtfy(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.Ntfy(); ok {
+		t.Error("cleared, so nothing is configured")
+	}
+	if !s.NtfyManaged() {
+		t.Error("a deliberate clear has to be remembered, or the config would seed it again")
+	}
+	// There is nothing to switch on once it is gone.
+	if ok, err := s.SetNtfyEnabled(true); ok || err != nil {
+		t.Errorf("SetNtfyEnabled with nothing stored = %v %v", ok, err)
+	}
+}
+
+func TestNtfyRefusesWhatThePublisherCouldNotUse(t *testing.T) {
+	s := openAt(t, filepath.Join(t.TempDir(), FileName))
+	for _, bad := range []Ntfy{
+		{Topic: "t"},
+		{Server: "ntfy.example.com", Topic: "t"},
+		{Server: "https://u:p@ntfy.example.com", Topic: "t"}, // leakcheck:allow fixture: credentials-in-URL test value
+		{Server: "https://ntfy.example.com", Topic: "no spaces allowed"},
+		{Server: "https://ntfy.example.com", Topic: ""},
+		{Server: "https://ntfy.example.com", Topic: "t", Token: "x", Username: "u"},
+		{Server: "https://ntfy.example.com", Topic: "t", Token: "with space"},
+		{Server: "https://ntfy.example.com", Topic: "t", Password: "line\nbreak"},
+	} {
+		if _, err := s.SetNtfy(bad); !errors.Is(err, ErrInvalid) {
+			t.Errorf("SetNtfy(%+v) = %v, want ErrInvalid", bad, err)
+		}
+	}
+	if s.NtfyManaged() {
+		t.Error("a refused value must not count as the portal owning it")
+	}
+}
+
+func TestNtfyNeverFormatsItsCredentials(t *testing.T) {
+	n := Ntfy{Server: "https://ntfy.example.com", Topic: "t", Token: "tok-ntfy-1", Enabled: true,
+		Meta: Meta{Source: SourcePortal}}
+	for _, got := range []string{n.String(), n.GoString(), fmt.Sprintf("%v %s %#v", n, n, n)} {
+		if strings.Contains(got, "tok-ntfy-1") {
+			t.Errorf("the token was formatted: %s", got)
+		}
+		if !strings.Contains(got, "token set") {
+			t.Errorf("it should still say a token is set: %s", got)
+		}
+	}
+	withPassword := Ntfy{Server: "https://ntfy.example.com", Topic: "t", Username: "u", Password: "pw-secret-1"}
+	if got := withPassword.String(); strings.Contains(got, "pw-secret-1") || !strings.Contains(got, "username and password set") {
+		t.Errorf("String with a password = %s", got)
+	}
+	if got := (Ntfy{}).String(); got != "ntfy (not set)" {
+		t.Errorf("empty String = %s", got)
+	}
+}
+
+func TestNtfySeedImportsOnceThenThePortalOwnsIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	s := openAt(t, path)
+	seed := Ntfy{Server: "https://ntfy.example.com", Topic: "shepherd-abc", Token: "tok-ntfy-1", Enabled: true}
+	if imported, err := s.SeedNtfy(Ntfy{}); imported || err != nil {
+		t.Errorf("an empty seed imports nothing: %v %v", imported, err)
+	}
+	imported, err := s.SeedNtfy(seed)
+	if !imported || err != nil {
+		t.Fatalf("SeedNtfy = %v %v", imported, err)
+	}
+	n, _ := s.Ntfy()
+	if n.Source != SourceConfig || n.Token != "tok-ntfy-1" {
+		t.Errorf("imported = %s", n)
+	}
+	// A second seed, with something else in it, changes nothing: the
+	// portal owns it from the first import on.
+	seed.Topic = "shepherd-other"
+	if imported, err := s.SeedNtfy(seed); imported || err != nil {
+		t.Errorf("a second seed must not import: %v %v", imported, err)
+	}
+	if n, _ := s.Ntfy(); n.Topic != "shepherd-abc" {
+		t.Errorf("the stored topic changed: %s", n)
+	}
+	if _, err := s.SeedNtfy(Ntfy{Server: "nonsense", Topic: "t"}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("an unusable seed = %v, want ErrInvalid", err)
+	}
+}
+
+func TestAStoredNtfyServerThatIsNotValidRefusesToLoad(t *testing.T) {
+	// Carrying on with an empty store would let the next save or seed
+	// overwrite a server the owner still has in the file.
+	path := filepath.Join(t.TempDir(), FileName)
+	if err := os.WriteFile(path, []byte(`{"version":1,"ntfy":{"server":"not a url","topic":"t"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path); err == nil {
+		t.Fatal("a stored server that cannot be used should refuse to load")
+	}
+}

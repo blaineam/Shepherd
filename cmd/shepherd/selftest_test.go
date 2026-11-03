@@ -55,7 +55,7 @@ func TestStartSelftestRunsAgainstTheEngineAndKeepsCanariesQuiet(t *testing.T) {
 	var skipped skipSet
 	skipped.add("192.0.2.99:53")
 
-	eng, _, stop, err := startAlarms(context.Background(), cfg, pool)
+	eng, _, _, stop, err := startAlarms(context.Background(), cfg, pool, memSecrets(t))
 	if err != nil {
 		t.Fatal(err)
 	}
