@@ -357,8 +357,13 @@ func TestApplyRollbackAndStartup(t *testing.T) {
 	if n, _ := DirSize(filepath.Join(dir, "absent")); n != 0 {
 		t.Fatal("absent dir")
 	}
-	if ReleasePublicKey() != nil {
-		t.Fatal("no key is built in by default")
+	// A key is built in (internal/update/pubkey.go) and releases are
+	// signed with its private half, so a build whose key does not decode
+	// would quietly refuse every update it is offered.
+	builtIn := ReleasePublicKeyB64
+	defer func() { ReleasePublicKeyB64 = builtIn }()
+	if len(ReleasePublicKey()) != ed25519.PublicKeySize {
+		t.Fatal("the built-in release key does not decode")
 	}
 	ReleasePublicKeyB64 = "%%%"
 	if ReleasePublicKey() != nil {
@@ -370,6 +375,9 @@ func TestApplyRollbackAndStartup(t *testing.T) {
 		t.Fatal("a real key decodes")
 	}
 	ReleasePublicKeyB64 = ""
+	if ReleasePublicKey() != nil {
+		t.Fatal("no key built in means nothing to verify against")
+	}
 }
 
 func base64Of(b []byte) string {
