@@ -1,6 +1,6 @@
 # Watch mode
 
-> **Status, 2026-11-01 (evening): reinstated as opt-in, with the loop brake rewritten.** Earlier
+> **Status, 2026-11-02: on by default (`watch.enabled = true`); set it false to opt out. The status below, 2026-11-01 (evening): reinstated as opt-in, with the loop brake rewritten.** Earlier
 > the same day Watch mode was retired on three measurements. Two of them stand and one does not:
 >
 > - **Outbound-only by construction.** Still true. Downloads are now *estimated* from each

@@ -13,6 +13,7 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Changed
+- **Watch mode is on by default again**, as `shepherd.example.toml` and the comparison doc already said: `watch.enabled` defaults to true. It still reports itself unavailable, and changes nothing, anywhere it cannot run (no Linux, missing capabilities). Set `watch.enabled = false` to opt out. The kill switch is unchanged: a stop you make from the portal stays in force across restarts until you re-arm it, which is why a restart after a kill comes up running but not steering.
 - **The Overview and Watch mode screens are gone.** The Overview repeated what the Map, History and
   Bandwidth screens show better, so the portal opens on the Map and what only the Overview had (software
   updates, blocklist health, your own rules, the Private Relay switch) is the new **System** screen under

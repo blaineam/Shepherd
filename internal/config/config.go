@@ -597,7 +597,7 @@ func Default() Config {
 		// default because it is outbound-only and a device's already-open
 		// connections can bypass it (docs/WATCH.md), not because it loops:
 		// the loops that retired it that morning were uploads misread.
-		Watch:   Watch{Enabled: false, Mode: "auto", ActiveWindowSeconds: 900, AllowRoutingHost: true},
+		Watch:   Watch{Enabled: true, Mode: "auto", ActiveWindowSeconds: 900, AllowRoutingHost: true},
 		DataDir: "data",
 		DNS: DNS{
 			Listen:               []string{"127.0.0.1:5353"},
