@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -228,6 +229,21 @@ func (c *Client) Discard() {
 	c.pending, c.token, c.secrets = "", "", nil
 }
 
+// PersistTo saves the current session token to store, so a later Client
+// built with that store can Resume it. It is how an owner who chose to keep
+// the connection (eero bandwidth) turns a one-time sign-in into a lasting
+// one. It stores nothing when there is no verified session.
+func (c *Client) PersistTo(store TokenStore) error {
+	tok := c.tokenValue()
+	if tok == "" {
+		return ErrEeroNoSession
+	}
+	if store == nil {
+		return errors.New("eero: no token store")
+	}
+	return store.Save(tok)
+}
+
 // Forget is Discard plus removing a stored token.
 func (c *Client) Forget() error {
 	c.Discard()
@@ -342,6 +358,11 @@ type EeroDevice struct {
 	ProfileURL   string
 	Paused       bool
 	Guest        bool
+	// DownMbps and UpMbps are eero's instantaneous usage for the device, in
+	// megabits per second. HasUsage is false when the response carried no
+	// usage object, which the owner's plan or eero's firmware may not send.
+	DownMbps, UpMbps float64
+	HasUsage         bool
 }
 
 // EeroProfile is a profile and the devices it lists.
@@ -797,6 +818,30 @@ func str(m map[string]any, keys ...string) string {
 	return ""
 }
 
+// number reads a JSON number that may also arrive as a numeric string.
+func number(m map[string]any, keys ...string) (float64, bool) {
+	for _, k := range keys {
+		switch v := m[k].(type) {
+		case float64:
+			if !math.IsNaN(v) && !math.IsInf(v, 0) {
+				return v, true
+			}
+		case string:
+			if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil && !math.IsNaN(f) && !math.IsInf(f, 0) {
+				return f, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func nonNegative(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	return v
+}
+
 func boolean(m map[string]any, keys ...string) (v, present bool) {
 	for _, k := range keys {
 		switch x := m[k].(type) {
@@ -877,6 +922,13 @@ func parseDevice(m map[string]any) EeroDevice {
 	}
 	d.Paused, _ = boolean(m, "paused")
 	d.Guest, _ = boolean(m, "is_guest", "guest")
+	if o, _ := sub(m, "usage"); o != nil {
+		down, dok := number(o, "down_mbps", "downMbps")
+		up, uok := number(o, "up_mbps", "upMbps")
+		if dok || uok {
+			d.DownMbps, d.UpMbps, d.HasUsage = nonNegative(down), nonNegative(up), true
+		}
+	}
 	if o, s := sub(m, "source"); o != nil {
 		d.NodeLocation = cleanText(str(o, "location", "name"), 100)
 		d.NodeURL = str(o, "url")

@@ -22,6 +22,31 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   upload bar, and a trend line per busy device.
 
 ### Added
+- **UniFi as a bandwidth source.** A UniFi Network controller keeps real byte counters per client,
+  so unlike eero its figures are measurements rather than sampled estimates, and when both are
+  connected the controller wins. Connecting one is a single form (address, a read-only account,
+  site) with no verification code; the credentials are checked against the controller before they
+  are stored. Both a UniFi OS console and a self-hosted Network Application work, discovered at
+  login, and redirects are refused so a mistyped address cannot walk the session cookie somewhere
+  else. See [docs/TRAFFIC.md](docs/TRAFFIC.md).
+- **Per-device bandwidth read from your router**, for networks where Watch mode cannot run. A new
+  `internal/routerusage` package reads what the router already knows and records it as the same
+  per-device byte counts Watch mode produces, so the Bandwidth screen, the per-device chart and the
+  history all work unchanged. Sources report either cumulative byte counters (exact) or
+  instantaneous rates (integrated, and labelled as an estimate everywhere it reaches the owner).
+  **eero** is the first source: connect it under "Read from your router" on the Bandwidth screen,
+  which reuses the existing sign-in and keeps the session in `secrets.json`. It is unofficial --
+  eero publishes no API for this -- and it reports rates only, so its totals are close rather than
+  exact. Nothing is put in the path of your traffic, and no setting on your router is changed.
+  See [docs/TRAFFIC.md](docs/TRAFFIC.md). The "Right now" card and the per-device rows are fed by
+  the reader too while Watch mode is not measuring, so the live view is not left at zero; the
+  rolling chart's caption says how often the router is actually read, since the line steps rather
+  than curves. Measured against a known transfer, eero's sampling recorded about a sixth of it, so
+  the screen and the docs call these totals a floor rather than a measurement. The live card shows
+  only the eight busiest devices, since a router source lists every device it knows, and says how
+  many it is leaving out. The kept sign-in also powers **Device names**: copy eero's names and
+  profiles into Shepherd whenever you like, with no new verification code. It previews first, and
+  names you set yourself are kept unless you explicitly ask for them to be replaced.
 - **ntfy setup walk-through** under Notifications on the Alarms screen: an expandable section with the steps, a ready-to-paste `[alarms.ntfy]` block with a hard-to-guess topic suggested, and a line saying whether ntfy is on and where it publishes (never the token). `GET /api/alarms/push` now includes an `ntfy` object.
 - **A built-in DNS self-test** (`[selftest]`, on by default). Every minute Shepherd asks a known-good and a
   known-blocked name of every address it listens on, over UDP and TCP, so an address devices use with no
@@ -46,6 +71,18 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   row turn them off, and each change is logged. Filtered answers show as `ipv6-filtered` in the log.
 
 ### Fixed
+
+- **Filtered AAAA answers, and blocked names, could make a device query without end.** A synthesized
+  NODATA or NXDOMAIN carried no SOA in its authority section, and RFC 2308 negative caching needs
+  one: with nothing to cache against, a client that prefers IPv6 just asks again. A solar inverter
+  here asked for the same filtered `AAAA` **forty-eight times a second**, indefinitely, and never
+  fell back to IPv4. Every synthesized negative answer now carries an SOA with a one-minute
+  negative TTL, which matches how often the IPv6 probe runs.
+
+- The Bandwidth charts overflowed the left edge of their card on a phone. An axis label wider than
+  the gutter ("100 Mbit/s") was positioned from the right with no left bound, so it grew out of the
+  card; it is now bounded on both sides, the gutter is wide enough to hold it, and the live, trend
+  and totals grids no longer demand a minimum width wider than a phone's card.
 
 - A failed update check caused by GitHub's anonymous rate limit (60 requests an hour per address, shared by everything on your network) now says so and when it resets, instead of "HTTP 403".
 - **Watch mode no longer eats duplicate TCP acknowledgements.** The duplicate brake drops any frame it has already relayed inside 100 ms, but a receiver that sees a gap sends the same ACK again for every segment that follows, and TCP needs those to reach the sender (three start a fast retransmit; SACK recovery runs on them). One lost packet on the download path therefore cost the sender a full retransmission timeout, which shows up as stalled and failed requests. A repeated pure ACK is now relayed up to 8 times inside the window before it is treated as a loop, in both the kernel and userspace relays; data, SYN, FIN and RST frames are dropped on their first repeat as before.

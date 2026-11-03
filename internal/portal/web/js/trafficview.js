@@ -8,14 +8,19 @@
 import { el } from './dom.js';
 import { button, emptyState, unavailableCard, segmented } from './ui.js';
 import { unavailable } from './mgmt.js';
+import { createRouterUsage } from './routerusageview.js';
 import {
   RANGE_PRESETS, rangeWindow, scopeOptions, scopeLabel, fillSeries, sumPoints, bucketRate, timeLabels,
-  shareOf, statusHeadline, liveRows, DOWNLOAD_CAVEAT, fmtBytes, fmtBitsPerSecond,
+  shareOf, statusHeadline, liveRows, liveRowsNote, DOWNLOAD_CAVEAT, measurementNote, liveChartCaption, fmtBytes, fmtBitsPerSecond,
   niceCeil, yTicks, lineArea, nearestIndex, pushSample, shareSlices, arcPath, rateStats,
 } from './traffic.js';
 
 const POLL_MS = 2000;
 const LIVE_SAMPLES = 90; // three minutes at the poll rate
+// The live card is for "what is busy right now", not an inventory: a
+// router source lists every device it knows, which is a hundred rows of
+// zeroes on a real network.
+const LIVE_ROWS = 8;
 const TREND_DEVICES = 6;
 const NS = 'http://www.w3.org/2000/svg';
 function svg(tag, attrs) {
@@ -100,6 +105,9 @@ function sparkline(points, bucket) {
 }
 
 export function createTraffic({ root, mgmt, notify, onOpenDevice = null, watch = null }) {
+  // Reading bandwidth from the owner's own router, for a network where
+  // Watch mode cannot run. It repaints from each poll's status.
+  const routerUsage = createRouterUsage({ mgmt, notify, onChanged: () => { load().catch(() => {}); } });
   let status = null;
   let loadError = null;
   let timer = 0;
@@ -154,6 +162,10 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, watch =
     const line = statusHeadline(status);
     headline.textContent = line.text;
     headline.className = 'tf-headline ' + line.tone;
+    const note = measurementNote(status);
+    liveNote.textContent = note;
+    liveNote.hidden = !note;
+    routerUsage.render(status.router);
     const lv = status.live || {};
     tilesHolder.replaceChildren();
     const tile = (label, value, sub, cls) => {
@@ -173,10 +185,10 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, watch =
       // per-second "bytes" so bucketRate's x8 lands back on the same value.
       const pts = live.map((p) => ({ time: p.time, down: p.down / 8, up: p.up / 8 }));
       const c = rateChart({ points: pts, bucket: 'second', height: 110, hover: true, ticks: 2, timeText: (t) => new Date(t).toLocaleTimeString() });
-      liveChartHolder.append(c.node, el('p', 'muted small tf-cap', 'The last ' + Math.max(1, Math.round((live.length * POLL_MS) / 60000 * 10) / 10) + ' minutes, one sample every 2 seconds.'));
+      liveChartHolder.append(c.node, el('p', 'muted small tf-cap', liveChartCaption(status, live.length, POLL_MS)));
     }
 
-    const rows = liveRows(status);
+    const rows = liveRows(status, LIVE_ROWS);
     const busiest = Math.max(1, ...rows.map((d) => Math.max(Number(d.down_bytes_per_second) || 0, Number(d.up_bytes_per_second) || 0)));
     liveRowsHolder.replaceChildren();
     for (const d of rows) {
@@ -202,6 +214,8 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, watch =
       row.append(main);
       liveRowsHolder.append(row);
     }
+    const omitted = liveRowsNote(status, rows.length);
+    if (omitted) liveRowsHolder.append(el('p', 'muted small tf-cap', omitted));
   }
 
   // --------------------------------------------------------------- history
@@ -353,7 +367,7 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, watch =
     }
     if (!status) return;
     if (!built) {
-      body.replaceChildren(liveCard, historyCard, mixCard, trendsCard, watchCard);
+      body.replaceChildren(liveCard, historyCard, mixCard, trendsCard, routerUsage.root, watchCard);
       built = true;
       paintHistory();
       paintMix();

@@ -33,6 +33,7 @@ import (
 	"shepherd/internal/passkeys"
 	"shepherd/internal/portscan"
 	"shepherd/internal/reverseproxy"
+	"shepherd/internal/routerusage"
 	"shepherd/internal/secrets"
 	"shepherd/internal/settings"
 	"shepherd/internal/threats"
@@ -94,6 +95,13 @@ type Deps struct {
 	// api_import.go). Nil talks to production eero over https; tests point it
 	// at a fake server with importers.NewTestClient.
 	NewEeroClient func() (*importers.Client, error)
+
+	// NewStoredEeroClient builds a client that resumes the kept sign-in
+	// (api_routerusage.go), for reading bandwidth and syncing names
+	// without another verification code. Nil talks to production eero;
+	// tests point it at a fake server. The store it is given is the only
+	// place the token lives.
+	NewStoredEeroClient func(importers.TokenStore) (*importers.Client, error)
 
 	// Alarms is the alarm engine (docs/ALARMS.md). Nil gives an unwired,
 	// in-memory engine that nothing raises alarms through, so the API still
@@ -208,6 +216,12 @@ type Deps struct {
 	// hostname, passkeys are unavailable and the portal says why.
 	TLSHostname string
 	TLSListen   string
+	// RouterUsage reads per-device bandwidth from the owner's router for
+	// networks where Watch mode cannot run (docs/TRAFFIC.md). Nil leaves
+	// the Bandwidth screen without that option, which is what a build with
+	// no cmd/shepherd wiring gets.
+	RouterUsage UsageReader
+
 	// Traffic is the bandwidth history (docs/TRAFFIC.md), fed by Watch
 	// mode. Nil gets an empty, memory-only store so the API still answers.
 	Traffic *traffic.Store
@@ -218,6 +232,20 @@ type Deps struct {
 	// it), in which case /api/watch answers "not enabled" and the Devices
 	// screen shows no Watch column instead of failing.
 	Watch WatchEngine
+}
+
+// UsageReader is what the portal needs from the passive bandwidth reader
+// (internal/routerusage): what it is doing, and a way to restart it after
+// the owner changes the connection.
+type UsageReader interface {
+	// Status is the current state, for the Bandwidth screen.
+	Status() routerusage.Status
+	// Live is every device as of the last poll, busiest first, for the
+	// screen's "Right now" card while the reader is the source.
+	Live() []routerusage.LiveDevice
+	// Reload re-reads the stored connection and starts, stops or restarts
+	// the collector to match.
+	Reload()
 }
 
 // WatchEngine is what the portal needs from Watch mode's engine
@@ -596,6 +624,14 @@ func (s *Server) routes() {
 	h("POST /api/import/eero/preview", s.importEeroPreview)
 	h("POST /api/import/eero/apply", s.importEeroApply)
 	h("POST /api/import/eero/cancel", s.importEeroCancel)
+	h("GET /api/routerusage", s.getRouterUsage)
+	h("POST /api/routerusage/connect", s.connectRouterUsage)
+	h("POST /api/routerusage/enabled", s.setRouterUsageEnabled)
+	h("DELETE /api/routerusage", s.forgetRouterUsage)
+	h("POST /api/routerusage/names", s.syncRouterNames)
+	h("POST /api/routerusage/unifi", s.connectUniFi)
+	h("POST /api/routerusage/unifi/enabled", s.setUniFiEnabled)
+	h("DELETE /api/routerusage/unifi", s.forgetUniFi)
 	h("POST /api/import/csv/preview", s.importCSVPreview)
 	h("POST /api/import/csv/apply", s.importCSVApply)
 

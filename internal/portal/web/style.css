@@ -1105,7 +1105,11 @@ button.wm-row:hover, button.wm-row:focus-visible { background: #ffffff06; outlin
    baseline, and a crosshair reads out the bucket under the pointer. */
 .tf-body .tf-chart-wrap { grid-template-columns: 64px minmax(0, 1fr); }
 .tf-body .tf-yaxis { position: relative; display: block; padding: 0; }
-.tf-body .tf-yaxis span { position: absolute; right: 0; transform: translateY(-50%); line-height: 1; }
+/* Bounded on both sides: with only `right` set, a label wider than the
+   gutter ("100 Mbit/s" on a phone) grows leftward straight out of the
+   card. Constrained here, the worst case is a clipped label, not an
+   overflowing one. */
+.tf-body .tf-yaxis span { position: absolute; left: 0; right: 0; text-align: right; transform: translateY(-50%); line-height: 1; overflow: hidden; text-overflow: ellipsis; }
 .tf-plot { position: relative; min-width: 0; touch-action: pan-y; }
 .tf-plot .tf-svg { width: 100%; }
 .tf-grid { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -1120,7 +1124,7 @@ button.wm-row:hover, button.wm-row:focus-visible { background: #ffffff06; outlin
 .tf-cap { margin: 8px 0 0; }
 .tf-live-chart { margin: 14px 0 6px; }
 .wm-tile.tile-down .wm-tile-v { color: var(--teal); } .wm-tile.tile-up .wm-tile-v { color: var(--amber); }
-.tf-sums { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 2px 0 14px; }
+.tf-sums { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(130px, 100%), 1fr)); gap: 10px; margin: 2px 0 14px; }
 .tf-stat { background: var(--surface-2); border-radius: var(--r-sm); padding: 10px 12px; }
 .tf-stat-v { font: 600 18px/1.3 var(--sans); font-variant-numeric: tabular-nums; }
 .tf-stat-down .tf-stat-v { color: var(--teal); } .tf-stat-up .tf-stat-v { color: var(--amber); }
@@ -1140,7 +1144,7 @@ path.sl0 { fill: var(--teal); } path.sl1 { fill: var(--blue); } path.sl2 { fill:
 span.sl0 { background: var(--teal); } span.sl1 { background: var(--blue); } span.sl2 { background: var(--amber); } span.sl3 { background: var(--wander); } span.sl4 { background: var(--red); } span.sl5 { background: #6fcf97; } span.sl-other { background: var(--text-3); }
 .tf-split { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--surface-2); margin: 6px 0 0; }
 .tf-split-down { background: var(--teal); } .tf-split-up { background: var(--amber); }
-.tf-trends { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+.tf-trends { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(210px, 100%), 1fr)); gap: 12px; }
 .tf-trend { display: flex; flex-direction: column; gap: 6px; text-align: left; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; color: inherit; font: inherit; min-width: 0; }
 button.tf-trend { cursor: pointer; } button.tf-trend:hover { border-color: var(--line-2); background: var(--surface-3); }
 .tf-trend-n { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1151,12 +1155,32 @@ button.tf-trend { cursor: pointer; } button.tf-trend:hover { border-color: var(-
 @media (max-width: 720px) {
   .tf-mix { grid-template-columns: 1fr; justify-items: center; }
   .tf-mix-legend { width: 100%; }
-  .tf-body .tf-chart-wrap { grid-template-columns: 52px minmax(0, 1fr); }
-  .tf-body .tf-xaxis { margin-left: 60px; }
+  /* Wide enough for "100 Mbit/s" at this size, so the gutter holds the
+     label instead of the label escaping the gutter. */
+  .tf-body .tf-chart-wrap { grid-template-columns: 70px minmax(0, 1fr); }
+  .tf-body .tf-yaxis span { font-size: 10px; }
+  .tf-body .tf-xaxis { margin-left: 78px; font-size: 10px; }
+  .tf-body .tf-xaxis span { white-space: nowrap; }
 }
 .tf-body .tf-yaxis span { white-space: nowrap; }
-.tf-body .tf-live { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; }
+
+.tf-body .tf-live { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 10px; }
 .tf-body .tf-live .list-row { border: 1px solid var(--line); border-radius: var(--r); }
+
+/* Bandwidth: reading from the owner's router instead of steering traffic. */
+.ru-line { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+.ru-line.good { color: var(--teal); } .ru-line.warn { color: var(--amber); }
+.ru-line.bad { color: var(--red); } .ru-line.muted { color: var(--text-2); font-weight: 500; }
+.ru-note { margin: 0 0 12px; max-width: 72ch; }
+.ru-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0 0 12px; }
+.ru-form input, .ru-form select { min-width: 220px; }
+.ru-acts { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+.ru-names { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.ru-sub { margin: 0 0 6px; font: 600 14px var(--sans); }
+.ru-names .switch { margin: 0 0 12px; }
+.ru-kinds { display: flex; gap: 8px; margin: 0 0 12px; }
+.ru-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); align-items: center; }
+.ru-grid .switch, .ru-grid button { grid-column: 1 / -1; justify-self: start; }
 
 .al-ntfy { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
 .al-ntfy > summary { cursor: pointer; font-weight: 600; }

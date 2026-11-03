@@ -164,12 +164,41 @@ func (e *Engine) write(w dns.ResponseWriter, r, resp *dns.Msg) {
 	_ = w.WriteMsg(resp)
 }
 
+// negativeTTL bounds how long a synthesized negative answer may be cached.
+// A minute matches the IPv6 probe's interval, so AAAA answers come back
+// promptly once IPv6 works again.
+const negativeTTL = 60
+
+// negativeSOA is the SOA record RFC 2308 wants in the authority section of
+// a NODATA or NXDOMAIN answer. Without one a resolver has nothing to cache
+// the negative answer against, so a client that keeps asking never stops:
+// a solar inverter here asked for the same filtered AAAA forty-eight times
+// a second, indefinitely, and never fell back to IPv4.
+//
+// The owner name is the question's own, because Shepherd synthesizes these
+// answers and does not know the real zone apex; that is what other
+// filtering resolvers do and what clients accept. The MNAME is deliberately
+// unresolvable: nothing should ever try to reach it.
+func negativeSOA(name string) *dns.SOA {
+	return &dns.SOA{
+		Hdr:     dns.RR_Header{Name: name, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: negativeTTL},
+		Ns:      "shepherd.invalid.",
+		Mbox:    "hostmaster.shepherd.invalid.",
+		Serial:  1,
+		Refresh: 3600,
+		Retry:   600,
+		Expire:  86400,
+		Minttl:  negativeTTL,
+	}
+}
+
 func (e *Engine) sinkhole(r *dns.Msg, q dns.Question, nxdomain bool) *dns.Msg {
 	m := new(dns.Msg)
 	m.SetReply(r)
 	m.RecursionAvailable = true
 	if nxdomain || e.BlockNXDOMAIN {
 		m.Rcode = dns.RcodeNameError
+		m.Ns = []dns.RR{negativeSOA(q.Name)}
 		return m
 	}
 	hdr := dns.RR_Header{Name: q.Name, Class: dns.ClassINET, Ttl: 60}
@@ -180,8 +209,11 @@ func (e *Engine) sinkhole(r *dns.Msg, q dns.Question, nxdomain bool) *dns.Msg {
 	case dns.TypeAAAA:
 		hdr.Rrtype = dns.TypeAAAA
 		m.Answer = append(m.Answer, &dns.AAAA{Hdr: hdr, AAAA: net.IPv6zero})
+	default:
+		// NOERROR with no answer is a NODATA, and needs the SOA too.
+		m.Ns = []dns.RR{negativeSOA(q.Name)}
 	}
-	return m // other types: NOERROR with no answer
+	return m
 }
 
 // publicIP reports whether ip is a routable address worth placing on a map.
@@ -367,6 +399,9 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		resp := new(dns.Msg)
 		resp.SetReply(r)
 		resp.RecursionAvailable = true
+		// Without the SOA this is an uncacheable NODATA and a client that
+		// prefers IPv6 can spin on it forever.
+		resp.Ns = []dns.RR{negativeSOA(q.Name)}
 		entry.Action, entry.Reason, entry.Rcode = "allowed", "ipv6-filtered", "NOERROR"
 		e.finishAllowed(w, r, q, entry, resp, start)
 		return

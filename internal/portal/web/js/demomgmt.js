@@ -125,6 +125,15 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
     const sum = (k) => rows.reduce((n, r) => n + r[k], 0);
     return {
       enabled: true, measuring: watchArmed,
+      // The demo shows the reader connected and working, so the whole
+      // section is exercised: status, the switch and the name sync.
+      router: {
+        available: true, connected: true, enabled: true, source: 'eero', network: 'demo-net',
+        status: {
+          source: 'eero', enabled: true, estimated: true, interval_seconds: 30,
+          last_poll: new Date().toISOString(), devices_seen: devices.length, matched: devices.length,
+        },
+      },
       retention: { minute_hours: 48, hour_days: 90, day_days: 0, max_bytes: 8388608 },
       devices_tracked: devices.length,
       live: { up_bytes_per_second: sum('up_bytes_per_second'), down_bytes_per_second: sum('down_bytes_per_second'), bytes_relayed: sum('bytes_relayed'), bytes_received_est: sum('bytes_received_est') },
@@ -412,6 +421,19 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       }
     }
     // ---- watch
+    if (path === '/api/routerusage' && method === 'GET') return trafficStatus().router;
+    if (path === '/api/routerusage/names' && method === 'POST') {
+      const dry = !!(body && body.dry_run);
+      return {
+        dry_run: dry, source: 'eero', changed: true,
+        created: 0, matched_by_mac: devices.length, matched_by_ip: 0, updated: 0,
+        named: 3, renamed: body && body.overwrite_names ? 2 : 0,
+        skipped: 0, unchanged: devices.length - 3,
+        groups_created: 0, memberships_added: 2, tags_added: 0,
+        marked_excluded: 0, notes_set: 0, types_set: 0,
+        lines: [], conflicts: [], warnings: [],
+      };
+    }
     if (path === '/api/traffic' && method === 'GET') return trafficStatus();
     if (path === '/api/traffic/series' && method === 'GET') return trafficSeries(Object.fromEntries(q));
     if (path === '/api/traffic/top' && method === 'GET') return trafficTop(Object.fromEntries(q));

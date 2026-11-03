@@ -126,7 +126,18 @@ export function shareOf(part, total) {
 // One line about what is being measured, with a tone for its colour.
 export function statusHeadline(status) {
   const s = status || {};
-  if (!s.enabled) return { tone: 'muted', text: 'Watch mode is off, so nothing is being measured. Turn it on to see bandwidth.' };
+  // The router reader, when it is working, is what the screen is showing,
+  // whatever Watch mode is doing.
+  if (!s.measuring && readingNow(s.router)) {
+    const st = s.router.status || {};
+    const live = s.live || {};
+    return {
+      tone: 'good',
+      text: 'Reading ' + (st.matched || 0) + ' devices from your ' + (s.router.source || 'router') + ': '
+        + fmtBitsPerSecond(live.down_bytes_per_second) + ' down, ' + fmtBitsPerSecond(live.up_bytes_per_second) + ' up at the last reading.',
+    };
+  }
+  if (!s.enabled) return { tone: 'muted', text: 'Watch mode is off, so nothing is being measured. Connect your router below, or turn Watch mode on.' };
   if (!s.measuring) return { tone: 'warn', text: 'Watch mode is stopped, so nothing new is being measured. History up to now is still here.' };
   const live = s.live || {};
   const n = (s.devices || []).length;
@@ -138,9 +149,30 @@ export function statusHeadline(status) {
 export const DOWNLOAD_CAVEAT = 'Download is an estimate read from each device’s own TCP acknowledgements: it never over-counts, but it cannot see QUIC, other UDP traffic or VPN tunnels, so video and some apps show lower than they really are. Upload is measured exactly.';
 
 // Rows for the live table, busiest first (the server already sorts; this
-// only guards against an unsorted fake).
-export function liveRows(status) {
-  return [...((status && status.devices) || [])].sort((a, b) => ((Number(b.down_bytes_per_second) || 0) + (Number(b.up_bytes_per_second) || 0)) - ((Number(a.down_bytes_per_second) || 0) + (Number(a.up_bytes_per_second) || 0)));
+// only guards against an unsorted fake). A router source reports every
+// device it knows, which on a real network is a hundred rows of zeroes, so
+// the live card takes only the busiest few: limit caps the list, and
+// anything moving nothing is left out entirely once the card is full.
+export function liveRows(status, limit = 0) {
+  const all = [...((status && status.devices) || [])]
+    .sort((a, b) => (rateOf(b) - rateOf(a)));
+  if (limit <= 0 || all.length <= limit) return all;
+  const busy = all.filter((d) => rateOf(d) > 0);
+  // Keep the shape stable when nothing is moving: show the first few
+  // rather than an empty card.
+  return (busy.length ? busy : all).slice(0, limit);
+}
+
+function rateOf(d) {
+  return (Number(d.down_bytes_per_second) || 0) + (Number(d.up_bytes_per_second) || 0);
+}
+
+// liveRowsNote says what the live card is leaving out, so a short list is
+// never mistaken for the whole network.
+export function liveRowsNote(status, shown) {
+  const total = ((status && status.devices) || []).length;
+  if (!total || shown >= total) return '';
+  return 'Showing the ' + shown + ' busiest of ' + total + ' devices. The rest are in Over time and Where it goes below.';
 }
 
 // ---------------------------------------------------------------- charts
@@ -219,4 +251,81 @@ export function rateStats(values) {
   const v = (values || []).map((x) => Number(x) || 0);
   if (!v.length) return { peak: 0, avg: 0 };
   return { peak: Math.max(...v), avg: v.reduce((s, x) => s + x, 0) / v.length };
+}
+
+// ------------------------------------------------- where the numbers come from
+// Bandwidth can be measured two ways. Watch mode relays each device's
+// traffic and counts the bytes, which is exact but needs a network that
+// tolerates steering. Reading the owner's own router touches nothing, but
+// a router that reports only its instantaneous rate (eero) gives figures
+// that are integrated between polls, and must never be shown as measured.
+
+// routerConnection describes the router side of GET /api/traffic in one
+// line, with a tone, for the Bandwidth screen's source section.
+export function routerConnection(router) {
+  const r = router || {};
+  if (!r.available) return { tone: 'muted', text: 'This build cannot read bandwidth from a router.' };
+  if (!r.connected) return { tone: 'muted', text: 'No router is connected. Shepherd can read per-device bandwidth from your router without touching your traffic.' };
+  const st = r.status || {};
+  if (!r.enabled) return { tone: 'muted', text: 'Connected to ' + (r.source || 'your router') + ', but switched off.' };
+  if (st.needs_sign_in) return { tone: 'bad', text: 'Your ' + (r.source || 'router') + ' sign-in has expired. Sign in again to carry on reading bandwidth.' };
+  if (st.last_error) return { tone: 'warn', text: 'Could not read ' + (r.source || 'the router') + ': ' + st.last_error };
+  if (!st.last_poll) return { tone: 'muted', text: 'Connected to ' + (r.source || 'your router') + '. Waiting for the first reading.' };
+  return {
+    tone: 'good',
+    text: 'Reading ' + (st.matched || 0) + ' of ' + (st.devices_seen || 0) + ' devices from your ' + (r.source || 'router')
+      + ' every ' + (st.interval_seconds || 0) + 's.',
+  };
+}
+
+// readingNow reports whether the router reader is the thing currently
+// producing numbers, which is true only when it is on and last succeeded.
+export function readingNow(router) {
+  const r = router || {};
+  const st = r.status || {};
+  return !!(r.available && r.connected && r.enabled && st.last_poll && !st.last_error);
+}
+
+// measurementNote is the one sentence under the live tiles saying how the
+// figures were arrived at, so an estimate is never mistaken for a count.
+export function measurementNote(status) {
+  const s = status || {};
+  if (s.measuring) return DOWNLOAD_CAVEAT;
+  if (!readingNow(s.router)) return '';
+  const est = (s.router.status || {}).estimated;
+  const src = s.router.source || 'your router';
+  return est
+    ? 'These figures are read from ' + src + ', which reports only the rate at each moment. Shepherd samples that and fills in the time between, so they show which devices are busy rather than how much they moved: anything shorter than the gap between readings is largely missed, and a few hundred megabytes downloaded in under a minute can be counted as a fraction of that. Treat the totals as a floor, not a measurement.'
+    : 'These figures are byte counts read from ' + src + '.';
+}
+
+// liveChartCaption says what the rolling chart is actually showing. The
+// screen polls every pollMs, but when the numbers come from a router that
+// is read every 30 seconds the line is a staircase, and saying "every two
+// seconds" would overstate it.
+export function liveChartCaption(status, samples, pollMs) {
+  const mins = Math.max(0.1, Math.round((samples * pollMs) / 6000) / 10);
+  const span = 'The last ' + mins + ' minutes';
+  if (!readingNow((status || {}).router)) return span + ', one sample every ' + Math.round(pollMs / 1000) + ' seconds.';
+  const every = ((status.router.status || {}).interval_seconds) || 0;
+  return span + '. Your ' + (status.router.source || 'router') + ' is read every ' + every
+    + ' seconds, so the line steps rather than curves.';
+}
+
+// nameSyncSummary turns an import report into one sentence, for the
+// confirmation the owner sees before anything is written and the result
+// they see after. Renamed is called out separately: it is the only count
+// that takes away a name they chose themselves.
+export function nameSyncSummary(report, done) {
+  const r = report || {};
+  const bits = [];
+  const add = (n, one, many) => { if (n > 0) bits.push(n + ' ' + (n === 1 ? one : many)); };
+  add(r.created, 'device added', 'devices added');
+  add(r.named, 'device named', 'devices named');
+  add(r.renamed, 'device renamed', 'devices renamed');
+  add(r.groups_created, 'group created', 'groups created');
+  add(r.memberships_added, 'device put in a group', 'devices put in groups');
+  if (!bits.length) return done ? 'Nothing changed: your names already match eero.' : 'Nothing to change: your names already match eero.';
+  const list = bits.length === 1 ? bits[0] : bits.slice(0, -1).join(', ') + ' and ' + bits[bits.length - 1];
+  return (done ? 'Synced: ' : 'This will make these changes: ') + list + '.';
 }
