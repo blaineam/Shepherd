@@ -29,13 +29,11 @@ func (s *Server) routerUsageJSON() map[string]any {
 		"network":   "",
 		"status":    routerusage.Status{},
 	}
-	if s.Secrets != nil {
-		if e, ok := s.Secrets.Eero(); ok {
-			out["connected"] = true
-			out["source"] = "eero"
-			out["network"] = e.NetworkID
-			out["enabled"] = e.Enabled
-		}
+	if e, ok := s.Secrets.Eero(); ok {
+		out["connected"] = true
+		out["source"] = "eero"
+		out["network"] = e.NetworkID
+		out["enabled"] = e.Enabled
 	}
 	if s.RouterUsage != nil {
 		out["status"] = s.RouterUsage.Status()
@@ -59,7 +57,7 @@ func (s *Server) connectRouterUsage(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &b, smallBody) {
 		return
 	}
-	if s.Secrets == nil || s.RouterUsage == nil {
+	if s.RouterUsage == nil {
 		notFound(w, "this build cannot read bandwidth from a router")
 		return
 	}
@@ -119,7 +117,7 @@ func (s *Server) setRouterUsageEnabled(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &b, smallBody) {
 		return
 	}
-	if s.Secrets == nil || s.RouterUsage == nil {
+	if s.RouterUsage == nil {
 		notFound(w, "this build cannot read bandwidth from a router")
 		return
 	}
@@ -138,7 +136,7 @@ func (s *Server) setRouterUsageEnabled(w http.ResponseWriter, r *http.Request) {
 
 // forgetRouterUsage drops the stored session entirely and stops reading.
 func (s *Server) forgetRouterUsage(w http.ResponseWriter, r *http.Request) {
-	if s.Secrets == nil || s.RouterUsage == nil {
+	if s.RouterUsage == nil {
 		notFound(w, "this build cannot read bandwidth from a router")
 		return
 	}
@@ -148,4 +146,82 @@ func (s *Server) forgetRouterUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.RouterUsage.Reload()
 	writeJSON(w, s.routerUsageJSON())
+}
+
+// ---- names ------------------------------------------------------------------
+
+// Syncing names reuses the kept sign-in: eero already knows what the
+// household calls each device, and the importer already maps those names
+// to aliases and eero's profiles to groups (internal/importers). What is
+// new here is that it needs no fresh verification code, so it can be run
+// whenever the owner adds a device.
+//
+// The owner's own names win by default. Overwriting them is a deliberate
+// choice, asked for per request, never a default and never automatic.
+
+// storedEeroClient opens a client on the kept sign-in, with the network
+// the owner chose.
+func (s *Server) storedEeroClient() (*importers.Client, importers.Network, error) {
+	e, ok := s.Secrets.Eero()
+	if !ok || e.NetworkID == "" {
+		return nil, importers.Network{}, importers.ErrEeroNoSession
+	}
+	store := secrets.EeroTokenStore{S: s.Secrets}
+	var (
+		c   *importers.Client
+		err error
+	)
+	if s.NewStoredEeroClient != nil {
+		c, err = s.NewStoredEeroClient(store)
+	} else {
+		c, err = importers.NewClient(importers.ClientOptions{TokenStore: store})
+	}
+	if err != nil {
+		return nil, importers.Network{}, err
+	}
+	resumed, err := c.Resume()
+	if err != nil {
+		return nil, importers.Network{}, err
+	}
+	if !resumed {
+		return nil, importers.Network{}, importers.ErrEeroNoSession
+	}
+	return c, importers.Network{ID: e.NetworkID}, nil
+}
+
+// syncRouterNames previews or applies eero's device names and profiles.
+// dry_run is the preview the portal shows before anything is written.
+func (s *Server) syncRouterNames(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		OverwriteNames bool `json:"overwrite_names"`
+		DryRun         bool `json:"dry_run"`
+	}
+	if !decode(w, r, &b, smallBody) {
+		return
+	}
+	c, net, err := s.storedEeroClient()
+	if err != nil {
+		eeroError(w, err)
+		return
+	}
+	// The client is for this request only; the token stays in the store.
+	defer c.Discard()
+	snap, err := c.Snapshot(r.Context(), net)
+	if err != nil {
+		eeroError(w, err)
+		return
+	}
+	plan := importers.MapEero(snap)
+	opts := importers.Options{OverwriteNames: b.OverwriteNames}
+	var rep importers.Report
+	if b.DryRun {
+		rep, err = importers.PreviewWith(plan, s.Devices, opts)
+	} else {
+		rep, err = importers.Apply(plan, s.Devices, opts)
+	}
+	if err != nil {
+		bad(w, err.Error())
+		return
+	}
+	writeJSON(w, toImportReport(rep))
 }

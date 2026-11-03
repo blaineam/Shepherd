@@ -112,6 +112,21 @@ new code; **Disconnect** forgets it entirely.
 **When the session expires**, the reader says so and the screen offers a sign-in rather than
 showing a stuck collector. The network already chosen is kept.
 
+### Device names
+
+The kept sign-in is good for more than bandwidth. eero already knows what the household calls each
+device, and `internal/importers` already maps those names to Shepherd aliases and eero's profiles
+to groups -- that was the one-time import. With a session kept, the same thing can be run whenever
+the owner adds a device, with no new verification code, from **Device names** in the same section.
+
+It always previews first, and says exactly what would change before anything is written.
+**The owner's own names win:** a device they have named in Shepherd is left alone unless they tick
+"Also replace names I have set myself", which is asked for per sync and is never the default and
+never automatic. Running it twice changes nothing the second time.
+
+`POST /api/routerusage/names` takes `dry_run` and `overwrite_names` and returns the same report the
+import does.
+
 ### Adding another router
 
 A new source is one type with three methods -- `Name`, `Kind` and `Poll` -- plus a constructor.

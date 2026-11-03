@@ -161,7 +161,7 @@ test('rateStats reports peak and average', () => {
   assert.deepEqual(rateStats([2, 4, 6, 'x']), { peak: 6, avg: 3 });
 });
 
-import { routerConnection, readingNow, measurementNote, liveChartCaption } from '../js/traffic.js';
+import { routerConnection, readingNow, measurementNote, liveChartCaption, nameSyncSummary } from '../js/traffic.js';
 
 const reading = {
   available: true, connected: true, enabled: true, source: 'eero',
@@ -255,4 +255,14 @@ test('liveRowsNote says what the live card is leaving out', () => {
   assert.equal(liveRowsNote(status, 88), '');
   assert.equal(liveRowsNote({ devices: [] }, 0), '');
   assert.equal(liveRowsNote(null, 0), '');
+});
+
+test('nameSyncSummary says what will change, and what a rename costs', () => {
+  assert.match(nameSyncSummary({}, false), /Nothing to change/);
+  assert.match(nameSyncSummary({}, true), /Nothing changed/);
+  assert.equal(nameSyncSummary({ named: 1 }, false), 'This will make these changes: 1 device named.');
+  assert.equal(nameSyncSummary({ created: 2, named: 3 }, true), 'Synced: 2 devices added and 3 devices named.');
+  const all = nameSyncSummary({ created: 1, named: 2, renamed: 1, groups_created: 1, memberships_added: 4 }, false);
+  assert.equal(all, 'This will make these changes: 1 device added, 2 devices named, 1 device renamed, 1 group created and 4 devices put in groups.');
+  assert.equal(nameSyncSummary(null, false), 'Nothing to change: your names already match eero.');
 });

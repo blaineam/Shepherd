@@ -12,6 +12,7 @@ import (
 
 	"shepherd/internal/secrets"
 
+	"shepherd/internal/importers"
 	"shepherd/internal/routerusage"
 )
 
@@ -284,5 +285,166 @@ func TestTheLiveCardIgnoresARouterReaderThatIsNotReading(t *testing.T) {
 		if n := len(out["devices"].([]any)); n != 0 {
 			t.Errorf("%s: %d devices, want none", name, n)
 		}
+	}
+}
+
+// withStoredEero points the kept-sign-in client at the fake eero too.
+func (h *harness) withStoredEero(base string) {
+	h.srv.NewStoredEeroClient = func(store importers.TokenStore) (*importers.Client, error) {
+		return importers.NewTestClient(base, importers.ClientOptions{MinInterval: -1, TokenStore: store})
+	}
+}
+
+// connected signs in and keeps the session, which is what every name sync
+// below starts from.
+func connected(t *testing.T, h *harness) {
+	t.Helper()
+	base := newFakeEero(t)
+	h.withEero(base)
+	h.withStoredEero(base)
+	h.srv.RouterUsage = &fakeUsage{}
+	h.ok("POST", "/api/routerusage/connect", fmt.Sprintf(`{"session_id":%q,"network_id":"3001"}`, signedInSession(t, h)), 200)
+}
+
+// The point of syncing names off the kept sign-in is that it needs no new
+// verification code, and that the owner's own names survive it.
+func TestSyncNamesPreviewsThenAppliesWithoutANewCode(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	connected(t, h)
+
+	prev := h.ok("POST", "/api/routerusage/names", `{"dry_run":true}`, 200)
+	if prev["dry_run"] != true {
+		t.Fatalf("preview = %v, want a dry run", prev)
+	}
+	if prev["created"].(float64) < 1 {
+		t.Fatalf("the preview found nothing to do: %v", prev)
+	}
+	// A preview writes nothing.
+	if n := len(h.srv.Devices.List()); n != 0 {
+		t.Fatalf("the preview created %d devices", n)
+	}
+
+	rep := h.ok("POST", "/api/routerusage/names", `{"dry_run":false}`, 200)
+	if rep["dry_run"] != false || rep["created"].(float64) < 1 {
+		t.Fatalf("apply = %v", rep)
+	}
+	var named bool
+	for _, d := range h.srv.Devices.List() {
+		if d.DisplayName() == "Kid iPad" {
+			named = true
+		}
+	}
+	if !named {
+		t.Fatalf("eero's name was not applied: %+v", h.srv.Devices.List())
+	}
+	// Running it again changes nothing, so a button can be pressed twice.
+	again := h.ok("POST", "/api/routerusage/names", `{"dry_run":false}`, 200)
+	if again["created"].(float64) != 0 {
+		t.Fatalf("a second sync created devices again: %v", again)
+	}
+}
+
+func TestSyncNamesLeavesTheOwnersOwnNamesAloneUnlessAsked(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	connected(t, h)
+	h.ok("POST", "/api/routerusage/names", `{"dry_run":false}`, 200)
+
+	// The owner renames it to something of their own.
+	var id string
+	for _, d := range h.srv.Devices.List() {
+		if d.DisplayName() == "Kid iPad" {
+			id = d.ID
+		}
+	}
+	if id == "" {
+		t.Fatal("no device to rename")
+	}
+	h.ok("PATCH", "/api/devices/"+id, `{"alias":"Harriet's tablet"}`, 200)
+
+	// A plain sync must not take that away.
+	if rep := h.ok("POST", "/api/routerusage/names", `{"dry_run":false}`, 200); rep["renamed"].(float64) != 0 {
+		t.Fatalf("a plain sync renamed the owner's device: %v", rep)
+	}
+	if d, _ := h.srv.Devices.Get(id); d.DisplayName() != "Harriet's tablet" {
+		t.Fatalf("the owner's name was lost: %q", d.DisplayName())
+	}
+
+	// Only an explicit ask replaces it.
+	if rep := h.ok("POST", "/api/routerusage/names", `{"dry_run":false,"overwrite_names":true}`, 200); rep["renamed"].(float64) != 1 {
+		t.Fatalf("overwrite_names did not rename: %v", rep)
+	}
+	if d, _ := h.srv.Devices.Get(id); d.DisplayName() != "Kid iPad" {
+		t.Fatalf("after overwriting = %q", d.DisplayName())
+	}
+}
+
+func TestSyncNamesNeedsAKeptSignIn(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	h.withStoredEero(newFakeEero(t))
+	h.srv.RouterUsage = &fakeUsage{}
+	// Nothing stored at all.
+	h.expect("POST", "/api/routerusage/names", `{"dry_run":true}`, 401)
+
+	// A session with no network chosen is not enough either.
+	if _, err := h.srv.Secrets.SetEero(secrets.Eero{Token: "eero-token-abc"}); err != nil {
+		t.Fatal(err)
+	}
+	h.expect("POST", "/api/routerusage/names", `{"dry_run":true}`, 401)
+}
+
+func TestSyncNamesReportsAReadThatFailedPartWayThrough(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	base := newFakeEeroFailing(t, "/2.2/networks/3001/devices")
+	h.withEero(newFakeEero(t)) // the sign-in itself works
+	h.withStoredEero(base)     // but reading the devices later does not
+	h.srv.RouterUsage = &fakeUsage{}
+	h.ok("POST", "/api/routerusage/connect", fmt.Sprintf(`{"session_id":%q,"network_id":"3001"}`, signedInSession(t, h)), 200)
+
+	h.expect("POST", "/api/routerusage/names", `{"dry_run":true}`, 400)
+	if n := len(h.srv.Devices.List()); n != 0 {
+		t.Fatalf("a failed read still wrote %d devices", n)
+	}
+}
+
+func TestSyncNamesReportsAClientItCouldNotBuild(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	connected(t, h)
+	h.srv.NewStoredEeroClient = func(importers.TokenStore) (*importers.Client, error) {
+		return nil, importers.ErrEeroBadURL
+	}
+	h.expect("POST", "/api/routerusage/names", `{"dry_run":true}`, 400)
+}
+
+// A sign-in that was forgotten after the client was configured must ask
+// for one rather than reading with no token.
+func TestSyncNamesAsksForASignInWhenTheTokenHasGone(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	connected(t, h)
+	if err := h.srv.Secrets.ClearEero(); err != nil {
+		t.Fatal(err)
+	}
+	h.expect("POST", "/api/routerusage/names", `{"dry_run":true}`, 401)
+}
+
+func TestRouterUsageRefusesMalformedBodies(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	connected(t, h)
+	for _, path := range []string{"/api/routerusage/connect", "/api/routerusage/enabled", "/api/routerusage/names"} {
+		h.expect("POST", path, "{not json", 400)
+	}
+}
+
+// Live() is only consulted while the reader is actually reading, so a
+// manager with nothing running must not be asked for rows.
+func TestTheLiveCardIgnoresAReaderWithNoRows(t *testing.T) {
+	at := time.Now()
+	h := newHarness(t)
+	h.srv.RouterUsage = &fakeUsage{st: routerusage.Status{Source: "eero", Enabled: true, LastPoll: &at}}
+	out := h.ok("GET", "/api/traffic", "", 200)
+	if n := len(out["devices"].([]any)); n != 0 {
+		t.Fatalf("%d devices from an empty reader", n)
+	}
+	if live := out["live"].(map[string]any); live["down_bytes_per_second"] != 0.0 {
+		t.Fatalf("live = %v", live)
 	}
 }

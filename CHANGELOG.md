@@ -37,7 +37,9 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   than curves. Measured against a known transfer, eero's sampling recorded about a sixth of it, so
   the screen and the docs call these totals a floor rather than a measurement. The live card shows
   only the eight busiest devices, since a router source lists every device it knows, and says how
-  many it is leaving out.
+  many it is leaving out. The kept sign-in also powers **Device names**: copy eero's names and
+  profiles into Shepherd whenever you like, with no new verification code. It previews first, and
+  names you set yourself are kept unless you explicitly ask for them to be replaced.
 - **`dns.filter_aaaa`** (`"auto"` by default, or `"on"` / `"off"`). On a network whose devices have no
   IPv6 route to the internet (only private `fd..` or link-local addresses) every AAAA answer is an
   unreachable address, and a device that tries it first or handles the failure badly reports a network

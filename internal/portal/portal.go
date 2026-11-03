@@ -96,6 +96,13 @@ type Deps struct {
 	// at a fake server with importers.NewTestClient.
 	NewEeroClient func() (*importers.Client, error)
 
+	// NewStoredEeroClient builds a client that resumes the kept sign-in
+	// (api_routerusage.go), for reading bandwidth and syncing names
+	// without another verification code. Nil talks to production eero;
+	// tests point it at a fake server. The store it is given is the only
+	// place the token lives.
+	NewStoredEeroClient func(importers.TokenStore) (*importers.Client, error)
+
 	// Alarms is the alarm engine (docs/ALARMS.md). Nil gives an unwired,
 	// in-memory engine that nothing raises alarms through, so the API still
 	// works (and returns no alarms).
@@ -613,6 +620,7 @@ func (s *Server) routes() {
 	h("POST /api/routerusage/connect", s.connectRouterUsage)
 	h("POST /api/routerusage/enabled", s.setRouterUsageEnabled)
 	h("DELETE /api/routerusage", s.forgetRouterUsage)
+	h("POST /api/routerusage/names", s.syncRouterNames)
 	h("POST /api/import/csv/preview", s.importCSVPreview)
 	h("POST /api/import/csv/apply", s.importCSVApply)
 

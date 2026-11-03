@@ -62,6 +62,7 @@ export function createMgmt(api) {
     routerUsageConnect: (sessionId, networkId) => post('/api/routerusage/connect', { session_id: sessionId, network_id: networkId }),
     routerUsageEnabled: (enabled) => post('/api/routerusage/enabled', { enabled }),
     routerUsageForget: () => api('/api/routerusage', { method: 'DELETE' }),
+    routerUsageSyncNames: (overwriteNames, dryRun) => post('/api/routerusage/names', { overwrite_names: overwriteNames, dry_run: dryRun }),
     importCSVPreview: (csv, overwriteNames) => post('/api/import/csv/preview', { csv, overwrite_names: overwriteNames }),
     importCSVApply: (csv, overwriteNames) => post('/api/import/csv/apply', { csv, overwrite_names: overwriteNames }),
 

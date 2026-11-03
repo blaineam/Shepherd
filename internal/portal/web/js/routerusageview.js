@@ -7,7 +7,7 @@
 // Every string that came from the server is placed with textContent.
 import { el } from './dom.js';
 import { button } from './ui.js';
-import { routerConnection } from './traffic.js';
+import { routerConnection, nameSyncSummary } from './traffic.js';
 
 export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {
   const root = el('section', 'card ru');
@@ -19,6 +19,9 @@ export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {
   // seconds, and a repaint replaces the input element, so without this the
   // field empties itself under them mid-word.
   const draft = { login: '', code: '' };
+  // The name sync: null when idle, otherwise the preview awaiting a yes.
+  let names = null;
+  let overwrite = false;
 
   // field builds an input that remembers what is in it across repaints.
   function field(key, attrs) {
@@ -122,6 +125,60 @@ export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {
     return wrap;
   }
 
+  // --------------------------------------------------------- device names
+  // eero already knows what the household calls each device, and the kept
+  // sign-in means asking costs no new verification code. The owner's own
+  // names win unless they say otherwise, and nothing is written until
+  // they have seen what would change.
+  function nameSync() {
+    const wrap = el('div', 'ru-names');
+    wrap.append(el('h4', 'ru-sub', 'Device names'));
+    wrap.append(el('p', 'muted small ru-note',
+      'Copy the names and profiles from your eero into Shepherd. Names you have set here are kept unless you ask for them to be replaced.'));
+
+    const over = el('label', 'switch');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = overwrite;
+    box.disabled = busy;
+    box.addEventListener('change', () => {
+      overwrite = box.checked;
+      // The preview is about to be wrong, so take it away and ask again.
+      names = null;
+      run(async () => { names = await mgmt.routerUsageSyncNames(overwrite, true); });
+    });
+    over.append(box, el('span', '', 'Also replace names I have set myself'));
+    wrap.append(over);
+
+    if (!names) {
+      const go = button('Check what would change', 'ghost', () =>
+        run(async () => { names = await mgmt.routerUsageSyncNames(overwrite, true); }));
+      go.disabled = busy;
+      const acts = el('div', 'ru-acts');
+      acts.append(go);
+      wrap.append(acts);
+      return wrap;
+    }
+    wrap.append(el('p', 'ru-line ' + (names.changed ? 'good' : 'muted'), nameSyncSummary(names, false)));
+    const acts = el('div', 'ru-acts');
+    if (names.changed) {
+      const apply = button('Apply', 'primary', () => run(async () => {
+        const done = await mgmt.routerUsageSyncNames(overwrite, false);
+        names = null;
+        notify(nameSyncSummary(done, true));
+        onChanged();
+      }));
+      apply.disabled = busy;
+      acts.append(apply);
+    }
+    const cancel = button(names.changed ? 'Cancel' : 'Close', 'ghost', () => { names = null; paint(); });
+    cancel.disabled = busy;
+    acts.append(cancel);
+    wrap.append(acts);
+    for (const warn of names.warnings || []) wrap.append(el('p', 'muted small', warn));
+    return wrap;
+  }
+
   // ------------------------------------------------------------ connected
   function controls() {
     const wrap = el('div', 'ru-acts');
@@ -156,7 +213,9 @@ export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {
       const st = router.status || {};
       if (st.needs_sign_in) {
         root.append(el('p', 'muted small', 'Signing in again keeps the network you already chose.'), signInForm());
+        return;
       }
+      root.append(nameSync());
       return;
     }
     if (!signin) {

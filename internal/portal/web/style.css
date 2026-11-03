@@ -1175,3 +1175,6 @@ button.tf-trend { cursor: pointer; } button.tf-trend:hover { border-color: var(-
 .ru-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0 0 12px; }
 .ru-form input, .ru-form select { min-width: 220px; }
 .ru-acts { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+.ru-names { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.ru-sub { margin: 0 0 6px; font: 600 14px var(--sans); }
+.ru-names .switch { margin: 0 0 12px; }

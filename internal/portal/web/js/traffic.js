@@ -311,3 +311,21 @@ export function liveChartCaption(status, samples, pollMs) {
   return span + '. Your ' + (status.router.source || 'router') + ' is read every ' + every
     + ' seconds, so the line steps rather than curves.';
 }
+
+// nameSyncSummary turns an import report into one sentence, for the
+// confirmation the owner sees before anything is written and the result
+// they see after. Renamed is called out separately: it is the only count
+// that takes away a name they chose themselves.
+export function nameSyncSummary(report, done) {
+  const r = report || {};
+  const bits = [];
+  const add = (n, one, many) => { if (n > 0) bits.push(n + ' ' + (n === 1 ? one : many)); };
+  add(r.created, 'device added', 'devices added');
+  add(r.named, 'device named', 'devices named');
+  add(r.renamed, 'device renamed', 'devices renamed');
+  add(r.groups_created, 'group created', 'groups created');
+  add(r.memberships_added, 'device put in a group', 'devices put in groups');
+  if (!bits.length) return done ? 'Nothing changed: your names already match eero.' : 'Nothing to change: your names already match eero.';
+  const list = bits.length === 1 ? bits[0] : bits.slice(0, -1).join(', ') + ' and ' + bits[bits.length - 1];
+  return (done ? 'Synced: ' : 'This will make these changes: ') + list + '.';
+}
