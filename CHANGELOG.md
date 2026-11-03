@@ -35,7 +35,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   upload bar, and a trend line per busy device.
 
 ### Added
-- **DHCP mode, off by default ([docs/DHCP.md](docs/DHCP.md)).** Shepherd can serve the LAN's DHCP and
+- **DHCP mode — ALPHA, off by default ([docs/DHCP.md](docs/DHCP.md)).** Alpha means something
+  specific and the doc says it plainly: no real device has ever taken an address from it. The lease
+  exchange is tested end to end, but over loopback sockets on high ports, so the real port 67, the
+  broadcast a client needs before it has an address, and a household's traffic crossing one network
+  card twice have been reasoned about rather than measured. It is also the one thing here that can
+  take a whole network off the internet. Nothing offers it to you: it is off in the default
+  configuration, no first-run path mentions it, and the portal screen leads with all of this. Shepherd can serve the LAN's DHCP and
   masquerade the traffic of the devices it routes, so both directions of those devices' traffic pass
   through it -- downloads *measured* rather than estimated from acknowledgements, and QUIC no longer a
   blind spot. One NIC, one flat segment, the router still routing. `[dhcp] mode` has three positions

@@ -52,8 +52,16 @@ type Config struct {
 	DHCP           DHCP           `toml:"dhcp"`
 }
 
-// DHCP controls DHCP mode (docs/DHCP.md), which is off by default and is the
-// one setting in Shepherd that can take a household off the internet.
+// DHCP controls DHCP mode (docs/DHCP.md). It is **alpha**, off by default,
+// and the one setting in Shepherd that can take a household off the
+// internet. Alpha here means something specific and is worth stating rather
+// than implying: no real device has ever taken an address from it. The lease
+// exchange is tested end to end, but only over loopback sockets on high
+// ports, so the real port 67, the broadcast a client needs before it has an
+// address, and a household's traffic crossing one network card twice have
+// all been reasoned about rather than measured. Anybody turning it on is
+// trying it out, and should follow the staged rollout in docs/DHCP.md
+// starting at "observe", which cannot transmit at all.
 //
 // What it is: Shepherd serves the LAN's DHCP, and for the devices it routes
 // it puts its own address in option 3 instead of the router's, forwards their
@@ -719,8 +727,11 @@ func Default() Config {
 		Watch: Watch{Enabled: false, Mode: "auto", ActiveWindowSeconds: 900, AllowRoutingHost: true},
 		// DHCP mode is off, and this is the one default in Shepherd that
 		// is not a judgement call: serving the wrong DHCP on somebody's
-		// network takes their house off the internet. docs/DHCP.md has
-		// the staged rollout that earns each step.
+		// network takes their house off the internet. It is also alpha
+		// (see the DHCP type), so it stays something a person goes
+		// looking for rather than something they are walked into: no
+		// first-run path offers it. docs/DHCP.md has the staged rollout
+		// that earns each step.
 		DHCP:    DHCP{Mode: "off", LeaseSeconds: 600, SettleSeconds: 60},
 		DataDir: "data",
 		DNS: DNS{
