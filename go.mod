@@ -11,6 +11,13 @@ require (
 require github.com/cilium/ebpf v0.22.0
 
 require (
+	github.com/insomniacslk/dhcp v0.0.0-20261014062924-c6bb46ad3f3a
+	github.com/josharian/native v1.1.0 // indirect
+	github.com/pierrec/lz4/v4 v4.1.14 // indirect
+	github.com/u-root/uio v0.0.0-20230220225925-ffce2a382923 // indirect
+)
+
+require (
 	github.com/maxmind/mmdbwriter v1.2.0
 	github.com/oschwald/maxminddb-golang/v2 v2.8.0
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect

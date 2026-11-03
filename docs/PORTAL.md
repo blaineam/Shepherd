@@ -7,8 +7,13 @@ or the file `portal-token` in the data directory).
 
 The portal is a dashboard with a side menu. On a desktop the menu is always visible on the left,
 grouped into **Monitor** (Map, History, Alarms, Vulnerabilities, Network health, Bandwidth), **Protect**
-(Devices, Blocking) and **Settings** (Upstream DNS, Reverse proxy, Accountability, Locking, System). The portal opens on the Map.
+(Devices, Blocking) and **Settings** (Upstream DNS, DHCP, Reverse proxy, Accountability, Locking, System). The portal opens on the Map.
 Monitor also holds **Bandwidth** ([TRAFFIC.md](TRAFFIC.md)): live and historical bytes per device, group and network.
+Settings holds **DHCP** ([DHCP.md](DHCP.md)): what DHCP mode is doing and what is stopping it, the addressing it
+would hand out, the current leases with the gateway each was actually given, address reservations you can add,
+edit and remove, and a plainly worded account of what turning it on will do. It is off by default and the screen
+says so; every part of it works with the mode off, which is the point -- the whole arrangement is meant to be
+reviewed before it is switched on.
 The top bar carries the connection state (live, demo, replay or offline), the clock, the demo-data switch
 and the Lock button. Below about 1024px the side menu slides in from the left behind a labelled **Menu**
 button in the top bar; picking a screen, tapping outside the menu or pressing Escape closes it.

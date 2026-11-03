@@ -343,3 +343,58 @@ startup_grace_seconds = 0
 [[lists]]
 name = "hagezi-pro"
 url = "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt"
+
+[dhcp]
+# DHCP mode (docs/DHCP.md). OFF BY DEFAULT, and the one setting in Shepherd
+# that can take a household off the internet, so read the doc before changing
+# mode to "serve".
+#
+# What it is: Shepherd serves the LAN's DHCP, and for the devices it routes it
+# hands out its own address as their gateway instead of the router's, then
+# forwards and masquerades their traffic to the router. Both directions of
+# those devices' traffic then pass through Shepherd, which is the only way to
+# measure downloads rather than estimate them. One NIC, one flat segment, the
+# router still routing: source NAT is what makes the hairpin work.
+#
+# mode has three positions, not two:
+#   "off"     opens no socket; nothing changes (the default)
+#   "observe" a listener with NO send path. It feeds the device registry from
+#             every DHCP packet on the segment and shows what Shepherd would
+#             have answered, without being able to answer. Safe to leave
+#             running on a live network, and the right way to prove the
+#             decoder against every device in the house before cutover.
+#   "serve"   answers. It refuses to while another DHCP server is still
+#             replying on the segment, and needs the typed confirmation in
+#             the portal, so turning the router's DHCP off can be done after
+#             this is set rather than under time pressure.
+mode = "off"
+interface = ""           # empty: the default route's interface
+subnet = ""              # empty: taken from the interface, e.g. "192.0.2.0/24"
+server_ip = ""           # empty: the interface's first IPv4 address
+gateway = ""             # empty: the default route's gateway
+# The dynamic range. Reserved addresses must lie OUTSIDE it, and so must
+# server_ip and gateway; Shepherd refuses to serve otherwise, because handing
+# one address out twice is how a DHCP server breaks a network.
+pool_start = ""          # e.g. "192.0.2.100"
+pool_end = ""            # e.g. "192.0.2.200"
+dns = []                 # empty: hand out server_ip, which is the point
+domain = ""              # option 15, the client's search domain
+# Short on purpose. The lease time is how fast a device stops being routed
+# when Shepherd decides it should not be, and that is the whole fail-open
+# mechanism: an unhealthy Shepherd hands out the router's address instead of
+# its own and the house drifts back by itself within one renewal. The cost is
+# that the segment starts failing sooner after the host goes down. Minimum 60.
+lease_seconds = 600
+# Routing is separate from serving. With mode = "serve" and route = false,
+# every lease carries the router's own address, so nothing is on Shepherd's
+# data path -- a complete, safe resting place to sit in for a week before
+# routing anything. Turning it on routes every eligible device at its next
+# renewal: there is no per-device opt-in, only the per-device opt-out in the
+# portal and a refusal list that covers the gateway, Shepherd's own
+# interfaces, network infrastructure, Thread and Matter gear, and consoles.
+route = false
+# Game consoles are left on the router by default: double NAT is what makes a
+# console's NAT type worse, and it is noticed mid-match.
+route_consoles = false
+settle_seconds = 60     # quiet period with no other DHCP server before serving
+nft = ""                # empty: "nft" on the PATH

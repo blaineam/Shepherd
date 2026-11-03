@@ -6,6 +6,14 @@ discovers devices with mDNS. Break either and smart-home devices quietly stop wo
 
 ## Hard rules
 
+These hold for the Guard, Watch and **DHCP** profiles. Gateway mode ([GATEWAY.md](GATEWAY.md)) has to
+rescope rules 1 and 5, because a router advertises itself and is the default gateway; that rescope is
+recorded there rather than quietly taken here. **DHCP mode keeps every one of them**, which is a real
+advantage of it: Shepherd sends no Router Advertisements and no DHCPv6, the router stays the IPv6
+router, and the Thread and Matter risk is therefore almost entirely absent. The cost is stated in
+[DHCP.md](DHCP.md): a routed device's IPv6 traffic does not pass through Shepherd and is not measured.
+
+
 1. **Never run a Router Advertisement or DHCPv6 server on the LAN.** Routers and Thread border
    routers advertise default routes and Thread-mesh routes via RAs. A second source breaks them.
 2. **Never filter or rewrite ICMPv6 neighbor discovery, RAs, or mDNS** (UDP 5353, `ff02::fb`).

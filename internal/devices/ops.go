@@ -272,6 +272,11 @@ func (r *Registry) SetWatch(id string, mode WatchMode) error {
 	return r.single(id, func() BulkResult { return r.BulkSetWatch([]string{id}, mode) })
 }
 
+// SetRoute sets one device's DHCP-mode routing switch (see Device.Route).
+func (r *Registry) SetRoute(id string, mode RouteMode) error {
+	return r.single(id, func() BulkResult { return r.BulkSetRoute([]string{id}, mode) })
+}
+
 // SetWandering puts one device in or out of wandering mode: no filtering at all,
 // every request still watched. until ends it automatically; the zero time keeps
 // it on until it is turned off.
@@ -371,6 +376,17 @@ func (r *Registry) BulkSetWatch(ids []string, mode WatchMode) BulkResult {
 			return false
 		}
 		d.Watch = mode
+		return true
+	})
+}
+
+// BulkSetRoute sets every listed device's DHCP-mode routing switch.
+func (r *Registry) BulkSetRoute(ids []string, mode RouteMode) BulkResult {
+	return r.bulk(ids, EventUpdated, "", func(d *Device) bool {
+		if d.Route == mode {
+			return false
+		}
+		d.Route = mode
 		return true
 	})
 }

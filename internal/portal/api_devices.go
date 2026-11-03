@@ -5,10 +5,12 @@ package portal
 import (
 	"errors"
 	"net/http"
+	"net/netip"
 	"regexp"
 	"time"
 
 	"shepherd/internal/devices"
+	"shepherd/internal/dhcp"
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/watch"
 )
@@ -49,6 +51,33 @@ type deviceJSON struct {
 	// from the engine. Omitted entirely when Watch mode is not wired in,
 	// so the portal can tell "no Watch mode" from "Watch mode says this".
 	WatchState *watch.DeviceStatus `json:"watch_state,omitempty"`
+	// Route is the device's own DHCP-mode routing switch: "auto" (the
+	// mode decides, which routes it while routing is on), "on" or "off".
+	// See docs/DHCP.md.
+	Route string `json:"route"`
+	// Reserved is this device's DHCP reservation, when DHCP mode is wired
+	// in. Omitted entirely when it is not, so the Devices screen can tell
+	// "no DHCP mode" from "DHCP mode, no reservation".
+	Reserved *reservationJSON `json:"reserved,omitempty"`
+}
+
+// reservationJSON is the per-device reserved switch: whether the device is
+// pinned to an address, which one, and -- for a device that is not pinned --
+// the address it currently holds, so the switch has something to offer.
+type reservationJSON struct {
+	On       bool   `json:"on"`
+	IP       string `json:"ip,omitempty"`
+	Hostname string `json:"hostname,omitempty"`
+	// MAC is the key the reservation is stored under, which is the one
+	// the Devices screen has to send back.
+	MAC string `json:"mac,omitempty"`
+	// Candidate is the address this device holds now, offered when it has
+	// no reservation yet. Empty when there is nothing to pin.
+	Candidate string `json:"candidate,omitempty"`
+	// InPool says the address sits inside the dynamic range. Not a
+	// problem -- the allocator takes a reserved address out of the pool
+	// for everyone else -- but worth saying.
+	InPool bool `json:"in_pool,omitempty"`
 }
 
 func toDevice(d devices.Device) deviceJSON {
@@ -68,8 +97,66 @@ func toDevice(d devices.Device) deviceJSON {
 		Vendor: d.Vendor, Type: typ, TypeReason: d.TypeReason, TypeAuto: d.TypeAuto, TypeConfidence: d.TypeConfidence,
 		MACs: orEmpty(d.MACs), IPs: orEmpty(d.IPs), FirstSeen: d.FirstSeen, LastSeen: d.LastSeen,
 		Groups: orEmpty(d.Groups), Tags: orEmpty(d.Tags), Excluded: d.Excluded, Wandering: wandering, WanderingUntil: until, Notes: d.Notes,
-		Watch: d.Watch.String(),
+		Watch: d.Watch.String(), Route: d.Route.String(),
 	}
+}
+
+// withReservation attaches the device's DHCP reservation, and the address it
+// could be pinned to when it has none. pool is the dynamic range, for the
+// note; a nil svc means DHCP mode is not wired in and the field is left off
+// entirely.
+func withReservation(j deviceJSON, d devices.Device, svc DHCPService, pool dhcp.Pool) deviceJSON {
+	if svc == nil {
+		return j
+	}
+	res := &reservationJSON{}
+	for _, mac := range d.MACs {
+		if r, ok := svc.Reservation(mac); ok {
+			res.On, res.MAC, res.Hostname = true, r.MAC, r.Hostname
+			if r.IP.IsValid() {
+				res.IP = r.IP.String()
+				res.InPool = pool.Contains(r.IP)
+			}
+			break
+		}
+	}
+	if !res.On {
+		if len(d.MACs) > 0 {
+			res.MAC = d.MACs[0]
+		}
+		for _, raw := range d.IPs {
+			a, err := netip.ParseAddr(raw)
+			if err != nil || !a.Is4() {
+				continue
+			}
+			res.Candidate = a.String()
+			res.InPool = pool.Contains(a)
+			break
+		}
+	}
+	// A device with no MAC cannot be reserved at all: the reservation is
+	// keyed on hardware. Saying nothing is better than offering a switch
+	// that cannot work.
+	if res.MAC == "" {
+		return j
+	}
+	j.Reserved = res
+	return j
+}
+
+// dhcpPool is the dynamic range for one request, read once rather than once
+// per device.
+func (s *Server) dhcpPool() dhcp.Pool {
+	if s.DHCP == nil {
+		return dhcp.Pool{}
+	}
+	v := s.DHCP.SettingsView()
+	start, err1 := netip.ParseAddr(v.PoolStart)
+	end, err2 := netip.ParseAddr(v.PoolEnd)
+	if err1 != nil || err2 != nil {
+		return dhcp.Pool{}
+	}
+	return dhcp.Pool{Start: start, End: end}
 }
 
 // watchStates is the per-device Watch state for one request, or nil when
@@ -136,9 +223,10 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	page := s.Devices.Search(q.Get("q"), devices.SearchOptions{Sort: sort, Offset: offset, Limit: limit})
 	states := s.watchStates()
+	pool := s.dhcpPool()
 	out := make([]deviceJSON, len(page.Items))
 	for i, d := range page.Items {
-		out[i] = withWatch(toDevice(d), states)
+		out[i] = withReservation(withWatch(toDevice(d), states), d, s.DHCP, pool)
 	}
 	writeJSON(w, map[string]any{"devices": out, "total": page.Total, "offset": page.Offset, "limit": page.Limit})
 }
@@ -149,7 +237,7 @@ func (s *Server) getDevice(w http.ResponseWriter, r *http.Request) {
 		notFound(w, "unknown device")
 		return
 	}
-	writeJSON(w, withWatch(toDevice(d), s.watchStates()))
+	writeJSON(w, withReservation(withWatch(toDevice(d), s.watchStates()), d, s.DHCP, s.dhcpPool()))
 }
 
 func validTags(tags []string) bool {
@@ -175,6 +263,7 @@ func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
 		Wandering        *bool     `json:"wandering"`
 		WanderingMinutes int       `json:"wandering_minutes"`
 		Watch            *string   `json:"watch"`
+		Route            *string   `json:"route"`
 	}
 	if !decode(w, r, &b, smallBody) {
 		return
@@ -209,6 +298,15 @@ func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
 		}
 		watchMode = m
 	}
+	var routeMode devices.RouteMode
+	if b.Route != nil {
+		m, ok := devices.ParseRouteMode(*b.Route)
+		if !ok {
+			bad(w, `route must be "auto", "on" or "off"`)
+			return
+		}
+		routeMode = m
+	}
 	var err error
 	if b.Alias != nil {
 		err = s.Devices.Rename(id, *b.Alias)
@@ -230,6 +328,9 @@ func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil && b.Watch != nil {
 		err = s.Devices.SetWatch(id, watchMode)
+	}
+	if err == nil && b.Route != nil {
+		err = s.Devices.SetRoute(id, routeMode)
 	}
 	if errors.Is(err, devices.ErrNotFound) { // deleted by someone else meanwhile
 		notFound(w, "unknown device")
@@ -286,6 +387,7 @@ func (s *Server) bulkDevices(w http.ResponseWriter, r *http.Request) {
 		Wandering        *bool    `json:"wandering"`
 		WanderingMinutes int      `json:"wandering_minutes"`
 		Watch            *string  `json:"watch"`
+		Route            *string  `json:"route"`
 	}
 	if !decode(w, r, &b, smallBody) {
 		return
@@ -338,6 +440,17 @@ func (s *Server) bulkDevices(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		res = s.Devices.BulkSetWatch(b.IDs, m)
+	case "set_route":
+		if b.Route == nil {
+			bad(w, "route is required")
+			return
+		}
+		m, ok := devices.ParseRouteMode(*b.Route)
+		if !ok {
+			bad(w, `route must be "auto", "on" or "off"`)
+			return
+		}
+		res = s.Devices.BulkSetRoute(b.IDs, m)
 	case "set_tags":
 		if len(b.AddTags)+len(b.RemoveTags) == 0 {
 			bad(w, "give add_tags or remove_tags")
@@ -384,7 +497,7 @@ func (s *Server) mergeDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	s.forgetDeviceScopes(b.Sources...) // what was configured on a merged-away device goes with it
 	d, _ := s.Devices.Get(b.Target)
-	writeJSON(w, withWatch(toDevice(d), s.watchStates()))
+	writeJSON(w, withReservation(withWatch(toDevice(d), s.watchStates()), d, s.DHCP, s.dhcpPool()))
 }
 
 func (s *Server) listGroups(w http.ResponseWriter, r *http.Request) {

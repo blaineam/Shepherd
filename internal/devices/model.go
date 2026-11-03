@@ -114,6 +114,37 @@ func (m WatchMode) String() string {
 	return string(m)
 }
 
+// RouteMode is a device's DHCP-mode routing switch. See Device.Route.
+type RouteMode string
+
+// Route switch positions.
+const (
+	RouteAuto RouteMode = ""    // the mode's own policy decides (the default)
+	RouteOn   RouteMode = "on"  // route it, even one the policy would skip
+	RouteOff  RouteMode = "off" // never route it
+)
+
+// ParseRouteMode reads "auto", "on" or "off".
+func ParseRouteMode(s string) (RouteMode, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "auto":
+		return RouteAuto, true
+	case "on":
+		return RouteOn, true
+	case "off":
+		return RouteOff, true
+	}
+	return "", false
+}
+
+// String returns "auto", "on" or "off".
+func (m RouteMode) String() string {
+	if m == RouteAuto {
+		return "auto"
+	}
+	return string(m)
+}
+
 // HLC is a hybrid logical clock stamp: wall-clock milliseconds plus a counter
 // that orders events within the same millisecond.
 type HLC struct {
@@ -174,6 +205,15 @@ type Device struct {
 	// steers it even when the policy would not (never an Excluded device);
 	// WatchOff never steers it.
 	Watch WatchMode `json:"watch,omitempty"`
+	// Route is the device's DHCP-mode routing switch (docs/DHCP.md):
+	// RouteAuto (the empty string, the default) lets the mode decide, which
+	// routes every eligible device while routing is on and nothing while it
+	// is off; RouteOn routes it even when the eligibility rules would not,
+	// except for the refusals that exist to stop Shepherd routing itself or
+	// the gateway, which no device record can override; RouteOff never
+	// routes it, which is the escape hatch for a device that turns out to
+	// mind double NAT.
+	Route RouteMode `json:"route,omitempty"`
 	// Wandering devices are not filtered at all, but every request they make is
 	// still logged and watched. WanderingUntil ends it automatically; zero means
 	// until it is turned off.
