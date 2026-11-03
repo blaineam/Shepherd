@@ -131,16 +131,25 @@ type DHCP struct {
 	NFT string `toml:"nft"`
 }
 
-// Watch controls Watch mode (docs/WATCH.md), which is opt-in and off by
-// default: outbound-only by construction, with downloads estimated from TCP
-// acknowledgements (docs/TRAFFIC.md), and bandwidth in both directions
-// still needs Gateway mode (docs/GATEWAY.md).
+// Watch controls Watch mode (docs/WATCH.md), which is DEPRECATED and off by
+// default. Per-device bandwidth now comes from the router over its own API
+// (internal/routerusage: eero and UniFi, docs/TRAFFIC.md), which measures both
+// directions, puts nothing in the path of your traffic and works on networks
+// where one-sided steering cannot be made reliable at all. Watch mode is kept
+// for the installs already using it and for the forensics in
+// docs/WATCH-MODE-COMPARISON.md; it is not the path forward and gets no new
+// features. It is outbound-only by construction, with downloads estimated from
+// TCP acknowledgements, and on at least one real network (a mesh whose gateway
+// reflects forwarded frames) its first full-size segment never arrives. If it
+// is ever revived it should be as a DHCP/gateway mode, where Shepherd hands out
+// the LAN's addresses and NATs the traffic, which is what actually stopped that
+// reflection (docs/GATEWAY.md).
 //
 // Watch mode: one-sided ARP steering of each
 // eligible device's outbound IPv4 traffic through Shepherd, relayed to the
 // real gateway in the kernel (XDP) or by a parallel userspace relay
-// (internal/intercept). Enabled defaults true, per the protect-by-default
-// decision in docs/DESIGN.md: every device is steered once it has been seen
+// (internal/intercept). Enabled defaults false: every device would be steered
+// once it has been seen
 // with a MAC and an IPv4 address, except the gateway, Shepherd's own
 // interfaces, devices marked Excluded, network infrastructure (routers, mesh
 // nodes, access points, hubs and bridges, Thread border routers, anything
@@ -700,11 +709,13 @@ func Default() Config {
 		Nethealth:      Nethealth{Enabled: false, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
 		Selftest:       Selftest{Enabled: true, IntervalSeconds: 60, GoodName: "example.com", MaxErrorPercent: 5, WindowMinutes: 15, AlarmCooldownMinutes: 30},
 		ReverseProxy:   ReverseProxy{Listen: ":8443"},
-		// Watch mode is opt-in. It was on, under the protect-by-default
-		// decision in docs/DESIGN.md, until 2026-11-01; it is kept off by
-		// default because it is outbound-only and a device's already-open
-		// connections can bypass it (docs/WATCH.md), not because it loops:
-		// the loops that retired it that morning were uploads misread.
+		// Watch mode is deprecated and off. It was on, under the
+		// protect-by-default decision in docs/DESIGN.md, until 2026-11-01.
+		// It stays off because reading the router's own API measures both
+		// directions without touching the traffic (internal/routerusage),
+		// because Watch mode is outbound-only and a device's already-open
+		// connections can bypass it, and because one-sided steering could
+		// not be made reliable on a reflecting mesh (docs/WATCH.md).
 		Watch: Watch{Enabled: false, Mode: "auto", ActiveWindowSeconds: 900, AllowRoutingHost: true},
 		// DHCP mode is off, and this is the one default in Shepherd that
 		// is not a judgement call: serving the wrong DHCP on somebody's

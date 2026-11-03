@@ -161,7 +161,7 @@ test('rateStats reports peak and average', () => {
   assert.deepEqual(rateStats([2, 4, 6, 'x']), { peak: 6, avg: 3 });
 });
 
-import { routerConnection, readingNow, measurementNote, liveChartCaption, nameSyncSummary } from '../js/traffic.js';
+import { routerConnection, readingNow, measurementNote, tileLabels, liveChartCaption, nameSyncSummary } from '../js/traffic.js';
 
 const reading = {
   available: true, connected: true, enabled: true, source: 'eero',
@@ -215,6 +215,32 @@ test('measurementNote never lets an estimate pass for a measurement', () => {
   });
   assert.match(counted, /byte counts read from unifi/);
   assert.doesNotMatch(counted, /not exact/);
+});
+
+test('the live tiles are labelled for whichever source produced them', () => {
+  // Watch mode relays uploads and infers downloads, and its total starts
+  // when it did.
+  const watch = tileLabels({ measuring: true });
+  assert.deepEqual(watch, { down: 'estimated', up: 'measured', total: 'Since Watch mode started' });
+  // A counter-reading router measures both directions, so neither tile may
+  // say "estimated" and the total is not Watch mode's.
+  const unifi = tileLabels({
+    measuring: false,
+    router: { ...reading, source: 'unifi', status: { ...reading.status, estimated: false } },
+  });
+  assert.equal(unifi.down, 'measured from unifi');
+  assert.equal(unifi.up, 'measured from unifi');
+  assert.equal(unifi.total, 'Since Shepherd started reading');
+  // A rate-sampling router samples both directions; neither is a count.
+  const eero = tileLabels({ measuring: false, router: reading });
+  assert.equal(eero.down, 'sampled from eero');
+  assert.equal(eero.up, 'sampled from eero');
+  // Nothing is producing numbers: claim neither.
+  assert.deepEqual(tileLabels({ measuring: false, router: { available: true, connected: false } }), {
+    down: '', up: '', total: 'Total so far',
+  });
+  // Watch mode wins while it is measuring, as measurementNote does.
+  assert.equal(tileLabels({ measuring: true, router: reading }).total, 'Since Watch mode started');
 });
 
 test('the headline says when the numbers come from the router instead of Watch mode', () => {

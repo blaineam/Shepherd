@@ -80,8 +80,8 @@ Shepherd is early and built in public. This is real, tested and running on a rea
 - [x] **Configurable upstreams** over plain DNS, DNS over TLS and DNS over HTTPS, with bootstrap, verified presets and a test before you add one ([UPSTREAMS.md](docs/UPSTREAMS.md)).
 - [x] **Management screens** for all of the above (Devices, Blocking, Upstreams, History) alongside the HUD.
 - [x] **Tailscale integration** for private remote access, validated on a live exit node and subnet router.
-- [x] **Watch mode**, opt-in ([WATCH.md](docs/WATCH.md)): steers a device's outbound traffic through Shepherd by one-sided ARP, to show what a device connects to even when it bypasses your DNS. Off by default. It is outbound-only by construction, so the Bandwidth screen's download figure is an estimate from each device's own acknowledgements; it prefers a wired interface and uses Wi-Fi only as a fallback; and on real hardware the segment echoes some frames back, which both relays now drop. The "loops" that retired it earlier on 2026-11-01 were uploads misread by a verdict that judged frames by their IP identification field, which macOS leaves at 0. Bandwidth in both directions still needs the return path, which means [Gateway mode](docs/GATEWAY.md).
-- [x] **Bandwidth per device, group and network** ([TRAFFIC.md](docs/TRAFFIC.md)), live and over months: upload measured exactly by the relay, download estimated from each device's own TCP acknowledgements, at no cost to the network. Honest about its blind spot: QUIC, other UDP and VPN traffic are invisible to the estimate.
+- [x] **Bandwidth per device, group and network** ([TRAFFIC.md](docs/TRAFFIC.md)), live and over months, **read from the router you already own**: sign in to eero or a UniFi controller under "Read from your router" on the Bandwidth screen and Shepherd records what the router already counts. Both directions, nothing in the path of your traffic, no setting changed on your router, and it works on mesh networks where steering cannot. UniFi keeps real byte counters, so its figures are measurements; eero reports rates only, so its totals are a floor rather than a measurement, and the screen says so. The same eero sign-in can copy device names and profiles across.
+- [x] **Watch mode**, **deprecated** ([WATCH.md](docs/WATCH.md)): steers a device's outbound traffic through Shepherd by one-sided ARP, to show what a device connects to even when it bypasses your DNS. Off by default, no new features, kept for the installs already running it. It is outbound-only by construction, so its download figure is an estimate from each device's own acknowledgements, and on the eero mesh it was developed against the gateway reflects forwarded frames back, which stops the first full-size segment of every flow. Source NAT fixed that when measured, so a revival belongs in [Gateway mode](docs/GATEWAY.md) as a DHCP/NAT mode rather than one-sided steering.
 - [x] **Threat feeds** ([THREATS.md](docs/THREATS.md)): every lookup checked against curated lists of malware hosts, botnet controllers and hijacked networks, and an alarm naming the device that reached for one, blocked or not. A few map lookups per query, no model, no packet inspection.
 - [x] **Thread, Matter and IPv6 safe by design**, written down as hard rules ([IPV6.md](docs/IPV6.md)). IPv6 steering exists (unicast Neighbor Advertisements only, never Router Advertisements) but is off by default and never touches Thread or Matter gear ([IPV6-WATCH.md](docs/IPV6-WATCH.md)).
 - [x] **97% test coverage** with the race detector, enforced by a floor that only rises.
@@ -118,12 +118,12 @@ flowchart LR
 ```
 
 - **Guard**: your router hands out Shepherd as DNS, so every device is filtered the moment setup finishes. It cannot take your internet down.
-- **Watch** (on by default, opt out per device): Shepherd steers each eligible device's outbound traffic through
-  itself, for the destinations and byte rates DNS alone cannot show. Outbound only — it never sees downloads — and it
-  blocks nothing. IPv4 by default; IPv6 steering is opt-in and never touches Thread or Matter. Your router, Shepherd
-  itself, excluded devices and all network and smart-home infrastructure are never steered, and one button stops
-  everything ([WATCH.md](docs/WATCH.md)).
-- Works with routers that offer nothing, like eero, because it needs no router integration.
+- **Measure**: for the byte rates DNS alone cannot show, Shepherd signs in to the router you already own — eero or a
+  UniFi controller — and records what it already counts, per device, in both directions. Nothing is put in the path of
+  your traffic and no setting on your router is changed ([TRAFFIC.md](docs/TRAFFIC.md)).
+- **Watch** (deprecated, off by default): one-sided ARP steering of each eligible device's outbound traffic through
+  Shepherd. Outbound only — it never sees downloads — and it blocks nothing. Kept for the installs already using it;
+  read from your router instead ([WATCH.md](docs/WATCH.md)).
 
 ## Principles
 

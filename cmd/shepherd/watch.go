@@ -64,6 +64,7 @@ func startWatch(ctx context.Context, cfg config.Config, reg *devices.Registry, s
 		log.Print("watch: Watch mode is off (watch.enabled = false or watch.mode = \"off\"); no device traffic is steered")
 		return nil, nil
 	}
+	log.Print("watch: Watch mode is DEPRECATED and gets no new features. Per-device bandwidth now comes from your router's own API (eero or UniFi) under \"Read from your router\" on the Bandwidth screen, which measures both directions and touches none of your traffic; see docs/TRAFFIC.md. Set watch.enabled = false once you have connected it.")
 	secs := func(n int) time.Duration { return time.Duration(n) * time.Second }
 	eng, err := watch.New(watch.Config{
 		Enabled:   true,
