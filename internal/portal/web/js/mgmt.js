@@ -133,6 +133,15 @@ export function createMgmt(api) {
     killWatch: () => post('/api/watch/kill', {}),
     rearmWatch: () => post('/api/watch/rearm', {}),
 
+    dhcp: () => api('/api/dhcp'),
+    dhcpConfirm: (confirm, phrase) => post('/api/dhcp/confirm', { confirm, phrase }),
+    dhcpKill: (reason) => post('/api/dhcp/kill', { reason }),
+    dhcpRearm: () => post('/api/dhcp/rearm', {}),
+    dhcpForgetPeers: () => post('/api/dhcp/peers/forget', {}),
+    dhcpSetRange: (body) => api('/api/dhcp/range', { method: 'PUT', body: J(body) }),
+    dhcpSetReservation: (body) => api('/api/dhcp/reservations', { method: 'PUT', body: J(body) }),
+    dhcpDeleteReservation: (mac) => api('/api/dhcp/reservations/' + encodeURIComponent(mac), { method: 'DELETE' }),
+
     reverseProxy: () => api('/api/reverseproxy'),
     proxyHosts: () => api('/api/reverseproxy/hosts'),
     addProxyHost: (body) => post('/api/reverseproxy/hosts', body),

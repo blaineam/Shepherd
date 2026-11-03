@@ -227,6 +227,21 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	defer routerUsage.Stop()
 	deps.RouterUsage = routerUsage
 
+	// ---- DHCP mode (docs/DHCP.md) ---------------------------------------
+	// Off by default, and the one feature here that can take a household
+	// off the internet, so it is its own block too: the server owns the
+	// socket, the leases, the reservations and the kernel's NAT rules, and
+	// nothing else in run() knows about any of it. With the mode off a
+	// server is still built, with no socket, so reservations can be
+	// prepared and reviewed before it is ever switched on.
+	dhcpServer, err := startDHCP(ctx, cfg, registry, deps.Alarms)
+	if err != nil {
+		return err
+	}
+	if dhcpServer != nil { // avoid a non-nil interface over a nil *dhcp.Server
+		deps.DHCP = dhcpServer
+	}
+
 	// Every passive ARP event is logged and, when the alarm engine is on,
 	// raised as the alarm docs/ARP.md's table maps it to (arpalarms.go).
 	// The gateway-mac-changed event also tells Watch mode to re-read the

@@ -53,7 +53,14 @@ const (
 	TypeDNSCanaryFailed     = "dns-canary-failed"
 	TypeDNSLANUncovered     = "dns-lan-uncovered"
 	TypeDNSUpstreamDegraded = "dns-upstream-degraded"
-	TypeTest                = "test"
+	// DHCP mode's findings (internal/dhcp, docs/DHCP.md). All three are
+	// about the two ways this mode can hurt: another server answering on
+	// the same segment, and a kernel that will not take the rules that
+	// make routed devices work.
+	TypeDHCPRogueServer = "dhcp-rogue-server"
+	TypeDHCPNATFailed   = "dhcp-nat-failed"
+	TypeDHCPLeaseReset  = "dhcp-lease-reset"
+	TypeTest            = "test"
 )
 
 // AlarmType describes a kind of alarm: how it reads, how severe it is by
@@ -117,6 +124,9 @@ func BuiltinTypes() []AlarmType {
 		all(TypeDNSListenerDown, "DNS listener not answering", "Shepherd says it listens on an address, but a test query to it over UDP or TCP got no answer.", SeverityCritical, false, false),
 		all(TypeDNSCanaryFailed, "DNS self-test failed", "A listener answers, but a known-good name did not resolve or a known-blocked name was not blocked.", SeverityHigh, false, false),
 		all(TypeDNSLANUncovered, "LAN address has no DNS listener", "This host has a LAN address Shepherd does not serve DNS on. Devices pointed at it get \"host not found\".", SeverityMedium, false, false),
+		all(TypeDHCPRogueServer, "Another DHCP server is answering", "A DHCP reply came from something other than Shepherd. Two servers on one segment hand out addresses unpredictably, so Shepherd has stopped serving.", SeverityCritical, false, false),
+		all(TypeDHCPNATFailed, "DHCP mode could not configure NAT", "Shepherd could not install the forwarding rules routed devices need, so it has stopped routing them. They move back to the router at their next renewal.", SeverityCritical, false, false),
+		portal(all(TypeDHCPLeaseReset, "DHCP lease file reset", "Shepherd could not read its DHCP lease file and started with none. Addresses are re-learned as devices renew.", SeverityMedium, false, false)),
 		all(TypeDNSUpstreamDegraded, "Upstream DNS degraded", "An upstream resolver is failing more than a few percent of its queries, or is far slower than the others.", SeverityMedium, false, false),
 		func() AlarmType {
 			t := all(TypeTest, "Test notification", "Sent on request to check that notifications arrive.", SeverityHigh, false, false)

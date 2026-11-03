@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
-	"strings"
 	"time"
 
 	"shepherd/internal/arp"
@@ -67,44 +66,11 @@ type Decision struct {
 	Policy bool
 }
 
-// mdns service labels that mark a Thread border router or a Matter device:
-// their IPv6 neighbour discovery must never be disturbed (docs/IPV6.md), and
-// steering even their IPv4 side is not worth the risk of confusing a device
-// the whole smart home hangs off.
-var threadMatterServices = []string{"_meshcop", "_matter", "_matterc", "_matterd", "_thread"}
-
-// Vendors that only make network infrastructure. A device from one of these
-// is treated like a router even before the classifier has typed it; the
-// owner can still flip its Watch switch on.
-var infrastructureVendors = []string{"eero", "ubiquiti", "mikrotik", "aruba", "ruckus"}
-
-// isInfrastructure reports whether d looks like something the network
-// itself depends on: a router, mesh node, access point or switch (the
-// registry's router/infrastructure type covers all of these), a
-// smart-home hub or bridge, a Thread border router or a Matter device.
-func isInfrastructure(d *devices.Device) (bool, string) {
-	switch d.Type {
-	case devices.TypeRouter:
-		return true, "network infrastructure (" + string(d.Type) + ")"
-	case devices.TypeSmartHome:
-		return true, "smart-home hub or bridge"
-	}
-	for _, s := range d.Services {
-		l := strings.ToLower(s)
-		for _, want := range threadMatterServices {
-			if strings.HasPrefix(l, want) {
-				return true, "advertises Thread/Matter services (" + s + ")"
-			}
-		}
-	}
-	v := strings.ToLower(d.Vendor)
-	for _, want := range infrastructureVendors {
-		if strings.Contains(v, want) {
-			return true, "network infrastructure vendor (" + d.Vendor + ")"
-		}
-	}
-	return false, ""
-}
+// isInfrastructure reports whether d looks like something the network itself
+// depends on. The answer is a fact about the device rather than a Watch-mode
+// policy, so it lives in the registry (devices.Infrastructure) where DHCP
+// mode's routing policy reads the same answer from the same place.
+func isInfrastructure(d *devices.Device) (bool, string) { return devices.Infrastructure(d) }
 
 // Own is everything that belongs to this host: every MAC and every IP
 // address across all of its interfaces, plus the gateway's MAC. A device

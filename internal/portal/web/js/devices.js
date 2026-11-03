@@ -7,10 +7,11 @@ import { Selection } from './selection.js';
 import { parseQuery, stringifyQuery, addFilter, removeFilter, formatFilter, hasGroupFilter, FILTER_HELP } from './search.js';
 import { applyBulkLocal, planUndo, describeBulk, parseTags, normTag } from './bulk.js';
 import { TYPES, typeLabel, typeIcon, GROUP_COLORS } from './devtypes.js';
-import { icon, iconButton, button, chip, segmented, emptyState, openPopover, openMenu, confirmDialog, relTime, unavailableCard, debounce } from './ui.js';
+import { icon, iconButton, button, chip, segmented, toggle, emptyState, openPopover, openMenu, confirmDialog, relTime, unavailableCard, debounce } from './ui.js';
 import { unavailable } from './mgmt.js';
 import { rangeWindow, fillSeries, sumPoints, areaPaths, axisLabels, timeLabels, fmtBytes } from './traffic.js';
 import { TIMER_CHOICES, MODES, deviceMode, countdown, countdownShort, modePatch, applyModeLocal } from './wander.js';
+import { reservedLabel } from './dhcp.js';
 import { createImportModal } from './importview.js';
 import { severityLabel, severityBadgeClass } from './alarms.js';
 import { activeFindings, resolvedFindings, findingTooltip } from './vulnscan.js';
@@ -1213,6 +1214,40 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
       if (live.childNodes.length) sW.append(live);
       sW.append(el('p', 'muted small', 'Watch mode carries only what this device sends out; its downloads are estimated from its own TCP acknowledgements (QUIC, other UDP and VPN traffic are invisible to that). It blocks nothing on its own.'));
       drawer.append(sW);
+    }
+
+    // The DHCP reservation (docs/DHCP.md). Only drawn when the server
+    // reported one, which means DHCP mode is wired in and this device has a
+    // hardware address to key a reservation on.
+    if (d.reserved) {
+      const res = d.reserved;
+      const sR = section('Address');
+      const lbl = reservedLabel(res);
+      const line = el('p', 'muted small', lbl.text);
+      const sw = toggle({
+        checked: res.on,
+        label: 'Reserve this address',
+        disabled: !res.on && !res.candidate,
+        title: res.on ? 'Stop pinning this device to an address' : 'Pin this device to the address it holds now',
+        onChange: async (on) => {
+          try {
+            if (on) await mgmt.dhcpSetReservation({ mac: res.mac, ip: res.candidate, hostname: '', note: '' });
+            else await mgmt.dhcpDeleteReservation(res.mac);
+            const fresh = await mgmt.device(d.id);
+            d.reserved = fresh.reserved;
+            const next = reservedLabel(d.reserved);
+            line.textContent = next.text;
+          } catch (err) {
+            notify(err.message || String(err));
+            line.textContent = lbl.text;
+          }
+        },
+      });
+      sR.append(sw, line);
+      sR.append(el('p', 'muted small',
+        'A reservation pins this hardware to one address, whatever else is going on. It is held back from the pool for '
+        + 'this device only, so it keeps working if the device is away for a week. It takes effect at the next renewal.'));
+      drawer.append(sR);
     }
 
     // Blocking

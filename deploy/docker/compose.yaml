@@ -23,6 +23,18 @@ services:
     # ARP monitor without Watch mode: it then reports itself unavailable in
     # the portal and nothing else changes. See docs/WATCH.md.
     cap_add: [NET_BIND_SERVICE, NET_RAW, NET_ADMIN, BPF, PERFMON]
+    # DHCP mode (docs/DHCP.md) is off by default. When you turn it on, it also
+    # needs these two kernel parameters, and it CANNOT set them here: this
+    # container is read_only, so /proc/sys is not writable even with
+    # NET_ADMIN. Shepherd reads them first and only writes what is already
+    # wrong, so setting them here -- or on the host -- is enough, and it says
+    # in the portal which one it could not get. send_redirects matters more
+    # than it looks: on a one-armed gateway the kernel's default is to tell
+    # each client "go direct to the router next time", which silently
+    # un-routes it. Uncomment with DHCP mode, not before.
+    # sysctls:
+    #   net.ipv4.ip_forward: "1"
+    #   net.ipv4.conf.all.send_redirects: "0"
     security_opt: ["no-new-privileges:true"]
     read_only: true
     tmpfs: [/tmp]
