@@ -25,6 +25,7 @@ import (
 	"shepherd/internal/secrets"
 	"shepherd/internal/selftest"
 	"shepherd/internal/setup"
+	"shepherd/internal/tlscert"
 )
 
 const setupTestToken = "cmd-setup-test-token"
@@ -389,7 +390,7 @@ func TestTheSetupPageIsHandedTheRunningShepherd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := runningSetup(cfg, "a-token", policy, &skipSet{})
+	run := runningSetup(cfg, "a-token", policy, &skipSet{}, nil)
 	if run.PortalURL != "http://127.0.0.1:8787" || run.Token != "a-token" {
 		t.Errorf("running = %+v", run)
 	}
@@ -492,5 +493,159 @@ func TestTheOfferedCategoriesExistInTheShippedCatalog(t *testing.T) {
 func TestApplyCategoriesWithoutAPolicyIsNothingToOffer(t *testing.T) {
 	if applyCategories(nil) != nil {
 		t.Error("no policy store means the page should not offer blocking")
+	}
+}
+
+func TestSetupKeepsAWorkingCloudflareTokenAndRefusesABadOne(t *testing.T) {
+	// HTTPS is what makes a passkey possible at all, and the one thing
+	// about it that can fail silently is a token without edit rights on
+	// the zone. Setup checks it while the owner is still on the page.
+	const good = "cf-setup-token-good"
+	newFakeCF(t, good)
+	dir := filepath.Join(t.TempDir(), "data")
+
+	if err := saveSetupDNSToken(context.Background(), dir, "shepherd.example.com", good); err != nil {
+		t.Fatalf("a token that can edit the zone should be kept: %v", err)
+	}
+	store, err := secrets.Open(filepath.Join(dir, secrets.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, ok := store.DNSProvider()
+	if !ok || d.APIToken != good || d.Provider != secrets.ProviderCloudflare {
+		t.Errorf("the token was not kept as the portal's own: %s", d)
+	}
+
+	// A token Cloudflare refuses is reported, and nothing is stored.
+	fresh := filepath.Join(t.TempDir(), "data")
+	err = saveSetupDNSToken(context.Background(), fresh, "shepherd.example.com", "cf-setup-token-bad")
+	if err == nil || !strings.Contains(err.Error(), "did not accept") {
+		t.Errorf("a refused token = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(fresh, secrets.FileName)); err == nil {
+		t.Error("nothing should have been stored for a refused token")
+	}
+
+	// A zone the token cannot see is the same kind of failure, caught the
+	// same way: this is what a token scoped to the wrong zone looks like.
+	err = saveSetupDNSToken(context.Background(), fresh, "shepherd.example.net", good)
+	if err == nil {
+		t.Error("a hostname outside the token's zone should be refused")
+	}
+}
+
+func TestRunningSetupOffersHTTPSOnlyWhenItIsConfigured(t *testing.T) {
+	cfg := config.Default()
+	cfg.DataDir = tempDir(t)
+	if r := runningSetup(cfg, "tok", nil, &skipSet{}, nil); r.TLSURL != "" || r.CertReady != nil {
+		t.Errorf("with [tls] off there is no HTTPS to offer: %+v", r)
+	}
+	cfg.TLS = config.TLS{Enabled: true, Hostname: "shepherd.example.com", Listen: "0.0.0.0:8443"}
+	r := runningSetup(cfg, "tok", nil, &skipSet{}, nil)
+	if r.TLSURL != "https://shepherd.example.com:8443" {
+		t.Errorf("TLSURL = %q", r.TLSURL)
+	}
+	// No manager means HTTPS was configured but did not start, which the
+	// page has to say rather than waiting for a certificate for ever.
+	ready, detail := r.CertReady()
+	if ready || !strings.Contains(detail, "did not start") {
+		t.Errorf("CertReady with no manager = %v %q", ready, detail)
+	}
+}
+
+func TestCertReadyWaitsThenReports(t *testing.T) {
+	mgr := &tlscert.Manager{}
+	ready, detail := certReady(mgr, "shepherd.example.com")()
+	if ready {
+		t.Error("no certificate yet")
+	}
+	// The wait is explained, with the two things that actually hold it up.
+	if !strings.Contains(detail, "DNS-01") || !strings.Contains(detail, "resolve") {
+		t.Errorf("detail = %q", detail)
+	}
+}
+
+// TestSetupHandsOverAWorkingHTTPSAddress is the whole HTTPS half of setup,
+// end to end and through run() itself: no configuration file, so Shepherd
+// serves the setup page, the page writes [tls], Shepherd starts on it and
+// gets a certificate, and the same page is handed the address where a
+// passkey can actually be registered. It is the step the owner is told to
+// go and do, so the address they are given has to be one that works.
+func TestSetupHandsOverAWorkingHTTPSAddress(t *testing.T) {
+	scriptedSetup(t)
+	resetTLSSeams(t)
+	logs := captureLog(t)
+	const hostname = "shepherd.example.com"
+	tlsEvery = 10 * time.Millisecond
+	tlsACMEClient = newFakeTLSACME(hostname)
+	tlsDNS01 = &fakeTLSDNS01{}
+	tlsPropagationCheck = func(context.Context, string, string) error { return nil }
+
+	dir := tempDir(t)
+	t.Chdir(dir)
+	cfgPath := filepath.Join(dir, "shepherd.toml")
+	tlsPort := freePort(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, cfgPath, false, io.Discard) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			t.Error("run did not stop")
+		}
+	})
+
+	base := setupURL(t, portFromLog(logs))
+	// What the page posts once the Cloudflare token has been checked.
+	body := fmt.Sprintf(`{"dns_listen":["127.0.0.1"],"dns_port":%d,"upstreams":["9.9.9.10"],`+
+		`"portal_host":"127.0.0.1","portal_port":%d,"tls_hostname":%q,"tls_port":%d}`,
+		freePort(t), freePort(t), hostname, tlsPort)
+	res, err := http.Post(base+"/api/setup/finish?token="+setupTestToken, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("finish = %d", res.StatusCode)
+	}
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("the config setup wrote does not load: %v", err)
+	}
+	if !cfg.TLS.Enabled || cfg.TLS.Hostname != hostname {
+		t.Fatalf("tls = %+v", cfg.TLS)
+	}
+	// The listener has to be reachable from wherever the hostname
+	// resolves, so setup binds every address rather than loopback.
+	if cfg.TLS.Listen != fmt.Sprintf("0.0.0.0:%d", tlsPort) {
+		t.Errorf("tls.listen = %q", cfg.TLS.Listen)
+	}
+
+	// The page polls this while Let's Encrypt is being asked, and it is
+	// the same page: setup kept serving while Shepherd started.
+	deadline := time.Now().Add(25 * time.Second)
+	var got map[string]any
+	for time.Now().Before(deadline) {
+		res, err := http.Get(base + "/api/setup/certificate?token=" + setupTestToken)
+		if err == nil {
+			got = nil
+			_ = json.NewDecoder(res.Body).Decode(&got)
+			res.Body.Close()
+			if got["ready"] == true {
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if got["ready"] != true {
+		t.Fatalf("the certificate never arrived: %+v", got)
+	}
+	want := fmt.Sprintf("https://%s:%d", hostname, tlsPort)
+	if got["url"] != want {
+		t.Errorf("url = %v, want %s (where a passkey is registered)", got["url"], want)
 	}
 }

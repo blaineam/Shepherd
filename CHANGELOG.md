@@ -42,6 +42,18 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   Shepherd speaks are the read-only ones, and neither vendor publishes a supported way to set a
   network's DNS server. Closing the page is the last step, and the listener stops there.
 
+  **Setup can also put the portal on HTTPS**, which is what makes a passkey possible: WebAuthn binds
+  a passkey to one hostname, so Face ID or Touch ID for the portal works at that address and nowhere
+  else. The step is optional and skipped by leaving the hostname empty. Give it a name in a
+  Cloudflare zone and an API token scoped to **Zone → DNS → Edit** on it, and setup checks that token
+  against that zone before accepting it — the same read-only check the portal's Proxy tab makes — and
+  refuses to finish with a hostname whose token has not been checked, because a token without edit
+  rights is a certificate that never arrives. The token goes to `<data_dir>/secrets.json` (0600),
+  never into `shepherd.toml`. Afterwards the page waits for the certificate, saying which of the slow
+  parts it is on, then links to the portal at its own HTTPS name, where the passkey is registered on
+  the Locking screen. Setup does not register it itself: that page is served over plain HTTP from a
+  different origin, and a passkey belongs to the hostname's own.
+
   An existing `shepherd.toml` is kept as `.bak`; only the keys setup asked about are written, so
   every other default keeps following Shepherd's own; a held port is explained rather than refused;
   and a setup listener that cannot come up at all is logged while Shepherd starts on its defaults.

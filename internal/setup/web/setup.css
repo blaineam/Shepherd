@@ -47,7 +47,10 @@ body {
 .field { display: block; margin: 0 0 .8rem; }
 .field > span { display: block; font-size: .875rem; color: var(--muted); margin-bottom: .25rem; }
 .field.short { max-width: 12rem; }
-input[type=text], input[type=password], input[type=number], textarea, input:not([type]) {
+/* Every text-ish input, by exclusion rather than by listing types: an
+   input whose type is not on a list is otherwise an unstyled native box
+   that looks nothing like the rest of the form. */
+input:not([type=checkbox]):not([type=radio]), textarea {
   width: 100%;
   font: inherit;
   font-size: 16px; /* iOS Safari zooms a focused field below this */
@@ -80,6 +83,10 @@ input:focus, textarea:focus, button:focus { outline: 2px solid var(--accent); ou
 .addrs .iface, .presets .pnote { color: var(--muted); font-size: .85rem; }
 .fact { margin: 0; display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; }
 .row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; }
+/* A field sharing a row with another one takes the space that is left,
+   rather than collapsing to its content. */
+.row > .field { flex: 1 1 12rem; margin-bottom: .4rem; }
+.row > .field.short { flex: 0 0 8rem; }
 button {
   font: inherit;
   border-radius: 7px;
@@ -108,7 +115,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 a { color: var(--accent); }
 @media (prefers-color-scheme: light) {
   :root { --bg: #f4f7fa; --card: #fff; --line: #d7e0ea; --ink: #16202b; --muted: #5b6b7d; --accent: #10776a; }
-  input[type=text], input[type=password], input[type=number], textarea, input:not([type]),
+  input:not([type=checkbox]):not([type=radio]), textarea,
   .check, .addrs label, .presets label, .radios label { background: #f8fafc; }
   button { background: #eef3f8; }
   button.primary { color: #fff; }

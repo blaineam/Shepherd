@@ -118,9 +118,17 @@ Bandwidth screen; its credentials go into `<data_dir>/secrets.json` (0600), neve
 `shepherd.toml`. eero signs in from the portal's Bandwidth screen instead, because it needs a code
 eero emails while you wait.
 
-**Then you close it.** The setup listener stops; Shepherd keeps running. A passkey or a PIN, so the
-token is not what you type every time, is on the portal's Locking screen
-([PASSKEYS.md](PASSKEYS.md), [LOCKING.md](LOCKING.md)).
+**It waits for the certificate, when HTTPS was set up**, and says which of the two slow parts it is
+on: the first one usually takes a minute or two over DNS-01, and it needs the name to already
+resolve. When it arrives, the page links to the portal at its own HTTPS name, which is where a
+passkey is added — the Locking screen there. Setup cannot register the passkey itself: a passkey
+belongs to that hostname's origin, and this page is served over plain HTTP from a different one.
+
+**A PIN needs none of that.** It works over plain HTTP, and the page says so, because for most
+installs it is the thing that stops the token being what you type every time
+([LOCKING.md](LOCKING.md)).
+
+**Then you close it.** The setup listener stops; Shepherd keeps running.
 
 ## What it does not do
 

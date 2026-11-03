@@ -823,3 +823,122 @@ func TestFinishRefusesThePortTheSetupPageIsUsing(t *testing.T) {
 		t.Errorf("finish on the setup page's own port = %d, want 400", res.StatusCode)
 	}
 }
+
+// ---- HTTPS, and the passkey it makes possible ----------------------------
+
+func TestTheDNSTokenIsCheckedBeforeItIsKept(t *testing.T) {
+	r := newRig(t)
+	var seen []string
+	r.s.SaveDNSToken = func(_ context.Context, dir, host, tok string) error {
+		seen = append(seen, dir+" "+host+" "+tok)
+		if tok != "good" {
+			return errors.New("Cloudflare did not accept that token for " + host)
+		}
+		return nil
+	}
+	got := r.json("POST", "/api/setup/dns-token", `{"hostname":"shepherd.example.com","token":"good"}`, 200)
+	if got["ok"] != true {
+		t.Errorf("a working token = %+v", got)
+	}
+	if len(seen) != 1 || !strings.HasPrefix(seen[0], r.s.DataDir+" ") {
+		t.Errorf("the token should be kept under Shepherd's own data directory: %v", seen)
+	}
+	got = r.json("POST", "/api/setup/dns-token", `{"hostname":"shepherd.example.com","token":"bad"}`, 200)
+	if got["ok"] != false || !strings.Contains(got["error"].(string), "did not accept") {
+		t.Errorf("a refused token = %+v", got)
+	}
+}
+
+func TestTheDNSTokenStepRefusesWhatCouldNeverWork(t *testing.T) {
+	// Caught on the page, before anyone waits on a certificate that was
+	// never going to be issued.
+	r := newRig(t)
+	r.s.SaveDNSToken = func(context.Context, string, string, string) error { return nil }
+	for _, body := range []string{
+		`{"hostname":"https://shepherd.example.com","token":"x"}`, // a URL, not a name
+		`{"hostname":"shepherd","token":"x"}`,                     // no domain
+		`{"hostname":"192.0.2.10","token":"x"}`,                   // an address
+		`{"hostname":"shepherd.example.com","token":"  "}`,        // no token
+	} {
+		got := r.json("POST", "/api/setup/dns-token", body, 200)
+		if got["ok"] != false || got["error"] == "" {
+			t.Errorf("%s = %+v", body, got)
+		}
+	}
+	r.s.SaveDNSToken = nil
+	if code, _ := r.do("POST", "/api/setup/dns-token", `{"hostname":"a.example.com","token":"x"}`); code != 404 {
+		t.Error("a build that cannot set up HTTPS should say so")
+	}
+}
+
+func TestTheCertificateIsWatchedRatherThanAssumed(t *testing.T) {
+	r := newRig(t)
+	// Before Shepherd is up, and with no [tls], there is nothing to watch.
+	if got := r.json("GET", "/api/setup/certificate", "", 200); got["configured"] != false {
+		t.Errorf("= %+v", got)
+	}
+	ready := false
+	r.s.Started(Running{
+		PortalURL: "http://127.0.0.1:8787",
+		TLSURL:    "https://shepherd.example.com:8443",
+		CertReady: func() (bool, string) { return ready, "asking Let's Encrypt" },
+	})
+	got := r.json("GET", "/api/setup/certificate", "", 200)
+	if got["configured"] != true || got["ready"] != false || got["url"] != "https://shepherd.example.com:8443" {
+		t.Errorf("while waiting = %+v", got)
+	}
+	if got["detail"] != "asking Let's Encrypt" {
+		t.Errorf("the page needs something to show while it waits: %+v", got)
+	}
+	ready = true
+	if got := r.json("GET", "/api/setup/certificate", "", 200); got["ready"] != true {
+		t.Errorf("once it has one = %+v", got)
+	}
+}
+
+func TestFinishWritesTLSOnlyWhenItWasSetUp(t *testing.T) {
+	r := newRig(t)
+	r.json("POST", "/api/setup/finish", finishBody, 200)
+	b, err := os.ReadFile(r.s.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "[tls]") {
+		t.Errorf("skipping HTTPS should write no [tls] section:\n%s", b)
+	}
+
+	withTLS := `{"dns_listen":["192.0.2.10"],"dns_port":53,"upstreams":["9.9.9.10"],` +
+		`"portal_host":"127.0.0.1","portal_port":8787,` +
+		`"tls_hostname":"shepherd.example.com","tls_port":8443,"tls_email":"me@example.com"}`
+	r.json("POST", "/api/setup/finish", withTLS, 200)
+	cfg, err := config.Load(r.s.ConfigPath)
+	if err != nil {
+		t.Fatalf("the config setup wrote does not load: %v", err)
+	}
+	if !cfg.TLS.Enabled || cfg.TLS.Hostname != "shepherd.example.com" || cfg.TLS.Listen != "0.0.0.0:8443" {
+		t.Errorf("tls = %+v", cfg.TLS)
+	}
+	// The token belongs in secrets.json, and nowhere near this file.
+	if cfg.TLS.CloudflareAPIToken != "" || cfg.TLS.CloudflareAPITokenFile != "" {
+		t.Error("the Cloudflare token must not be written into shepherd.toml")
+	}
+	written, _ := os.ReadFile(r.s.ConfigPath)
+	if !strings.Contains(string(written), "secrets.json") || !strings.Contains(string(written), "passkey") {
+		t.Errorf("the written comments should say where the token is and what the address is for:\n%s", written)
+	}
+}
+
+func TestFinishRefusesHTTPSAnswersThatCannotWork(t *testing.T) {
+	r := newRig(t)
+	base := `{"dns_listen":["192.0.2.10"],"dns_port":53,"upstreams":["9.9.9.10"],"portal_host":"127.0.0.1","portal_port":8787,`
+	for _, tail := range []string{
+		`"tls_hostname":"shepherd","tls_port":8443}`,              // no domain
+		`"tls_hostname":"https://x.example.com","tls_port":8443}`, // a URL
+		`"tls_hostname":"shepherd.example.com","tls_port":0}`,     // not a port
+		`"tls_hostname":"shepherd.example.com","tls_port":8787}`,  // the portal's own port
+	} {
+		if code, out := r.do("POST", "/api/setup/finish", base+tail); code != 400 {
+			t.Errorf("%s = %d: %s", tail, code, out)
+		}
+	}
+}

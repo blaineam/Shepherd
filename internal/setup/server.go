@@ -41,6 +41,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -76,6 +77,14 @@ type Server struct {
 	// optional bandwidth step. Nil in a build that cannot read a router,
 	// and the page then says so instead of offering it.
 	ConnectRouter func(ctx context.Context, dataDir string, c RouterConn) error
+	// SaveDNSToken checks a Cloudflare API token against the zone the
+	// chosen hostname is in -- read-only lookups, nothing published --
+	// and, if it works, keeps it as the portal-managed DNS provider
+	// credential. It is how setup can offer HTTPS (and so passkeys) at
+	// all: a token that cannot edit that zone is a certificate that will
+	// never be issued, and finding that out now beats finding it out in
+	// a log an hour later. Nil leaves the step unoffered.
+	SaveDNSToken func(ctx context.Context, dataDir, hostname, token string) error
 
 	// DataDir is where Shepherd will keep its state. It is worked out
 	// from the configuration file's own directory rather than asked
@@ -175,6 +184,15 @@ type Running struct {
 	// SetCategories switches the chosen categories on at network scope.
 	// Nil when there is no policy store to put them in.
 	SetCategories func(ids []string) error
+	// TLSURL is the portal's own HTTPS address, empty when [tls] is off.
+	// It is where a passkey can be registered, and nowhere else: WebAuthn
+	// binds a passkey to exactly that name (docs/PASSKEYS.md).
+	TLSURL string
+	// CertReady reports whether a certificate has actually been obtained
+	// yet, and what to say while it has not. The first one takes a minute
+	// or two over DNS-01, which is long enough that a page saying nothing
+	// looks broken.
+	CertReady func() (bool, string)
 }
 
 // ListenerCheck is one address's verification: whether it answered at all,
@@ -325,11 +343,13 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/setup/upstream-rank", s.gate(http.HandlerFunc(s.upstreamRank)))
 	mux.Handle("POST /api/setup/port-check", s.gate(http.HandlerFunc(s.portCheck)))
 	mux.Handle("POST /api/setup/router", s.gate(http.HandlerFunc(s.router)))
+	mux.Handle("POST /api/setup/dns-token", s.gate(http.HandlerFunc(s.dnsToken)))
 	mux.Handle("POST /api/setup/finish", s.gate(http.HandlerFunc(s.finish)))
 	mux.Handle("GET /api/setup/running", s.gate(http.HandlerFunc(s.runningState)))
 	mux.Handle("POST /api/setup/verify", s.gate(http.HandlerFunc(s.verify)))
 	mux.Handle("GET /api/setup/token", s.gate(http.HandlerFunc(s.portalToken)))
 	mux.Handle("POST /api/setup/categories", s.gate(http.HandlerFunc(s.categories)))
+	mux.Handle("GET /api/setup/certificate", s.gate(http.HandlerFunc(s.certificate)))
 	mux.Handle("POST /api/setup/done", s.gate(http.HandlerFunc(s.finished)))
 	return mux
 }
@@ -391,13 +411,16 @@ type stateJSON struct {
 	PortalHost   string      `json:"portal_host"`
 	DNSPortFree  bool        `json:"dns_port_free"`
 	CanRouter    bool        `json:"can_router"`
+	CanTLS       bool        `json:"can_tls"`
+	TLSPort      int         `json:"tls_port"`
 	Categories   []Category  `json:"categories"`
 }
 
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	out := stateJSON{ConfigPath: s.ConfigPath, Candidates: Candidates,
 		DataDir: s.DataDir, DNSPort: 53, PortalPort: 8787, PortalHost: "127.0.0.1",
-		CanRouter: s.ConnectRouter != nil, Categories: s.Categories}
+		CanRouter: s.ConnectRouter != nil, Categories: s.Categories,
+		CanTLS: s.SaveDNSToken != nil, TLSPort: 8443}
 	// Checked here rather than left for the owner to discover at the end:
 	// a directory Shepherd cannot write is the one thing about this step
 	// that can go wrong, and it is better said on the page than in a
@@ -508,6 +531,58 @@ func (s *Server) router(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// dnsToken checks the owner's Cloudflare token against the zone their
+// chosen hostname is in and, if it works, keeps it. The token never goes
+// into shepherd.toml: it lands in the data directory's secrets.json, which
+// is where the portal manages it from then on, so the file setup writes
+// can be read, copied and kept in version control like any other.
+func (s *Server) dnsToken(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Hostname string `json:"hostname"`
+		Token    string `json:"token"`
+	}
+	if !decodeBody(w, r, &b) {
+		return
+	}
+	if s.SaveDNSToken == nil {
+		notFound(w, "this build cannot set up HTTPS")
+		return
+	}
+	host := strings.TrimSpace(b.Hostname)
+	if err := checkHostname(host); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if strings.TrimSpace(b.Token) == "" {
+		writeJSON(w, map[string]any{"ok": false, "error": "the API token is empty"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if err := s.SaveDNSToken(ctx, s.DataDir, host, b.Token); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// certificate is what the second half of the page polls while Let's
+// Encrypt is being asked: the first certificate takes a minute or two over
+// DNS-01, and a page that said nothing for that long would look broken.
+func (s *Server) certificate(w http.ResponseWriter, r *http.Request) {
+	run := s.runningNow()
+	if run == nil || run.TLSURL == "" {
+		writeJSON(w, map[string]any{"configured": false})
+		return
+	}
+	out := map[string]any{"configured": true, "url": run.TLSURL, "ready": false}
+	if run.CertReady != nil {
+		ready, detail := run.CertReady()
+		out["ready"], out["detail"] = ready, detail
+	}
+	writeJSON(w, out)
 }
 
 // finish writes the file. It is the only thing here that changes anything

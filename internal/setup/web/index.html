@@ -81,6 +81,35 @@
       </label>
     </section>
 
+    <section class="card" id="s-tls">
+      <h2>6. Reach the portal over HTTPS? <span class="opt">optional</span></h2>
+      <p class="note">A real certificate for a name of your own, issued by Let's Encrypt over a DNS
+        challenge against Cloudflare. It adds an HTTPS address beside the plain one above — nothing
+        you choose here takes anything away. <strong>Passkeys need it:</strong> a passkey is bound to
+        exactly one hostname, so Face ID or Touch ID for the portal is only possible at this address.</p>
+      <p class="note small">You need: a DNS name in a Cloudflare zone (it can point anywhere reachable,
+        even a tailnet address — the challenge only writes a TXT record), and a Cloudflare API token
+        with <strong>Zone → DNS → Edit</strong> on that zone and nothing else.</p>
+      <label class="field"><span>Hostname</span>
+        <input id="t-host" spellcheck="false" autocomplete="off" placeholder="shepherd.example.com"></label>
+      <div class="row">
+        <label class="field short"><span>HTTPS port</span>
+          <input id="t-port" type="number" min="1" max="65535" inputmode="numeric" value="8443"></label>
+        <label class="field"><span>Email for expiry notices (optional)</span>
+          <input id="t-email" type="email" spellcheck="false" autocomplete="off"></label>
+      </div>
+      <label class="field"><span>Cloudflare API token</span>
+        <input id="t-token" type="password" autocomplete="new-password"></label>
+      <div class="row">
+        <button type="button" id="t-check" class="ghost">Check this token</button>
+        <span id="t-result" class="result"></span>
+      </div>
+      <p class="note small">The token is checked against that zone with read-only lookups, then kept in
+        your data directory's <code>secrets.json</code> (0600) — never in <code>shepherd.toml</code>.
+        Leave the hostname empty to skip; the portal is still reachable over plain HTTP, and you can
+        set this up later on the portal's Proxy tab.</p>
+    </section>
+
     <section class="card finish">
       <p id="exists" class="warn" hidden></p>
       <div class="row">
@@ -178,6 +207,17 @@
         <p id="eero-note" class="note small" hidden>eero signs in with a code it emails you while you
           wait, so that one is done from the portal's Bandwidth screen.</p>
       </div>
+      <div id="a-passkey" hidden>
+        <h3>Sign in without the token</h3>
+        <p class="note">Shepherd is asking Let's Encrypt for your certificate now. Once it has one, open
+          the portal at its own name and add a passkey on the Locking screen — then it is Face ID or
+          Touch ID instead of pasting that token.</p>
+        <p class="fact"><a id="pk-url" href="#" target="_blank" rel="noopener"></a>
+          <span id="pk-state" class="result"></span></p>
+        <p class="note small" id="pk-detail"></p>
+      </div>
+      <p class="note small" id="pin-note">A PIN works anywhere, including over plain HTTP: set one on the
+        portal's Locking screen and that is what you type from then on, not the token.</p>
       <div class="row">
         <button type="button" id="all-done" class="primary">I'm done — close setup</button>
         <span id="done-result" class="result"></span>

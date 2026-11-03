@@ -21,6 +21,14 @@ type Answers struct {
 	Upstreams  []string `json:"upstreams"`
 	PortalHost string   `json:"portal_host"`
 	PortalPort int      `json:"portal_port"`
+	// TLSHostname, TLSPort and TLSEmail set up the portal's own HTTPS
+	// address (docs/TLS.md). Empty hostname means the owner skipped it,
+	// and no [tls] section is written at all. The Cloudflare token is
+	// deliberately not here: it goes to secrets.json while the page is
+	// still open, never into shepherd.toml.
+	TLSHostname string `json:"tls_hostname,omitempty"`
+	TLSPort     int    `json:"tls_port,omitempty"`
+	TLSEmail    string `json:"tls_email,omitempty"`
 	// RouterConnected names the router connected in the optional step
 	// ("unifi"), or is empty. Nothing about it goes into the file -- the
 	// credentials live in the data directory's secrets.json -- so it is
@@ -54,6 +62,36 @@ func (a Answers) validate() error {
 	}
 	if a.PortalPort < 1 || a.PortalPort > 65535 {
 		return errors.New("the portal port must be between 1 and 65535")
+	}
+	if a.TLSHostname != "" {
+		if err := checkHostname(a.TLSHostname); err != nil {
+			return err
+		}
+		if a.TLSPort < 1 || a.TLSPort > 65535 {
+			return errors.New("the HTTPS port must be between 1 and 65535")
+		}
+		if a.TLSPort == a.PortalPort {
+			return errors.New("the HTTPS port and the portal port must be different: each needs its own listener")
+		}
+	}
+	return nil
+}
+
+// checkHostname refuses what a certificate could never be issued for,
+// while the owner is still looking at the field. It is not a full name
+// check -- Let's Encrypt and Cloudflare do that for real -- only the
+// mistakes worth catching here: a URL pasted instead of a name, a bare
+// label with no domain, spaces.
+func checkHostname(h string) error {
+	switch {
+	case strings.Contains(h, "/") || strings.Contains(h, ":"):
+		return fmt.Errorf("%q is a URL; the hostname on its own is what a certificate is issued for", h)
+	case strings.ContainsAny(h, " \t"):
+		return fmt.Errorf("%q has a space in it", h)
+	case !strings.Contains(strings.Trim(h, "."), "."):
+		return fmt.Errorf("%q is not a full name: it needs a domain, like shepherd.example.com", h)
+	case net.ParseIP(h) != nil:
+		return errors.New("a certificate is issued for a name, not an address")
 	}
 	return nil
 }
@@ -148,6 +186,29 @@ func Render(a Answers) string {
 		p("# it; docs/TLS.md adds HTTPS and docs/PASSKEYS.md a passkey.")
 	}
 	p("listen = %q", joinHostPort(a.PortalHost, a.PortalPort))
+	if a.TLSHostname != "" {
+		p("")
+		p("[tls]")
+		p("# A real certificate for the portal's own hostname, issued over")
+		p("# ACME's DNS-01 challenge against Cloudflare DNS (docs/TLS.md).")
+		p("# This is an extra HTTPS listener: the plain-HTTP portal above is")
+		p("# untouched. The first certificate takes a minute or two, and needs")
+		p("# %s to already resolve -- DNS-01 only writes a TXT record, so it", a.TLSHostname)
+		p("# can point anywhere reachable, even a tailnet address.")
+		p("#")
+		p("# The Cloudflare token is NOT here: setup put it in")
+		p("# <data_dir>/secrets.json (0600), which is where the portal manages")
+		p("# it from now on (its Proxy tab).")
+		p("#")
+		p("# This address is also the only place a passkey works")
+		p("# (docs/PASSKEYS.md): WebAuthn binds a passkey to exactly this name.")
+		p("enabled = true")
+		p("hostname = %q", a.TLSHostname)
+		p("listen = %q", net.JoinHostPort("0.0.0.0", strconv.Itoa(a.TLSPort)))
+		if a.TLSEmail != "" {
+			p("email = %q    # Let's Encrypt expiry notices", a.TLSEmail)
+		}
+	}
 	if a.RouterConnected != "" {
 		p("")
 		p("# A %s router was connected during setup for per-device bandwidth.", a.RouterConnected)

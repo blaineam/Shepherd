@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"shepherd/internal/secrets"
 	"shepherd/internal/selftest"
 	"shepherd/internal/setup"
+	"shepherd/internal/tlscert"
 )
 
 // probeTimeout bounds the one probe the setup page makes per resolver. It is
@@ -55,6 +57,7 @@ func newSetupServer(cfgPath string) (*setup.Server, error) {
 		PortFree:      setup.PortFree,
 		TestUpstream:  testUpstream,
 		ConnectRouter: connectUniFi,
+		SaveDNSToken:  saveSetupDNSToken,
 	})
 	if err != nil {
 		return nil, err
@@ -233,13 +236,64 @@ func setupOnly(args []string, stderr io.Writer) int {
 // file it wrote: the portal to link to and sign into, a way to prove DNS
 // filtering actually works from here, and the network-wide blocking the
 // owner chose during setup.
-func runningSetup(cfg config.Config, token string, policy *dnsengine.PolicyStore, skipped *skipSet) setup.Running {
-	return setup.Running{
+func runningSetup(cfg config.Config, token string, policy *dnsengine.PolicyStore, skipped *skipSet, tlsMgr *tlscert.Manager) setup.Running {
+	r := setup.Running{
 		PortalURL:     "http://" + cfg.Portal.Listen,
 		Token:         token,
 		Verify:        verifyDNS(cfg, skipped),
 		SetCategories: applyCategories(policy),
 	}
+	if cfg.TLS.Enabled && cfg.TLS.Hostname != "" {
+		_, port, err := net.SplitHostPort(cfg.TLS.Listen)
+		if err == nil {
+			r.TLSURL = "https://" + net.JoinHostPort(cfg.TLS.Hostname, port)
+		}
+		r.CertReady = certReady(tlsMgr, cfg.TLS.Hostname)
+	}
+	return r
+}
+
+// certReady reports whether the portal's own certificate has actually been
+// obtained. The first one takes a minute or two over DNS-01 and can fail
+// for reasons outside this machine (a name that does not resolve yet, a
+// token without edit rights on the zone), so the page polls this rather
+// than claiming HTTPS works the moment the file says so.
+func certReady(mgr *tlscert.Manager, hostname string) func() (bool, string) {
+	return func() (bool, string) {
+		if mgr == nil {
+			return false, "HTTPS is configured but did not start; check the log"
+		}
+		if mgr.Certificate() == nil {
+			return false, "asking Let's Encrypt for a certificate for " + hostname +
+				" over DNS-01. The first one usually takes a minute or two, and needs " + hostname +
+				" to already resolve."
+		}
+		return true, ""
+	}
+}
+
+// saveSetupDNSToken checks a Cloudflare token against the zone hostname is
+// in -- read-only zone lookups, exactly what the portal's Proxy tab does
+// before it will save one -- and keeps it as the portal-managed DNS
+// provider credential. It never goes into shepherd.toml: the file setup
+// writes should be safe to read, copy and commit.
+func saveSetupDNSToken(ctx context.Context, dataDir, hostname, token string) error {
+	p := &tlscert.CloudflareProvider{APIToken: token, BaseURL: cloudflareBaseURL,
+		HTTPClient: &http.Client{Timeout: 20 * time.Second}}
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	if err := p.Verify(ctx, hostname); err != nil {
+		return fmt.Errorf("Cloudflare did not accept that token for %s: %w", hostname, err)
+	}
+	if err := os.MkdirAll(dataDir, 0o750); err != nil {
+		return err
+	}
+	store, err := secrets.Open(filepath.Join(dataDir, secrets.FileName))
+	if err != nil {
+		return err
+	}
+	_, err = store.SetDNSProvider(secrets.DNSProvider{Provider: secrets.ProviderCloudflare, APIToken: token})
+	return err
 }
 
 // verifyDNS asks Shepherd's own listeners a name that must resolve and one

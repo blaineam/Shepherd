@@ -31,6 +31,7 @@ const post = (path, body) => call(path, { method: 'POST', body: JSON.stringify(b
 let state = null;
 let measured = null;      // the ranked measurements, once they have been taken
 let connectedRouter = '';
+let tokenSaved = false;   // the Cloudflare token has been checked and kept
 
 // ---------------------------------------------------------------- helpers
 
@@ -199,6 +200,8 @@ function draw() {
       + 'resolver Shepherd replaces, stop it before finishing; if you are keeping it, use another port (5353 is '
       + 'the usual one).', 'warn');
   }
+  if (!state.can_tls) $('s-tls').hidden = true;
+  else $('t-port').value = state.tls_port || 8443;
   $('load').hidden = true;
   $('form').hidden = false;
   // The measurement starts by itself: it is the whole reason this step is
@@ -219,6 +222,17 @@ async function finish(ev) {
     portal_port: Number($('portal-port').value),
     router_connected: connectedRouter,
   };
+  const host = state.can_tls ? $('t-host').value.trim() : '';
+  if (host) {
+    if (!tokenSaved) {
+      result('finish-result', 'Check the Cloudflare token first, or clear the hostname to skip HTTPS.', 'bad');
+      $('t-host').focus();
+      return;
+    }
+    body.tls_hostname = host;
+    body.tls_port = Number($('t-port').value);
+    body.tls_email = $('t-email').value.trim();
+  }
   // Loopback is the honest answer when this host has no LAN address: it is
   // what Shepherd will actually be able to bind.
   if (!body.dns_listen.length && !(state.addrs || []).length) body.dns_listen = ['127.0.0.1'];
@@ -259,6 +273,7 @@ async function waitForShepherd() {
         }
         loadToken();
         verify();
+        watchCertificate();
         return;
       }
     } catch { /* setup is still the only thing up; keep waiting */ }
@@ -278,6 +293,36 @@ async function drawCategoriesApplied(running) {
   } catch (e) {
     note('cat-note', 'Those categories could not be switched on: ' + e.message + '. The portal\'s Blocking screen can do it.', 'warn');
   }
+}
+
+// watchCertificate polls while Let's Encrypt is being asked. The first
+// certificate takes a minute or two over DNS-01 and can fail for reasons
+// outside this machine, so the page says which it is rather than claiming
+// HTTPS works the moment the file says so.
+async function watchCertificate() {
+  for (let i = 0; i < 180; i++) {
+    let out;
+    try {
+      out = await get('/api/setup/certificate');
+    } catch {
+      return; // setup is closing; nothing to report
+    }
+    if (!out.configured) return;
+    $('a-passkey').hidden = false;
+    const link = $('pk-url');
+    link.href = out.url + '/#locking';
+    link.textContent = out.url;
+    if (out.ready) {
+      result('pk-state', 'certificate ready', 'good');
+      $('pk-detail').textContent = 'Open that address, sign in with the token once, and add a passkey on the Locking screen.';
+      return;
+    }
+    result('pk-state', 'waiting for the certificate…');
+    $('pk-detail').textContent = out.detail || '';
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  result('pk-state', 'still waiting', 'warn');
+  $('pk-detail').textContent = 'It has not arrived yet. Shepherd keeps trying; the portal\'s Proxy tab shows what it is stuck on.';
 }
 
 async function verify() {
@@ -376,6 +421,35 @@ function drawRouterChoice() {
   }
 }
 
+// checkDNSToken verifies the Cloudflare token against the zone the chosen
+// hostname is in and keeps it. Doing it here, rather than letting the
+// certificate fail quietly after the owner has walked away, is the whole
+// reason this step is a form and not a paragraph of instructions.
+async function checkDNSToken() {
+  const host = $('t-host').value.trim();
+  if (!host) {
+    result('t-result', 'Fill in the hostname first.', 'bad');
+    return;
+  }
+  const btn = $('t-check');
+  btn.disabled = true;
+  result('t-result', 'Asking Cloudflare about ' + host + '…');
+  try {
+    const out = await post('/api/setup/dns-token', { hostname: host, token: $('t-token').value });
+    if (!out.ok) {
+      result('t-result', out.error, 'bad');
+      tokenSaved = false;
+    } else {
+      result('t-result', 'That token can edit the zone ' + host + ' is in. Saved.', 'good');
+      tokenSaved = true;
+    }
+  } catch (e) {
+    result('t-result', e.message, 'bad');
+    tokenSaved = false;
+  }
+  btn.disabled = false;
+}
+
 async function connectUniFi() {
   const btn = $('u-connect');
   btn.disabled = true;
@@ -427,6 +501,7 @@ async function load() {
   $('measure').addEventListener('click', measure);
   $('verify').addEventListener('click', verify);
   $('u-connect').addEventListener('click', connectUniFi);
+  $('t-check').addEventListener('click', checkDNSToken);
   $('all-done').addEventListener('click', allDone);
   $('form').addEventListener('submit', finish);
 }

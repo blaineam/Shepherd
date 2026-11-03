@@ -450,7 +450,7 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	// the flow (proving DNS filters, the portal token, network-wide
 	// blocking, pointing the router here) happens where they already are.
 	if setupSrv != nil {
-		setupSrv.Started(runningSetup(cfg, token, policy, &skipped))
+		setupSrv.Started(runningSetup(cfg, token, policy, &skipped, tlsMgr))
 	}
 
 	log.Printf("shepherd %s: dns on %v, portal on http://%s", version, cfg.DNS.ListenAddrs(), cfg.Portal.Listen)
