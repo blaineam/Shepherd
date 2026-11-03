@@ -35,7 +35,9 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   the reader too while Watch mode is not measuring, so the live view is not left at zero; the
   rolling chart's caption says how often the router is actually read, since the line steps rather
   than curves. Measured against a known transfer, eero's sampling recorded about a sixth of it, so
-  the screen and the docs call these totals a floor rather than a measurement.
+  the screen and the docs call these totals a floor rather than a measurement. The live card shows
+  only the eight busiest devices, since a router source lists every device it knows, and says how
+  many it is leaving out.
 - **`dns.filter_aaaa`** (`"auto"` by default, or `"on"` / `"off"`). On a network whose devices have no
   IPv6 route to the internet (only private `fd..` or link-local addresses) every AAAA answer is an
   unreachable address, and a device that tries it first or handles the failure badly reports a network
@@ -45,6 +47,11 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   row turn them off, and each change is logged. Filtered answers show as `ipv6-filtered` in the log.
 
 ### Fixed
+
+- The Bandwidth charts overflowed the left edge of their card on a phone. An axis label wider than
+  the gutter ("100 Mbit/s") was positioned from the right with no left bound, so it grew out of the
+  card; it is now bounded on both sides, the gutter is wide enough to hold it, and the live, trend
+  and totals grids no longer demand a minimum width wider than a phone's card.
 
 - **Watch mode no longer eats duplicate TCP acknowledgements.** The duplicate brake drops any frame it has already relayed inside 100 ms, but a receiver that sees a gap sends the same ACK again for every segment that follows, and TCP needs those to reach the sender (three start a fast retransmit; SACK recovery runs on them). One lost packet on the download path therefore cost the sender a full retransmission timeout, which shows up as stalled and failed requests. A repeated pure ACK is now relayed up to 8 times inside the window before it is treated as a loop, in both the kernel and userspace relays; data, SYN, FIN and RST frames are dropped on their first repeat as before.
 - **Unsteering now really restores a device.** The corrective ARP reply that tells a device the gateway's real address again was sent with the gateway's MAC as its Ethernet source, a forged link-layer address that wired links and docks drop, so a wired device kept the claim and sent everything through Shepherd until its ARP entry expired. It now leaves from Shepherd's own MAC (the body still says the gateway's), which is accepted, and it is repeated four more times, half a second apart, in the background in case one is lost.

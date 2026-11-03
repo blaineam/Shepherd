@@ -149,9 +149,30 @@ export function statusHeadline(status) {
 export const DOWNLOAD_CAVEAT = 'Download is an estimate read from each device’s own TCP acknowledgements: it never over-counts, but it cannot see QUIC, other UDP traffic or VPN tunnels, so video and some apps show lower than they really are. Upload is measured exactly.';
 
 // Rows for the live table, busiest first (the server already sorts; this
-// only guards against an unsorted fake).
-export function liveRows(status) {
-  return [...((status && status.devices) || [])].sort((a, b) => ((Number(b.down_bytes_per_second) || 0) + (Number(b.up_bytes_per_second) || 0)) - ((Number(a.down_bytes_per_second) || 0) + (Number(a.up_bytes_per_second) || 0)));
+// only guards against an unsorted fake). A router source reports every
+// device it knows, which on a real network is a hundred rows of zeroes, so
+// the live card takes only the busiest few: limit caps the list, and
+// anything moving nothing is left out entirely once the card is full.
+export function liveRows(status, limit = 0) {
+  const all = [...((status && status.devices) || [])]
+    .sort((a, b) => (rateOf(b) - rateOf(a)));
+  if (limit <= 0 || all.length <= limit) return all;
+  const busy = all.filter((d) => rateOf(d) > 0);
+  // Keep the shape stable when nothing is moving: show the first few
+  // rather than an empty card.
+  return (busy.length ? busy : all).slice(0, limit);
+}
+
+function rateOf(d) {
+  return (Number(d.down_bytes_per_second) || 0) + (Number(d.up_bytes_per_second) || 0);
+}
+
+// liveRowsNote says what the live card is leaving out, so a short list is
+// never mistaken for the whole network.
+export function liveRowsNote(status, shown) {
+  const total = ((status && status.devices) || []).length;
+  if (!total || shown >= total) return '';
+  return 'Showing the ' + shown + ' busiest of ' + total + ' devices. The rest are in Over time and Where it goes below.';
 }
 
 // ---------------------------------------------------------------- charts

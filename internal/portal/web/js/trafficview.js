@@ -11,12 +11,16 @@ import { unavailable } from './mgmt.js';
 import { createRouterUsage } from './routerusageview.js';
 import {
   RANGE_PRESETS, rangeWindow, scopeOptions, scopeLabel, fillSeries, sumPoints, bucketRate, timeLabels,
-  shareOf, statusHeadline, liveRows, DOWNLOAD_CAVEAT, measurementNote, liveChartCaption, fmtBytes, fmtBitsPerSecond,
+  shareOf, statusHeadline, liveRows, liveRowsNote, DOWNLOAD_CAVEAT, measurementNote, liveChartCaption, fmtBytes, fmtBitsPerSecond,
   niceCeil, yTicks, lineArea, nearestIndex, pushSample, shareSlices, arcPath, rateStats,
 } from './traffic.js';
 
 const POLL_MS = 2000;
 const LIVE_SAMPLES = 90; // three minutes at the poll rate
+// The live card is for "what is busy right now", not an inventory: a
+// router source lists every device it knows, which is a hundred rows of
+// zeroes on a real network.
+const LIVE_ROWS = 8;
 const TREND_DEVICES = 6;
 const NS = 'http://www.w3.org/2000/svg';
 function svg(tag, attrs) {
@@ -184,7 +188,7 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, watch =
       liveChartHolder.append(c.node, el('p', 'muted small tf-cap', liveChartCaption(status, live.length, POLL_MS)));
     }
 
-    const rows = liveRows(status);
+    const rows = liveRows(status, LIVE_ROWS);
     const busiest = Math.max(1, ...rows.map((d) => Math.max(Number(d.down_bytes_per_second) || 0, Number(d.up_bytes_per_second) || 0)));
     liveRowsHolder.replaceChildren();
     for (const d of rows) {
@@ -210,6 +214,8 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, watch =
       row.append(main);
       liveRowsHolder.append(row);
     }
+    const omitted = liveRowsNote(status, rows.length);
+    if (omitted) liveRowsHolder.append(el('p', 'muted small tf-cap', omitted));
   }
 
   // --------------------------------------------------------------- history

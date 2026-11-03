@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   RANGE_PRESETS, rangeWindow, scopeOptions, scopeLabel, fillSeries, sumPoints, bucketRate, areaPaths, axisLabels,
-  timeLabels, shareOf, statusHeadline, liveRows, DOWNLOAD_CAVEAT, fmtBytes, fmtBitsPerSecond,
+  timeLabels, shareOf, statusHeadline, liveRows, liveRowsNote, DOWNLOAD_CAVEAT, fmtBytes, fmtBitsPerSecond,
 } from '../js/traffic.js';
 
 const T0 = Date.parse('2026-11-01T12:00:00Z');
@@ -233,4 +233,26 @@ test('liveChartCaption does not overstate how often the line moves', () => {
   const router = liveChartCaption({ measuring: false, router: reading }, 90, 2000);
   assert.match(router, /read every 30 seconds, so the line steps rather than curves/);
   assert.match(router, /The last 3 minutes/);
+});
+
+test('the live card shows only the busiest few devices', () => {
+  const mk = (id, rate) => ({ device_id: id, name: id, down_bytes_per_second: rate, up_bytes_per_second: 0 });
+  const many = { devices: [mk('a', 0), mk('b', 500), mk('c', 0), mk('d', 900), mk('e', 0), mk('f', 0)] };
+  // Unlimited keeps everything, busiest first.
+  assert.deepEqual(liveRows(many).map((d) => d.device_id), ['d', 'b', 'a', 'c', 'e', 'f']);
+  // Capped, the idle ones drop out rather than padding the list.
+  assert.deepEqual(liveRows(many, 3).map((d) => d.device_id), ['d', 'b']);
+  // A quiet network still shows something rather than an empty card.
+  const quiet = { devices: [mk('a', 0), mk('b', 0), mk('c', 0)] };
+  assert.equal(liveRows(quiet, 2).length, 2);
+  assert.deepEqual(liveRows({ devices: [mk('a', 1)] }, 8).map((d) => d.device_id), ['a']);
+  assert.deepEqual(liveRows(null, 5), []);
+});
+
+test('liveRowsNote says what the live card is leaving out', () => {
+  const status = { devices: new Array(88).fill({ down_bytes_per_second: 0, up_bytes_per_second: 0 }) };
+  assert.match(liveRowsNote(status, 8), /the 8 busiest of 88 devices/);
+  assert.equal(liveRowsNote(status, 88), '');
+  assert.equal(liveRowsNote({ devices: [] }, 0), '');
+  assert.equal(liveRowsNote(null, 0), '');
 });
