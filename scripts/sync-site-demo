@@ -17,7 +17,9 @@
 # The demo is the portal's own files, not a second implementation: app.js
 # already has demo mode built in (?demo=), so the only thing site/demo needs
 # beyond a copy is to turn it on. Everything here is a verbatim copy except
-# index.html, which gets the two changes below.
+# index.html, which gets the two changes below, and the .js files, whose
+# relative imports are stamped with a content hash -- see the stamping step
+# further down for why that is not optional.
 #
 # Deliberately NOT copied:
 #   sw.js         a service worker on the marketing origin, registered for Web
@@ -52,6 +54,21 @@ mkdir -p "$out"
 
 cp "$src/app.js" "$src/style.css" "$src/icon.png" "$src/manifest.webmanifest" "$out/"
 cp -R "$src/js" "$src/vendor" "$out/"
+
+# Stamp the module graph. The CDN in front of the marketing site serves .js
+# with a year-long max-age while index.html gets ten minutes, and the
+# portfolio repo's scripts/cache-bust.py can only stamp URLs written in HTML
+# attributes or CSS url(). app.js and style.css are covered that way; the
+# modules under js/ are imported from inside app.js, so they were not, and a
+# returning visitor could pair a fresh app.js with year-old modules. A first
+# visit always looked fine, which is what made it hard to see.
+#
+# The stamps are content hashes taken bottom-up, so this is deterministic:
+# identical input gives identical output and --check below stays stable. It
+# also means app.js's own bytes change whenever anything it imports changes,
+# so cache-bust.py's existing stamp of app.js moves with it and the chain
+# completes without any change in the portfolio repo.
+go run ./cmd/stamp-demo-modules "$out"
 
 # index.html is the one generated file. Both edits are anchored on text that
 # must exist; if the portal's page changes shape, this fails loudly rather

@@ -5,9 +5,9 @@
 // produces is kept by the server, never held here.
 //
 // Every string that came from the server is placed with textContent.
-import { el } from './dom.js';
-import { button } from './ui.js';
-import { routerConnection, nameSyncSummary } from './traffic.js';
+import { el } from './dom.js?v=65858b99';
+import { button } from './ui.js?v=c9bbb094';
+import { routerConnection, nameSyncSummary } from './traffic.js?v=cd821019';
 
 export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {
   const root = el('section', 'card ru');

@@ -1,42 +1,42 @@
 // Shepherd portal entry point: wires the data sources (live SSE, replay,
 // in-browser demo), the model, the globe and the HUD chrome together. Pure
 // logic lives in js/*.js and is unit tested; this file is the glue.
-import { $ } from './js/dom.js';
-import { createApi } from './js/api.js';
-import { startActivityReports } from './js/activity.js';
-import { createDemoApi } from './js/demoapi.js';
-import { DemoGenerator, DEMO_HOME } from './js/demo.js';
-import { normalizeEntry, destKey, placeName } from './js/entry.js';
-import { LiveSource } from './js/sources.js';
-import { ReplaySource } from './js/replay.js';
-import { ReplayClock } from './js/clock.js';
-import { Model } from './js/model.js';
-import { weightScale, entryWeight } from './js/weight.js';
-import { validLatLon } from './js/geo.js';
-import { fmtClock } from './js/format.js';
-import { createDetails } from './js/details.js';
-import { createTiles, createFeed, createFilters, createLegend, createInspector, createTimeline } from './js/hud.js';
-import { createToaster } from './js/ui.js';
-import { createMgmt } from './js/mgmt.js';
-import { createNameBook } from './js/names.js';
-import { createPolicyStore } from './js/policystore.js';
-import { createDevices } from './js/devices.js';
-import { createBlocking, createDevicePolicy } from './js/blocking.js';
-import { createUpstreams } from './js/upstreamsview.js';
-import { createAlarms } from './js/alarmsview.js';
-import { createVulnscan } from './js/vulnscanview.js';
-import { createNethealth } from './js/nethealthview.js';
-import { createWatch } from './js/watchview.js';
-import { createTraffic } from './js/trafficview.js';
-import { createReverseProxy } from './js/reverseproxyview.js';
-import { createDhcp } from './js/dhcpview.js';
-import { createHistory } from './js/historyview.js';
-import { createAccountability } from './js/accountability.js';
-import { createDemoMgmt } from './js/demomgmt.js';
-import { DEVICE_BY_IP } from './js/demodata.js';
-import { createLocking } from './js/lockingview.js';
-import { lockedURL, unlockedURL, signInOrder, autoTryPasskey, methodLabel } from './js/locking.js';
-import { requestOptions, assertionJSON, ceremonyError } from './js/passkeys.js';
+import { $ } from './js/dom.js?v=65858b99';
+import { createApi } from './js/api.js?v=798e1c8c';
+import { startActivityReports } from './js/activity.js?v=bd3000e7';
+import { createDemoApi } from './js/demoapi.js?v=c182fda9';
+import { DemoGenerator, DEMO_HOME } from './js/demo.js?v=e0b32cdd';
+import { normalizeEntry, destKey, placeName } from './js/entry.js?v=de62f770';
+import { LiveSource } from './js/sources.js?v=e6dc9a01';
+import { ReplaySource } from './js/replay.js?v=bb8a7a3f';
+import { ReplayClock } from './js/clock.js?v=8fa6af79';
+import { Model } from './js/model.js?v=dffd8884';
+import { weightScale, entryWeight } from './js/weight.js?v=8da15ceb';
+import { validLatLon } from './js/geo.js?v=248f9f1a';
+import { fmtClock } from './js/format.js?v=86b54455';
+import { createDetails } from './js/details.js?v=be05806c';
+import { createTiles, createFeed, createFilters, createLegend, createInspector, createTimeline } from './js/hud.js?v=46a4d6db';
+import { createToaster } from './js/ui.js?v=c9bbb094';
+import { createMgmt } from './js/mgmt.js?v=8b3f5c53';
+import { createNameBook } from './js/names.js?v=e79e15ee';
+import { createPolicyStore } from './js/policystore.js?v=3aa33de9';
+import { createDevices } from './js/devices.js?v=0439e8d9';
+import { createBlocking, createDevicePolicy } from './js/blocking.js?v=cc55d09b';
+import { createUpstreams } from './js/upstreamsview.js?v=f10d836f';
+import { createAlarms } from './js/alarmsview.js?v=128cacff';
+import { createVulnscan } from './js/vulnscanview.js?v=f665a09a';
+import { createNethealth } from './js/nethealthview.js?v=adb5846f';
+import { createWatch } from './js/watchview.js?v=982e1254';
+import { createTraffic } from './js/trafficview.js?v=fb882dd9';
+import { createReverseProxy } from './js/reverseproxyview.js?v=f757bd02';
+import { createDhcp } from './js/dhcpview.js?v=8e55e0e7';
+import { createHistory } from './js/historyview.js?v=e661636a';
+import { createAccountability } from './js/accountability.js?v=86bbe11f';
+import { createDemoMgmt } from './js/demomgmt.js?v=1a411880';
+import { DEVICE_BY_IP } from './js/demodata.js?v=1f5ce92d';
+import { createLocking } from './js/lockingview.js?v=4b64d072';
+import { lockedURL, unlockedURL, signInOrder, autoTryPasskey, methodLabel } from './js/locking.js?v=198c7ce4';
+import { requestOptions, assertionJSON, ceremonyError } from './js/passkeys.js?v=0fe3526c';
 
 const params = new URLSearchParams(location.search);
 const demoParam = params.get('demo');
@@ -738,7 +738,7 @@ async function initGlobe() {
   let map = null;
   if (params.get('nogl') !== '1') {
     try {
-      const { Globe, webglAvailable } = await import('./js/globe.js');
+      const { Globe, webglAvailable } = await import('./js/globe.js?v=155edfa1');
       if (webglAvailable()) map = new Globe($('#stage'), opts);
     } catch (err) {
       if (DEBUG) console.warn('3d globe unavailable:', err && err.message);
@@ -746,7 +746,7 @@ async function initGlobe() {
   }
   const flat = !map;
   if (flat) {
-    const { FlatMap, canvas2dAvailable } = await import('./js/flatmap.js');
+    const { FlatMap, canvas2dAvailable } = await import('./js/flatmap.js?v=1f55b3c4');
     if (!canvas2dAvailable()) throw new Error('no canvas');
     map = new FlatMap($('#stage'), opts);
     document.body.classList.add('flatmap');

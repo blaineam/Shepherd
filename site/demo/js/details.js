@@ -3,9 +3,9 @@
 // list and top lists that used to share this screen live on the Map,
 // History and Bandwidth screens. Names and reasons come from the network,
 // so every value is placed with textContent, never innerHTML.
-import { $, el } from './dom.js';
-import { fmtNum, fmtUptime } from './format.js';
-import { updateLine, rollbackLine, dataDirLine, overBudget } from './update.js';
+import { $, el } from './dom.js?v=65858b99';
+import { fmtNum, fmtUptime } from './format.js?v=86b54455';
+import { updateLine, rollbackLine, dataDirLine, overBudget } from './update.js?v=cc2fe6cd';
 
 export function createDetails({ api, notify, onRulesChanged = () => {} }) {
   function fillList(id, items, build) {

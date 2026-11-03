@@ -9,11 +9,11 @@
 // with its own "Scan now"; this page is the cross-network, searchable view,
 // and clicking a row opens that same device's drawer rather than
 // duplicating the finding detail rendering a second time.
-import { el } from './dom.js';
-import { icon, button, segmented, emptyState, unavailableCard, relTime } from './ui.js';
-import { unavailable } from './mgmt.js';
-import { SEVERITIES, severityLabel, severityBadgeClass } from './alarms.js';
-import { flattenFindings, matchRow, scanSummary, findingTooltip, feedSummary } from './vulnscan.js';
+import { el } from './dom.js?v=65858b99';
+import { icon, button, segmented, emptyState, unavailableCard, relTime } from './ui.js?v=c9bbb094';
+import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { SEVERITIES, severityLabel, severityBadgeClass } from './alarms.js?v=a5e2e2d9';
+import { flattenFindings, matchRow, scanSummary, findingTooltip, feedSummary } from './vulnscan.js?v=31027ae4';
 
 const STATES = [['active', 'Active'], ['resolved', 'Resolved']];
 

@@ -3,7 +3,7 @@
 // server (internal/watch) decides everything; nothing here guesses a
 // state, it only names what came back. Kept separate from watchview.js so
 // all of it is unit-tested (test/watch.test.js) with no DOM.
-import { fmtBytes } from './weight.js';
+import { fmtBytes } from './weight.js?v=8da15ceb';
 
 // The three positions of a device's own Watch switch, matching
 // devices.WatchMode in Go.

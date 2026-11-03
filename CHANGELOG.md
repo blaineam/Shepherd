@@ -13,6 +13,15 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- The public demo's modules are stamped with a content hash, so a returning visitor can no longer be served a fresh
+  `app.js` alongside modules cached from an earlier version. The site's CDN serves `.js` with a year-long lifetime, and
+  the cache buster on the site side can only stamp URLs written in HTML or CSS — not the ~70 modules `app.js` imports.
+  `scripts/sync-site-demo` now rewrites those imports through the new `cmd/stamp-demo-modules`, hashing bottom-up so a
+  change in any module changes the URL of everything that reaches it. See
+  [docs/PORTAL.md](docs/PORTAL.md#the-public-demo-and-why-its-imports-carry-a-hash).
+
 ## [1.0.0] - 2026-11-03
 
 The first stable release, and with it the promise 1.0.0 is for: **`shepherd.toml` and the portal API

@@ -4,16 +4,16 @@
 // bulkbar for the selection, openMenu for per-action choices). Alarm text
 // (title, body, evidence) comes from the server, so it is placed with
 // textContent throughout.
-import { el } from './dom.js';
-import { icon, iconButton, button, segmented, emptyState, unavailableCard, confirmDialog, openMenu, relTime } from './ui.js';
-import { unavailable } from './mgmt.js';
-import { Selection } from './selection.js';
-import { pushSupport, permissionLine, urlBase64ToUint8Array, subscribeBody, defaultDeviceName, deviceLine, isThisBrowser, ntfyStatusLine, ntfyFields, ntfySaveBody, suggestTopic, NTFY_STEPS } from './push.js';
+import { el } from './dom.js?v=65858b99';
+import { icon, iconButton, button, segmented, emptyState, unavailableCard, confirmDialog, openMenu, relTime } from './ui.js?v=c9bbb094';
+import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { Selection } from './selection.js?v=209c4209';
+import { pushSupport, permissionLine, urlBase64ToUint8Array, subscribeBody, defaultDeviceName, deviceLine, isThisBrowser, ntfyStatusLine, ntfyFields, ntfySaveBody, suggestTopic, NTFY_STEPS } from './push.js?v=3cd5ae11';
 import {
   SEVERITIES, STATES, severityLabel, severityBadgeClass, stateLabel,
   MUTE_PRESETS, MUTE_SCOPES, bulkSummary, ruleMatchSummary, feedLine, matchLine,
   hoursOf, deliveryLine, digestFromForm,
-} from './alarms.js';
+} from './alarms.js?v=a5e2e2d9';
 
 const PAGE_SIZE = 50;
 

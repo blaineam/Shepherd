@@ -1,14 +1,14 @@
 // The 3D globe: WebGL scene, controls and picking. All rendering state lives
 // in preallocated typed arrays feeding instanced buffers, so a frame allocates
 // nothing and ~900 ribbons (300 lanes + 600 comets) draw in a handful of calls.
-import * as THREE from '../vendor/three.module.min.js';
+import * as THREE from '../vendor/three.module.min.js?v=6bff6b08';
 import {
   DEG, latLonToVec3, vec3ToLatLon, slerp, arcPoint, segmentHitsSphere, dampVelocity, clamp, normalizeLon,
-} from './geo.js';
-import { weightScale, widthPx, baseAlpha } from './weight.js';
-import { landPolygons, sampleLandPoints, coastSegments } from './topo.js';
-import * as SH from './shaders.js';
-import { LANE_CAP, COMET_CAP, PULSE_CAP, COLORS } from './palette.js';
+} from './geo.js?v=248f9f1a';
+import { weightScale, widthPx, baseAlpha } from './weight.js?v=8da15ceb';
+import { landPolygons, sampleLandPoints, coastSegments } from './topo.js?v=e9bc6869';
+import * as SH from './shaders.js?v=f7251b81';
+import { LANE_CAP, COMET_CAP, PULSE_CAP, COLORS } from './palette.js?v=93b6b93c';
 
 export { LANE_CAP, COMET_CAP, PULSE_CAP, COLORS };
 const SEG = 40;

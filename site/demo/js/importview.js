@@ -2,9 +2,9 @@
 // the code eero sends), a CSV file upload, a dry-run preview and an apply
 // step. Everything from either source is untrusted third-party text and is
 // only ever placed with textContent (see dom.js's el and ui.js's chip/field).
-import { el } from './dom.js';
-import { button, iconButton, segmented } from './ui.js';
-import { validLogin, validCode, reportRows, reportTitle } from './import.js';
+import { el } from './dom.js?v=65858b99';
+import { button, iconButton, segmented } from './ui.js?v=c9bbb094';
+import { validLogin, validCode, reportRows, reportTitle } from './import.js?v=c3e33f93';
 
 export function createImportModal({ mgmt, notify, onImported }) {
   let overlay = null;

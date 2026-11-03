@@ -1,5 +1,5 @@
 // Investigation view logic: ranges, query building, paging backwards in time.
-import { normalizeEntry } from './entry.js';
+import { normalizeEntry } from './entry.js?v=de62f770';
 
 export const RANGES = [
   { id: '1h', label: 'Last hour', ms: 3600000 },

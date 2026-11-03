@@ -2,11 +2,11 @@
 // form, and the list of proxied hosts with enable, edit and remove. Every
 // name and address comes from the server or the owner's typing, so all
 // text is set with textContent and links are built as properties.
-import { el } from './dom.js';
-import { button, iconButton, toggle, emptyState, unavailableCard, confirmDialog } from './ui.js';
-import { unavailable } from './mgmt.js';
-import { parseTarget, formatTarget, formatAllow, hostWarnings, hostBadges, sortHosts, filterHosts, certSummary, hostBody, publicURL } from './reverseproxy.js';
-import { dnsProviderSummary, usedByText, sourceText, tokenBody } from './secrets.js';
+import { el } from './dom.js?v=65858b99';
+import { button, iconButton, toggle, emptyState, unavailableCard, confirmDialog } from './ui.js?v=c9bbb094';
+import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { parseTarget, formatTarget, formatAllow, hostWarnings, hostBadges, sortHosts, filterHosts, certSummary, hostBody, publicURL } from './reverseproxy.js?v=ae77c7ec';
+import { dnsProviderSummary, usedByText, sourceText, tokenBody } from './secrets.js?v=c0f86999';
 
 export function createReverseProxy({ root, mgmt, notify }) {
   let status = null;

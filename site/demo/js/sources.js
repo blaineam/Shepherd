@@ -3,7 +3,7 @@
 // /api/queries?after=<last id> when SSE fails, retrying SSE now and then.
 // Like every source it exposes drain(nowMs, out), so the renderer cannot tell
 // live data from replayed or synthetic data.
-import { normalizeEntry } from './entry.js';
+import { normalizeEntry } from './entry.js?v=de62f770';
 
 const CLOSED = 2; // EventSource.CLOSED
 

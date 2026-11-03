@@ -1,6 +1,6 @@
 // In-browser stand-in for the portal API, used only in demo mode so the HUD
 // and Details view work with zero network calls. All data is synthetic.
-import { ApiError } from './api.js';
+import { ApiError } from './api.js?v=798e1c8c';
 
 export function createDemoApi({ getCounters, topClients, home, mgmt = null }) {
   const rules = { block: [], allow: [], policies: { 'apple-private-relay': true } };

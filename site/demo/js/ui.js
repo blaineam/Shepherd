@@ -1,7 +1,7 @@
 // Shared UI pieces for the management screens: icons, switches, chips,
 // popovers, menus, confirmation dialogs and toasts. All text goes in through
 // textContent; nothing here ever uses innerHTML.
-import { el } from './dom.js';
+import { el } from './dom.js?v=65858b99';
 
 const NS = 'http://www.w3.org/2000/svg';
 const P = {

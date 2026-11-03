@@ -3,7 +3,7 @@
 // scope.js, but there is no allow mechanism here: a country blocked at a
 // broader scope cannot be unblocked at a narrower one, only removed where
 // it was set. Everything here is pure and immutable, like scope.js.
-import { chainFor, sameScope } from './scope.js';
+import { chainFor, sameScope } from './scope.js?v=71a3b584';
 
 export function normalizeGeoBlock(g) {
   const q = g && typeof g === 'object' ? g : {};

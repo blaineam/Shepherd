@@ -1,4 +1,4 @@
-import { applyModeLocal } from './wander.js';
+import { applyModeLocal } from './wander.js?v=b40b3e3f';
 
 // Bulk device operations: local application (optimistic UI) and undo plans.
 

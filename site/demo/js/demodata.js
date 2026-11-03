@@ -2,12 +2,12 @@
 // resolver presets. Everything is made up. Addresses come from the RFC 5737 and
 // RFC 3849 documentation ranges, hardware addresses use the locally
 // administered 02:00:5e prefix, and every domain is under example.com/net/org.
-import { mulberry32, hash2 } from './demo.js';
-import { TYPES as ALL_TYPES, typeLabel } from './devtypes.js';
+import { mulberry32, hash2 } from './demo.js?v=e0b32cdd';
+import { TYPES as ALL_TYPES, typeLabel } from './devtypes.js?v=0c35dd83';
 
 export const DEVICE_IPS = ['192.0.2.11', '192.0.2.14', '192.0.2.23', '192.0.2.31', '192.0.2.47', '192.0.2.58', '198.51.100.8', '198.51.100.21', '198.51.100.60'];
 
-export { GROUP_COLORS } from './devtypes.js';
+export { GROUP_COLORS } from './devtypes.js?v=0c35dd83';
 
 export const DEMO_GROUPS = [
   { id: 'grp-kids', name: 'Kids', color: '#f0b64a' },

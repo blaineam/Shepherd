@@ -1,11 +1,11 @@
 // The Upstreams screen: resolver health, order, an add box that tests before
 // adding, presets, and the bootstrap resolvers. Addresses and errors come from
 // the server, so all text is set with textContent.
-import { el } from './dom.js';
-import { icon, iconButton, button, emptyState, unavailableCard, confirmDialog } from './ui.js';
-import { classifyAddr, KIND_LABEL, isEncrypted, move, presetVariants, parseBootstrap, healthLabel, selftestSummary } from './upstreams.js';
-import { unavailable } from './mgmt.js';
-import { fmtNum } from './format.js';
+import { el } from './dom.js?v=65858b99';
+import { icon, iconButton, button, emptyState, unavailableCard, confirmDialog } from './ui.js?v=c9bbb094';
+import { classifyAddr, KIND_LABEL, isEncrypted, move, presetVariants, parseBootstrap, healthLabel, selftestSummary } from './upstreams.js?v=f59ab5b8';
+import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { fmtNum } from './format.js?v=86b54455';
 
 export function createUpstreams({ root, mgmt, notify }) {
   let data = null;

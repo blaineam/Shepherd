@@ -4,10 +4,10 @@
 // item pickers here are deliberately simpler than scope.js's (that module
 // computes blocking-policy "effective" status, which has no meaning for a
 // subscription) rather than a mismatched reuse of it.
-import { el } from './dom.js';
-import { button, iconButton, toggle, emptyState, confirmDialog } from './ui.js';
-import { unavailable } from './mgmt.js';
-import { TLS_MODES, portForMode, relayStatus, relayBody, sourceText, passwordPlaceholder } from './secrets.js';
+import { el } from './dom.js?v=65858b99';
+import { button, iconButton, toggle, emptyState, confirmDialog } from './ui.js?v=c9bbb094';
+import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { TLS_MODES, portForMode, relayStatus, relayBody, sourceText, passwordPlaceholder } from './secrets.js?v=c0f86999';
 
 const DETAILS = [['summary', 'Summary — category and roughly when, never a domain'], ['detailed', 'Detailed — also names the exact domain']];
 const MODES = [['digest', 'Digest — one rollup per window'], ['immediate', 'Immediate — sent promptly, bursts still combined']];

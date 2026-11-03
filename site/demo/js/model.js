@@ -1,7 +1,7 @@
 // HUD state: lanes, filters, counters and recent events. Pure logic, no DOM.
-import { ACTIONS } from './entry.js';
-import { LaneTable } from './lanes.js';
-import { hasBytes } from './weight.js';
+import { ACTIONS } from './entry.js?v=de62f770';
+import { LaneTable } from './lanes.js?v=f5cde51a';
+import { hasBytes } from './weight.js?v=8da15ceb';
 
 export class Model {
   constructor({ laneCap = 300, recentCap = 400, halfLifeMs = 40000 } = {}) {

@@ -1,22 +1,22 @@
 // The Devices screen: a searchable, virtually scrolled table with bulk
 // actions, a group panel and a detail drawer. Names, vendors and tags come from
 // the network, so everything is placed with textContent.
-import { el } from './dom.js';
-import { createDeviceList } from './devlist.js';
-import { Selection } from './selection.js';
-import { parseQuery, stringifyQuery, addFilter, removeFilter, formatFilter, hasGroupFilter, FILTER_HELP } from './search.js';
-import { applyBulkLocal, planUndo, describeBulk, parseTags, normTag } from './bulk.js';
-import { TYPES, typeLabel, typeIcon, GROUP_COLORS } from './devtypes.js';
-import { icon, iconButton, button, chip, segmented, toggle, emptyState, openPopover, openMenu, confirmDialog, relTime, unavailableCard, debounce } from './ui.js';
-import { unavailable } from './mgmt.js';
-import { rangeWindow, fillSeries, sumPoints, areaPaths, axisLabels, timeLabels, fmtBytes } from './traffic.js';
-import { TIMER_CHOICES, MODES, deviceMode, countdown, countdownShort, modePatch, applyModeLocal } from './wander.js';
-import { reservedLabel } from './dhcp.js';
-import { createImportModal } from './importview.js';
-import { severityLabel, severityBadgeClass } from './alarms.js';
-import { activeFindings, resolvedFindings, findingTooltip } from './vulnscan.js';
-import { mergeAttention, attentionReasonLabel } from './attention.js';
-import { WATCH_CHOICES, watchSwitchOf, deviceBadge, fmtBitsPerSecond, fmtPacketsPerSecond, fmtTotalBytes } from './watch.js';
+import { el } from './dom.js?v=65858b99';
+import { createDeviceList } from './devlist.js?v=7efe674e';
+import { Selection } from './selection.js?v=209c4209';
+import { parseQuery, stringifyQuery, addFilter, removeFilter, formatFilter, hasGroupFilter, FILTER_HELP } from './search.js?v=6d6c330f';
+import { applyBulkLocal, planUndo, describeBulk, parseTags, normTag } from './bulk.js?v=a92cfb00';
+import { TYPES, typeLabel, typeIcon, GROUP_COLORS } from './devtypes.js?v=0c35dd83';
+import { icon, iconButton, button, chip, segmented, toggle, emptyState, openPopover, openMenu, confirmDialog, relTime, unavailableCard, debounce } from './ui.js?v=c9bbb094';
+import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { rangeWindow, fillSeries, sumPoints, areaPaths, axisLabels, timeLabels, fmtBytes } from './traffic.js?v=cd821019';
+import { TIMER_CHOICES, MODES, deviceMode, countdown, countdownShort, modePatch, applyModeLocal } from './wander.js?v=b40b3e3f';
+import { reservedLabel } from './dhcp.js?v=769b13a6';
+import { createImportModal } from './importview.js?v=0a7ab1c5';
+import { severityLabel, severityBadgeClass } from './alarms.js?v=a5e2e2d9';
+import { activeFindings, resolvedFindings, findingTooltip } from './vulnscan.js?v=31027ae4';
+import { mergeAttention, attentionReasonLabel } from './attention.js?v=e8e791aa';
+import { WATCH_CHOICES, watchSwitchOf, deviceBadge, fmtBitsPerSecond, fmtPacketsPerSecond, fmtTotalBytes } from './watch.js?v=79562f0e';
 
 const OVER = 6;
 const rowHeight = () => (window.matchMedia && window.matchMedia('(max-width: 760px)').matches ? 88 : 56);

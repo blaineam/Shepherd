@@ -1,7 +1,7 @@
 // Proxy host validation, backend parsing and certificate wording. Pure.
 // The server validates everything again (internal/reverseproxy); this is
 // here so a typo is explained while typing instead of after a round trip.
-import { isIPv4, isIPv6 } from './upstreams.js';
+import { isIPv4, isIPv6 } from './upstreams.js?v=f59ab5b8';
 
 const LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
