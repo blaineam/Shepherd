@@ -96,8 +96,11 @@ type Status struct {
 	Estimated bool `json:"estimated"`
 	// Interval between polls.
 	IntervalSeconds int `json:"interval_seconds"`
-	// LastPoll is when a poll last succeeded; zero means never.
-	LastPoll time.Time `json:"last_poll,omitempty"`
+	// LastPoll is when a poll last succeeded, nil until one has. It is a
+	// pointer because encoding/json's omitempty does not omit a zero
+	// time.Time, and a zero timestamp in the JSON reads to the portal as
+	// "it has polled", which is the opposite of the truth.
+	LastPoll *time.Time `json:"last_poll,omitempty"`
 	// DevicesSeen is how many devices the last successful poll returned,
 	// and Matched how many of those are known to the device registry.
 	DevicesSeen int `json:"devices_seen"`

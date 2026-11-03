@@ -4,9 +4,11 @@ package routerusage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -326,7 +328,7 @@ func TestAFailedPollIsReportedAndLoggedOnceUntilItRecovers(t *testing.T) {
 	)
 	h.step(0)
 	st := h.c.Status()
-	if st.LastError == "" || st.NeedsSignIn || !st.LastPoll.IsZero() {
+	if st.LastError == "" || st.NeedsSignIn || st.LastPoll != nil {
 		t.Fatalf("status = %+v", st)
 	}
 	h.step(time.Second)
@@ -334,7 +336,7 @@ func TestAFailedPollIsReportedAndLoggedOnceUntilItRecovers(t *testing.T) {
 		t.Fatalf("the same failure was logged %d times: %v", len(lines), lines)
 	}
 	h.step(time.Second)
-	if st := h.c.Status(); st.LastError != "" || st.LastPoll.IsZero() {
+	if st := h.c.Status(); st.LastError != "" || st.LastPoll == nil {
 		t.Fatalf("status after recovery = %+v", st)
 	}
 	if len(lines) != 2 {
@@ -597,5 +599,22 @@ func waitPoll(t *testing.T, ch chan struct{}) {
 	case <-ch:
 	case <-time.After(2 * time.Second):
 		t.Fatal("the collector never polled")
+	}
+}
+
+// A zero timestamp in the JSON would read to the portal as "it has
+// polled", so an unpolled collector must omit the field entirely.
+func TestStatusOmitsTheLastPollUntilThereHasBeenOne(t *testing.T) {
+	h := newHarness(t, KindRates, nil, samples(Sample{MAC: "aa:bb:cc:00:00:0a"}))
+	b, err := json.Marshal(h.c.Status())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "last_poll") {
+		t.Fatalf("an unpolled collector reported a last poll: %s", b)
+	}
+	h.step(0)
+	if b, _ := json.Marshal(h.c.Status()); !strings.Contains(string(b), "last_poll") {
+		t.Fatalf("after a poll the time is missing: %s", b)
 	}
 }

@@ -156,7 +156,8 @@ func (c *Collector) pollOnce(ctx context.Context) {
 	}
 	c.mu.Lock()
 	hadError := c.status.LastError != ""
-	c.status.LastPoll, c.status.DevicesSeen, c.status.Matched = now, seen, matched
+	at := now
+	c.status.LastPoll, c.status.DevicesSeen, c.status.Matched = &at, seen, matched
 	c.status.LastError, c.status.NeedsSignIn = "", false
 	c.mu.Unlock()
 	if hadError {
