@@ -81,6 +81,18 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   no key built in and still refuses to apply anything; it has to be replaced by hand once.
 
 ### Changed
+- **The lock screen leads with one way in, and tries a passkey by itself.** It used to show the PIN
+  and token forms together, plus a passkey button where one was available, leaving the owner to pick
+  between things only one of which they could usually use. It now asks the server what is actually
+  available to this browser (`GET /api/login/methods`, which replaces `GET /api/login/passkey`) and
+  expands the first of **passkey, PIN, token** that is; the rest become a quiet line of links. The
+  token is never hidden, only collapsed — it is the way back in when a phone is lost or a PIN is
+  forgotten. Where a passkey is the way in, the ceremony now starts without being asked: once, and
+  only on a page that is actually being looked at, so a cancelled attempt leaves the button rather
+  than prompting in a loop. The new endpoint tells a browser without a trusted-device cookie that no
+  PIN is available, which is the truth for it and says nothing about whether anyone else has one.
+
+### Changed
 - **Watch mode is deprecated.** Per-device bandwidth now comes from the router over its own API
   (eero and UniFi), which measures both directions instead of estimating downloads, puts nothing in
   the path of your traffic, changes no setting on your router, and works on mesh networks where

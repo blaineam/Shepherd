@@ -151,8 +151,8 @@ func TestPasskeyRegisterThenUnlockWithIt(t *testing.T) {
 	if p.unlocked(c) {
 		t.Fatal("still unlocked after Lock")
 	}
-	avail := decodeJSON(t, p.send(c, "GET", "/api/login/passkey", ""))
-	if avail["available"] != true {
+	avail := decodeJSON(t, p.send(c, "GET", "/api/login/methods", ""))
+	if avail["passkey"] != true {
 		t.Fatalf("lock screen availability = %v", avail)
 	}
 
@@ -188,7 +188,7 @@ func TestPasskeysNeedTLSAndSayWhyBeforeAnyCeremony(t *testing.T) {
 	if code != http.StatusConflict || !strings.Contains(body, "[tls]") {
 		t.Errorf("register begin without [tls] = %d %q, want 409 naming [tls]", code, body)
 	}
-	if h.ok("GET", "/api/login/passkey", "", http.StatusOK)["available"] != false {
+	if h.ok("GET", "/api/login/methods", "", http.StatusOK)["passkey"] != false {
 		t.Error("the lock screen must not offer passkeys without [tls]")
 	}
 	if code, _ := h.call("POST", "/api/login/passkey/begin", ""); code != http.StatusConflict {
@@ -236,8 +236,8 @@ func TestPasskeyLoginOffSiteRevealsNothing(t *testing.T) {
 	// A visitor on the plain-HTTP listener sees no passkey option and no
 	// hostname, even though passkeys exist.
 	anon := jarClient(t)
-	av := decodeJSON(t, req(t, anon, "GET", p.ts.URL+"/api/login/passkey", "", nil))
-	if av["available"] != false {
+	av := decodeJSON(t, req(t, anon, "GET", p.ts.URL+"/api/login/methods", "", nil))
+	if av["passkey"] != false {
 		t.Errorf("availability over plain HTTP = %v", av)
 	}
 	res := req(t, anon, "POST", p.ts.URL+"/api/login/passkey/begin", "", nil)
@@ -260,7 +260,7 @@ func TestPasskeyRegistrationNeedsAnUnlockedSession(t *testing.T) {
 	if res := p.send(c, "POST", "/api/login/passkey/begin", ""); res.StatusCode != http.StatusConflict {
 		t.Errorf("login begin with nothing registered = %d, want 409", res.StatusCode)
 	}
-	if av := decodeJSON(t, p.send(c, "GET", "/api/login/passkey", "")); av["available"] != false {
+	if av := decodeJSON(t, p.send(c, "GET", "/api/login/methods", "")); av["passkey"] != false {
 		t.Errorf("available with nothing registered = %v", av)
 	}
 }
@@ -440,7 +440,7 @@ func TestPasskeyRenameAndRevoke(t *testing.T) {
 		t.Error("revoking a passkey must not end the token session that revoked it")
 	}
 	p.expect("DELETE", "/api/passkeys/"+id, "", http.StatusNotFound)
-	if av := decodeJSON(t, p.send(c, "GET", "/api/login/passkey", "")); av["available"] != false {
+	if av := decodeJSON(t, p.send(c, "GET", "/api/login/methods", "")); av["passkey"] != false {
 		t.Error("with its only passkey revoked, the lock screen stops offering passkeys")
 	}
 }
@@ -508,7 +508,7 @@ func TestACorruptPasskeyFileDisablesOnlyPasskeys(t *testing.T) {
 	}
 	h.expect("PATCH", "/api/passkeys/x", `{"name":"y"}`, http.StatusServiceUnavailable)
 	h.expect("DELETE", "/api/passkeys/x", "", http.StatusServiceUnavailable)
-	if h.ok("GET", "/api/login/passkey", "", http.StatusOK)["available"] != false {
+	if h.ok("GET", "/api/login/methods", "", http.StatusOK)["passkey"] != false {
 		t.Error("a corrupt file must hide the lock screen option")
 	}
 	// The token still works, and the file was not overwritten.
@@ -612,13 +612,13 @@ func TestPasskeysFromAnOldHostnameAreListedButNotOffered(t *testing.T) {
 	}
 	ts := httptest.NewTLSServer(h2.srv.Handler())
 	t.Cleanup(ts.Close)
-	r, _ := http.NewRequest("GET", ts.URL+"/api/login/passkey", nil)
+	r, _ := http.NewRequest("GET", ts.URL+"/api/login/methods", nil)
 	r.Host = "portal.example.com:8443"
 	res, err := ts.Client().Do(r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if av := decodeJSON(t, res); av["available"] != false {
+	if av := decodeJSON(t, res); av["passkey"] != false {
 		t.Errorf("with only a passkey for the old hostname, availability = %v, want false", av)
 	}
 }

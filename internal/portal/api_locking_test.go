@@ -702,3 +702,54 @@ func TestTokenRotationAcrossRestartRevokesPINAndTrustedDevices(t *testing.T) {
 		t.Error("rotating the token should have cleared every trusted device")
 	}
 }
+
+func TestLoginMethodsSaysWhatThisBrowserCanActuallyUse(t *testing.T) {
+	// The lock screen leads with one way in (docs/LOCKING.md), so it has
+	// to be told which ones are real for the browser asking.
+	h, _ := lockingHarness(t)
+	client := jarClient(t)
+
+	// Nothing set up: only the token, which is not listed because it
+	// always works and is never the thing in question.
+	m := decodeJSON(t, req(t, client, "GET", h.ts.URL+"/api/login/methods", "", nil))
+	if m["pin"] != false || m["passkey"] != false {
+		t.Errorf("a fresh install = %v", m)
+	}
+
+	loginWithToken(t, h, client)
+	if res := req(t, client, "POST", h.ts.URL+"/api/pin", `{"pin":"a1b2c3"}`, withCSRF); res.StatusCode != http.StatusOK {
+		t.Fatalf("set PIN = %d", res.StatusCode)
+	}
+	// This browser is trusted now, so its PIN is a way in even after the
+	// session goes.
+	req(t, client, "POST", h.ts.URL+"/api/lock", "", withCSRF)
+	if m := decodeJSON(t, req(t, client, "GET", h.ts.URL+"/api/login/methods", "", nil)); m["pin"] != true {
+		t.Errorf("a trusted browser with a PIN = %v", m)
+	}
+
+	// A browser without the trusted cookie is told false -- which is the
+	// truth for it: a PIN alone unlocks nothing from an untrusted browser,
+	// and it learns nothing about whether anyone else has one.
+	anon := jarClient(t)
+	if m := decodeJSON(t, req(t, anon, "GET", h.ts.URL+"/api/login/methods", "", nil)); m["pin"] != false {
+		t.Errorf("an untrusted browser = %v", m)
+	}
+
+	// And once the PIN is gone, so is the offer.
+	loginWithToken(t, h, client)
+	if res := req(t, client, "DELETE", h.ts.URL+"/api/pin", "", withCSRF); res.StatusCode != http.StatusOK {
+		t.Fatalf("clear PIN = %d", res.StatusCode)
+	}
+	if m := decodeJSON(t, req(t, client, "GET", h.ts.URL+"/api/login/methods", "", nil)); m["pin"] != false {
+		t.Errorf("after clearing the PIN = %v", m)
+	}
+}
+
+func TestLoginMethodsNeedsNoSession(t *testing.T) {
+	// It is read by someone who is not signed in; that is the whole point.
+	h, _ := lockingHarness(t)
+	res := req(t, jarClient(t), "GET", h.ts.URL+"/api/login/methods", "", nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("= %d, want 200 without a session", res.StatusCode)
+	}
+}

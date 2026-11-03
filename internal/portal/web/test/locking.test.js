@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lockedURL, unlockedURL, isLockedDemo, pinIssue, idleChoices, IDLE_STOPS } from '../js/locking.js';
+import { lockedURL, unlockedURL, isLockedDemo, pinIssue, idleChoices, IDLE_STOPS, signInOrder, autoTryPasskey, methodLabel } from '../js/locking.js';
 
 test('lockedURL sets demo and locked, keeping other params', () => {
   const u = lockedURL('http://x.invalid/?foo=bar');
@@ -57,4 +57,40 @@ test('idleChoices includes the fixed stops and preserves a custom value', () => 
 test('idleChoices labels 0 as Never', () => {
   const choices = idleChoices(0);
   assert.equal(choices[0].label, 'Never');
+});
+
+test('signInOrder leads with the best way in this browser actually has', () => {
+  // Everything available: the passkey is the one with nothing to type.
+  assert.deepEqual(signInOrder({ passkey: true, pin: true }, { hasWebAuthn: true, secureContext: true }),
+    ['passkey', 'pin', 'token']);
+  // A registered passkey is no use without WebAuthn or a secure context,
+  // whatever the server says.
+  assert.deepEqual(signInOrder({ passkey: true, pin: true }, { hasWebAuthn: false, secureContext: true }),
+    ['pin', 'token']);
+  assert.deepEqual(signInOrder({ passkey: true, pin: true }, { hasWebAuthn: true, secureContext: false }),
+    ['pin', 'token']);
+  // A browser that is not trusted has no PIN to offer.
+  assert.deepEqual(signInOrder({ passkey: false, pin: false }, {}), ['token']);
+  // The token is always there: it is the way back in when the rest is gone.
+  assert.ok(signInOrder({}, {}).includes('token'));
+  assert.ok(signInOrder(null, {}).includes('token'));
+});
+
+test('autoTryPasskey only when the passkey leads, the page is looked at, and once', () => {
+  const order = ['passkey', 'pin', 'token'];
+  assert.equal(autoTryPasskey({ order, visible: true, tried: false }), true);
+  // Not on a background tab: an unasked-for prompt on a tab nobody is
+  // looking at is an interruption.
+  assert.equal(autoTryPasskey({ order, visible: false, tried: false }), false);
+  // Not twice: a cancelled attempt must leave the button, not loop.
+  assert.equal(autoTryPasskey({ order, visible: true, tried: true }), false);
+  // Not when the passkey is only an alternative.
+  assert.equal(autoTryPasskey({ order: ['pin', 'token'], visible: true, tried: false }), false);
+  assert.equal(autoTryPasskey({}), false);
+});
+
+test('methodLabel names the alternatives the way they would be looked for', () => {
+  assert.match(methodLabel('passkey'), /passkey/i);
+  assert.match(methodLabel('pin'), /PIN/);
+  assert.match(methodLabel('token'), /token/i);
 });
