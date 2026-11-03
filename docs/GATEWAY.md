@@ -7,6 +7,24 @@ Status: **design only.** Nothing here is built. The purpose of the document is t
 decisions visible before any of it is, and to record which of them are the maintainer's rather
 than mine.
 
+**Where this stands, 2026-11-03.** The bandwidth this was for is now read from the router's own
+API instead (eero and UniFi; [TRAFFIC.md](TRAFFIC.md)), which is where the project is going, and
+Watch mode is deprecated. Two findings from the Watch-mode work land squarely here, though, and
+are the reason this document is kept rather than closed:
+
+- **Source NAT is what stopped the frame reflection.** The eero gateway reflects a forwarded frame
+  only when it carries a foreign source IP out of the interface it arrived on. Masquerading the
+  forwarded traffic to Shepherd's own address ended it: 0/10 → 10/10 on the big-first-segment
+  probe, 25/25 `gh api` calls, zero reflected frames, 24 MB/s up and 46–75 MB/s down. So the
+  reflection is not a reason this design cannot work — it is a reason it must NAT.
+- **NAT also fixes the one-sided blind spot**, because return traffic then comes back through
+  Shepherd and downloads are measured rather than estimated from acknowledgements.
+
+If this is ever built, the shape to build is the **DHCP/NAT mode** below (what Firewalla calls
+Simple mode): Shepherd serves the LAN's DHCP and NATs what it forwards. That is a deliberate
+feature with real costs — double NAT while the eero is still routing, which touches UPnP/NAT-PMP,
+port forwards and console NAT type — not a default to flip on.
+
 ## Why this and not Watch mode
 
 The goal is **per-device bandwidth, and ideally per-destination bandwidth**, alongside the DNS

@@ -24,7 +24,14 @@ export function createWatch({ root, mgmt, notify, onOpenDevice = null, embedded 
   root.replaceChildren();
   const body = el('div', 'wm-body');
   if (embedded) {
-    root.append(el('h3', 'sec-t', 'Watch mode'), el('p', 'muted small sec-sub', 'Watch mode steers each device’s outbound traffic through Shepherd on its way to your router, which is how bandwidth is measured and how Shepherd sees connections that never ask it for a name. Nothing here blocks anything.'), body);
+    const title = el('h3', 'sec-t', 'Watch mode');
+    title.append(el('span', 'wm-dep-tag', 'Deprecated'));
+    root.append(
+      title,
+      el('p', 'muted small sec-sub', 'Watch mode steers each device’s outbound traffic through Shepherd on its way to your router, so Shepherd sees connections that never ask it for a name. Nothing here blocks anything.'),
+      el('p', 'wm-dep', 'Read your bandwidth from your router instead, above: it measures downloads as well as uploads, puts nothing in the path of your traffic, and works on networks where steering cannot. Watch mode is kept for setups already using it and gets no new features.'),
+      body,
+    );
   } else {
     const head = el('div', 'pg-head stack');
     const title = el('h2', 'pg-title');

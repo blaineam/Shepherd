@@ -7,11 +7,18 @@ modes, alarms, the scanners) versus what Watch mode (one-sided ARP interception,
 [INTERCEPT.md](INTERCEPT.md)) would add on top, once it ships. Nothing here is marketing copy —
 every row reflects the real, current, honestly-documented state of the code, not an aspiration.
 
-**Watch mode is live, and on by default** (2026-10-30), after the throughput ceiling that held it
+> **Superseded, 2026-11-03.** Watch mode is deprecated and off by default, and the bandwidth it
+> was for now comes from the router's own API (eero and UniFi; [TRAFFIC.md](TRAFFIC.md)) — both
+> directions, nothing in the path of your traffic, and it works on networks where steering does
+> not. The comparison below is kept because the rest of it still holds: it is the honest account
+> of what steering buys over the baseline, and that is what made it clear the baseline plus a
+> router API covers nearly all of it. Read the "with Watch mode" column as what steering *would*
+> add, not as what you should turn on. See the status note at the top of [WATCH.md](WATCH.md).
+
+**Watch mode was live and on by default** (2026-10-30), after the throughput ceiling that held it
 back was root-caused and fixed and the relay was measured at full gigabit on real hardware. It
-runs inside `cmd/shepherd` (`internal/watch`), is managed from the portal's Watch screen, and has
-a per-device switch; see [WATCH.md](WATCH.md). The "with Watch mode" column below is what you
-get today.
+runs inside `cmd/shepherd` (`internal/watch`), is managed from the Watch mode section of the
+portal's Bandwidth screen, and has a per-device switch; see [WATCH.md](WATCH.md).
 
 | Capability | Baseline (DNS filtering + passive monitoring) | With Watch mode (one-sided ARP interception) |
 |---|---|---|

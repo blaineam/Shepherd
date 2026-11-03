@@ -286,6 +286,21 @@ export function readingNow(router) {
   return !!(r.available && r.connected && r.enabled && st.last_poll && !st.last_error);
 }
 
+// tileLabels names the three live tiles for whichever source is actually
+// producing the numbers. Watch mode relays uploads and infers downloads from
+// acknowledgements, so its labels are not true of a router reading: a UniFi
+// controller counts bytes in both directions, eero samples rates in both, and
+// neither total starts when Watch mode did. Watch mode wins when it is
+// measuring, matching the precedence in measurementNote.
+export function tileLabels(status) {
+  const s = status || {};
+  if (s.measuring) return { down: 'estimated', up: 'measured', total: 'Since Watch mode started' };
+  if (!readingNow(s.router)) return { down: '', up: '', total: 'Total so far' };
+  const src = s.router.source || 'your router';
+  const word = (s.router.status || {}).estimated ? 'sampled' : 'measured';
+  return { down: word + ' from ' + src, up: word + ' from ' + src, total: 'Since Shepherd started reading' };
+}
+
 // measurementNote is the one sentence under the live tiles saying how the
 // figures were arrived at, so an estimate is never mistaken for a count.
 export function measurementNote(status) {
