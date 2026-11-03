@@ -151,3 +151,100 @@ func TestRelayWithoutADedupRelaysEverything(t *testing.T) {
 		}
 	}
 }
+
+// wire4 / wire6 make a test frame carry the length fields a real packet does
+// (the shared helpers leave them zero, which the brake reads as "not a
+// well-formed TCP segment").
+func wire4(f []byte, payload int) []byte {
+	f = append(append([]byte(nil), f...), make([]byte, payload)...)
+	binary.BigEndian.PutUint16(f[ethHeaderLen+2:], uint16(len(f)-ethHeaderLen))
+	return f
+}
+
+func wire6(f []byte, payload int) []byte {
+	f = append(append([]byte(nil), f...), make([]byte, payload)...)
+	f[ethHeaderLen+6] = ipProtoTCP
+	binary.BigEndian.PutUint16(f[ethHeaderLen+4:], uint16(len(f)-ethHeaderLen-ipv6HeaderLen))
+	return f
+}
+
+func TestDedupLetsDuplicateAcksThroughSoLossRecoveryWorks(t *testing.T) {
+	ack := wire4(tcpFrame4(devIP, remoteIP, 50000, 443, 1000, tcpFlagACK), 0)
+	d := &Dedup{}
+	if d.Seen(ack, t0) {
+		t.Fatal("the first copy is never a duplicate")
+	}
+	// Three duplicate ACKs are what starts a fast retransmit; the brake must
+	// not eat them. Up to PureACKRepeats repeats are relayed.
+	for i := 1; i <= PureACKRepeats; i++ {
+		if d.Seen(ack, t0.Add(time.Duration(i)*20*time.Microsecond)) {
+			t.Fatalf("repeat %d of a pure ACK was dropped", i)
+		}
+	}
+	// A loop of ACKs is still contained: after that, it is dropped.
+	if !d.Seen(ack, t0.Add(time.Millisecond)) {
+		t.Fatal("a pure ACK repeated past the allowance is a loop")
+	}
+	// Once the window passes the allowance starts over.
+	if d.Seen(ack, t0.Add(time.Millisecond+2*DefaultDedupWindow)) {
+		t.Fatal("the allowance did not reset after the window")
+	}
+}
+
+func TestDedupStillDropsEverythingThatIsNotAPureAck(t *testing.T) {
+	for name, f := range map[string][]byte{
+		"data segment": wire4(tcpFrame4(devIP, remoteIP, 50000, 443, 1000, tcpFlagACK), 1200),
+		"syn":          wire4(tcpFrame4(devIP, remoteIP, 50000, 443, 0, 0x02), 0),
+		"fin ack":      wire4(tcpFrame4(devIP, remoteIP, 50000, 443, 1, tcpFlagACK|0x01), 0),
+		"rst":          wire4(tcpFrame4(devIP, remoteIP, 50000, 443, 1, 0x04|tcpFlagACK), 0),
+		"no ack flag":  wire4(tcpFrame4(devIP, remoteIP, 50000, 443, 1, 0), 0),
+		"v6 data":      wire6(tcpFrame6(devIP6, someV6, 40000, 80, 1, tcpFlagACK), 500),
+	} {
+		d := &Dedup{}
+		if d.Seen(f, t0) || !d.Seen(f, t0.Add(10*time.Microsecond)) {
+			t.Errorf("%s: the second copy should be dropped at once", name)
+		}
+	}
+}
+
+func TestDedupAllowsDuplicateAcksOverIPv6Too(t *testing.T) {
+	ack := wire6(tcpFrame6(devIP6, someV6, 40000, 80, 7, tcpFlagACK), 0)
+	d := &Dedup{}
+	d.Seen(ack, t0)
+	for i := 1; i <= PureACKRepeats; i++ {
+		if d.Seen(ack, t0.Add(time.Duration(i)*time.Microsecond)) {
+			t.Fatalf("repeat %d of an IPv6 pure ACK was dropped", i)
+		}
+	}
+	if !d.Seen(ack, t0.Add(time.Millisecond)) {
+		t.Fatal("an IPv6 ACK loop must still be contained")
+	}
+}
+
+func TestIsPureACKRejectsMalformedAndNonTCP(t *testing.T) {
+	good := wire4(tcpFrame4(devIP, remoteIP, 1, 2, 3, tcpFlagACK), 0)
+	if !isPureACK(good) {
+		t.Fatal("a well-formed ACK was not recognised")
+	}
+	udp := append([]byte(nil), good...)
+	udp[ethHeaderLen+9] = 17
+	badIHL := append([]byte(nil), good...)
+	badIHL[ethHeaderLen] = 0x42
+	badTot := append([]byte(nil), good...)
+	binary.BigEndian.PutUint16(badTot[ethHeaderLen+2:], 10)
+	badOff := append([]byte(nil), good...)
+	badOff[ethHeaderLen+ipv4HeaderMinLen+12] = 2 << 4
+	v6udp := wire6(tcpFrame6(devIP6, someV6, 1, 2, 3, tcpFlagACK), 0)
+	v6udp[ethHeaderLen+6] = 17
+	arpish := append([]byte(nil), good...)
+	binary.BigEndian.PutUint16(arpish[12:14], 0x0806)
+	for name, f := range map[string][]byte{
+		"udp": udp, "bad header length": badIHL, "total shorter than header": badTot, "bad data offset": badOff,
+		"truncated": good[:ethHeaderLen+ipv4HeaderMinLen+8], "v6 non-tcp": v6udp, "not ip": arpish, "tiny": good[:10],
+		"v6 truncated": wire6(tcpFrame6(devIP6, someV6, 1, 2, 3, tcpFlagACK), 0)[:ethHeaderLen+ipv6HeaderLen+4],
+	} {
+		if isPureACK(f) {
+			t.Errorf("%s was taken for a pure ACK", name)
+		}
+	}
+}
