@@ -91,29 +91,57 @@ export function suggestTopic(bytes) {
   return 'shepherd-' + (s || 'alarms');
 }
 
-// ntfyStatusLine says whether ntfy is on, from the server's ntfy status.
+// ntfyStatusLine says whether ntfy is set up, switched off, or delivering.
 export function ntfyStatusLine(ntfy) {
   const n = ntfy || {};
-  if (!n.enabled) return { tone: 'muted', text: 'ntfy is off. Follow the steps below to turn it on.' };
+  if (!n.configured && !n.server) return { tone: 'muted', text: 'ntfy is not set up. Fill in the server and topic below.' };
   const where = (n.server || '') + (n.topic ? ' / ' + n.topic : '');
+  if (!n.enabled) return { tone: 'warn', text: 'ntfy is set up for ' + where + ' but switched off, so no alarms are published to it.' };
   return { tone: 'good', text: 'ntfy is on and publishing alarms to ' + where + '. Subscribe to that topic in the ntfy app, then send a test notification.' };
 }
 
-// ntfySnippet is the shepherd.toml section to paste. Credentials are never
-// written for the owner; a protected server gets a commented hint.
-export function ntfySnippet({ server, topic } = {}) {
-  return [
-    '[alarms.ntfy]',
-    'enabled = true',
-    'server = "' + (server || NTFY_DEFAULT_SERVER) + '"',
-    'topic = "' + (topic || 'shepherd-alarms') + '"',
-    '# token = ""        # only for a server that needs a login',
-  ].join('\n');
+// ntfyFields is what the form shows for a stored (or empty) ntfy document:
+// the values to prefill, and placeholders that say when a credential is
+// already stored without ever carrying it. The API never sends a saved
+// token or password back, so "leave blank to keep it" is the only honest
+// thing the form can say.
+export function ntfyFields(ntfy, suggested) {
+  const n = ntfy || {};
+  return {
+    server: n.server || NTFY_DEFAULT_SERVER,
+    topic: n.topic || suggested || 'shepherd-alarms',
+    username: n.username || '',
+    tokenPlaceholder: n.has_token ? 'a token is stored; leave blank to keep it' : 'only for a server that needs a login',
+    passwordPlaceholder: n.has_password ? 'a password is stored; leave blank to keep it' : '',
+    enabled: n.enabled !== false,
+  };
 }
 
+// ntfySaveBody is the PUT body for what was typed. A blank credential means
+// "keep what is stored", which the server honours only for the same server,
+// so moving to another server always asks for it again.
+export function ntfySaveBody(form, ntfy) {
+  const n = ntfy || {};
+  const body = {
+    server: (form.server || '').trim(),
+    topic: (form.topic || '').trim(),
+    username: (form.username || '').trim(),
+    enabled: form.enabled !== false,
+  };
+  const token = (form.token || '').trim();
+  if (token) body.token = token;
+  else if (n.has_token && form.clearToken) body.clear_token = true;
+  const password = form.password || '';
+  if (password) body.password = password;
+  else if (n.has_password && form.clearPassword) body.clear_password = true;
+  return body;
+}
+
+// NTFY_STEPS is what the owner does on their phone. Shepherd's own side is
+// the form below them, not a file to edit: no feature of Shepherd should
+// need shepherd.toml opened.
 export const NTFY_STEPS = [
   'Install the ntfy app on your phone (App Store or Google Play), or open the ntfy web app. The free public server at ntfy.sh works with no account; you can also run your own.',
-  'In the app, tap + and subscribe to a topic name. Pick one nobody can guess: on a public server anyone who knows the topic can read it.',
-  'Paste the section below into shepherd.toml, using the same topic, and restart Shepherd.',
-  'Come back here and press Send a test notification. It should arrive in the ntfy app within a few seconds.',
+  'In the app, tap + and subscribe to the topic below. Pick one nobody can guess: on a public server anyone who knows the topic can read it.',
+  'Press Save. Shepherd publishes one notification straight away to prove it works; it should arrive within a few seconds.',
 ];

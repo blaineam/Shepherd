@@ -27,9 +27,11 @@ type secretsRig struct {
 	mu        sync.Mutex
 	dnsChecks []secrets.DNSProvider
 	smtpCheck []secrets.SMTP
+	ntfySends []secrets.Ntfy
 	changed   []string
 	dnsErr    error
 	smtpErr   error
+	ntfyErr   error
 }
 
 // snapshot returns copies of what the rig recorded, under its lock (the
@@ -49,6 +51,13 @@ func (r *secretsRig) set(f func(*secretsRig)) {
 func (r *secretsRig) dns() []secrets.DNSProvider { d, _, _ := r.snapshot(); return d }
 func (r *secretsRig) smtp() []secrets.SMTP       { _, m, _ := r.snapshot(); return m }
 func (r *secretsRig) changes() []string          { _, _, c := r.snapshot(); return c }
+
+// ntfy returns every notification the portal published to check a server.
+func (r *secretsRig) ntfy() []secrets.Ntfy {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]secrets.Ntfy(nil), r.ntfySends...)
+}
 
 func (h *harness) withSecrets() (*secrets.Store, *secretsRig) {
 	h.t.Helper()
@@ -70,6 +79,12 @@ func (h *harness) withSecrets() (*secrets.Store, *secretsRig) {
 		defer rig.mu.Unlock()
 		rig.smtpCheck = append(rig.smtpCheck, m)
 		return rig.smtpErr
+	}
+	h.srv.VerifyNtfy = func(_ context.Context, n secrets.Ntfy) error {
+		rig.mu.Lock()
+		defer rig.mu.Unlock()
+		rig.ntfySends = append(rig.ntfySends, n)
+		return rig.ntfyErr
 	}
 	h.srv.OnSecretsChanged = func(kind string) {
 		rig.mu.Lock()

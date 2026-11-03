@@ -59,6 +59,26 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   and a setup listener that cannot come up at all is logged while Shepherd starts on its defaults.
   It complements `scripts/shepherd-doctor` (the read-only host preflight) rather than repeating it.
   See [docs/SETUP.md](docs/SETUP.md).
+- **ntfy is set up in the portal.** Alarms → Notifications → Set up ntfy is now a real form — server,
+  topic, access token or username and password, with Save, "send a test notification", a switch and
+  "forget server" — instead of a `shepherd.toml` section to copy and a restart. Shepherd's standing
+  rule is that no feature requires editing the configuration file, and the walk-through broke it.
+  The server lives in `<data_dir>/secrets.json` (0600) beside the mail relay and the router
+  connections (`internal/secrets`), is write-only like every other secret there (a saved token is
+  never sent back; a blank field keeps the stored one, and only for the same server, so a credential
+  can never be pointed at somewhere it was not entered for), and reaches the running delivery Router
+  through the new `Router.SetNtfy`, so nothing about ntfy needs a restart. Saving publishes one
+  notification as the check, which is also what the test button does: ntfy offers no way to ask
+  whether a server and token would work without sending something, and a refused server is reported
+  with nothing stored. `[alarms.ntfy]` in `shepherd.toml` is still read **once** and imported, so an
+  install already using it keeps working; after that the portal owns it and a startup line says so.
+  See [docs/ALARMS.md](docs/ALARMS.md).
+- **Releases are signed.** The Ed25519 release key pair exists now: the public half is built into
+  Shepherd (`update.ReleasePublicKeyB64`) and the private half is the `SHEPHERD_SIGNING_KEY`
+  repository secret, so both workflows write `SHA256SUMS.sig` beside the checksums and a running
+  Shepherd verifies it before applying an update. Until now every release was published unsigned and
+  self-update could only report that a newer version existed. A binary built before this commit has
+  no key built in and still refuses to apply anything; it has to be replaced by hand once.
 
 ### Changed
 - **Watch mode is deprecated.** Per-device bandwidth now comes from the router over its own API
@@ -83,7 +103,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   upload bar, and a trend line per busy device.
 
 ### Added
-- **DHCP mode, off by default ([docs/DHCP.md](docs/DHCP.md)).** Shepherd can serve the LAN's DHCP and
+- **DHCP mode — ALPHA, off by default ([docs/DHCP.md](docs/DHCP.md)).** Alpha means something
+  specific and the doc says it plainly: no real device has ever taken an address from it. The lease
+  exchange is tested end to end, but over loopback sockets on high ports, so the real port 67, the
+  broadcast a client needs before it has an address, and a household's traffic crossing one network
+  card twice have been reasoned about rather than measured. It is also the one thing here that can
+  take a whole network off the internet. Nothing offers it to you: it is off in the default
+  configuration, no first-run path mentions it, and the portal screen leads with all of this. Shepherd can serve the LAN's DHCP and
   masquerade the traffic of the devices it routes, so both directions of those devices' traffic pass
   through it -- downloads *measured* rather than estimated from acknowledgements, and QUIC no longer a
   blind spot. One NIC, one flat segment, the router still routing. `[dhcp] mode` has three positions
@@ -160,6 +186,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   row turn them off, and each change is logged. Filtered answers show as `ipv6-filtered` in the log.
 
 ### Fixed
+
+- **The alarm engine's test-only tick hook could wedge the worker it runs on.** The hook is called
+  inline by the worker loop, so one that blocks stops the worker, and `Close` then waits on it for
+  ever: a hung test binary rather than a failing test, which costs the whole suite its ten-minute
+  timeout instead of naming the problem. The contract is now written down on the hook, and the one
+  test that uses it signals without blocking. No change to the engine's behaviour -- nothing in the
+  public API sets the hook.
 
 - **A list refresh started from the portal was untracked once its request returned.** `POST
   /api/lists/refresh` answers `202` and refreshes in the background by design, but nothing held a

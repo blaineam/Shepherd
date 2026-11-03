@@ -925,3 +925,36 @@ func TestEngineToRouterEndToEnd(t *testing.T) {
 		t.Fatalf("held alarm not delivered: %d", push.count())
 	}
 }
+
+func TestSetNtfyReplacesTheChannelWhileTheRouterRuns(t *testing.T) {
+	// The portal owns the ntfy server (docs/ALARMS.md), so a server saved,
+	// switched off or forgotten there has to reach a Router that is
+	// already running.
+	eng, _, _ := newTestEngine(t)
+	rt := NewRouter(RouterOptions{Source: eng})
+	configured := func() bool {
+		for _, st := range rt.Status() {
+			if st.Channel == ChannelNtfy {
+				return st.Configured
+			}
+		}
+		return false
+	}
+	if configured() {
+		t.Fatal("no publisher was given, so the channel is not configured")
+	}
+	fake := &countingNtfy{}
+	rt.SetNtfy(fake)
+	if !configured() {
+		t.Error("after SetNtfy the channel should report configured")
+	}
+	rt.SetNtfy(nil)
+	if configured() {
+		t.Error("after SetNtfy(nil) the channel should report unconfigured")
+	}
+}
+
+// countingNtfy counts publishes and accepts them all.
+type countingNtfy struct{ n int }
+
+func (c *countingNtfy) Publish(context.Context, Notification) error { c.n++; return nil }
