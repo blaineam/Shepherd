@@ -22,6 +22,7 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   upload bar, and a trend line per busy device.
 
 ### Added
+- **ntfy setup walk-through** under Notifications on the Alarms screen: an expandable section with the steps, a ready-to-paste `[alarms.ntfy]` block with a hard-to-guess topic suggested, and a line saying whether ntfy is on and where it publishes (never the token). `GET /api/alarms/push` now includes an `ntfy` object.
 - **`dns.filter_aaaa`** (`"auto"` by default, or `"on"` / `"off"`). On a network whose devices have no
   IPv6 route to the internet (only private `fd..` or link-local addresses) every AAAA answer is an
   unreachable address, and a device that tries it first or handles the failure badly reports a network

@@ -8,7 +8,7 @@ import { el } from './dom.js';
 import { icon, iconButton, button, segmented, emptyState, unavailableCard, confirmDialog, openMenu, relTime } from './ui.js';
 import { unavailable } from './mgmt.js';
 import { Selection } from './selection.js';
-import { pushSupport, permissionLine, urlBase64ToUint8Array, subscribeBody, defaultDeviceName, deviceLine, isThisBrowser } from './push.js';
+import { pushSupport, permissionLine, urlBase64ToUint8Array, subscribeBody, defaultDeviceName, deviceLine, isThisBrowser, ntfyStatusLine, ntfySnippet, suggestTopic, NTFY_STEPS } from './push.js';
 import {
   SEVERITIES, STATES, severityLabel, severityBadgeClass, stateLabel,
   MUTE_PRESETS, MUTE_SCOPES, bulkSummary, ruleMatchSummary, feedLine, matchLine,
@@ -601,7 +601,35 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
     } catch (e) { notify(e.message); }
   }
 
+  // The walk-through for ntfy, always available under Notifications and
+  // open by default until ntfy is on.
+  function ntfyGuide() {
+    const n = (push && push.ntfy) || {};
+    const box = el('details', 'al-ntfy');
+    box.open = !n.enabled;
+    box.append(el('summary', '', 'Set up ntfy (phone notifications without Web Push)'));
+    const line = ntfyStatusLine(n);
+    box.append(el('p', 'al-push-line ' + line.tone, line.text));
+    const steps = el('ol', 'al-ntfy-steps');
+    for (const t of NTFY_STEPS) steps.append(el('li', '', t));
+    box.append(steps);
+    let bytes = [];
+    try { bytes = Array.from(crypto.getRandomValues(new Uint8Array(8))); } catch { /* the default topic name still works */ }
+    const snippet = el('pre', 'al-ntfy-code mono', ntfySnippet({ server: n.server, topic: n.topic || suggestTopic(bytes) }));
+    const copy = button('Copy', 'ghost', async () => {
+      try { await navigator.clipboard.writeText(snippet.textContent); notify('Copied'); } catch { notify('Select the text and copy it'); }
+    });
+    box.append(snippet, copy);
+    box.append(el('p', 'muted small', 'Self-hosting ntfy, or using a server that needs a login? Set server to its address and add token (or username and password). More in docs/ALARMS.md.'));
+    return box;
+  }
+
   function paintPush() {
+    paintPushBody();
+    if (push && !pushError) pushWrap.append(ntfyGuide());
+  }
+
+  function paintPushBody() {
     pushWrap.replaceChildren();
     const h = el('div', 'card-h');
     h.append(el('h3', 'card-t', 'Notifications'));

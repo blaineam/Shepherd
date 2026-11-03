@@ -168,6 +168,10 @@ type Deps struct {
 	// the separate, less frequent bufferbloat check.
 	NethealthBufferbloatEnabled bool
 
+	// Ntfy describes the ntfy delivery channel for the Alarms screen; the
+	// zero value is "off".
+	Ntfy NtfyStatus
+
 	// ReverseProxy holds the hosts the [reverseproxy] listener forwards
 	// (docs/REVERSEPROXY.md). Nil gets a memory-only store, so the API
 	// still works but nothing persists.

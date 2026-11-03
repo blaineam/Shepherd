@@ -1157,3 +1157,8 @@ button.tf-trend { cursor: pointer; } button.tf-trend:hover { border-color: var(-
 .tf-body .tf-yaxis span { white-space: nowrap; }
 .tf-body .tf-live { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; }
 .tf-body .tf-live .list-row { border: 1px solid var(--line); border-radius: var(--r); }
+
+.al-ntfy { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+.al-ntfy > summary { cursor: pointer; font-weight: 600; }
+.al-ntfy-steps { margin: 8px 0 12px 20px; padding: 0; display: grid; gap: 6px; max-width: 70ch; color: var(--text-2); }
+.al-ntfy-code { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 10px 12px; margin: 0 0 8px; overflow-x: auto; white-space: pre; }
