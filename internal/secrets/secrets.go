@@ -182,11 +182,46 @@ func checkField(name, v string, noSpace bool) error {
 	return nil
 }
 
+// Eero is the owner's kept-signed-in eero session, used to read per-device
+// usage for the Bandwidth screen. Enabled is the owner's switch; the token
+// stays stored while it is off, so turning it back on needs no new sign-in.
+type Eero struct {
+	Token     string `json:"token"`
+	NetworkID string `json:"network_id"`
+	Enabled   bool   `json:"enabled"`
+	Meta
+}
+
+// Configured reports whether a session token is actually stored.
+func (e Eero) Configured() bool { return e.Token != "" }
+
+// String never includes the token.
+func (e Eero) String() string {
+	if !e.Configured() {
+		return "eero session (not set)"
+	}
+	return fmt.Sprintf("eero session (token set, network %s, enabled %v, from %s)", e.NetworkID, e.Enabled, e.Source)
+}
+
+// GoString redacts the same way for %#v.
+func (e Eero) GoString() string { return e.String() }
+
+func (e Eero) validate() error {
+	if e.Token == "" {
+		return fmt.Errorf("%w: the eero session token must not be empty", ErrInvalid)
+	}
+	if err := checkField("eero session token", e.Token, true); err != nil {
+		return err
+	}
+	return checkField("eero network id", e.NetworkID, true)
+}
+
 type file struct {
 	Version int `json:"version"`
 	// A nil record means "never owned": shepherd.toml may still seed it.
 	DNSProvider *DNSProvider `json:"dns_provider,omitempty"`
 	SMTP        *SMTP        `json:"smtp,omitempty"`
+	Eero        *Eero        `json:"eero,omitempty"`
 }
 
 // Store owns secrets.json. It is safe for concurrent use. An empty path
@@ -231,6 +266,11 @@ func Open(path string) (*Store, error) {
 	if m := f.SMTP; m != nil && m.Configured() {
 		if err := m.validate(); err != nil {
 			return nil, fmt.Errorf("%s: smtp: %w", path, err)
+		}
+	}
+	if e := f.Eero; e != nil && e.Configured() {
+		if err := e.validate(); err != nil {
+			return nil, fmt.Errorf("%s: eero: %w", path, err)
 		}
 	}
 	s.data = f
@@ -384,6 +424,69 @@ func trimSMTP(m SMTP) SMTP {
 	return m
 }
 
+// Eero returns the stored eero session and whether a token is actually set.
+func (s *Store) Eero() (Eero, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.data.Eero == nil {
+		return Eero{}, false
+	}
+	e := *s.data.Eero
+	return e, e.Configured()
+}
+
+// SetEero validates and saves e as the owner's choice from the portal.
+func (s *Store) SetEero(e Eero) (Eero, error) {
+	e.Token = strings.TrimSpace(e.Token)
+	e.NetworkID = strings.TrimSpace(e.NetworkID)
+	if err := e.validate(); err != nil {
+		return Eero{}, err
+	}
+	e.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return e, s.mutate(func(f *file) { f.Eero = &e })
+}
+
+// SetEeroEnabled flips the switch without touching the stored token. It
+// returns false when no session is stored.
+func (s *Store) SetEeroEnabled(on bool) (bool, error) {
+	e, ok := s.Eero()
+	if !ok {
+		return false, nil
+	}
+	e.Enabled = on
+	e.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return true, s.mutate(func(f *file) { f.Eero = &e })
+}
+
+// ClearEero forgets the session entirely.
+func (s *Store) ClearEero() error {
+	return s.mutate(func(f *file) {
+		f.Eero = &Eero{Meta: Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}}
+	})
+}
+
+// EeroTokenStore adapts the stored session to the eero client's TokenStore,
+// so a signed-in client can keep or resume its token across restarts. Saving
+// a token keeps the stored network and switch.
+type EeroTokenStore struct{ S *Store }
+
+// Load returns the stored token, or "" when none is stored.
+func (t EeroTokenStore) Load() (string, error) {
+	e, _ := t.S.Eero()
+	return e.Token, nil
+}
+
+// Save stores tok, keeping the network and switch already chosen.
+func (t EeroTokenStore) Save(tok string) error {
+	e, _ := t.S.Eero()
+	e.Token = tok
+	_, err := t.S.SetEero(e)
+	return err
+}
+
+// Delete forgets the session.
+func (t EeroTokenStore) Delete() error { return t.S.ClearEero() }
+
 // seed applies fn to a copy and saves it only when fn reports a change.
 func (s *Store) seed(fn func(*file) bool) (bool, error) {
 	changed := false
@@ -405,6 +508,10 @@ func (s *Store) mutate(fn func(*file), want ...func() bool) error {
 	if next.SMTP != nil {
 		m := *next.SMTP
 		next.SMTP = &m
+	}
+	if next.Eero != nil {
+		e := *next.Eero
+		next.Eero = &e
 	}
 	fn(&next)
 	for _, w := range want {
