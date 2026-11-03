@@ -35,8 +35,8 @@ import { createAccountability } from './js/accountability.js';
 import { createDemoMgmt } from './js/demomgmt.js';
 import { DEVICE_BY_IP } from './js/demodata.js';
 import { createLocking } from './js/lockingview.js';
-import { lockedURL, unlockedURL } from './js/locking.js';
-import { requestOptions, assertionJSON, browserIssue, ceremonyError } from './js/passkeys.js';
+import { lockedURL, unlockedURL, signInOrder, autoTryPasskey, methodLabel } from './js/locking.js';
+import { requestOptions, assertionJSON, ceremonyError } from './js/passkeys.js';
 
 const params = new URLSearchParams(location.search);
 const demoParam = params.get('demo');
@@ -641,18 +641,56 @@ $('#pin-form').addEventListener('submit', async (e) => {
     location.assign(unlockedURL(location.href));
   } catch (err) { $('#pin-err').textContent = err.message === 'unauthorized' ? 'Wrong PIN.' : err.message; }
 });
-// Passkey sign-in: offered only when the server says a passkey can work
-// here (this is the portal's own HTTPS address and one is registered) and
-// the browser has WebAuthn at all. Success lands in the same session, and
-// the same reload, as the PIN and token forms above.
-async function offerPasskey() {
-  if (browserIssue({ secureContext: window.isSecureContext, hasWebAuthn: !!window.PublicKeyCredential })) return;
-  try {
-    const r = await realApi('/api/login/passkey');
-    if (r && r.available) $('#passkey-unlock').hidden = false;
-  } catch { /* no passkey option; the PIN and token forms are still there */ }
+// ---- which way in the lock screen leads with -------------------------
+//
+// Three forms at once made the owner choose between things only one of
+// which they can usually use. The server says which are actually available
+// to this browser (GET /api/login/methods), the best one is expanded, and
+// the rest become a line of links. The token is always in that line: it is
+// the way back in when the passkey and the PIN are gone.
+let signinTried = false;
+
+function showMethod(name, order) {
+  for (const m of ['passkey', 'pin', 'token']) {
+    $('#signin-' + m).hidden = m !== name;
+  }
+  const alts = $('#signin-alts');
+  alts.replaceChildren();
+  for (const other of order.filter((m) => m !== name)) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'linky';
+    b.textContent = methodLabel(other);
+    b.addEventListener('click', () => showMethod(other, order));
+    alts.append(b);
+  }
+  // Put the cursor where the typing happens, but never steal focus for a
+  // passkey: the browser's own prompt is about to take over.
+  if (name === 'pin') $('#pin').focus();
+  else if (name === 'token') $('#token').focus();
 }
-$('#btn-passkey').addEventListener('click', async () => {
+
+async function prepareSignIn() {
+  let methods = {};
+  try {
+    methods = await realApi('/api/login/methods');
+  } catch { /* the token form alone is a working lock screen */ }
+  const order = signInOrder(methods, {
+    secureContext: window.isSecureContext,
+    hasWebAuthn: !!window.PublicKeyCredential,
+  });
+  showMethod(order[0] || 'token', order);
+  if (autoTryPasskey({ order, visible: document.visibilityState === 'visible', tried: signinTried })) {
+    tryPasskey();
+  }
+}
+
+// tryPasskey runs the ceremony. It is called by the button and, when a
+// passkey is the way in, once by itself: an owner who set one up to avoid
+// typing should not have to press a button first. A failure leaves the
+// button and the alternatives rather than prompting again.
+async function tryPasskey() {
+  signinTried = true;
   $('#passkey-err').textContent = '';
   try {
     const opts = await realApi('/api/login/passkey/begin', { method: 'POST' });
@@ -660,8 +698,13 @@ $('#btn-passkey').addEventListener('click', async () => {
     if (!cred) throw new Error('Cancelled.');
     await realApi('/api/login/passkey/finish', { method: 'POST', body: JSON.stringify(assertionJSON(cred)), keep401: true });
     location.assign(unlockedURL(location.href));
-  } catch (err) { $('#passkey-err').textContent = ceremonyError(err); }
-});
+  } catch (err) {
+    $('#passkey-err').textContent = ceremonyError(err);
+    $('#passkey-hint').hidden = true;
+  }
+}
+$('#btn-passkey').addEventListener('click', tryPasskey);
+
 $('#btn-lock').addEventListener('click', async () => {
   try { await realApi('/api/lock', { method: 'POST' }); } catch { /* lock locally regardless of what the server says */ }
   location.assign(lockedURL(location.href));
@@ -733,7 +776,7 @@ async function main() {
   $('#tab-locking').hidden = DEMO;
   $('#btn-lock').hidden = DEMO;
   $('.demo-switch').hidden = LOCKED;
-  if (LOCKED) { $('#login').hidden = false; offerPasskey(); }
+  if (LOCKED) { $('#login').hidden = false; prepareSignIn(); }
   if (params.get('setup_pin') === '1') { try { history.replaceState(null, '', location.pathname + location.search.replace(/[?&]setup_pin=1/, '').replace(/^&/, '?') + location.hash); } catch { /* ignore */ } showView('locking'); }
   { const h = location.hash.slice(1); if (VIEWS.includes(h) && h !== 'hud') showView(h); else if (h === 'watch') showView('traffic'); }
   try {

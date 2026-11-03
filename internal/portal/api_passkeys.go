@@ -259,9 +259,30 @@ func (s *Server) revokePasskey(w http.ResponseWriter, r *http.Request) {
 // hostname (a visitor on the plain-HTTP address learns nothing) and never
 // how many passkeys exist. Only passkeys registered for the current
 // hostname count.
-func (s *Server) passkeyAvailable(w http.ResponseWriter, r *http.Request) {
+// loginMethods tells the lock screen which ways in are actually available
+// to this browser, so it can lead with the best one instead of showing all
+// three at once (docs/LOCKING.md). It is unauthenticated by necessity --
+// it is read by someone who is not signed in -- so it says nothing a
+// stranger does not already have:
+//
+//   - passkey: there is a usable passkey and this is the HTTPS address it
+//     is bound to. The lock screen already offered the button on exactly
+//     this condition.
+//   - pin: a PIN exists AND this browser holds a valid trusted-device
+//     cookie. Someone without that cookie is told false, which is also the
+//     truth for them: a PIN alone unlocks nothing from an untrusted
+//     browser (docs/LOCKING.md's "PIN" section).
+//
+// The token is always a way in and is not listed: it is the one that works
+// when everything else has been lost, which is why the lock screen keeps it
+// reachable whatever this says.
+func (s *Server) loginMethods(w http.ResponseWriter, r *http.Request) {
 	svc, _ := s.passkeyHere(r)
-	writeJSON(w, map[string]bool{"available": svc != nil && s.passkeyStore != nil && svc.Usable() > 0})
+	_, pinSet := s.lockStore.pin()
+	writeJSON(w, map[string]bool{
+		"passkey": svc != nil && s.passkeyStore != nil && svc.Usable() > 0,
+		"pin":     pinSet && s.currentTrustedDeviceID(r) != "",
+	})
 }
 
 // notHere is the unauthenticated refusal: no hostname, no reason beyond
