@@ -69,6 +69,11 @@ func newSetupServer(cfgPath string) (*setup.Server, error) {
 // the process was asked to stop first. The server keeps running for the
 // caller to hand a started Shepherd to, and to Close.
 func serveSetup(ctx context.Context, s *setup.Server, port int) (string, error) {
+	// A port that is not a port at all is the owner's typo, and moving
+	// quietly to another one would hide it.
+	if port < 0 || port > 65535 {
+		return "", fmt.Errorf("%d is not a port number", port)
+	}
 	// Something else may already own the preferred port -- on a NAS that
 	// is common, and binding the wildcard can succeed while another
 	// process still owns loopback, so the page would appear to come up

@@ -119,17 +119,14 @@ func TestSetupSubcommandReportsBadFlagsAndAPortItCannotTake(t *testing.T) {
 	if code := realMain([]string{"setup", "-h"}, nil, io.Discard, &errb); code != 0 {
 		t.Errorf("-h should exit 0, got %d", code)
 	}
-	// A port already taken on every address: the subcommand was asked for
-	// this port explicitly, so it reports rather than quietly moving.
-	// Held on the wildcard, since that is the bind setup itself makes.
-	l, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	port := l.Addr().(*net.TCPAddr).Port
+	// A port that is not a port is the owner's typo and is reported. (A
+	// port merely in use is not this case: setup moves to a free one,
+	// which TestSetupMovesToAFreePortRatherThanRefusingToStart covers.
+	// Whether binding the wildcard succeeds while another process holds
+	// one address of it differs between operating systems, so it is not
+	// something to assert on.)
 	errb.Reset()
-	if code := realMain([]string{"setup", "-config", filepath.Join(t.TempDir(), "c.toml"), "-port", fmt.Sprint(port)}, nil, io.Discard, &errb); code != 1 {
+	if code := realMain([]string{"setup", "-config", filepath.Join(t.TempDir(), "c.toml"), "-port", "99999"}, nil, io.Discard, &errb); code != 1 {
 		t.Errorf("exit %d, want 1", code)
 	}
 	if !strings.Contains(errb.String(), "setup:") {

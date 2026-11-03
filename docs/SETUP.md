@@ -21,7 +21,8 @@ two cannot share a port (and it says so if you try to give the portal 8788).
 
 `shepherd setup` runs the same flow deliberately, for an install that already has a configuration
 file. Nothing starts after that subcommand, so the second half has nothing to show and says so.
-`-config /etc/shepherd/shepherd.toml` writes somewhere else, and `-port` moves the setup page.
+`-config /etc/shepherd/shepherd.toml` writes somewhere else, and `-port` moves the setup page (a
+port that is not a port is reported; a port that is merely in use moves to a free one and says so).
 
 Run it on the host that will serve DNS, since the addresses it offers are that host's own. In the
 container deployment ([`deploy/docker/`](../deploy/docker/)) that means running Shepherd with the
