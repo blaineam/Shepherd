@@ -115,9 +115,17 @@ func (u *UniFi) client() *http.Client {
 		if u.cfg.AllowSelfSigned {
 			// The owner asked for this: a controller on a LAN address
 			// almost always has a certificate nothing can verify.
-			tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- opt-in, see AllowSelfSigned
+			tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // opt-in, see AllowSelfSigned
 		}
-		u.hc = &http.Client{Jar: jar, Transport: tr, Timeout: u.cfg.Timeout}
+		u.hc = &http.Client{
+			Jar: jar, Transport: tr, Timeout: u.cfg.Timeout,
+			// A controller never redirects these calls, and following one
+			// would let a wrong address walk this client somewhere else
+			// with the session cookie attached.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return errors.New("unifi: redirects are not followed")
+			},
+		}
 	}
 	return u.hc
 }
@@ -230,6 +238,11 @@ func (u *UniFi) ensureLogin(ctx context.Context) error {
 }
 
 func (u *UniFi) post(ctx context.Context, path string, body []byte) (int, http.Header, error) {
+	// The address is the owner's own controller, typed into the portal by
+	// someone already signed in to it, and NewUniFi has already limited it
+	// to an http or https URL with no credentials in it. Redirects are
+	// refused above, so this cannot be walked anywhere else.
+	// codeql[go/request-forgery]
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.cfg.BaseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, err
@@ -247,6 +260,8 @@ func (u *UniFi) post(ctx context.Context, path string, body []byte) (int, http.H
 const maxUniFiResponse = 8 << 20
 
 func (u *UniFi) get(ctx context.Context, path string, into any) error {
+	// The owner's own controller; see the note in post.
+	// codeql[go/request-forgery]
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.cfg.BaseURL+path, nil)
 	if err != nil {
 		return err

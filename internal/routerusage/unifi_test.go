@@ -321,3 +321,20 @@ func TestUniFiPollNeedsALoginThatWorked(t *testing.T) {
 		t.Fatalf("it read clients %d times without logging in", f.polls)
 	}
 }
+
+// Following a redirect would carry the session cookie somewhere the owner
+// never named, so the client refuses them.
+func TestUniFiDoesNotFollowRedirects(t *testing.T) {
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the client followed a redirect to %s", r.URL.Path)
+	}))
+	t.Cleanup(elsewhere.Close)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL+r.URL.Path, http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+	u, _ := NewUniFi(UniFiConfig{BaseURL: srv.URL, Username: "a", Password: "b"})
+	if _, err := u.Poll(context.Background()); err == nil {
+		t.Fatal("a redirect was followed")
+	}
+}
