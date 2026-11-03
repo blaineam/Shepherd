@@ -105,8 +105,15 @@ func toDevice(d devices.Device) deviceJSON {
 // could be pinned to when it has none. pool is the dynamic range, for the
 // note; a nil svc means DHCP mode is not wired in and the field is left off
 // entirely.
-func withReservation(j deviceJSON, d devices.Device, svc DHCPService, pool dhcp.Pool) deviceJSON {
-	if svc == nil {
+//
+// It is also left off while the mode is "off", even though the service is
+// wired in and the reservation would store perfectly well. DHCP mode is
+// alpha, and alpha means somebody goes looking for it rather than meeting a
+// switch for it on a screen they were already on. The DHCP screen itself
+// stays fully usable with the mode off -- getting there is the going and
+// looking -- but the Devices screen is not where that invitation belongs.
+func withReservation(j deviceJSON, d devices.Device, svc DHCPService, pool dhcp.Pool, on bool) deviceJSON {
+	if svc == nil || !on {
 		return j
 	}
 	res := &reservationJSON{}
@@ -142,6 +149,16 @@ func withReservation(j deviceJSON, d devices.Device, svc DHCPService, pool dhcp.
 	}
 	j.Reserved = res
 	return j
+}
+
+// dhcpOn reports whether DHCP mode is doing anything at all, which is what
+// decides whether the Devices screen offers a reserved switch.
+func (s *Server) dhcpOn() bool {
+	if s.DHCP == nil {
+		return false
+	}
+	m := s.DHCP.Status().Mode
+	return m == string(dhcp.ModeObserve) || m == string(dhcp.ModeServe)
 }
 
 // dhcpPool is the dynamic range for one request, read once rather than once
@@ -224,9 +241,10 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	page := s.Devices.Search(q.Get("q"), devices.SearchOptions{Sort: sort, Offset: offset, Limit: limit})
 	states := s.watchStates()
 	pool := s.dhcpPool()
+	dhcpOn := s.dhcpOn()
 	out := make([]deviceJSON, len(page.Items))
 	for i, d := range page.Items {
-		out[i] = withReservation(withWatch(toDevice(d), states), d, s.DHCP, pool)
+		out[i] = withReservation(withWatch(toDevice(d), states), d, s.DHCP, pool, dhcpOn)
 	}
 	writeJSON(w, map[string]any{"devices": out, "total": page.Total, "offset": page.Offset, "limit": page.Limit})
 }
@@ -237,7 +255,7 @@ func (s *Server) getDevice(w http.ResponseWriter, r *http.Request) {
 		notFound(w, "unknown device")
 		return
 	}
-	writeJSON(w, withReservation(withWatch(toDevice(d), s.watchStates()), d, s.DHCP, s.dhcpPool()))
+	writeJSON(w, withReservation(withWatch(toDevice(d), s.watchStates()), d, s.DHCP, s.dhcpPool(), s.dhcpOn()))
 }
 
 func validTags(tags []string) bool {
@@ -497,7 +515,7 @@ func (s *Server) mergeDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	s.forgetDeviceScopes(b.Sources...) // what was configured on a merged-away device goes with it
 	d, _ := s.Devices.Get(b.Target)
-	writeJSON(w, withReservation(withWatch(toDevice(d), s.watchStates()), d, s.DHCP, s.dhcpPool()))
+	writeJSON(w, withReservation(withWatch(toDevice(d), s.watchStates()), d, s.DHCP, s.dhcpPool(), s.dhcpOn()))
 }
 
 func (s *Server) listGroups(w http.ResponseWriter, r *http.Request) {

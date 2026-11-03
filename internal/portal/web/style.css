@@ -926,8 +926,18 @@ tr.a-error .h-dom { color: var(--amber); }
 .wm-headline.good { color: var(--teal); } .wm-headline.warn { color: var(--amber); } .wm-headline.bad { color: var(--red); } .wm-headline.muted { color: var(--text-2); }
 .wm-note { margin: 12px 0 0; }
 /* Watch mode is deprecated: router mode (above it on Bandwidth) is the way now. */
-.wm-dep-tag { margin-left: 8px; padding: 2px 7px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); color: var(--text-2); font: 600 11px var(--sans); text-transform: uppercase; letter-spacing: 0.04em; vertical-align: middle; }
-.wm-dep { margin: 0 0 12px; max-width: 72ch; padding: 10px 12px; border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: var(--r-sm); background: var(--surface-2); color: var(--text-2); font-size: 13px; }
+/* One idiom for "this screen is not ordinary": a pill beside the heading
+   and a bordered note under the subtitle. Watch mode's deprecation was the
+   first use; DHCP mode's alpha is the second, in red rather than amber
+   because getting that one wrong takes a household off the network. Two
+   tones, one shape -- a second visual language for the same idea would only
+   teach people to skip both. */
+.flag-tag { margin-left: 8px; padding: 2px 7px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); color: var(--text-2); font: 600 11px var(--sans); text-transform: uppercase; letter-spacing: 0.04em; vertical-align: middle; }
+.flag-tag.danger { border-color: var(--red); color: var(--red); }
+.flag-note { margin: 0 0 12px; max-width: 72ch; padding: 10px 12px; border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: var(--r-sm); background: var(--surface-2); color: var(--text-2); font-size: 13px; }
+.flag-note.danger { border-left-color: var(--red); }
+.flag-note p { margin: 0 0 8px; }
+.flag-note p:last-child { margin-bottom: 0; }
 .wm-counts { margin: 0 0 12px; }
 .wm-kill { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .wm-kill p { margin: 0; max-width: 62ch; }

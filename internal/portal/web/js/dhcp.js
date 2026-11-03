@@ -230,6 +230,23 @@ export function stateSummary(d) {
   return { tone: 'good', text: 'Serving every lease with the router\'s own address as the gateway. Nothing is on Shepherd\'s data path.' };
 }
 
+// ALPHA is what the word means here, in the only terms that matter to
+// somebody deciding whether to switch it on. It is deliberately not softened:
+// the honest list of what has never been exercised is more use than a badge,
+// and anybody who reads this and decides to wait has been served well.
+export function alphaNote() {
+  return [
+    'DHCP mode is alpha. No real device has ever taken an address from it: the whole lease exchange is tested, but only '
+      + 'over loopback sockets on high ports, so the real port 67, the broadcast a device needs before it has an address, '
+      + 'and a household\'s traffic crossing one network card twice have all been reasoned about rather than measured.',
+    'It is also the one thing in Shepherd that can take your whole network off the internet. Two DHCP servers answering, '
+      + 'or a handover done in the wrong order, leaves devices with no address or no way out. The recovery is turning your '
+      + 'router\'s own DHCP back on, which needs nothing from Shepherd — worth knowing before you start, not after.',
+    'If you want to try it, read docs/DHCP.md and start at Watching, which opens a listener with no way to send and so '
+      + 'cannot answer anything. Nothing here is on by default, and nothing turns it on for you.',
+  ];
+}
+
 // consequences is the plainly worded account of what turning this on does.
 // It is a list rather than a paragraph because each line is a separate thing
 // that can go wrong, and because the one about the router's own DHCP is the
