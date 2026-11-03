@@ -147,3 +147,21 @@ func TestStateAndRollbackErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestRateLimitedCheckSaysSoAndWhenItResets(t *testing.T) {
+	for _, reset := range []string{"1793666193", "soon"} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-RateLimit-Remaining", "0")
+			w.Header().Set("X-RateLimit-Reset", reset)
+			w.WriteHeader(http.StatusForbidden)
+		}))
+		_, err := (Checker{Repo: "o/r", API: srv.URL, Client: srv.Client()}).Latest(context.Background(), ChannelStable)
+		srv.Close()
+		if err == nil || !strings.Contains(err.Error(), "rate limit") || strings.Contains(err.Error(), "403") {
+			t.Fatalf("reset %q: %v", reset, err)
+		}
+		if (reset == "soon") == strings.Contains(err.Error(), "resets at") {
+			t.Errorf("reset %q: %v", reset, err)
+		}
+	}
+}

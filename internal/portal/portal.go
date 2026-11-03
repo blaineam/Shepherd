@@ -168,6 +168,10 @@ type Deps struct {
 	// the separate, less frequent bufferbloat check.
 	NethealthBufferbloatEnabled bool
 
+	// Ntfy describes the ntfy delivery channel for the Alarms screen; the
+	// zero value is "off".
+	Ntfy NtfyStatus
+
 	// Selftest is the built-in DNS self-test (internal/selftest,
 	// docs/DNS-QA.md). Nil means it is off: the endpoint says so.
 	Selftest SelftestSource

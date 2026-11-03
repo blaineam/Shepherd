@@ -22,6 +22,7 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   upload bar, and a trend line per busy device.
 
 ### Added
+- **ntfy setup walk-through** under Notifications on the Alarms screen: an expandable section with the steps, a ready-to-paste `[alarms.ntfy]` block with a hard-to-guess topic suggested, and a line saying whether ntfy is on and where it publishes (never the token). `GET /api/alarms/push` now includes an `ntfy` object.
 - **A built-in DNS self-test** (`[selftest]`, on by default). Every minute Shepherd asks a known-good and a
   known-blocked name of every address it listens on, over UDP and TCP, so an address devices use with no
   listener behind it (the wired-versus-Wi-Fi failure that left a PS5 with "host not found") is caught within
@@ -46,6 +47,7 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Fixed
 
+- A failed update check caused by GitHub's anonymous rate limit (60 requests an hour per address, shared by everything on your network) now says so and when it resets, instead of "HTTP 403".
 - **Watch mode no longer eats duplicate TCP acknowledgements.** The duplicate brake drops any frame it has already relayed inside 100 ms, but a receiver that sees a gap sends the same ACK again for every segment that follows, and TCP needs those to reach the sender (three start a fast retransmit; SACK recovery runs on them). One lost packet on the download path therefore cost the sender a full retransmission timeout, which shows up as stalled and failed requests. A repeated pure ACK is now relayed up to 8 times inside the window before it is treated as a loop, in both the kernel and userspace relays; data, SYN, FIN and RST frames are dropped on their first repeat as before.
 - **Unsteering now really restores a device.** The corrective ARP reply that tells a device the gateway's real address again was sent with the gateway's MAC as its Ethernet source, a forged link-layer address that wired links and docks drop, so a wired device kept the claim and sent everything through Shepherd until its ARP entry expired. It now leaves from Shepherd's own MAC (the body still says the gateway's), which is accepted, and it is repeated four more times, half a second apart, in the background in case one is lost.
 

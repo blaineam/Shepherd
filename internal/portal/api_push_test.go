@@ -122,3 +122,16 @@ func TestPushSubscribeRenameRemoveAndTest(t *testing.T) {
 		t.Fatalf("devices after remove = %d", n)
 	}
 }
+
+func TestPushStatusReportsNtfyWithoutCredentials(t *testing.T) {
+	h := newHarness(t)
+	h.srv.Ntfy = NtfyStatus{Enabled: true, Server: "https://ntfy.example.com", Topic: "shepherd-x"}
+	n := h.ok("GET", "/api/alarms/push", "", 200)["ntfy"].(map[string]any)
+	if n["enabled"] != true || n["server"] != "https://ntfy.example.com" || n["topic"] != "shepherd-x" || len(n) != 3 {
+		t.Fatalf("ntfy = %v", n)
+	}
+	h.srv.Push = newFakePush()
+	if n := h.ok("GET", "/api/alarms/push", "", 200)["ntfy"].(map[string]any); n["enabled"] != true {
+		t.Fatalf("ntfy with push on = %v", n)
+	}
+}

@@ -211,6 +211,13 @@ func (c Checker) get(ctx context.Context, path string, v any) error {
 		return ErrNoRelease
 	}
 	if resp.StatusCode != http.StatusOK {
+		if resp.Header.Get("X-RateLimit-Remaining") == "0" {
+			msg := "update: GitHub's anonymous rate limit for this network is used up (60 requests an hour, shared by every device behind your address)"
+			if reset, err := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64); err == nil {
+				msg += "; it resets at " + time.Unix(reset, 0).Format("15:04")
+			}
+			return errors.New(msg)
+		}
 		return fmt.Errorf("update: GitHub answered HTTP %d", resp.StatusCode)
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(v)

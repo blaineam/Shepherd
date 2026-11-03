@@ -347,6 +347,9 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		return err
 	}
 	deps.ReverseProxy = proxyHosts
+	if n := cfg.Alarms.Ntfy; cfg.Alarms.Enabled && n.Enabled {
+		deps.Ntfy = portal.NtfyStatus{Enabled: true, Server: n.Server, Topic: n.Topic}
+	}
 	deps.ReverseProxyStatus = portal.ReverseProxyStatus{Listen: cfg.ReverseProxy.Listen, Wildcard: cfg.ReverseProxy.Wildcard()}
 	proxySrv, err := startReverseProxy(ctx, cfg, proxyHosts, sec, stopOnFailure(portalErr, cancel))
 	if err != nil {
