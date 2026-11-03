@@ -16,7 +16,7 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - **First-run setup in a browser.** A new install no longer starts in a text editor. Start Shepherd
   with no configuration file and it brings up a setup page, prints the addresses to open (with a
   one-time token, since the page listens on every address so it can be reached from the machine you
-  are actually sitting at), asks five questions and writes a commented `shepherd.toml` — then shuts
+  are actually sitting at), asks what it has to and writes a commented `shepherd.toml` — then shuts
   the page down and carries straight on with what you chose, in the same process. `shepherd setup`
   runs it again later. The address question is the reason it exists: it lists every address this host
   has with its interface and ticks them all, because a device asks one specific address and a host

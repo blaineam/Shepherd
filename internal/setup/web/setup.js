@@ -10,10 +10,18 @@ const $ = (id) => document.getElementById(id);
 
 // post sends JSON and returns the parsed answer, throwing the server's own
 // message so it can be shown to the person who pressed the button.
+// token is the one-time token from the address Shepherd printed. It is kept
+// in memory and sent as a header: nothing stores it in the browser, and it
+// leaves the address bar as soon as the page has read it.
+const token = new URLSearchParams(location.search).get('token') || '';
+try {
+  history.replaceState(null, '', location.pathname);
+} catch { /* an address bar that keeps the token is not worth failing over */ }
+
 async function post(path, body) {
   const res = await fetch(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Shepherd-Setup': token },
     body: JSON.stringify(body),
   });
   const text = await res.text();
@@ -56,7 +64,9 @@ function addrRow(name, a, checked, type) {
 }
 
 function draw() {
-  $('data-dir').value = state.data_dir;
+  $('data-dir').textContent = state.data_dir;
+  if (state.data_dir_error) result('data-dir-state', 'cannot be used: ' + state.data_dir_error, 'bad');
+  else result('data-dir-state', 'ready', 'good');
   $('dns-port').value = state.dns_port;
   $('portal-port').value = state.portal_port;
 
@@ -211,7 +221,6 @@ async function connectUniFi() {
   result('u-result', 'Reading the controller once to check it…');
   try {
     const out = await post('/api/setup/router', {
-      data_dir: $('data-dir').value,
       base_url: $('u-url').value,
       username: $('u-user').value,
       password: $('u-pass').value,
@@ -237,7 +246,6 @@ async function finish(ev) {
   ev.preventDefault();
   const portal = document.querySelector('input[name=portal]:checked');
   const body = {
-    data_dir: $('data-dir').value.trim(),
     dns_listen: chosenAddrs(),
     dns_port: Number($('dns-port').value),
     upstreams: upstreams(),
@@ -269,7 +277,7 @@ async function finish(ev) {
 
 async function load() {
   try {
-    const res = await fetch('/api/setup/state');
+    const res = await fetch('/api/setup/state', { headers: { 'X-Shepherd-Setup': token } });
     if (!res.ok) throw new Error((await res.text()).trim() || res.statusText);
     state = await res.json();
   } catch (e) {

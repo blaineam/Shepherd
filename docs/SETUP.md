@@ -28,8 +28,10 @@ engine and a token, none of which exists on a first run, and its own default put
 — unreachable from the laptop of whoever is installing Shepherd on a NAS or a Pi. So setup brings up
 its own listener on **every** address this host has, and the one-time token in the printed URL is
 what keeps the rest of the network out: the console is the one place that proves you are the person
-who started the process. The token moves into a cookie on first load, so it is not in any later URL,
-and the listener stops the moment setup finishes.
+who started the process. The page keeps that token in memory and sends it as a header, and drops it
+from the address bar as soon as it has read it — deliberately not a cookie, since setup is plain
+HTTP (there is no certificate yet) and this host and port become the portal once setup is done. The
+listener stops the moment setup finishes.
 
 If the preferred port is already taken, setup moves to a free one and says so rather than refusing
 to start. That matters on a NAS: binding the wildcard can succeed while another process still owns
@@ -40,8 +42,12 @@ A setup page that cannot come up at all is logged, not fatal — Shepherd then s
 
 ## What it asks
 
-1. **Where Shepherd keeps its state** (`data_dir`). The directory is created as part of finishing, so
-   a path that cannot be used is caught while you are still looking at the page. This is the
+1. **Where Shepherd keeps its state** (`data_dir`) — stated, not asked. It is `data` beside the
+   configuration file, created and checked while the page loads, so a directory that cannot be
+   written is reported there rather than as a startup error after you have walked away. Nothing the
+   page sends can change it: a path typed into a web page is both a question nobody can answer
+   better than Shepherd and a path this process would then create and write to on a stranger's
+   say-so. Move it later by editing `data_dir` if you really want it elsewhere. This is the
    directory to back up.
 
 2. **Which addresses answer DNS** (`dns.listen`). Every address this host has, listed with its

@@ -19,13 +19,10 @@
 
   <form id="form" hidden>
     <section class="card" id="s-data">
-      <h2>1. Where should Shepherd keep its state?</h2>
+      <h2>1. Where Shepherd keeps its state</h2>
       <p class="note">The portal token, your rules, the device registry and the cached blocklists go
-        here. This is the directory to back up.</p>
-      <label class="field">
-        <span>Data directory</span>
-        <input id="data-dir" name="data-dir" spellcheck="false" autocomplete="off">
-      </label>
+        here, beside the configuration file. This is the directory to back up.</p>
+      <p class="fact"><code id="data-dir"></code> <span id="data-dir-state" class="result"></span></p>
     </section>
 
     <section class="card" id="s-dns">

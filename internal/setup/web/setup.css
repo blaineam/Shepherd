@@ -78,6 +78,7 @@ input:focus, textarea:focus, button:focus { outline: 2px solid var(--accent); ou
 .addrs label > span, .presets label > span, .radios label > span { min-width: 0; overflow-wrap: anywhere; }
 .done code, .done li { overflow-wrap: anywhere; }
 .addrs .iface, .presets .pnote { color: var(--muted); font-size: .85rem; }
+.fact { margin: 0; display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; }
 .row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; }
 button {
   font: inherit;

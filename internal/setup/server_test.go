@@ -137,7 +137,7 @@ func TestEverythingNeedsTheToken(t *testing.T) {
 	// owner's laptop, which means the rest of the network can reach it
 	// too; the token printed on the console is what separates them.
 	r := newRig(t)
-	for _, path := range []string{"/", "/setup.js", "/api/setup/state"} {
+	for _, path := range []string{"/", "/api/setup/state"} {
 		res, err := http.Get(r.srv.URL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -157,33 +157,42 @@ func TestEverythingNeedsTheToken(t *testing.T) {
 	}
 }
 
-func TestTheTokenMovesIntoACookieSoItLeavesTheURL(t *testing.T) {
+func TestTheTokenIsAcceptedAsAHeaderSoNothingStoresIt(t *testing.T) {
+	// Setup is plain HTTP by necessity, and this host and port become the
+	// portal once setup is done, so a cookie here would be a credential
+	// the browser keeps sending afterwards. The page holds it in memory
+	// and sends it as a header instead.
 	r := newRig(t)
 	res, err := http.Get(r.srv.URL + "/?token=" + testToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
-	var got *http.Cookie
-	for _, c := range res.Cookies() {
-		if c.Name == setupCookie {
-			got = c
-		}
+	res.Body.Close()
+	if len(res.Cookies()) != 0 {
+		t.Errorf("setup should set no cookies, got %v", res.Cookies())
 	}
-	if got == nil || got.Value != testToken || !got.HttpOnly {
-		t.Fatalf("cookie = %v", got)
-	}
-	// And the cookie alone is then enough, so no later request has to
-	// carry the token in a URL.
 	req, _ := http.NewRequest("GET", r.srv.URL+"/api/setup/state", nil)
-	req.AddCookie(got)
+	req.Header.Set(tokenHeader, testToken)
 	res2, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer res2.Body.Close()
 	if res2.StatusCode != 200 {
-		t.Errorf("with the cookie = %d", res2.StatusCode)
+		t.Errorf("with the header = %d", res2.StatusCode)
+	}
+	// The stylesheet and the script carry nothing about this host, and
+	// the page must be able to load them before any of our JavaScript has
+	// run, so those two are not behind the token.
+	for _, path := range []string{"/setup.css", "/setup.js"} {
+		res, err := http.Get(r.srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != 200 {
+			t.Errorf("GET %s = %d", path, res.StatusCode)
+		}
 	}
 }
 
@@ -198,7 +207,7 @@ func TestStateDescribesThisHostAndTheDefaults(t *testing.T) {
 	if first["ip"] != "192.0.2.10" || first["interface"] != "eth0" {
 		t.Errorf("the page needs the interface with the address: %v", first)
 	}
-	if got["data_dir"] != "data" || got["dns_port"] != 53.0 || got["portal_port"] != 8787.0 {
+	if got["data_dir"] != r.s.DataDir || got["dns_port"] != 53.0 || got["portal_port"] != 8787.0 {
 		t.Errorf("defaults = %+v", got)
 	}
 	if got["config_exists"] != false || got["can_router"] != true || got["dns_port_free"] != true {
@@ -285,16 +294,16 @@ func TestUpstreamTestSaysWhenTheBuildCannotProbe(t *testing.T) {
 
 func TestConnectingARouterIsOptionalAndVerifiedFirst(t *testing.T) {
 	r := newRig(t)
-	body := `{"data_dir":"mydata","base_url":"https://198.51.100.20","username":"ro-user","password":"pw-9f3","site":"default","allow_self_signed":true}`
+	body := `{"base_url":"https://198.51.100.20","username":"ro-user","password":"pw-9f3","site":"default","allow_self_signed":true}`
 	if got := r.json("POST", "/api/setup/router", body, 200); got["ok"] != true {
 		t.Fatalf("connect = %+v", got)
 	}
 	if len(r.connSeen) != 1 || r.connSeen[0].Username != "ro-user" || !r.connSeen[0].AllowSelfSigned {
 		t.Errorf("collected = %+v", r.connSeen)
 	}
-	// The credentials are stored under the data directory the owner
-	// chose on the page, not under a default nobody picked.
-	if len(r.connDirs) != 1 || r.connDirs[0] != "mydata" {
+	// The credentials are stored under Shepherd's own data directory,
+	// never one a request named.
+	if len(r.connDirs) != 1 || r.connDirs[0] != r.s.DataDir {
 		t.Errorf("data dirs = %v", r.connDirs)
 	}
 	r.connErr = errors.New("the controller refused the username or password")
@@ -308,7 +317,7 @@ func TestConnectingARouterIsOptionalAndVerifiedFirst(t *testing.T) {
 	}
 }
 
-const finishBody = `{"data_dir":"data","dns_listen":["192.0.2.10","198.51.100.10"],"dns_port":53,` +
+const finishBody = `{"dns_listen":["192.0.2.10","198.51.100.10"],"dns_port":53,` +
 	`"upstreams":["9.9.9.10","149.112.112.10"],"portal_host":"127.0.0.1","portal_port":8787}`
 
 func TestFinishWritesAConfigShepherdCanLoad(t *testing.T) {
@@ -332,8 +341,15 @@ func TestFinishWritesAConfigShepherdCanLoad(t *testing.T) {
 	if !cfg.Privacy.BlockPrivateRelay || cfg.Watch.Enabled || cfg.DNS.BlockMode != "null" {
 		t.Errorf("a default was frozen into the file: %+v", cfg)
 	}
-	if _, err := os.Stat(filepath.Join(r.dir, "data")); err != nil {
+	if _, err := os.Stat(r.s.DataDir); err != nil {
 		t.Errorf("the data directory was not created: %v", err)
+	}
+	// A path in the request is ignored: nothing a stranger sends becomes
+	// a directory this process creates and writes to.
+	r.json("POST", "/api/setup/finish", `{"data_dir":"/tmp/not-this","dns_listen":["192.0.2.10"],"dns_port":53,`+
+		`"upstreams":["9.9.9.10"],"portal_host":"127.0.0.1","portal_port":8787}`, 200)
+	if cfg, err := config.Load(r.s.ConfigPath); err != nil || cfg.DataDir != r.s.DataDir {
+		t.Errorf("data_dir = %q, want %q (%v)", cfg.DataDir, r.s.DataDir, err)
 	}
 	// Finishing is what hands control back to cmd/shepherd.
 	select {
@@ -348,13 +364,12 @@ func TestFinishWritesAConfigShepherdCanLoad(t *testing.T) {
 func TestFinishRefusesAnswersThatCouldNotWork(t *testing.T) {
 	r := newRig(t)
 	for _, body := range []string{
-		`{"data_dir":"","dns_listen":["192.0.2.10"],"dns_port":53,"upstreams":["9.9.9.10"],"portal_host":"127.0.0.1","portal_port":8787}`,
-		`{"data_dir":"data","dns_listen":[],"dns_port":53,"upstreams":["9.9.9.10"],"portal_host":"127.0.0.1","portal_port":8787}`,
-		`{"data_dir":"data","dns_listen":["not an address"],"dns_port":53,"upstreams":["9.9.9.10"],"portal_host":"127.0.0.1","portal_port":8787}`,
-		`{"data_dir":"data","dns_listen":["192.0.2.10"],"dns_port":0,"upstreams":["9.9.9.10"],"portal_host":"127.0.0.1","portal_port":8787}`,
-		`{"data_dir":"data","dns_listen":["192.0.2.10"],"dns_port":53,"upstreams":[],"portal_host":"127.0.0.1","portal_port":8787}`,
-		`{"data_dir":"data","dns_listen":["192.0.2.10"],"dns_port":53,"upstreams":["9.9.9.10"],"portal_host":"nope","portal_port":8787}`,
-		`{"data_dir":"data","dns_listen":["192.0.2.10"],"dns_port":53,"upstreams":["9.9.9.10"],"portal_host":"127.0.0.1","portal_port":99999}`,
+		`{"dns_listen":[],"dns_port":53,"upstreams":["9.9.9.10"],"portal_host":"127.0.0.1","portal_port":8787}`,
+		`{"dns_listen":["not an address"],"dns_port":53,"upstreams":["9.9.9.10"],"portal_host":"127.0.0.1","portal_port":8787}`,
+		`{"dns_listen":["192.0.2.10"],"dns_port":0,"upstreams":["9.9.9.10"],"portal_host":"127.0.0.1","portal_port":8787}`,
+		`{"dns_listen":["192.0.2.10"],"dns_port":53,"upstreams":[],"portal_host":"127.0.0.1","portal_port":8787}`,
+		`{"dns_listen":["192.0.2.10"],"dns_port":53,"upstreams":["9.9.9.10"],"portal_host":"nope","portal_port":8787}`,
+		`{"dns_listen":["192.0.2.10"],"dns_port":53,"upstreams":["9.9.9.10"],"portal_host":"127.0.0.1","portal_port":99999}`,
 		`not json`,
 	} {
 		if code, out := r.do("POST", "/api/setup/finish", body); code != 400 {
@@ -386,17 +401,24 @@ func TestFinishReportsAPathItCannotUse(t *testing.T) {
 	if code, out := r.do("POST", "/api/setup/finish", finishBody); code != 500 {
 		t.Errorf("= %d: %s", code, out)
 	}
-	// A data directory that cannot be made is the owner's to fix, and is
-	// reported as their mistake rather than ours.
+}
+
+func TestADataDirectoryThatCannotBeUsedIsReportedOnThePage(t *testing.T) {
+	// It is the one thing about that step that can go wrong, and it is
+	// better said while the owner is looking than as a startup error
+	// after they have walked away.
+	r := newRig(t)
 	blocker := filepath.Join(r.dir, "file")
 	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r.s.ConfigPath = filepath.Join(r.dir, "shepherd.toml")
-	body := `{"data_dir":"` + filepath.ToSlash(filepath.Join(blocker, "data")) + `","dns_listen":["192.0.2.10"],"dns_port":53,` +
-		`"upstreams":["9.9.9.10"],"portal_host":"127.0.0.1","portal_port":8787}`
-	if code, out := r.do("POST", "/api/setup/finish", body); code != 400 {
-		t.Errorf("= %d: %s", code, out)
+	r.s.DataDir = filepath.Join(blocker, "data")
+	got := r.json("GET", "/api/setup/state", "", 200)
+	if got["data_dir_error"] == nil {
+		t.Errorf("state = %+v", got)
+	}
+	if code, _ := r.do("POST", "/api/setup/finish", finishBody); code != 500 {
+		t.Error("finishing into an unusable data directory should fail")
 	}
 }
 
@@ -556,7 +578,7 @@ func TestNewServerFillsInWhatWasNotGiven(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.ConfigPath != "shepherd.toml" || s.HostAddrs == nil || s.PortFree == nil {
+	if s.ConfigPath != "shepherd.toml" || s.HostAddrs == nil || s.PortFree == nil || s.DataDir != "data" {
 		t.Errorf("defaults = %+v", s)
 	}
 	if len(s.Token) < 32 {
@@ -589,8 +611,8 @@ func TestConnectingARouterWithoutADataDirectoryUsesTheDefault(t *testing.T) {
 	// changed it, and the default is what the rest of setup assumes.
 	r := newRig(t)
 	r.json("POST", "/api/setup/router", `{"base_url":"https://198.51.100.20","username":"u","password":"p"}`, 200)
-	if len(r.connDirs) != 1 || r.connDirs[0] != "data" {
-		t.Errorf("data dirs = %v", r.connDirs)
+	if len(r.connDirs) != 1 || r.connDirs[0] != r.s.DataDir {
+		t.Errorf("data dirs = %v, want Shepherd's own", r.connDirs)
 	}
 }
 

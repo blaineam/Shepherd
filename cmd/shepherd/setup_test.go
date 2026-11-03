@@ -43,7 +43,7 @@ func scriptedSetup(t *testing.T) {
 	t.Cleanup(func() { setupSeams = nil })
 }
 
-const finishBody = `{"data_dir":"data","dns_listen":["192.0.2.10"],"dns_port":5353,` +
+const finishBody = `{"dns_listen":["192.0.2.10"],"dns_port":5353,` +
 	`"upstreams":["9.9.9.10"],"portal_host":"127.0.0.1","portal_port":8787}`
 
 // finishSetupAt completes setup over its own API, the way the page does.

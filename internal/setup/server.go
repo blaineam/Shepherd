@@ -41,7 +41,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -77,6 +76,16 @@ type Server struct {
 	// optional bandwidth step. Nil in a build that cannot read a router,
 	// and the page then says so instead of offering it.
 	ConnectRouter func(ctx context.Context, dataDir string, c RouterConn) error
+
+	// DataDir is where Shepherd will keep its state. It is worked out
+	// from the configuration file's own directory rather than asked
+	// about: "data" beside shepherd.toml is right for every install this
+	// page is for, and a path typed into a web page is both a question
+	// nobody can answer better than Shepherd and a path this process
+	// would then create and write to on a stranger's say-so. The page
+	// shows it, with whether it is writable, and nothing it sends can
+	// change it.
+	DataDir string
 
 	// Token gates every request. Empty means NewServer generates one.
 	Token string
@@ -122,6 +131,9 @@ func NewServer(s *Server) (*Server, error) {
 	}
 	if s.PortFree == nil {
 		s.PortFree = PortFree
+	}
+	if s.DataDir == "" {
+		s.DataDir = filepath.Join(filepath.Dir(s.ConfigPath), "data")
 	}
 	if s.Token == "" {
 		raw := make([]byte, 24)
@@ -197,8 +209,11 @@ func (s *Server) URLs(port string) []string {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	assets, _ := fs.Sub(webFS, "web")
-	mux.Handle("GET /setup.css", s.gate(http.FileServerFS(assets)))
-	mux.Handle("GET /setup.js", s.gate(http.FileServerFS(assets)))
+	// The stylesheet and the script hold nothing about this host, and the
+	// page has to load them before any JavaScript of ours has run, so
+	// they are the one thing here that is not behind the token.
+	mux.Handle("GET /setup.css", http.FileServerFS(assets))
+	mux.Handle("GET /setup.js", http.FileServerFS(assets))
 	mux.Handle("GET /", s.gate(http.HandlerFunc(s.page)))
 	mux.Handle("GET /api/setup/state", s.gate(http.HandlerFunc(s.state)))
 	mux.Handle("POST /api/setup/upstream-test", s.gate(http.HandlerFunc(s.upstreamTest)))
@@ -209,30 +224,31 @@ func (s *Server) Handler() http.Handler {
 }
 
 // gate requires the one-time token, from the ?token= in the printed URL or
-// from the cookie set on the first load, so the rest of the network cannot
-// configure this Shepherd while setup is up. It is compared in constant
-// time, and a wrong one is a flat 403 with no hint.
+// from the X-Shepherd-Setup header the page sends afterwards, so the rest of
+// the network cannot configure this Shepherd while setup is up. It is
+// compared in constant time, and a wrong one is a flat 403 with no hint.
+//
+// The token is deliberately not put in a cookie: setup is plain HTTP (there
+// is no certificate yet and cannot be), and a cookie would be stored by the
+// browser and sent on every later request to this host and port -- which,
+// once setup finishes, is the portal. Keeping it in the page's memory and
+// sending it as a header leaves nothing behind.
 func (s *Server) gate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tok := r.URL.Query().Get("token")
+		tok := r.Header.Get(tokenHeader)
 		if tok == "" {
-			if c, err := r.Cookie(setupCookie); err == nil {
-				tok = c.Value
-			}
+			tok = r.URL.Query().Get("token")
 		}
 		if subtle.ConstantTimeCompare([]byte(tok), []byte(s.Token)) != 1 {
 			http.Error(w, "Open the address Shepherd printed on the console: it carries the setup token.", http.StatusForbidden)
 			return
 		}
-		// Carrying the token in a cookie keeps it out of every later URL
-		// (and so out of the browser's history and any Referer header).
-		http.SetCookie(w, &http.Cookie{Name: setupCookie, Value: s.Token, Path: "/",
-			HttpOnly: true, SameSite: http.SameSiteStrictMode})
 		next.ServeHTTP(w, r)
 	})
 }
 
-const setupCookie = "shepherd_setup"
+// tokenHeader is how the page proves itself after the first load.
+const tokenHeader = "X-Shepherd-Setup"
 
 func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
@@ -258,6 +274,7 @@ type stateJSON struct {
 	AddrsError   string   `json:"addrs_error,omitempty"`
 	Presets      []Preset `json:"presets"`
 	DataDir      string   `json:"data_dir"`
+	DataDirError string   `json:"data_dir_error,omitempty"`
 	DNSPort      int      `json:"dns_port"`
 	PortalPort   int      `json:"portal_port"`
 	PortalHost   string   `json:"portal_host"`
@@ -267,8 +284,15 @@ type stateJSON struct {
 
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	out := stateJSON{ConfigPath: s.ConfigPath, Presets: Presets,
-		DataDir: "data", DNSPort: 53, PortalPort: 8787, PortalHost: "127.0.0.1",
+		DataDir: s.DataDir, DNSPort: 53, PortalPort: 8787, PortalHost: "127.0.0.1",
 		CanRouter: s.ConnectRouter != nil}
+	// Checked here rather than left for the owner to discover at the end:
+	// a directory Shepherd cannot write is the one thing about this step
+	// that can go wrong, and it is better said on the page than in a
+	// startup error after they have walked away.
+	if err := os.MkdirAll(s.DataDir, 0o750); err != nil {
+		out.DataDirError = err.Error()
+	}
 	if _, err := os.Stat(s.ConfigPath); err == nil {
 		out.ConfigExists = true
 	}
@@ -347,10 +371,7 @@ func (s *Server) portCheck(w http.ResponseWriter, r *http.Request) {
 // directory the owner has chosen (the credentials go into its secrets.json,
 // never into shepherd.toml).
 func (s *Server) router(w http.ResponseWriter, r *http.Request) {
-	var b struct {
-		DataDir string `json:"data_dir"`
-		RouterConn
-	}
+	var b RouterConn
 	if !decodeBody(w, r, &b) {
 		return
 	}
@@ -358,11 +379,8 @@ func (s *Server) router(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this build cannot read bandwidth from a router", http.StatusNotFound)
 		return
 	}
-	dir := strings.TrimSpace(b.DataDir)
-	if dir == "" {
-		dir = "data"
-	}
-	if err := s.ConnectRouter(r.Context(), dir, b.RouterConn); err != nil {
+	// The directory is Shepherd's own, never one the request names.
+	if err := s.ConnectRouter(r.Context(), s.DataDir, b); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
@@ -377,15 +395,15 @@ func (s *Server) finish(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &a) {
 		return
 	}
+	// Whatever the page sent, the state goes where this process decided
+	// it goes: nothing a request carries becomes a path Shepherd creates.
+	a.DataDir = s.DataDir
 	if err := a.validate(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// The data directory is created here rather than left to startup, so
-	// a path that cannot be used is reported while the owner is still
-	// looking at the page.
-	if err := os.MkdirAll(a.DataDir, 0o750); err != nil {
-		http.Error(w, "that data directory cannot be used: "+err.Error(), http.StatusBadRequest)
+	if err := os.MkdirAll(s.DataDir, 0o750); err != nil {
+		http.Error(w, "Shepherd's data directory cannot be used: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if _, err := os.Stat(s.ConfigPath); err == nil {
