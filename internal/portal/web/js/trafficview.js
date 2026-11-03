@@ -11,7 +11,7 @@ import { unavailable } from './mgmt.js';
 import { createRouterUsage } from './routerusageview.js';
 import {
   RANGE_PRESETS, rangeWindow, scopeOptions, scopeLabel, fillSeries, sumPoints, bucketRate, timeLabels,
-  shareOf, statusHeadline, liveRows, liveRowsNote, DOWNLOAD_CAVEAT, measurementNote, liveChartCaption, fmtBytes, fmtBitsPerSecond,
+  shareOf, statusHeadline, liveRows, liveRowsNote, DOWNLOAD_CAVEAT, measurementNote, tileLabels, liveChartCaption, fmtBytes, fmtBitsPerSecond,
   niceCeil, yTicks, lineArea, nearestIndex, pushSample, shareSlices, arcPath, rateStats,
 } from './traffic.js';
 
@@ -174,9 +174,10 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, watch =
       if (sub) t.append(el('div', 'wm-tile-s muted', sub));
       tilesHolder.append(t);
     };
-    tile('Download now', fmtBitsPerSecond(lv.down_bytes_per_second), 'estimated', 'tile-down');
-    tile('Upload now', fmtBitsPerSecond(lv.up_bytes_per_second), 'measured', 'tile-up');
-    tile('Since Watch mode started', fmtBytes(Number(lv.bytes_received_est) || 0) + ' down', fmtBytes(Number(lv.bytes_relayed) || 0) + ' up');
+    const labels = tileLabels(status);
+    tile('Download now', fmtBitsPerSecond(lv.down_bytes_per_second), labels.down, 'tile-down');
+    tile('Upload now', fmtBitsPerSecond(lv.up_bytes_per_second), labels.up, 'tile-up');
+    tile(labels.total, fmtBytes(Number(lv.bytes_received_est) || 0) + ' down', fmtBytes(Number(lv.bytes_relayed) || 0) + ' up');
 
     live = pushSample(live, { time: Date.now(), down: (Number(lv.down_bytes_per_second) || 0) * 8, up: (Number(lv.up_bytes_per_second) || 0) * 8 }, LIVE_SAMPLES);
     liveChartHolder.replaceChildren();
