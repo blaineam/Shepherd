@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"shepherd/internal/intercept"
 )
 
 // persisted is what survives a restart: only the kill switch. An owner who
@@ -61,6 +63,57 @@ type LoopStop struct {
 	// digest: the lines that say whether the frames were circulating.
 	Devices []string `json:"devices,omitempty"`
 	Flows   []string `json:"flows,omitempty"`
+	// StreakRelayed, StreakDuplicates and StreakReturned are the relay's
+	// counts over the mirrored seconds alone: frames relayed, copies the
+	// duplicate brake refused, and Shepherd's own frames that came back.
+	StreakRelayed    uint64 `json:"streak_relayed"`
+	StreakDuplicates uint64 `json:"streak_duplicates"`
+	StreakReturned   uint64 `json:"streak_returned"`
+	// Echo is how long echoed frames took to return, bucketed: microseconds
+	// means local, hundreds of microseconds a switch, milliseconds wireless.
+	Echo *intercept.EchoDelays `json:"echo_delays,omitempty"`
+	// Frames are the sampled frames as hex (first 60 bytes each), for
+	// opening in a packet tool.
+	Frames []string `json:"frames,omitempty"`
+}
+
+// echoDelays reads the relay's echo histogram, nil when it has none.
+func echoDelays(ctrl *intercept.Controller) *intercept.EchoDelays {
+	d := ctrl.EchoDelays()
+	if d.Total() == 0 {
+		return nil
+	}
+	return &d
+}
+
+// sampleHex renders up to 64 sampled frames, newest last, as
+// "len=N <hex>" lines.
+func sampleHex(samples []intercept.FrameSample) []string {
+	if len(samples) > 64 {
+		samples = samples[len(samples)-64:]
+	}
+	out := make([]string, 0, len(samples))
+	for _, s := range samples {
+		out = append(out, fmt.Sprintf("len=%d %x", s.Len, s.Bytes))
+	}
+	return out
+}
+
+// appendStopHistory appends the trip to watch-stops.jsonl beside the state
+// file. last_loop_stop keeps only the latest trip, so without this each
+// new one erases the evidence of the one before; failure to write it is
+// not worth failing the trip over.
+func appendStopHistory(statePath string, stop *LoopStop) {
+	b, err := json.Marshal(stop)
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(filepath.Dir(statePath), "watch-stops.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.Write(append(b, '\n'))
 }
 
 // hasLoopingRelay reports whether the relay named "<iface>/<relay>" is
