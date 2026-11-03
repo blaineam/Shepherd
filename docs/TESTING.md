@@ -13,6 +13,12 @@ Every bug fix begins with a test that reproduces it. The outage that shaped the 
 (an encrypted upstream that connected and never answered) is now `TestPoolFailsOverFromDeadUpstream`
 and the probe tests.
 
+## DNS QA
+
+`scripts/dns-qa` runs the end-to-end DNS suite: a real engine over real sockets in front of fake
+upstreams. See [DNS-QA.md](DNS-QA.md). It is part of CI, and the same checks run inside a live
+Shepherd as the built-in self-test.
+
 ## The coverage floor
 
 `.coverage-floor` holds the minimum total statement coverage. `scripts/coverage` fails below it and

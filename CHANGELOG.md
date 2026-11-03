@@ -22,6 +22,20 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   upload bar, and a trend line per busy device.
 
 ### Added
+- **A built-in DNS self-test** (`[selftest]`, on by default). Every minute Shepherd asks a known-good and a
+  known-blocked name of every address it listens on, over UDP and TCP, so an address devices use with no
+  listener behind it (the wired-versus-Wi-Fi failure that left a PS5 with "host not found") is caught within
+  a minute instead of by a person. It also watches each upstream's error rate and latency over a rolling
+  window, flags one above 5 percent errors or far slower than its peers, and warns when this host has a LAN
+  address that is neither served nor listed in `selftest.not_served`. Results are a card on the Upstreams
+  screen and `GET /api/selftest`; four new alarm types (`dns-listener-down`, `dns-canary-failed`,
+  `dns-lan-uncovered`, `dns-upstream-degraded`) fire after two failing rounds and not again within the
+  cooldown. The test's queries are kept out of the query log and device list. See
+  [docs/DNS-QA.md](docs/DNS-QA.md).
+- **`scripts/dns-qa`, an automated DNS QA suite** (its tests run in CI with the rest): a real engine on real sockets in
+  front of fake UDP, TCP, DoH and DoT upstreams, checking failover, hedging, stalled and blackholed upstreams,
+  TCP fallback on truncation, the AAAA filter and `ipv6hint` stripping, blocklists and allowlist precedence,
+  Private Relay NXDOMAIN, cache TTLs, and listener coverage on loopback aliases.
 - **`dns.filter_aaaa`** (`"auto"` by default, or `"on"` / `"off"`). On a network whose devices have no
   IPv6 route to the internet (only private `fd..` or link-local addresses) every AAAA answer is an
   unreachable address, and a device that tries it first or handles the failure badly reports a network

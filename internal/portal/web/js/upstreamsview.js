@@ -3,7 +3,7 @@
 // the server, so all text is set with textContent.
 import { el } from './dom.js';
 import { icon, iconButton, button, emptyState, unavailableCard, confirmDialog } from './ui.js';
-import { classifyAddr, KIND_LABEL, isEncrypted, move, presetVariants, parseBootstrap, healthLabel } from './upstreams.js';
+import { classifyAddr, KIND_LABEL, isEncrypted, move, presetVariants, parseBootstrap, healthLabel, selftestSummary } from './upstreams.js';
 import { unavailable } from './mgmt.js';
 import { fmtNum } from './format.js';
 
@@ -31,10 +31,46 @@ export function createUpstreams({ root, mgmt, notify }) {
   const presetCard = el('section', 'card up-card');
   const bootCard = el('section', 'card up-card');
   const noteCard = el('section', 'card up-card note');
-  colA.append(listCard, bootCard, noteCard);
+  const testCard = el('section', 'card up-card');
+  colA.append(testCard, listCard, bootCard, noteCard);
   colB.append(addCard, presetCard);
 
   const cardHead = (t, sub) => { const h = el('div', 'card-h'); const hh = el('h3', 'card-t', t); h.append(hh); if (sub) h.append(el('span', 'muted small', sub)); return h; };
+
+  // ------------------------------------------------------------- self-test
+  let selftestDoc = null;
+  function paintSelftest() {
+    testCard.replaceChildren(cardHead('DNS self-test', 'every minute'));
+    const sum = selftestSummary(selftestDoc);
+    const line = el('p', sum.state === 'ok' ? 'good' : sum.state === 'fail' || sum.state === 'warn' ? 'badtxt' : 'muted', sum.headline);
+    line.setAttribute('role', 'status');
+    testCard.append(line);
+    if (sum.problems.length) {
+      const ul = el('ul', 'up-list');
+      for (const p of sum.problems) ul.append(el('li', 'up-item bad small', p.message));
+      testCard.append(ul);
+    }
+    if (sum.listeners.length) {
+      const ul = el('ul', 'up-list');
+      for (const l of sum.listeners) {
+        const li = el('li', 'up-item' + (l.ok ? '' : ' bad'));
+        li.append(el('span', l.ok ? 'dot' : 'dot bad'), el('span', 'up-addr mono', l.addr), el('span', 'muted small', l.detail));
+        ul.append(li);
+      }
+      testCard.append(ul);
+    }
+    if (sum.state !== 'off') {
+      const run = button('Run now', 'ghost', async () => {
+        run.disabled = true;
+        try { selftestDoc = await mgmt.selftestRun(); paintSelftest(); } catch (e) { notify('Self-test failed: ' + e.message); run.disabled = false; }
+      }, 'refresh');
+      testCard.append(run);
+    }
+  }
+  async function loadSelftest() {
+    try { selftestDoc = await mgmt.selftest(); } catch (e) { selftestDoc = unavailable(e) ? { enabled: false } : selftestDoc; }
+    paintSelftest();
+  }
 
   // ------------------------------------------------------------- resolver list
   function paintList() {
@@ -251,8 +287,9 @@ export function createUpstreams({ root, mgmt, notify }) {
     async show() {
       if (!started) { started = true; paintAdd(); paintBoot(); paintNote(); }
       await load();
+      loadSelftest();
       clearInterval(timer);
-      timer = setInterval(() => { if (!root.hidden && dragFrom < 0 && !busy && !document.hidden) mgmt.upstreams().then((r) => { data = { ...data, upstreams: r.upstreams, presets: r.presets || data.presets }; paintList(); paintPresets(); }).catch(() => {}); }, 4000);
+      timer = setInterval(() => { if (!root.hidden && dragFrom < 0 && !busy && !document.hidden) { mgmt.upstreams().then((r) => { data = { ...data, upstreams: r.upstreams, presets: r.presets || data.presets }; paintList(); paintPresets(); }).catch(() => {}); loadSelftest(); } }, 4000);
     },
     hide() { clearInterval(timer); },
   };

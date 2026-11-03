@@ -232,6 +232,22 @@ interval_seconds = 120                 # 2 minutes; minimum 60
 bufferbloat_enabled = false
 bufferbloat_interval_seconds = 3600    # 1 hour; minimum 600 when enabled
 
+[selftest]
+# The built-in DNS self-test (docs/DNS-QA.md). Every interval it asks a
+# known-good and a known-blocked name of EVERY address Shepherd listens on,
+# over UDP and TCP, checks each upstream's error rate and latency, and warns
+# when this host has a LAN address with no DNS listener. It only talks to
+# Shepherd's own listeners. Results are on the Upstreams screen and
+# /api/selftest; failures raise alarms (with a cooldown).
+enabled = true
+interval_seconds = 60                 # minimum 10
+good_name = "example.com"             # must resolve
+blocked_name = ""                     # a name on one of your lists; empty = a synthetic name Shepherd always blocks
+not_served = []                       # LAN addresses of this host that deliberately have no DNS listener
+max_error_percent = 5                 # flag an upstream above this error rate over the window
+window_minutes = 15
+alarm_cooldown_minutes = 30           # the least time between two alarms for the same finding
+
 [portal]
 listen = "127.0.0.1:8787"
 idle_lock_minutes = 10           # relock to demo data after this long idle; 0 = never auto-lock

@@ -258,6 +258,10 @@ alarm is recorded at medium severity on all channels, so a typo never loses an a
 | `arp-many-ips` (internal/arp) | medium | all | yes (install and device) |
 | `arp-flood` (internal/arp) | low (medium for the gateway's address) | portal | yes (install and device) |
 | `arp-reply-storm` (internal/arp) | medium | all | yes (install and device) |
+| `dns-listener-down` (internal/selftest) | critical | all | no |
+| `dns-canary-failed` (internal/selftest) | high | all | no |
+| `dns-lan-uncovered` (internal/selftest) | medium | all | no |
+| `dns-upstream-degraded` (internal/selftest) | medium | all | no |
 | `test` | high | all | no, and it **bypasses** mute rules, quiet hours and learning mode |
 
 "Install and device" means the type is also suppressed for a device that was first seen recently (see
