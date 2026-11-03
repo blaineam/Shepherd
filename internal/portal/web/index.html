@@ -268,24 +268,32 @@
       <img src="icon.png" alt="" class="logo big">
       <h2>Shepherd is locked</h2>
       <p class="muted small">Shepherd is showing synthetic demo data, made up in your browser. Unlock to see your real network.</p>
-      <!-- Shown only on the portal's own HTTPS address once a passkey is
-           registered (GET /api/login/passkey); see docs/PASSKEYS.md. -->
-      <div id="passkey-unlock" class="passkey-unlock" hidden>
+      <!-- One way in is expanded, the rest are a line of links below
+           (docs/LOCKING.md). Which one leads is decided at runtime:
+           passkey where one is registered and this is its HTTPS address,
+           then a PIN on a browser that is already trusted, then the token,
+           which is always reachable because it is the way back in when the
+           other two are gone. -->
+      <div id="signin-passkey" class="signin" hidden>
         <button type="button" id="btn-passkey">Sign in with a passkey</button>
+        <p class="muted small" id="passkey-hint">Your device should ask for Face ID, Touch ID or your device PIN.</p>
         <p class="err" id="passkey-err"></p>
-        <hr>
       </div>
-      <form id="pin-form" class="inline-form">
-        <input id="pin" type="password" inputmode="numeric" placeholder="PIN" autocomplete="off">
-        <button>Unlock with PIN</button>
-      </form>
-      <p class="err" id="pin-err"></p>
-      <hr>
-      <form id="login-form">
-        <input id="token" type="password" placeholder="Portal token" autocomplete="current-password">
-        <button>Unlock with token</button>
-      </form>
-      <p class="muted small">The token is in the data directory, or run <code>shepherd -print-token</code>.</p>
+      <div id="signin-pin" class="signin" hidden>
+        <form id="pin-form" class="inline-form">
+          <input id="pin" type="password" inputmode="numeric" placeholder="PIN" autocomplete="off">
+          <button>Unlock with PIN</button>
+        </form>
+        <p class="err" id="pin-err"></p>
+      </div>
+      <div id="signin-token" class="signin" hidden>
+        <form id="login-form">
+          <input id="token" type="password" placeholder="Portal token" autocomplete="current-password">
+          <button>Unlock with token</button>
+        </form>
+        <p class="muted small">The token is in the data directory, or run <code>shepherd -print-token</code>.</p>
+      </div>
+      <p class="signin-alts" id="signin-alts"></p>
       <p class="err" id="login-err"></p>
     </div>
   </div>

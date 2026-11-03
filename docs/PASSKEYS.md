@@ -26,7 +26,9 @@ passkey** button on the lock screen.
   to one device. Remove any one individually; removing it also ends every session it opened, the way
   revoking a trusted browser does.
 - **Order on the lock screen:** passkey (when available), then PIN, then token — the order
-  [LOCKING.md](LOCKING.md) planned.
+  [LOCKING.md](LOCKING.md) planned. One of them is expanded and the others are links beneath it, decided
+  from `GET /api/login/methods`; where the passkey leads, the ceremony starts by itself (once, and only on a
+  visible page) rather than waiting for a button.
 
 ## Why a library, and which one
 
@@ -170,7 +172,7 @@ gets, not a claim that the contents need hiding. Nothing passkey-related is ever
 
 | Route | Auth | What it does |
 |---|---|---|
-| `GET /api/login/passkey` | none | `{"available": bool}`: whether the lock screen should offer a passkey. True only at the HTTPS address with at least one passkey for this hostname. Never reveals the hostname or a count. |
+| `GET /api/login/methods` | none | `{"passkey": bool, "pin": bool}`: which ways in the lock screen should offer this browser. `passkey` is true only at the HTTPS address with at least one passkey for this hostname; `pin` only when a PIN exists *and* this browser's trusted-device cookie checks out. Never reveals the hostname, a count, or anything about another browser. The token is always a way in and is not listed. |
 | `POST /api/login/passkey/begin` | none | Options for `navigator.credentials.get`; sets the ceremony cookie. 409 when not available here. |
 | `POST /api/login/passkey/finish` | none | Body: the assertion. On success, the session cookie, exactly like `POST /api/login`. 401 when refused. |
 | `GET /api/passkeys` | session or token | `configured`, `here`, `problem` (why not, naming where to go), `rp_id`, `origin`, `max`, and the list (id, name, rp_id, created, last_used, synced). No key material. |

@@ -425,7 +425,7 @@ func New(d Deps) *Server {
 	s.mux.Handle("DELETE /api/trusted-devices/{id}", s.auth(s.revokeTrustedDevice))
 	// Passkeys: the lock screen's sign-in is unauthenticated like the other
 	// logins; registering and managing passkeys needs an unlocked session.
-	s.mux.HandleFunc("GET /api/login/passkey", s.passkeyAvailable)
+	s.mux.HandleFunc("GET /api/login/methods", s.loginMethods)
 	s.mux.HandleFunc("POST /api/login/passkey/begin", s.beginPasskeyLogin)
 	s.mux.HandleFunc("POST /api/login/passkey/finish", s.finishPasskeyLogin)
 	s.mux.Handle("GET /api/passkeys", s.auth(s.listPasskeys))

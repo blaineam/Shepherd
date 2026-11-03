@@ -237,7 +237,7 @@ button.wide { width: 100%; margin-top: 8px; }
 .modal hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
 .modal form { display: flex; flex-direction: column; gap: 8px; }
 .modal p { margin: 0; }
-.passkey-unlock { display: flex; flex-direction: column; gap: 12px; }
+.signin { display: flex; flex-direction: column; gap: 12px; }
 .dlg-overlay { z-index: 70; }
 .dlg { text-align: left; }
 .dlg h2 { font-size: 17px; }
@@ -1227,3 +1227,18 @@ button.tf-trend { cursor: pointer; } button.tf-trend:hover { border-color: var(-
 }
 .dhcp-conflicts { margin: 10px 0 0; padding-left: 18px; max-width: 90ch; }
 .dhcp-conflicts li { margin-bottom: 6px; }
+
+/* The lock screen leads with one way in; the others are a quiet line of
+   links under it (docs/LOCKING.md). */
+.signin-alts { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; margin: .6rem 0 0; }
+.signin-alts .linky {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: .875rem;
+  color: var(--muted, #9babbd);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.signin-alts .linky:hover { color: inherit; }
