@@ -142,9 +142,16 @@ Grab the newest beta from [Releases](https://github.com/blaineam/shepherd/releas
 ```bash
 git clone https://github.com/blaineam/shepherd && cd shepherd
 make build
-cp shepherd.example.toml shepherd.toml      # set dns.listen and portal.listen
-bin/shepherd -config shepherd.toml
+bin/shepherd                                # prints a setup link; finish it in a browser
 ```
+
+With no configuration file, Shepherd brings up a setup page and prints the addresses to open. Answer
+five questions in the browser — where to keep state, which of this host's addresses answer DNS, which
+resolvers to ask (each one tested before it is written), where the portal listens, and optionally
+your router for per-device bandwidth — press Finish, and Shepherd writes a commented `shepherd.toml`
+and carries straight on with it in the same process. `shepherd setup` runs it again later. Copying
+[`shepherd.example.toml`](shepherd.example.toml) and editing it by hand still works.
+See [SETUP.md](docs/SETUP.md).
 
 Run it on a spare port beside your current resolver, check it with `dig`, and only then point your
 router at it. The [Wave 2 guide](docs/WAVE-2.md) walks through it and what to verify.
@@ -165,7 +172,7 @@ privately through [SECURITY.md](SECURITY.md). Releases follow [SemVer](https://s
 
 ## Docs
 
-[Design](docs/DESIGN.md) · [Roadmap](docs/ROADMAP.md) · [Testing](docs/TESTING.md) · [DNS QA and self-test](docs/DNS-QA.md) · [IPv6 and Thread](docs/IPV6.md) ·
+[First-run setup](docs/SETUP.md) · [Design](docs/DESIGN.md) · [Roadmap](docs/ROADMAP.md) · [Testing](docs/TESTING.md) · [DNS QA and self-test](docs/DNS-QA.md) · [IPv6 and Thread](docs/IPV6.md) ·
 [Wave 2 guide](docs/WAVE-2.md) · [Raspberry Pi](docs/RASPBERRY-PI.md) · [Releasing](docs/RELEASING.md) ·
 [Public development](docs/PUBLIC-DEV.md)
 

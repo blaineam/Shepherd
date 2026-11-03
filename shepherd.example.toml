@@ -1,4 +1,9 @@
 # Copy to shepherd.toml (git-ignored) and edit. Never commit your real config.
+# Or just start Shepherd with no configuration file: it brings up a setup page,
+# prints the address to open, asks what has to be decided -- the addresses to
+# answer DNS on, the resolvers to ask, the data directory, the portal -- and
+# writes a shorter, commented shepherd.toml holding only those, then starts on
+# it (docs/SETUP.md). "shepherd setup" runs that again later.
 
 # Protection is ON by default: a blocklist is active and Apple Private Relay is
 # blocked. Opt out of anything below. Everything shown here is the default.

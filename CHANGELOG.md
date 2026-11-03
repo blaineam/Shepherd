@@ -12,6 +12,26 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+- **First-run setup in a browser.** A new install no longer starts in a text editor. Start Shepherd
+  with no configuration file and it brings up a setup page, prints the addresses to open (with a
+  one-time token, since the page listens on every address so it can be reached from the machine you
+  are actually sitting at), asks five questions and writes a commented `shepherd.toml` — then shuts
+  the page down and carries straight on with what you chose, in the same process. `shepherd setup`
+  runs it again later. The address question is the reason it exists: it lists every address this host
+  has with its interface and ticks them all, because a device asks one specific address and a host
+  serving only its Wi-Fi address while the router hands out the wired one is a network with no DNS,
+  with nothing in the configuration looking wrong. Each chosen resolver is probed from this host
+  before it is written (twice before it is called a failure, since public resolvers drop the odd
+  query), a held port is explained rather than refused, only the keys it asked about are written so
+  every other default keeps following Shepherd's own, and an existing `shepherd.toml` is kept as
+  `.bak`. The optional last step connects a UniFi controller and verifies it by reading it once; its
+  credentials go to `<data_dir>/secrets.json` (0600), never into the configuration, and eero is
+  pointed at the portal's Bandwidth screen, which has the emailed-code flow. If the preferred port is
+  taken, setup moves to a free one and says so; if it cannot come up at all, that is logged and
+  Shepherd starts on its defaults rather than refusing. It complements `scripts/shepherd-doctor` (the
+  read-only host preflight) rather than repeating it. See [docs/SETUP.md](docs/SETUP.md).
+
 ### Changed
 - **Watch mode is deprecated.** Per-device bandwidth now comes from the router over its own API
   (eero and UniFi), which measures both directions instead of estimating downloads, puts nothing in

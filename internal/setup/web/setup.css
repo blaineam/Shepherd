@@ -1,0 +1,107 @@
+/* The first-run setup page. Deliberately standalone: it runs before the
+   portal exists, so it shares none of the portal's stylesheet or its
+   vendored assets, and it loads nothing from the internet. */
+:root {
+  color-scheme: dark light;
+  --bg: #0b1016;
+  --card: #141b24;
+  --line: #243040;
+  --ink: #e7eef7;
+  --muted: #9babbd;
+  --accent: #4bb3a5;
+  --warn: #e0a23c;
+  --bad: #e06c6c;
+  --good: #58c08f;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.wrap { max-width: 50rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+.head h1 { margin: 0 0 .25rem; font-size: 1.6rem; letter-spacing: -0.01em; }
+.sub, .note { color: var(--muted); }
+.sub { margin: 0 0 1.5rem; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1.1rem 1.2rem;
+  margin: 0 0 1rem;
+}
+.card h2 { margin: 0 0 .4rem; font-size: 1.05rem; }
+.note { margin: 0 0 .9rem; }
+.small { font-size: .875rem; }
+.opt {
+  font-size: .75rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--accent);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: .1rem .5rem;
+  vertical-align: middle;
+}
+.field { display: block; margin: 0 0 .8rem; }
+.field > span { display: block; font-size: .875rem; color: var(--muted); margin-bottom: .25rem; }
+.field.short { max-width: 12rem; }
+input[type=text], input[type=password], input[type=number], textarea, input:not([type]) {
+  width: 100%;
+  font: inherit;
+  font-size: 16px; /* iOS Safari zooms a focused field below this */
+  color: var(--ink);
+  background: #0e141c;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: .5rem .6rem;
+}
+textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+input:focus, textarea:focus, button:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.addrs, .presets, .radios { display: grid; gap: .4rem; margin: 0 0 .9rem; }
+.check, .addrs label, .presets label, .radios label {
+  display: flex;
+  gap: .55rem;
+  align-items: start;
+  background: #0e141c;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: .55rem .7rem;
+  cursor: pointer;
+}
+.check { margin: .2rem 0 .8rem; }
+.addrs input, .presets input, .radios input, .check input { margin: .3rem 0 0; flex: none; }
+/* A long IPv6 address must wrap rather than widen the page: on a phone the
+   whole setup is otherwise scrolled sideways. */
+.addrs .ip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.addrs label > span, .presets label > span, .radios label > span { min-width: 0; overflow-wrap: anywhere; }
+.done code, .done li { overflow-wrap: anywhere; }
+.addrs .iface, .presets .pnote { color: var(--muted); font-size: .85rem; }
+.row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; }
+button {
+  font: inherit;
+  border-radius: 7px;
+  padding: .5rem .9rem;
+  border: 1px solid var(--line);
+  background: #19222d;
+  color: var(--ink);
+  cursor: pointer;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #06231f; font-weight: 600; }
+button[disabled] { opacity: .6; cursor: progress; }
+.result { font-size: .9rem; color: var(--muted); }
+.result.good { color: var(--good); }
+.result.bad { color: var(--bad); }
+.warn { color: var(--warn); }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
+.done ol { padding-left: 1.2rem; }
+.done li { margin: .4rem 0; }
+a { color: var(--accent); }
+@media (prefers-color-scheme: light) {
+  :root { --bg: #f4f7fa; --card: #fff; --line: #d7e0ea; --ink: #16202b; --muted: #5b6b7d; --accent: #10776a; }
+  input[type=text], input[type=password], input[type=number], textarea, input:not([type]),
+  .check, .addrs label, .presets label, .radios label { background: #f8fafc; }
+  button { background: #eef3f8; }
+  button.primary { color: #fff; }
+}

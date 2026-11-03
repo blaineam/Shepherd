@@ -101,13 +101,13 @@ enabled = false
 
 func TestRealMainVersionAndFlags(t *testing.T) {
 	var out, errb bytes.Buffer
-	if code := realMain([]string{"-version"}, &out, &errb); code != 0 || !strings.Contains(out.String(), "shepherd") {
+	if code := realMain([]string{"-version"}, nil, &out, &errb); code != 0 || !strings.Contains(out.String(), "shepherd") {
 		t.Errorf("-version: code %d out %q", code, out.String())
 	}
-	if code := realMain([]string{"-nope"}, &out, &errb); code != 2 {
+	if code := realMain([]string{"-nope"}, nil, &out, &errb); code != 2 {
 		t.Errorf("unknown flag: code %d, want 2", code)
 	}
-	if code := realMain([]string{"-h"}, &out, &errb); code != 0 {
+	if code := realMain([]string{"-h"}, nil, &out, &errb); code != 0 {
 		t.Errorf("-h: code %d, want 0", code)
 	}
 }
@@ -115,7 +115,7 @@ func TestRealMainVersionAndFlags(t *testing.T) {
 func TestRealMainPrintTokenAndConfigErrors(t *testing.T) {
 	cfg := writeConfig(t, freePort(t), freePort(t), "")
 	var out, errb bytes.Buffer
-	if code := realMain([]string{"-config", cfg, "-print-token"}, &out, &errb); code != 0 {
+	if code := realMain([]string{"-config", cfg, "-print-token"}, nil, &out, &errb); code != 0 {
 		t.Fatalf("print-token: code %d err %q", code, errb.String())
 	}
 	tok := strings.TrimSpace(out.String())
@@ -123,7 +123,7 @@ func TestRealMainPrintTokenAndConfigErrors(t *testing.T) {
 		t.Errorf("token %q too short", tok)
 	}
 	out.Reset()
-	realMain([]string{"-config", cfg, "-print-token"}, &out, &errb)
+	realMain([]string{"-config", cfg, "-print-token"}, nil, &out, &errb)
 	if strings.TrimSpace(out.String()) != tok {
 		t.Error("token must be stable across runs")
 	}
@@ -131,7 +131,7 @@ func TestRealMainPrintTokenAndConfigErrors(t *testing.T) {
 	bad := filepath.Join(tempDir(t), "bad.toml")
 	os.WriteFile(bad, []byte("[dns]\nblock_mode = \"nope\"\n"), 0o600)
 	errb.Reset()
-	if code := realMain([]string{"-config", bad}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "block_mode") {
+	if code := realMain([]string{"-config", bad}, nil, &out, &errb); code != 1 || !strings.Contains(errb.String(), "block_mode") {
 		t.Errorf("bad config: code %d err %q", code, errb.String())
 	}
 }

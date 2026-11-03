@@ -239,10 +239,10 @@ func TestRollbackFlagThroughMain(t *testing.T) {
 	cfgPath := filepath.Join(dir, "shepherd.toml")
 	os.WriteFile(cfgPath, []byte("data_dir = \""+filepath.Join(dir, "data")+"\"\n"), 0o600)
 	var out, errb strings.Builder
-	if code := realMain([]string{"-config", cfgPath, "-rollback"}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "nothing to roll back") {
+	if code := realMain([]string{"-config", cfgPath, "-rollback"}, nil, &out, &errb); code != 1 || !strings.Contains(errb.String(), "nothing to roll back") {
 		t.Fatalf("rollback with nothing to restore: exit %d, %q", code, errb.String())
 	}
-	if code := realMain([]string{"-config", filepath.Join(dir, "missing.toml"), "-rollback"}, &out, &errb); code != 1 {
+	if code := realMain([]string{"-config", filepath.Join(dir, "missing.toml"), "-rollback"}, nil, &out, &errb); code != 1 {
 		t.Fatalf("rollback with a missing config: exit %d", code)
 	}
 }
