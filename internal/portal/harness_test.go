@@ -105,6 +105,12 @@ func newHarnessWith(t *testing.T, adjust func(*Deps)) *harness {
 		adjust(&deps)
 	}
 	srv := New(deps)
+	// Drain background refreshes before the harness is torn down. Registered
+	// after t.TempDir() and before the test server, so cleanup runs in the
+	// order: stop serving, finish the refresh, close its source, remove dir.
+	// Without this a test that posts to /api/lists/refresh leaves a goroutine
+	// writing into the directory being removed.
+	t.Cleanup(srv.waitBackground)
 	engine.Clients = reg
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

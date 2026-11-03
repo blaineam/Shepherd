@@ -90,6 +90,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Fixed
 
+- **A list refresh started from the portal was untracked once its request returned.** `POST
+  /api/lists/refresh` answers `202` and refreshes in the background by design, but nothing held a
+  handle on that goroutine, so nothing could wait for it to finish writing its list files. In the
+  test suite it raced the temporary directory being removed and made CI fail intermittently
+  (`TempDir RemoveAll cleanup: directory not empty`). The server now tracks background refreshes and
+  can drain them. No change to how refreshing behaves for you: the request still returns at once.
+
 - **Filtered AAAA answers, and blocked names, could make a device query without end.** A synthesized
   NODATA or NXDOMAIN carried no SOA in its authority section, and RFC 2308 negative caching needs
   one: with nothing to cache against, a client that prefers IPv6 just asks again. A solar inverter

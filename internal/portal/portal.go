@@ -270,6 +270,10 @@ type Server struct {
 	started time.Time
 	mux     *http.ServeMux
 
+	// bg tracks work started by refreshAsync, which outlives its request on
+	// purpose. waitBackground drains it.
+	bg sync.WaitGroup
+
 	mu      sync.Mutex
 	memHome *settings.Home // used when no settings store is configured
 
