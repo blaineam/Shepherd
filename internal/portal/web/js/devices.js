@@ -17,6 +17,7 @@ import { severityLabel, severityBadgeClass } from './alarms.js';
 import { activeFindings, resolvedFindings, findingTooltip } from './vulnscan.js';
 import { mergeAttention, attentionReasonLabel } from './attention.js';
 import { WATCH_CHOICES, watchSwitchOf, deviceBadge, fmtBitsPerSecond, fmtPacketsPerSecond, fmtTotalBytes } from './watch.js';
+import { DEVICE_AAAA_CHOICES, deviceAAAAChoice, aaaaSwitchOf } from './aaaa.js';
 
 const OVER = 6;
 const rowHeight = () => (window.matchMedia && window.matchMedia('(max-width: 760px)').matches ? 88 : 56);
@@ -709,6 +710,14 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     })), { label: 'Set Watch mode' });
   }
 
+  // The AAAA switch, in bulk. Same three positions as the drawer's own.
+  function aaaaMenu(anchor) {
+    openMenu(anchor, DEVICE_AAAA_CHOICES.map((c) => ({
+      label: c.label, hint: c.id === 'auto' ? 'the default' : undefined,
+      onSelect: () => runBulk({ op: 'set_aaaa', aaaa: c.id }),
+    })), { label: 'Set IPv6 answers' });
+  }
+
   async function runBulk(req, { confirmDelete = false } = {}) {
     const n = sel.count();
     if (!n) return;
@@ -819,11 +828,12 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
     const inc = button('Include', 'bb', () => runBulk({ op: 'set_excluded', excluded: false }));
     const wd = button('Wandering', 'bb', (e) => wanderMenu(e.currentTarget), 'refresh');
     const wm = button('Watch', 'bb', (e) => watchMenu(e.currentTarget), 'eye');
+    const am = button('IPv6', 'bb', (e) => aaaaMenu(e.currentTarget), 'globe');
     const tg = button('Tags', 'bb', (e) => tagsPopover(e.currentTarget), 'tag');
     const del = button('Delete', 'bb danger', () => runBulk({ op: 'delete' }, { confirmDelete: true }), 'trash');
     const clear = iconButton('x', 'Clear selection', () => { sel.clear(); renderAll(); }, 'bulk-x');
-    for (const b of [g1, g2, tg, wd, wm]) b.setAttribute('aria-haspopup', 'true');
-    bulk.append(label, g1, g2, wd, wm, ex, inc, tg, del, clear);
+    for (const b of [g1, g2, tg, wd, wm, am]) b.setAttribute('aria-haspopup', 'true');
+    bulk.append(label, g1, g2, wd, wm, am, ex, inc, tg, del, clear);
   }
 
   // ------------------------------------------------------------- drawer
@@ -1214,6 +1224,23 @@ export function createDevices({ root, mgmt, notify, toaster, renderBlocking, onO
       if (live.childNodes.length) sW.append(live);
       sW.append(el('p', 'muted small', 'Watch mode carries only what this device sends out; its downloads are estimated from its own TCP acknowledgements (QUIC, other UDP and VPN traffic are invisible to that). It blocks nothing on its own.'));
       drawer.append(sW);
+    }
+
+    // IPv6 answers for this device (docs/IPV6.md). Always drawn: the whole
+    // point of it is to be found from the device that is misbehaving, and the
+    // network-wide setting lives on the Upstreams screen.
+    {
+      const sA = section('IPv6 answers');
+      const curA = aaaaSwitchOf(d);
+      const segA = segmented(DEVICE_AAAA_CHOICES.map((c) => ({ id: c.id, label: c.label })), curA,
+        (id) => {
+          aaaaText.textContent = deviceAAAAChoice(id).text;
+          patchDevice(d.id, { aaaa: id }).catch((err) => notify(err.message || String(err)));
+        }, 'AAAA answers for this device');
+      const aaaaText = el('p', 'muted small', deviceAAAAChoice(curA).text);
+      sA.append(segA.root, aaaaText);
+      sA.append(el('p', 'muted small', 'Answering in full is the escape hatch for a device that keeps asking for the same name: some do not remember an empty answer, and ask again without end instead of trying IPv4.'));
+      drawer.append(sA);
     }
 
     // The DHCP reservation (docs/DHCP.md). Only drawn when the server

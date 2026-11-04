@@ -54,7 +54,9 @@ upstreams = ["9.9.9.10", "149.112.112.10", "1.1.1.1"]
 bootstrap = ["9.9.9.9", "1.1.1.1"]
 block_mode = "null"            # "null" answers 0.0.0.0 / ::, "nxdomain" answers NXDOMAIN
 # "auto" withholds AAAA answers only while outbound IPv6 is unreachable (a LAN with just private
-# fd.. addresses); "on" always withholds them, "off" never does.
+# fd.. addresses); "on" always withholds them, "off" never does. After first run, change it from
+# the portal (Upstreams -> IPv6 answers), which also lets one device be set apart; a mode saved
+# there wins over this one. See docs/IPV6.md.
 filter_aaaa = "auto"
 probe_interval_seconds = 15
 cache_size = 20000

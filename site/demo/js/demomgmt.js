@@ -3,7 +3,7 @@
 // with no backend. All data is synthetic; state lives in memory.
 import { ApiError } from './api.js?v=798e1c8c';
 import { parseQuery, matchDevice, sortDevices } from './search.js?v=6d6c330f';
-import { applyBulkLocal, normTag } from './bulk.js?v=a92cfb00';
+import { applyBulkLocal, normTag } from './bulk.js?v=59d2b697';
 import { applyModeLocal } from './wander.js?v=b40b3e3f';
 import { buildDevices, fallbackName, DEMO_GROUPS, DEMO_CATALOG, DEMO_SWITCHES, DEMO_PRESETS } from './demodata.js?v=1f5ce92d';
 import { GROUP_COLORS } from './devtypes.js?v=0c35dd83';
@@ -49,6 +49,10 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
     { config: '203.0.113.53', kind: 'udp', healthy: false, rtt_ms: 0, consecutive_failures: 4, last_error: 'read udp: i/o timeout', queries: 412, errors: 380 },
   ];
   let bootstrap = ['198.51.100.2', '198.51.100.3'];
+  // AAAA filtering (docs/IPV6.md). Empty means nothing was set in the
+  // portal, so the demo's "shepherd.toml" still decides.
+  let aaaaMode = '';
+  const demoIPv6Usable = false;
   let proxyHosts = [
     { id: 'rp-1', domain: 'media.example.com', target_scheme: 'http', target_host: '192.0.2.20', target_port: 8096, skip_tls_verify: false, enabled: true },
     { id: 'rp-2', domain: 'photos.example.com', target_scheme: 'http', target_host: '192.0.2.21', target_port: 2283, skip_tls_verify: false, enabled: true },
@@ -378,8 +382,9 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       const ids = Array.isArray(body.ids) ? body.ids : [];
       if (!ids.length) throw err(400, 'ids required');
       if (body.op === 'assign_group' && !groups.some((g) => g.id === body.group_id)) throw err(404, 'group not found');
-      if (!['assign_group', 'remove_group', 'set_excluded', 'set_wandering', 'set_watch', 'set_tags', 'delete'].includes(body.op)) throw err(400, 'unknown op');
+      if (!['assign_group', 'remove_group', 'set_excluded', 'set_wandering', 'set_watch', 'set_aaaa', 'set_tags', 'delete'].includes(body.op)) throw err(400, 'unknown op');
       if (body.op === 'set_watch' && !['auto', 'on', 'off'].includes(body.watch)) throw err(400, 'watch must be "auto", "on" or "off"');
+      if (body.op === 'set_aaaa' && !['auto', 'on', 'off'].includes(body.aaaa)) throw err(400, 'aaaa must be "auto", "on" or "off"');
       const set = new Set(ids);
       const have = new Set(devices.map((d) => d.id));
       const missing = ids.filter((id) => !have.has(id));
@@ -412,6 +417,10 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
           if (typeof body.watch === 'string') {
             if (!['auto', 'on', 'off'].includes(body.watch)) throw err(400, 'watch must be "auto", "on" or "off"');
             n.watch = body.watch;
+          }
+          if (typeof body.aaaa === 'string') {
+            if (!['auto', 'on', 'off'].includes(body.aaaa)) throw err(400, 'aaaa must be "auto", "on" or "off"');
+            n.aaaa = body.aaaa;
           }
           if (typeof body.wandering === 'boolean') { const m = applyModeLocal(n, body, now()); n.wandering = m.wandering; n.excluded = m.excluded; if (m.wandering_until) n.wandering_until = m.wandering_until; else delete n.wandering_until; }
           if (Array.isArray(body.tags)) n.tags = [...new Set(body.tags.map(normTag).filter(Boolean))];
@@ -575,6 +584,17 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
         upstreams = next;
         return upstreamDoc();
       }
+    }
+    // ---- IPv6 answers (AAAA)
+    if (path === '/api/dns/aaaa') {
+      if (method === 'PUT') aaaaMode = String(body.mode || '');
+      const mode = aaaaMode || 'auto';
+      return {
+        mode, from_config: aaaaMode === '', config_mode: 'auto',
+        filtering: mode === 'on' || (mode === 'auto' && !demoIPv6Usable),
+        ipv6_usable: demoIPv6Usable,
+        exceptions: devices.filter((d) => d.aaaa && d.aaaa !== 'auto').map((d) => ({ id: d.id, name: d.name, aaaa: d.aaaa })),
+      };
     }
     if (path === '/api/upstreams/test' && method === 'POST') return probe(String(body.addr || '').trim());
     if (path === '/api/upstreams/bootstrap' && method === 'PUT') {

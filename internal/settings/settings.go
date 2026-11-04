@@ -34,6 +34,26 @@ type Home struct {
 type file struct {
 	User *Home `json:"home,omitempty"`      // set by the user
 	Auto *Home `json:"auto_home,omitempty"` // detected from the network's public address
+	// AAAA is the network's AAAA-filtering mode as set in the portal:
+	// "auto", "on" or "off". Empty means nothing was ever set here, so
+	// dns.filter_aaaa from the configuration file still decides.
+	AAAA string `json:"aaaa_filter,omitempty"`
+}
+
+// AAAA filtering modes, the same three dns.filter_aaaa takes.
+const (
+	AAAAAuto = "auto" // filter only while outbound IPv6 is unreachable
+	AAAAOn   = "on"   // always withhold AAAA answers
+	AAAAOff  = "off"  // never withhold them
+)
+
+// ValidAAAAMode reports whether mode is one Shepherd accepts.
+func ValidAAAAMode(mode string) bool {
+	switch mode {
+	case AAAAAuto, AAAAOn, AAAAOff:
+		return true
+	}
+	return false
 }
 
 // Store persists settings to one JSON file (mode 0600). It stores where home
@@ -142,5 +162,35 @@ func (s *Store) SetAuto(h Home) error {
 	defer s.mu.Unlock()
 	next := s.data
 	next.Auto = &h
+	return s.saveLocked(next)
+}
+
+// AAAAMode returns the AAAA-filtering mode saved from the portal, or "" when
+// none was ever saved and dns.filter_aaaa still decides.
+func (s *Store) AAAAMode() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data.AAAA
+}
+
+// SetAAAAMode saves the network's AAAA-filtering mode, which from then on wins
+// over dns.filter_aaaa.
+func (s *Store) SetAAAAMode(mode string) error {
+	if !ValidAAAAMode(mode) {
+		return fmt.Errorf("mode must be %q, %q or %q, got %q", AAAAAuto, AAAAOn, AAAAOff, mode)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.data
+	next.AAAA = mode
+	return s.saveLocked(next)
+}
+
+// ClearAAAAMode forgets the portal's choice, so dns.filter_aaaa decides again.
+func (s *Store) ClearAAAAMode() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.data
+	next.AAAA = ""
 	return s.saveLocked(next)
 }

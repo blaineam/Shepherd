@@ -49,6 +49,10 @@ export function createMgmt(api) {
     setUpstreams: (addrs) => api('/api/upstreams', { method: 'PUT', body: J({ addrs }) }),
     setBootstrap: (servers) => api('/api/upstreams/bootstrap', { method: 'PUT', body: J({ servers }) }),
 
+    aaaa: () => api('/api/dns/aaaa'),
+    // An empty mode hands the decision back to shepherd.toml.
+    setAAAA: (mode) => api('/api/dns/aaaa', { method: 'PUT', body: J({ mode }) }),
+
     history: (params) => api('/api/history' + Q(params)),
     unlock: (passphrase) => api('/api/history/unlock', { method: 'POST', body: J({ passphrase }), keep401: true }),
     settings: () => api('/api/settings'),

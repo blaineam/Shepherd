@@ -21,6 +21,7 @@ import (
 	"shepherd/internal/alarms"
 	"shepherd/internal/arp"
 	"shepherd/internal/config"
+	"shepherd/internal/devices"
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/geo"
 	"shepherd/internal/history"
@@ -160,11 +161,6 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go pool.Probe(ctx, time.Duration(cfg.DNS.ProbeIntervalSeconds)*time.Second)
-	filterAAAA, v6 := aaaaFilter(cfg.DNS.FilterAAAA)
-	engine.FilterAAAA = filterAAAA
-	if v6 != nil {
-		go v6.Run(ctx, time.Minute)
-	}
 	go listMgr.Run(ctx, 24*time.Hour)
 
 	registry, stopDevices, err := startDevices(ctx, cfg, engine)
@@ -177,9 +173,18 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	if err != nil {
 		return err
 	}
+	// AAAA filtering (docs/IPV6.md): a mode saved in the portal wins over
+	// dns.filter_aaaa, and a device's own switch wins over both. The probe
+	// runs whatever the mode is, so switching to "auto" from the portal has
+	// an answer to work with at once.
+	aaaa := newAAAASwitch(prefs, cfg.DNS.FilterAAAA, registry)
+	engine.FilterAAAA = aaaa.filter
+	go aaaa.probe.Run(ctx, time.Minute)
+
 	deps := portal.Deps{Engine: engine, Lists: listMgr, Policy: policy, Devices: registry, Upstreams: ups,
 		Token: token, Version: version, Settings: prefs, GeoBlock: geoBlock,
-		DataDir: cfg.DataDir, IdleLockMinutes: cfg.Portal.IdleLockMinutes}
+		DataDir: cfg.DataDir, IdleLockMinutes: cfg.Portal.IdleLockMinutes,
+		AAAAConfigMode: cfg.DNS.FilterAAAA, AAAANetwork: aaaa.network, AAAAIPv6Usable: aaaa.ipv6Usable}
 
 	// alarmRouter is kept so an ntfy server saved in the portal reaches the
 	// running Router (see secretsChanged); it is nil when alarms are off.
@@ -541,24 +546,78 @@ func openHistory(cfg config.Config) (*history.Store, error) {
 	})
 }
 
-// aaaaFilter builds the engine's AAAA-filtering switch from dns.filter_aaaa:
-// nil for "off", always true for "on", and for "auto" the IPv6 probe's
-// verdict (the probe is returned so the caller can run it).
-func aaaaFilter(mode string) (func() bool, *dnsengine.IPv6Probe) {
-	switch mode {
-	case "on":
-		return func() bool { return true }, nil
-	case "auto":
-		v6 := &dnsengine.IPv6Probe{OnChange: logIPv6Change}
-		return v6.Filtering, v6
-	}
-	return nil, nil
+// aaaaSwitch is the engine's AAAA-filtering switch. Three things decide, most
+// specific first: the device's own switch, then the mode (the portal's choice
+// if one was saved, otherwise dns.filter_aaaa), and in "auto" mode the IPv6
+// probe's verdict. See docs/IPV6.md.
+type aaaaSwitch struct {
+	prefs *settings.Store
+	// configMode is dns.filter_aaaa, used until the portal saves a mode.
+	configMode string
+	probe      *dnsengine.IPv6Probe
+	// devs supplies each client's per-device switch; nil means none have one.
+	devs *devices.Registry
 }
 
-func logIPv6Change(usable bool) {
+func newAAAASwitch(prefs *settings.Store, configMode string, devs *devices.Registry) *aaaaSwitch {
+	a := &aaaaSwitch{prefs: prefs, configMode: configMode, devs: devs}
+	a.probe = &dnsengine.IPv6Probe{OnChange: a.logIPv6Change}
+	return a
+}
+
+// mode is the network's mode: the portal's saved choice, else dns.filter_aaaa.
+func (a *aaaaSwitch) mode() string {
+	if a.prefs != nil {
+		if m := a.prefs.AAAAMode(); settings.ValidAAAAMode(m) {
+			return m
+		}
+	}
+	if settings.ValidAAAAMode(a.configMode) {
+		return a.configMode
+	}
+	return settings.AAAAAuto
+}
+
+// network reports what the network-wide mode alone says, with no device's
+// switch considered. The portal shows it.
+func (a *aaaaSwitch) network() bool {
+	switch a.mode() {
+	case settings.AAAAOn:
+		return true
+	case settings.AAAAOff:
+		return false
+	}
+	return a.probe.Filtering()
+}
+
+// ipv6Usable reports the probe's own verdict, whatever the mode is, so the
+// portal can say why "auto" is filtering (or not).
+func (a *aaaaSwitch) ipv6Usable() bool { return !a.probe.Filtering() }
+
+// filter answers the engine, per query.
+func (a *aaaaSwitch) filter(clientIP string) bool {
+	if a.devs != nil && clientIP != "" {
+		if d, ok := a.devs.FindByIP(clientIP); ok {
+			switch d.AAAA {
+			case devices.AAAAOn:
+				return true
+			case devices.AAAAOff:
+				return false
+			}
+		}
+	}
+	return a.network()
+}
+
+// logIPv6Change reports a flip in the probe's verdict, but only while the
+// mode is one the verdict decides: in "on" or "off" it changes nothing.
+func (a *aaaaSwitch) logIPv6Change(usable bool) {
+	if a.mode() != settings.AAAAAuto {
+		return
+	}
 	if usable {
 		log.Printf("dns: outbound IPv6 is reachable, so AAAA answers are given out")
 		return
 	}
-	log.Printf("dns: outbound IPv6 is not reachable (dns.filter_aaaa = \"auto\"), so AAAA answers are withheld until it is")
+	log.Printf("dns: outbound IPv6 is not reachable (AAAA filtering is on \"auto\"), so AAAA answers are withheld until it is")
 }

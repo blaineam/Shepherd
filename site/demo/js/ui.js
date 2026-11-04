@@ -41,6 +41,8 @@ const P = {
   archive: ['M3 5h18v4H3z', 'M5 9v10h14V9', 'M10 13h4'],
   // Watch mode. Not the wristwatch above (that is a device type).
   eye: ['M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z', 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z'],
+  // Address families, for the AAAA switch.
+  globe: ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M3 12h18', 'M12 3c2.5 2.4 3.8 5.4 3.8 9S14.5 18.6 12 21c-2.5-2.4-3.8-5.4-3.8-9S9.5 5.4 12 3z'],
 };
 
 export function icon(name, size = 16, cls = '') {

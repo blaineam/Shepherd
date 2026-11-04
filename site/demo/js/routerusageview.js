@@ -6,7 +6,7 @@
 //
 // Every string that came from the server is placed with textContent.
 import { el } from './dom.js?v=65858b99';
-import { button } from './ui.js?v=c9bbb094';
+import { button } from './ui.js?v=4d208003';
 import { routerConnection, nameSyncSummary } from './traffic.js?v=cd821019';
 
 export function createRouterUsage({ mgmt, notify, onChanged = () => {} }) {

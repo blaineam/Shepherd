@@ -77,6 +77,8 @@ The search box takes free text and filters. A `-` in front negates a term; quote
 | `excluded:true` | opted out of protection |
 | `unnamed:true` | no real name known yet |
 | `tag:guest` | a tag |
+| `watch:off` | its own Watch switch ([WATCH.md](WATCH.md)) |
+| `aaaa:off` | its own IPv6-answers switch ([IPV6.md](IPV6.md)) |
 | `-group:kids` | not in the group |
 
 Order by most recently seen (`sort=recent`) or name; results are paged (`offset`, `limit`, at most 500).
@@ -84,7 +86,8 @@ Order by most recently seen (`sort=recent`) or name; results are paged (`offset`
 ## Groups and bulk edit
 
 A group has a name, a color and members. A device can be in several. Select any number of devices (from a search, for instance
-`unnamed:true`) and in one step: add them to or remove them from a group, set or clear **excluded**, add or remove tags, or delete them.
+`unnamed:true`) and in one step: add them to or remove them from a group, set or clear **excluded**, set wandering, set the Watch or
+IPv6-answers switch, add or remove tags, or delete them.
 A deleted device comes back as a new one if it is seen again. Deleting a group takes its devices out of it and forgets the policy set for
 it; deleting a device forgets the policy set for it.
 

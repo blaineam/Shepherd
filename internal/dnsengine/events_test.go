@@ -443,7 +443,7 @@ func TestFilterAAAAAnswersEmptyAndNeverAsksUpstream(t *testing.T) {
 	var hits atomicInt
 	up := fakeUpstreamAnswering(t, "198.51.100.7", &hits)
 	pool, _ := NewPool([]string{up})
-	e := &Engine{Filter: NewFilter(), Pool: pool, Cache: NewCache(10), Log: NewQueryLog(20), Stats: NewStats(), FilterAAAA: func() bool { return true }}
+	e := &Engine{Filter: NewFilter(), Pool: pool, Cache: NewCache(10), Log: NewQueryLog(20), Stats: NewStats(), FilterAAAA: func(string) bool { return true }}
 
 	w := udpWriter()
 	e.ServeDNS(w, query("v6.example.", dns.TypeAAAA))
@@ -461,12 +461,44 @@ func TestFilterAAAAAnswersEmptyAndNeverAsksUpstream(t *testing.T) {
 	}
 }
 
+// One client may be filtered while another is answered in full: a device that
+// does not cache a NODATA asks for the same filtered AAAA without end, so it
+// needs an exception the rest of the network does not get.
+func TestFilterAAAAIsDecidedPerClient(t *testing.T) {
+	var hits atomicInt
+	up := fakeUpstreamAnswering(t, "198.51.100.7", &hits)
+	pool, _ := NewPool([]string{up})
+	e := &Engine{Filter: NewFilter(), Pool: pool, Cache: NewCache(10), Log: NewQueryLog(20), Stats: NewStats(),
+		FilterAAAA: func(clientIP string) bool { return clientIP != "192.0.2.51" }}
+
+	e.ServeDNS(udpWriter(), query("v6.example.", dns.TypeAAAA)) // 192.0.2.50: filtered
+	if hits.Load() != 0 {
+		t.Fatalf("the filtered client reached the upstream %d times", hits.Load())
+	}
+	exempt := &fakeWriter{remote: &net.UDPAddr{IP: net.ParseIP("192.0.2.51"), Port: 4000}}
+	e.ServeDNS(exempt, query("v6.example.", dns.TypeAAAA))
+	if hits.Load() != 1 {
+		t.Fatalf("the exempt client should have been forwarded, hits = %d", hits.Load())
+	}
+	entries, _ := e.Log.After(0, 10)
+	if len(entries) != 2 || entries[0].Reason != "ipv6-filtered" || entries[1].Reason == "ipv6-filtered" {
+		t.Fatalf("entries = %+v", entries)
+	}
+	// The exempt client's answer was cached; the filtered one must still not
+	// be served it.
+	e.ServeDNS(udpWriter(), query("v6.example.", dns.TypeAAAA))
+	entries, _ = e.Log.After(0, 10)
+	if len(entries) != 3 || entries[2].Reason != "ipv6-filtered" {
+		t.Fatalf("a cached AAAA answer leaked to a filtered client: %+v", entries)
+	}
+}
+
 func TestWithoutIPv6HintsStripsOnlyTheHint(t *testing.T) {
-	e := &Engine{FilterAAAA: func() bool { return true }}
+	e := &Engine{FilterAAAA: func(string) bool { return true }}
 	rr := &dns.HTTPS{SVCB: dns.SVCB{Hdr: dns.RR_Header{Name: "a.example.", Rrtype: dns.TypeHTTPS, Class: dns.ClassINET}, Priority: 1, Target: ".",
 		Value: []dns.SVCBKeyValue{&dns.SVCBAlpn{Alpn: []string{"h2"}}, &dns.SVCBIPv6Hint{Hint: []net.IP{net.ParseIP("2001:db8::1")}}}}}
 	in := &dns.Msg{Answer: []dns.RR{rr}}
-	out := e.withoutIPv6Hints(in)
+	out := e.withoutIPv6Hints("10.0.0.5", in)
 	got := out.Answer[0].(*dns.HTTPS).Value
 	if len(got) != 1 || got[0].Key() != dns.SVCB_ALPN {
 		t.Errorf("hint not stripped: %v", got)
@@ -474,21 +506,21 @@ func TestWithoutIPv6HintsStripsOnlyTheHint(t *testing.T) {
 	if len(in.Answer[0].(*dns.HTTPS).Value) != 2 {
 		t.Error("the cached message was modified")
 	}
-	if (&Engine{}).withoutIPv6Hints(in) != in {
+	if (&Engine{}).withoutIPv6Hints("10.0.0.5", in) != in {
 		t.Error("with the filter off the message must pass through untouched")
 	}
 }
 
 func TestWithoutIPv6HintsHandlesSVCBAndLeavesHintlessAnswersAlone(t *testing.T) {
-	e := &Engine{FilterAAAA: func() bool { return true }}
+	e := &Engine{FilterAAAA: func(string) bool { return true }}
 	svcb := &dns.SVCB{Hdr: dns.RR_Header{Name: "b.example.", Rrtype: dns.TypeSVCB, Class: dns.ClassINET}, Priority: 1, Target: ".",
 		Value: []dns.SVCBKeyValue{&dns.SVCBIPv6Hint{Hint: []net.IP{net.ParseIP("2001:db8::2")}}}}
-	out := e.withoutIPv6Hints(&dns.Msg{Answer: []dns.RR{svcb}})
+	out := e.withoutIPv6Hints("10.0.0.5", &dns.Msg{Answer: []dns.RR{svcb}})
 	if got := out.Answer[0].(*dns.SVCB).Value; len(got) != 0 {
 		t.Errorf("SVCB hint not stripped: %v", got)
 	}
 	plain := &dns.Msg{Answer: []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: "c.example.", Rrtype: dns.TypeA, Class: dns.ClassINET}, A: net.ParseIP("192.0.2.1")}}}
-	if e.withoutIPv6Hints(plain) != plain {
+	if e.withoutIPv6Hints("10.0.0.5", plain) != plain {
 		t.Error("an answer with no IPv6 hint must pass through untouched")
 	}
 }

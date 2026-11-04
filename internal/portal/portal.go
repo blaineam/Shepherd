@@ -81,6 +81,18 @@ type Deps struct {
 	History dnsengine.HistorySource
 	// Settings stores the home location. Nil keeps it in memory only.
 	Settings *settings.Store
+	// AAAAConfigMode is dns.filter_aaaa from the configuration file, which
+	// decides AAAA filtering until a mode is saved in the portal. Empty
+	// means the default, "auto".
+	AAAAConfigMode string
+	// AAAANetwork reports whether the network-wide setting is withholding
+	// AAAA answers right now, with no device's own switch considered. Nil
+	// means AAAA filtering is not wired up and the screen says so.
+	AAAANetwork func() bool
+	// AAAAIPv6Usable reports the IPv6 probe's own verdict, whatever the
+	// mode is, so the screen can explain what "auto" is doing. Nil means
+	// unknown.
+	AAAAIPv6Usable func() bool
 	// Geo reports map data status. Nil means the map is disabled.
 	Geo GeoStatus
 	// ARP reports the passive ARP monitor's counters. Nil means ARP
@@ -327,6 +339,9 @@ type Server struct {
 
 	mu      sync.Mutex
 	memHome *settings.Home // used when no settings store is configured
+	// memAAAA holds the AAAA-filtering mode when no settings store is
+	// configured, for the same reason memHome does.
+	memAAAA string
 
 	importSessions *eeroSessions
 
@@ -727,6 +742,8 @@ func (s *Server) routes() {
 	h("POST /api/geoblock", s.setGeoBlock)
 
 	h("GET /api/upstreams", s.getUpstreams)
+	h("GET /api/dns/aaaa", s.getAAAA)
+	h("PUT /api/dns/aaaa", s.putAAAA)
 	h("POST /api/upstreams/test", s.testUpstream)
 	h("POST /api/upstreams", s.addUpstream)
 	h("DELETE /api/upstreams", s.deleteUpstream)

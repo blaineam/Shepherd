@@ -16,6 +16,7 @@ export function applyBulkLocal(d, req) {
     case 'set_excluded': n.excluded = !!req.excluded; if (n.excluded) { n.wandering = false; delete n.wandering_until; } break;
     case 'set_wandering': return applyModeLocal(d, { wandering: !!req.wandering, wandering_minutes: req.wandering_minutes });
     case 'set_watch': n.watch = req.watch; break;
+    case 'set_aaaa': n.aaaa = req.aaaa; break;
     case 'set_tags': {
       const rm = new Set((req.remove_tags || []).map(normTag));
       const tags = (d.tags || []).filter((t) => !rm.has(t));
@@ -60,6 +61,12 @@ export function planUndo(req, before) {
       }
       break;
     }
+    case 'set_aaaa': {
+      for (const was of ['auto', 'on', 'off']) {
+        push({ op: 'set_aaaa', aaaa: was }, idsWhere((d) => (d.aaaa || 'auto') === was && was !== req.aaaa));
+      }
+      break;
+    }
     case 'set_tags': {
       for (const t of req.add_tags || []) {
         const nt = normTag(t);
@@ -84,6 +91,7 @@ export function describeBulk(req, n, groupName = (id) => id) {
     case 'set_excluded': return `${req.excluded ? 'Excluded' : 'Included'} ${w}`;
     case 'set_tags': return `Updated tags on ${w}`;
     case 'set_watch': return req.watch === 'off' ? `Watch mode off for ${w}` : req.watch === 'on' ? `${w} always watched` : `${w} back to automatic watching`;
+    case 'set_aaaa': return req.aaaa === 'off' ? `${w} answered IPv6 in full` : req.aaaa === 'on' ? `IPv6 answers withheld from ${w}` : `${w} back to the network's IPv6 setting`;
     case 'set_wandering': return req.wandering ? `${w} set to wandering` + (req.wandering_minutes > 0 ? ' for ' + (req.wandering_minutes >= 60 ? req.wandering_minutes / 60 + ' h' : req.wandering_minutes + ' min') : '') : `${w} back to protected`;
     case 'delete': return `Deleted ${w}`;
     default: return 'Done';

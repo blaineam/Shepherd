@@ -51,6 +51,9 @@ type deviceJSON struct {
 	// from the engine. Omitted entirely when Watch mode is not wired in,
 	// so the portal can tell "no Watch mode" from "Watch mode says this".
 	WatchState *watch.DeviceStatus `json:"watch_state,omitempty"`
+	// AAAA is the device's own AAAA-filtering switch: "auto" (the
+	// network's setting decides), "on" or "off". See docs/IPV6.md.
+	AAAA string `json:"aaaa"`
 	// Route is the device's own DHCP-mode routing switch: "auto" (the
 	// mode decides, which routes it while routing is on), "on" or "off".
 	// See docs/DHCP.md.
@@ -97,7 +100,7 @@ func toDevice(d devices.Device) deviceJSON {
 		Vendor: d.Vendor, Type: typ, TypeReason: d.TypeReason, TypeAuto: d.TypeAuto, TypeConfidence: d.TypeConfidence,
 		MACs: orEmpty(d.MACs), IPs: orEmpty(d.IPs), FirstSeen: d.FirstSeen, LastSeen: d.LastSeen,
 		Groups: orEmpty(d.Groups), Tags: orEmpty(d.Tags), Excluded: d.Excluded, Wandering: wandering, WanderingUntil: until, Notes: d.Notes,
-		Watch: d.Watch.String(), Route: d.Route.String(),
+		Watch: d.Watch.String(), Route: d.Route.String(), AAAA: d.AAAA.String(),
 	}
 }
 
@@ -282,6 +285,7 @@ func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
 		WanderingMinutes int       `json:"wandering_minutes"`
 		Watch            *string   `json:"watch"`
 		Route            *string   `json:"route"`
+		AAAA             *string   `json:"aaaa"`
 	}
 	if !decode(w, r, &b, smallBody) {
 		return
@@ -325,6 +329,15 @@ func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
 		}
 		routeMode = m
 	}
+	var aaaaMode devices.AAAAMode
+	if b.AAAA != nil {
+		m, ok := devices.ParseAAAAMode(*b.AAAA)
+		if !ok {
+			bad(w, `aaaa must be "auto", "on" or "off"`)
+			return
+		}
+		aaaaMode = m
+	}
 	var err error
 	if b.Alias != nil {
 		err = s.Devices.Rename(id, *b.Alias)
@@ -349,6 +362,9 @@ func (s *Server) patchDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil && b.Route != nil {
 		err = s.Devices.SetRoute(id, routeMode)
+	}
+	if err == nil && b.AAAA != nil {
+		err = s.Devices.SetAAAA(id, aaaaMode)
 	}
 	if errors.Is(err, devices.ErrNotFound) { // deleted by someone else meanwhile
 		notFound(w, "unknown device")
@@ -406,6 +422,7 @@ func (s *Server) bulkDevices(w http.ResponseWriter, r *http.Request) {
 		WanderingMinutes int      `json:"wandering_minutes"`
 		Watch            *string  `json:"watch"`
 		Route            *string  `json:"route"`
+		AAAA             *string  `json:"aaaa"`
 	}
 	if !decode(w, r, &b, smallBody) {
 		return
@@ -469,6 +486,17 @@ func (s *Server) bulkDevices(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		res = s.Devices.BulkSetRoute(b.IDs, m)
+	case "set_aaaa":
+		if b.AAAA == nil {
+			bad(w, "aaaa is required")
+			return
+		}
+		m, ok := devices.ParseAAAAMode(*b.AAAA)
+		if !ok {
+			bad(w, `aaaa must be "auto", "on" or "off"`)
+			return
+		}
+		res = s.Devices.BulkSetAAAA(b.IDs, m)
 	case "set_tags":
 		if len(b.AddTags)+len(b.RemoveTags) == 0 {
 			bad(w, "give add_tags or remove_tags")
@@ -483,7 +511,7 @@ func (s *Server) bulkDevices(w http.ResponseWriter, r *http.Request) {
 		res = s.Devices.BulkDelete(b.IDs)
 		s.forgetDeviceScopes(b.IDs...)
 	default:
-		bad(w, `op must be "assign_group", "remove_group", "set_excluded", "set_wandering", "set_watch", "set_tags" or "delete"`)
+		bad(w, `op must be "assign_group", "remove_group", "set_excluded", "set_wandering", "set_watch", "set_route", "set_aaaa", "set_tags" or "delete"`)
 		return
 	}
 	if err != nil {

@@ -403,7 +403,7 @@ func TestEverySynthesizedNegativeAnswerCarriesAnSOA(t *testing.T) {
 	e := &Engine{Filter: NewFilter(), Cache: NewCache(4), Log: NewQueryLog(8), Stats: NewStats()}
 
 	// The AAAA filter's NODATA.
-	e.FilterAAAA = func() bool { return true }
+	e.FilterAAAA = func(string) bool { return true }
 	q := dns.Question{Name: "clients3.google.com.", Qtype: dns.TypeAAAA, Qclass: dns.ClassINET}
 	req := new(dns.Msg)
 	req.SetQuestion(q.Name, dns.TypeAAAA)

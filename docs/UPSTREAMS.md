@@ -75,3 +75,12 @@ Under the portal token, `X-Shepherd: 1` on every change. All return the current 
 | `DELETE /api/upstreams?addr=` | removes one (404 if unknown, 409 for the last) |
 | `PUT /api/upstreams` | `{addrs}` replaces and reorders |
 | `PUT /api/upstreams/bootstrap` | `{servers}` replaces the bootstrap resolvers |
+| `GET /api/dns/aaaa` | the AAAA switch: `{mode, from_config, config_mode, filtering, ipv6_usable, exceptions}` |
+| `PUT /api/dns/aaaa` | `{mode}` saves `"auto"`, `"on"` or `"off"`; `""` hands the decision back to `shepherd.toml` |
+
+## IPv6 answers (AAAA)
+
+The same screen carries the network's AAAA switch: whether Shepherd hands out IPv6 addresses at
+all. On a network with no IPv6 route to the internet they are addresses nothing can reach, and the
+default (`auto`) withholds them only while that is the case. The mode, the per-device exceptions
+and the reason any of it exists are in [IPV6.md](IPV6.md).

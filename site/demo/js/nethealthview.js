@@ -8,8 +8,8 @@
 // SVG chart coordinates (pure numbers from nethealth.js) are set as
 // attributes.
 import { el } from './dom.js?v=65858b99';
-import { button, segmented, emptyState, unavailableCard } from './ui.js?v=c9bbb094';
-import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { button, segmented, emptyState, unavailableCard } from './ui.js?v=4d208003';
+import { unavailable } from './mgmt.js?v=288370f7';
 import { fmtDateTime } from './format.js?v=86b54455';
 import {
   gradeClass, gradeLabel, fmtMS, fmtMSValue, fmtLoss, reachabilityText, statusHeadline, statusKind, statusPillLabel,

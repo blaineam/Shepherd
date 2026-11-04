@@ -134,3 +134,55 @@ func TestStoresNoIPAddress(t *testing.T) {
 		}
 	}
 }
+
+func TestAAAAModeRoundTripAndValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.AAAAMode(); got != "" {
+		t.Errorf("a new store has no mode, got %q", got)
+	}
+	for _, mode := range []string{AAAAAuto, AAAAOn, AAAAOff} {
+		if err := s.SetAAAAMode(mode); err != nil {
+			t.Fatalf("SetAAAAMode(%q): %v", mode, err)
+		}
+		if got := s.AAAAMode(); got != mode {
+			t.Errorf("AAAAMode = %q, want %q", got, mode)
+		}
+	}
+	// It has to survive a restart, or the portal's choice would be lost and
+	// dns.filter_aaaa would silently take over again.
+	s2, err := Open(path)
+	if err != nil || s2.AAAAMode() != AAAAOff {
+		t.Errorf("reload: %v %q", err, s2.AAAAMode())
+	}
+	for _, bad := range []string{"maybe", "ON", "", "true"} {
+		if err := s.SetAAAAMode(bad); err == nil {
+			t.Errorf("SetAAAAMode(%q) was accepted", bad)
+		}
+	}
+	if s.AAAAMode() != AAAAOff {
+		t.Error("a refused mode must leave the saved one alone")
+	}
+	if err := s.ClearAAAAMode(); err != nil {
+		t.Fatal(err)
+	}
+	if s.AAAAMode() != "" {
+		t.Error("ClearAAAAMode must hand the decision back to the configuration file")
+	}
+	// Clearing must not have disturbed the home that shares the file.
+	if err := s.SetHome(Home{Lat: 1, Lon: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAAAAMode(AAAAOn); err != nil {
+		t.Fatal(err)
+	}
+	if h := s.Home(); h == nil || h.Lat != 1 {
+		t.Errorf("home was lost: %+v", s.Home())
+	}
+	if !ValidAAAAMode(AAAAAuto) || ValidAAAAMode("x") {
+		t.Error("ValidAAAAMode")
+	}
+}

@@ -277,6 +277,11 @@ func (r *Registry) SetRoute(id string, mode RouteMode) error {
 	return r.single(id, func() BulkResult { return r.BulkSetRoute([]string{id}, mode) })
 }
 
+// SetAAAA sets one device's AAAA-filtering switch (see Device.AAAA).
+func (r *Registry) SetAAAA(id string, mode AAAAMode) error {
+	return r.single(id, func() BulkResult { return r.BulkSetAAAA([]string{id}, mode) })
+}
+
 // SetWandering puts one device in or out of wandering mode: no filtering at all,
 // every request still watched. until ends it automatically; the zero time keeps
 // it on until it is turned off.
@@ -387,6 +392,17 @@ func (r *Registry) BulkSetRoute(ids []string, mode RouteMode) BulkResult {
 			return false
 		}
 		d.Route = mode
+		return true
+	})
+}
+
+// BulkSetAAAA sets every listed device's AAAA-filtering switch.
+func (r *Registry) BulkSetAAAA(ids []string, mode AAAAMode) BulkResult {
+	return r.bulk(ids, EventUpdated, "", func(d *Device) bool {
+		if d.AAAA == mode {
+			return false
+		}
+		d.AAAA = mode
 		return true
 	})
 }

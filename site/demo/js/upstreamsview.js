@@ -2,9 +2,10 @@
 // adding, presets, and the bootstrap resolvers. Addresses and errors come from
 // the server, so all text is set with textContent.
 import { el } from './dom.js?v=65858b99';
-import { icon, iconButton, button, emptyState, unavailableCard, confirmDialog } from './ui.js?v=c9bbb094';
+import { icon, iconButton, button, emptyState, unavailableCard, confirmDialog, segmented } from './ui.js?v=4d208003';
 import { classifyAddr, KIND_LABEL, isEncrypted, move, presetVariants, parseBootstrap, healthLabel, selftestSummary } from './upstreams.js?v=f59ab5b8';
-import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { unavailable } from './mgmt.js?v=288370f7';
+import { AAAA_CHOICES, aaaaChoice, aaaaSummary, aaaaExceptions, exceptionNote } from './aaaa.js?v=4601fb63';
 import { fmtNum } from './format.js?v=86b54455';
 
 export function createUpstreams({ root, mgmt, notify }) {
@@ -32,8 +33,9 @@ export function createUpstreams({ root, mgmt, notify }) {
   const bootCard = el('section', 'card up-card');
   const noteCard = el('section', 'card up-card note');
   const testCard = el('section', 'card up-card');
+  const aaaaCard = el('section', 'card up-card');
   colA.append(testCard, listCard, bootCard, noteCard);
-  colB.append(addCard, presetCard);
+  colB.append(addCard, aaaaCard, presetCard);
 
   const cardHead = (t, sub) => { const h = el('div', 'card-h'); const hh = el('h3', 'card-t', t); h.append(hh); if (sub) h.append(el('span', 'muted small', sub)); return h; };
 
@@ -70,6 +72,77 @@ export function createUpstreams({ root, mgmt, notify }) {
   async function loadSelftest() {
     try { selftestDoc = await mgmt.selftest(); } catch (e) { selftestDoc = unavailable(e) ? { enabled: false } : selftestDoc; }
     paintSelftest();
+  }
+
+  // ------------------------------------------------------------- IPv6 answers
+  //
+  // This lives on the Upstreams screen because it is a property of the
+  // answers Shepherd gives, and because the query log is where a device that
+  // needs an exception is noticed. docs/IPV6.md has the reasoning.
+  let aaaaDoc = null;
+  let aaaaError = null;
+  let aaaaBusy = false;
+
+  function paintAAAA() {
+    aaaaCard.replaceChildren(cardHead('IPv6 answers', 'AAAA'));
+    if (aaaaError) {
+      aaaaCard.append(unavailable(aaaaError)
+        ? el('p', 'muted small', 'Only an administrator can change this.')
+        : emptyState('Could not load the IPv6 setting', aaaaError.message, button('Try again', 'ghost', loadAAAA)));
+      return;
+    }
+    if (!aaaaDoc) { aaaaCard.append(el('p', 'muted small', 'Loading...')); return; }
+    const sum = aaaaSummary(aaaaDoc);
+    const line = el('p', sum.state === 'filtering' ? 'badtxt' : sum.state === 'answering' ? 'good' : 'muted', sum.headline);
+    line.setAttribute('role', 'status');
+    aaaaCard.append(line);
+    if (sum.detail) aaaaCard.append(el('p', 'muted small', sum.detail));
+
+    const seg = segmented(AAAA_CHOICES.map((c) => ({ id: c.id, label: c.label })), sum.mode,
+      async (id) => {
+        if (aaaaBusy) return;
+        aaaaBusy = true;
+        help.textContent = aaaaChoice(id).text;
+        try { aaaaDoc = await mgmt.setAAAA(id); aaaaBusy = false; paintAAAA(); }
+        catch (e) { aaaaBusy = false; notify('Could not save the IPv6 setting: ' + e.message); paintAAAA(); }
+      }, 'What to do with AAAA queries');
+    const help = el('p', 'muted small', aaaaChoice(sum.mode).text);
+    aaaaCard.append(seg.root, help);
+
+    const ex = aaaaExceptions(aaaaDoc);
+    if (ex.length) {
+      aaaaCard.append(el('p', 'muted small', 'Devices with a switch of their own:'));
+      const ul = el('ul', 'up-list');
+      ul.setAttribute('aria-label', 'Devices with their own IPv6 setting');
+      for (const e of ex) {
+        const li = el('li', 'up-item small');
+        li.append(el('span', '', e.name || e.id), el('span', 'muted small', exceptionNote(e)));
+        ul.append(li);
+      }
+      aaaaCard.append(ul);
+    }
+    aaaaCard.append(el('p', 'muted small', 'A device that has no IPv6 route to the internet cannot reach an IPv6 address, and some report a network problem rather than trying IPv4. Withholding AAAA answers spares them that. Set one device apart on its own card, under Devices: a device that does not cache an empty answer asks for the same name again without end, and wants answering in full.'));
+  }
+
+  async function loadAAAA() {
+    try { aaaaDoc = await mgmt.aaaa(); aaaaError = null; }
+    catch (e) { if (!aaaaDoc) aaaaError = e; }
+    paintAAAA();
+  }
+
+  // refreshAAAA is the polling form. It leaves the card alone while the switch
+  // has focus, and repaints only when something actually changed: a repaint
+  // replaces the buttons, so one on every poll would put a fresh element
+  // under a cursor that was about to click the old one.
+  async function refreshAAAA() {
+    if (aaaaBusy) return;
+    if (document.activeElement && aaaaCard.contains(document.activeElement)) return;
+    let next;
+    try { next = await mgmt.aaaa(); } catch { return; }
+    if (aaaaDoc && JSON.stringify(next) === JSON.stringify(aaaaDoc)) return;
+    aaaaDoc = next;
+    aaaaError = null;
+    paintAAAA();
   }
 
   // ------------------------------------------------------------- resolver list
@@ -269,6 +342,7 @@ export function createUpstreams({ root, mgmt, notify }) {
   function paintAll(full = true) {
     if (loadError) {
       for (const c of [listCard, addCard, presetCard, bootCard, noteCard]) c.replaceChildren();
+      paintAAAA(); // its own endpoint, so it may well have loaded
       listCard.append(unavailable(loadError) ? unavailableCard('Upstream management') : emptyState('Could not load upstreams', loadError.message, button('Try again', 'ghost', load)));
       return;
     }
@@ -285,11 +359,12 @@ export function createUpstreams({ root, mgmt, notify }) {
 
   return {
     async show() {
-      if (!started) { started = true; paintAdd(); paintBoot(); paintNote(); }
+      if (!started) { started = true; paintAdd(); paintBoot(); paintNote(); paintAAAA(); }
       await load();
       loadSelftest();
+      loadAAAA();
       clearInterval(timer);
-      timer = setInterval(() => { if (!root.hidden && dragFrom < 0 && !busy && !document.hidden) { mgmt.upstreams().then((r) => { data = { ...data, upstreams: r.upstreams, presets: r.presets || data.presets }; paintList(); paintPresets(); }).catch(() => {}); loadSelftest(); } }, 4000);
+      timer = setInterval(() => { if (!root.hidden && dragFrom < 0 && !busy && !document.hidden) { mgmt.upstreams().then((r) => { data = { ...data, upstreams: r.upstreams, presets: r.presets || data.presets }; paintList(); paintPresets(); }).catch(() => {}); loadSelftest(); refreshAAAA(); } }, 4000);
     },
     hide() { clearInterval(timer); },
   };

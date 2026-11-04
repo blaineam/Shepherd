@@ -114,6 +114,37 @@ func (m WatchMode) String() string {
 	return string(m)
 }
 
+// AAAAMode is a device's own AAAA-filtering switch. See Device.AAAA.
+type AAAAMode string
+
+// AAAA switch positions.
+const (
+	AAAAAuto AAAAMode = ""    // follow the network's AAAA setting (the default)
+	AAAAOn   AAAAMode = "on"  // withhold AAAA answers from this device, whatever the network does
+	AAAAOff  AAAAMode = "off" // always answer this device's AAAA queries in full
+)
+
+// ParseAAAAMode reads "auto", "on" or "off".
+func ParseAAAAMode(s string) (AAAAMode, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "auto":
+		return AAAAAuto, true
+	case "on":
+		return AAAAOn, true
+	case "off":
+		return AAAAOff, true
+	}
+	return "", false
+}
+
+// String returns "auto", "on" or "off".
+func (m AAAAMode) String() string {
+	if m == AAAAAuto {
+		return "auto"
+	}
+	return string(m)
+}
+
 // RouteMode is a device's DHCP-mode routing switch. See Device.Route.
 type RouteMode string
 
@@ -214,6 +245,13 @@ type Device struct {
 	// routes it, which is the escape hatch for a device that turns out to
 	// mind double NAT.
 	Route RouteMode `json:"route,omitempty"`
+	// AAAA is the device's own AAAA-filtering switch (docs/IPV6.md):
+	// AAAAAuto (the empty string, the default) follows the network's
+	// setting; AAAAOn withholds AAAA answers from this device even when
+	// the network hands them out; AAAAOff always answers it in full, which
+	// is the escape hatch for a device that does not cache a NODATA and
+	// asks again without end instead of falling back to IPv4.
+	AAAA AAAAMode `json:"aaaa,omitempty"`
 	// Wandering devices are not filtered at all, but every request they make is
 	// still logged and watched. WanderingUntil ends it automatically; zero means
 	// until it is turned off.

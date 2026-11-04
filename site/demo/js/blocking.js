@@ -2,12 +2,12 @@
 // apps, categories and blocklists on or off for it, add domain rules and policy
 // switches. Inherited settings are shown, not hidden. Edits are optimistic.
 import { el } from './dom.js?v=65858b99';
-import { icon, iconButton, button, toggle, segmented, emptyState, confirmDialog, relTime, unavailableCard, debounce } from './ui.js?v=c9bbb094';
+import { icon, iconButton, button, toggle, segmented, emptyState, confirmDialog, relTime, unavailableCard, debounce } from './ui.js?v=4d208003';
 import { NETWORK, sameScope, scopeLabel, itemStatus, nextItemValue, rulesView, switchView, modeView, effectiveSummary, inheritedSources, dataFor, normalizeDomain } from './scope.js?v=71a3b584';
 import { normalizeGeoBlock, listFor, countryStatus, setCountry } from './geoscope.js?v=1ef8005f';
 import { COUNTRIES } from './countries.js?v=1670de04';
 import { groupCatalog, listStatus, fmtCount, sources, safeHref, bundleProgress, matchesQuery } from './catalog.js?v=96855bed';
-import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { unavailable } from './mgmt.js?v=288370f7';
 
 const TABS = [['apps', 'Apps and categories'], ['lists', 'Blocklists'], ['custom', 'Your lists'], ['rules', 'Domain rules'], ['switches', 'Settings'], ['geo', 'Countries']];
 

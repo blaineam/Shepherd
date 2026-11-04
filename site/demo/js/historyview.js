@@ -2,9 +2,9 @@
 // device, action and domain filters, paging backwards in time, a jump to the
 // HUD replay, and the locked state for encrypted history.
 import { el } from './dom.js?v=65858b99';
-import { icon, button, segmented, emptyState, unavailableCard, debounce, relTime } from './ui.js?v=c9bbb094';
+import { icon, button, segmented, emptyState, unavailableCard, debounce, relTime } from './ui.js?v=4d208003';
 import { RANGES, rangeFor, buildQuery, normalizeResponse, mergeOlder, retainedSpan, fmtSpan, placeOf, toLocalInput } from './history.js?v=938df46e';
-import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { unavailable } from './mgmt.js?v=288370f7';
 import { fmtClock } from './format.js?v=86b54455';
 import { shadowNote } from './wander.js?v=b40b3e3f';
 import { isIP } from './upstreams.js?v=f59ab5b8';

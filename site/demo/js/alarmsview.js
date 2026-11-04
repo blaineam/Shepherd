@@ -5,8 +5,8 @@
 // (title, body, evidence) comes from the server, so it is placed with
 // textContent throughout.
 import { el } from './dom.js?v=65858b99';
-import { icon, iconButton, button, segmented, emptyState, unavailableCard, confirmDialog, openMenu, relTime } from './ui.js?v=c9bbb094';
-import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { icon, iconButton, button, segmented, emptyState, unavailableCard, confirmDialog, openMenu, relTime } from './ui.js?v=4d208003';
+import { unavailable } from './mgmt.js?v=288370f7';
 import { Selection } from './selection.js?v=209c4209';
 import { pushSupport, permissionLine, urlBase64ToUint8Array, subscribeBody, defaultDeviceName, deviceLine, isThisBrowser, ntfyStatusLine, ntfyFields, ntfySaveBody, suggestTopic, NTFY_STEPS } from './push.js?v=3cd5ae11';
 import {

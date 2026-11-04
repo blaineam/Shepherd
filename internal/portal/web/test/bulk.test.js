@@ -49,3 +49,16 @@ test('describeBulk words each op and pluralises', () => {
   assert.equal(describeBulk({ op: 'delete' }, 1500), 'Deleted 1,500 devices');
   assert.equal(describeBulk({ op: 'zzz' }, 1), 'Done');
 });
+
+test('set_aaaa applies, undoes per previous position, and is worded', () => {
+  assert.equal(applyBulkLocal(d('1'), { op: 'set_aaaa', aaaa: 'off' }).aaaa, 'off');
+  const before = [d('1', { aaaa: 'auto' }), d('2', { aaaa: 'on' }), d('3')];
+  // Every device goes back to where it was, not to one shared value.
+  assert.deepEqual(planUndo({ op: 'set_aaaa', aaaa: 'off' }, before), [
+    { op: 'set_aaaa', aaaa: 'auto', ids: ['1', '3'] },
+    { op: 'set_aaaa', aaaa: 'on', ids: ['2'] },
+  ]);
+  assert.match(describeBulk({ op: 'set_aaaa', aaaa: 'off' }, 1), /in full/);
+  assert.match(describeBulk({ op: 'set_aaaa', aaaa: 'on' }, 2), /withheld from 2 devices/);
+  assert.match(describeBulk({ op: 'set_aaaa', aaaa: 'auto' }, 1), /IPv6 setting/);
+});

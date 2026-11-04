@@ -596,6 +596,12 @@ func (r *Registry) mergeLocked(dst, src *Device, now time.Time) {
 	if src.Watch == WatchOff || (dst.Watch == WatchAuto && src.Watch == WatchOn) {
 		dst.Watch = src.Watch
 	}
+	// The AAAA switch merges the same way, and for the same reason: an
+	// explicit "off" is the escape hatch for a device that breaks without
+	// full AAAA answers, so it survives a merge.
+	if src.AAAA == AAAAOff || (dst.AAAA == AAAAAuto && src.AAAA == AAAAOn) {
+		dst.AAAA = src.AAAA
+	}
 	// Wandering survives a merge, and for the longest time either side asked for;
 	// an open-ended one wins over a timed one.
 	if src.Wandering {

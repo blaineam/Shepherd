@@ -21,14 +21,19 @@ type Engine struct {
 	Log           *QueryLog
 	Stats         *Stats
 	BlockNXDOMAIN bool
-	// FilterAAAA, when it returns true, makes the engine answer every AAAA
-	// query with an empty (NODATA) answer and strip IPv6 hints from
-	// HTTPS/SVCB records. It is for a network whose devices have no IPv6
-	// route to the internet (only private fd.. or link-local addresses):
-	// the addresses are unreachable there, and devices that try them
-	// first, or handle the failure badly, report a network problem. Nil
-	// means never. IPv6Probe.Filtering is the automatic form.
-	FilterAAAA func() bool
+	// FilterAAAA is asked, for each query's client address, whether that
+	// client's AAAA queries should be answered with an empty (NODATA)
+	// answer and have IPv6 hints stripped from their HTTPS/SVCB records.
+	// It is for a network whose devices have no IPv6 route to the internet
+	// (only private fd.. or link-local addresses): the addresses are
+	// unreachable there, and devices that try them first, or handle the
+	// failure badly, report a network problem. Nil means never. It is
+	// asked per client because a device may need full AAAA answers even
+	// where the network withholds them -- one that does not cache a NODATA
+	// asks again without end instead of falling back to IPv4. It runs on
+	// the DNS path for every query and must be cheap. IPv6Probe.Filtering
+	// is the network-wide automatic form.
+	FilterAAAA func(clientIP string) bool
 	// Quiet, when set, is asked about every query name; a true answer keeps
 	// that query out of the log, the statistics, the device registry and
 	// OnEntry. It is for the built-in DNS self-test (internal/selftest),
@@ -395,7 +400,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 	entry.Reason = d.Reason // "allowlist" or empty
 
-	if e.filterAAAA() && q.Qtype == dns.TypeAAAA {
+	if q.Qtype == dns.TypeAAAA && e.filterAAAA(entry.Client) {
 		resp := new(dns.Msg)
 		resp.SetReply(r)
 		resp.RecursionAvailable = true
@@ -408,7 +413,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	if resp, ok := e.Cache.Get(r); ok {
-		resp = e.withoutIPv6Hints(resp)
+		resp = e.withoutIPv6Hints(entry.Client, resp)
 		entry.Action, entry.Rcode = "cached", dns.RcodeToString[resp.Rcode]
 		e.finishAllowed(w, r, q, entry, resp, start)
 		return
@@ -426,7 +431,7 @@ func (e *Engine) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 	e.Cache.Put(r, resp)
-	resp = e.withoutIPv6Hints(resp)
+	resp = e.withoutIPv6Hints(entry.Client, resp)
 	entry.Action, entry.Upstream, entry.Rcode = "allowed", up.Addr, dns.RcodeToString[resp.Rcode]
 	e.finishAllowed(w, r, q, entry, resp, start)
 }
@@ -567,10 +572,10 @@ func Serve(ctx context.Context, addrs []string, h dns.Handler, opts ...ServeOpti
 }
 
 // withoutIPv6Hints drops the ipv6hint parameter from HTTPS and SVCB answers
-// while AAAA filtering is on, on a copy, so the cached answer stays as the
-// upstream sent it.
-func (e *Engine) withoutIPv6Hints(resp *dns.Msg) *dns.Msg {
-	if !e.filterAAAA() || resp == nil {
+// while AAAA filtering is on for this client, on a copy, so the cached answer
+// stays as the upstream sent it and another client still gets the hints.
+func (e *Engine) withoutIPv6Hints(clientIP string, resp *dns.Msg) *dns.Msg {
+	if resp == nil || !e.filterAAAA(clientIP) {
 		return resp
 	}
 	has := false
@@ -612,4 +617,6 @@ func (e *Engine) withoutIPv6Hints(resp *dns.Msg) *dns.Msg {
 	return out
 }
 
-func (e *Engine) filterAAAA() bool { return e.FilterAAAA != nil && e.FilterAAAA() }
+func (e *Engine) filterAAAA(clientIP string) bool {
+	return e.FilterAAAA != nil && e.FilterAAAA(clientIP)
+}

@@ -265,7 +265,7 @@ func TestQA_BothTransportsServeTheSameAnswers(t *testing.T) {
 func TestQA_AAAAFilterAnswersEmptyAndNeverAsksTheUpstream(t *testing.T) {
 	r := newQAResolver(t)
 	var on atomic.Bool
-	e, addr := qaEngine(t, qaPool(t, time.Second, r.Addr), func(e *Engine) { e.FilterAAAA = on.Load })
+	e, addr := qaEngine(t, qaPool(t, time.Second, r.Addr), func(e *Engine) { e.FilterAAAA = func(string) bool { return on.Load() } })
 
 	on.Store(true)
 	resp, _ := qaQuery(t, "udp", addr, "v6.example.", dns.TypeAAAA)
@@ -291,7 +291,7 @@ func TestQA_AAAAFilterAnswersEmptyAndNeverAsksTheUpstream(t *testing.T) {
 func TestQA_AAAAFilterStripsIPv6HintsFromHTTPSAndSVCBButKeepsTheRest(t *testing.T) {
 	r := newQAResolver(t)
 	var on atomic.Bool
-	_, addr := qaEngine(t, qaPool(t, time.Second, r.Addr), func(e *Engine) { e.FilterAAAA = on.Load })
+	_, addr := qaEngine(t, qaPool(t, time.Second, r.Addr), func(e *Engine) { e.FilterAAAA = func(string) bool { return on.Load() } })
 
 	keys := func(resp *dns.Msg) (all []dns.SVCBKey) {
 		for _, rr := range resp.Answer {
@@ -332,7 +332,7 @@ func TestQA_IPv6ProbeDrivesTheFilterEndToEnd(t *testing.T) {
 		}
 		return nil, errors.New("network is unreachable")
 	}}
-	_, addr := qaEngine(t, qaPool(t, time.Second, r.Addr), func(e *Engine) { e.FilterAAAA = probe.Filtering })
+	_, addr := qaEngine(t, qaPool(t, time.Second, r.Addr), func(e *Engine) { e.FilterAAAA = func(string) bool { return probe.Filtering() } })
 	ctx := context.Background()
 
 	probe.Check(ctx) // one failed round is not believed

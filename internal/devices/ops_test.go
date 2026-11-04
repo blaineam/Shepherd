@@ -494,3 +494,88 @@ func TestWatchSwitchSurvivesAMerge(t *testing.T) {
 		}
 	}
 }
+
+func TestAAAASwitch(t *testing.T) {
+	r := New(Options{})
+	a := r.Observe(Observation{Source: SourceNeighbor, MAC: "02:00:5e:00:00:10", IP: "192.0.2.10"})
+	b := r.Observe(Observation{Source: SourceNeighbor, MAC: "02:00:5e:00:00:11", IP: "192.0.2.11"})
+
+	if d, _ := r.Get(a); d.AAAA != AAAAAuto || d.AAAA.String() != "auto" {
+		t.Fatalf("default aaaa = %q", d.AAAA)
+	}
+	if err := r.SetAAAA(a, AAAAOff); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := r.Get(a); d.AAAA != AAAAOff {
+		t.Fatalf("aaaa = %q", d.AAAA)
+	}
+	if r.SetAAAA("nope", AAAAOn) == nil {
+		t.Error("an unknown device must be an error")
+	}
+	res := r.BulkSetAAAA([]string{a, b, "ghost"}, AAAAOn)
+	if res.Changed != 2 || len(res.Missing) != 1 {
+		t.Fatalf("bulk = %+v", res)
+	}
+	if r.BulkSetAAAA([]string{a, b}, AAAAOn).Changed != 0 {
+		t.Error("setting the same value again should change nothing")
+	}
+
+	// Search filters on it, which is how a device given an exception months
+	// ago is found again.
+	if got := r.Search("aaaa:on", SearchOptions{}).Total; got != 2 {
+		t.Errorf("aaaa:on matched %d, want 2", got)
+	}
+	if err := r.SetAAAA(b, AAAAAuto); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Search("aaaa:on", SearchOptions{}).Total; got != 1 {
+		t.Errorf("aaaa:on matched %d, want 1", got)
+	}
+	if got := r.Search("-aaaa:on", SearchOptions{}).Total; got != 1 {
+		t.Errorf("-aaaa:on matched %d, want 1", got)
+	}
+	if got := r.Search("aaaa:nonsense", SearchOptions{}).Total; got != 0 {
+		t.Errorf("an unparsable value should match nothing, got %d", got)
+	}
+}
+
+func TestParseAAAAMode(t *testing.T) {
+	for in, want := range map[string]AAAAMode{"": AAAAAuto, "auto": AAAAAuto, " AUTO ": AAAAAuto, "on": AAAAOn, "Off": AAAAOff} {
+		got, ok := ParseAAAAMode(in)
+		if !ok || got != want {
+			t.Errorf("%q = %q %v, want %q", in, got, ok, want)
+		}
+	}
+	if _, ok := ParseAAAAMode("maybe"); ok {
+		t.Error("maybe accepted")
+	}
+}
+
+// "Off" (answer in full) is the escape hatch for a device that breaks without
+// real AAAA answers, so it has to survive a merge.
+func TestAAAASwitchSurvivesAMerge(t *testing.T) {
+	cases := []struct{ dst, src, want AAAAMode }{
+		{AAAAAuto, AAAAOff, AAAAOff},
+		{AAAAOn, AAAAOff, AAAAOff},
+		{AAAAAuto, AAAAOn, AAAAOn},
+		{AAAAOff, AAAAOn, AAAAOff},
+		{AAAAOff, AAAAAuto, AAAAOff},
+	}
+	for _, c := range cases {
+		r := New(Options{})
+		a := r.Observe(Observation{Source: SourceNeighbor, MAC: "02:00:5e:00:00:10", IP: "192.0.2.10"})
+		b := r.Observe(Observation{Source: SourceNeighbor, MAC: "02:00:5e:00:00:11", IP: "192.0.2.11"})
+		if err := r.SetAAAA(a, c.dst); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.SetAAAA(b, c.src); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.Merge(a, b); err != nil {
+			t.Fatal(err)
+		}
+		if d, _ := r.Get(a); d.AAAA != c.want {
+			t.Errorf("merge %q + %q = %q, want %q", c.dst, c.src, d.AAAA, c.want)
+		}
+	}
+}

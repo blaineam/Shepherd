@@ -13,6 +13,30 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+- **AAAA filtering is a portal setting, and can be set per device.** `dns.filter_aaaa` was
+  reachable only by editing `shepherd.toml` and restarting, which is the wrong place for it: the
+  device that needs it is found by watching the query log, and nobody watching a query log should
+  have to go and edit a file. The three positions (`auto`, `on`, `off`) are now on
+  **Upstreams -> IPv6 answers**, with the mode and whether outbound IPv6 is reachable shown
+  separately, so "automatic" says what it has decided and why. A mode saved there is kept in
+  `<data_dir>/settings.json` and wins over `dns.filter_aaaa` from then on, with no restart;
+  `dns.filter_aaaa` remains the value for a first run.
+
+  Each device also has its own switch, on its card under **Devices -> IPv6 answers**, because
+  **the network-wide setting cannot fix a device that will not take an answer.** A synthesized
+  NODATA has carried an SOA since the last release so a client can cache it (RFC 2308), but a
+  client that does not cache it has nothing to remember, and one that then does not fall back to
+  IPv4 just asks again: a solar inverter here asked for the same filtered `AAAA` about forty times
+  a second, indefinitely, and still does. **Answer in full** hands that one device the real
+  answer and lets it fail to connect over IPv6 the way it would without Shepherd, while the rest
+  of the network keeps the filter; **withhold** is the opposite exception. Both survive a merge of
+  two device records, an explicit "answer in full" preferentially, since it is the setting that
+  keeps a device working. `aaaa:off` finds them again in the device search, `set_aaaa` sets them in
+  bulk, and `GET`/`PUT /api/dns/aaaa` is the network-wide mode. See
+  [docs/IPV6.md](docs/IPV6.md), which also corrects hard rule 3: blocking never decided by address
+  family, and now says so instead of claiming AAAA records are never withheld.
+
 ### Fixed
 
 - The public demo's modules are stamped with a content hash, so a returning visitor can no longer be served a fresh

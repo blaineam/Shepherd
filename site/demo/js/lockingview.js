@@ -2,8 +2,8 @@
 // passkeys (add, rename, remove), and the trusted-browser list with revoke.
 // Not shown in demo mode (there is no real session to manage).
 import { el } from './dom.js?v=65858b99';
-import { button, confirmDialog, relTime, emptyState, unavailableCard } from './ui.js?v=c9bbb094';
-import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { button, confirmDialog, relTime, emptyState, unavailableCard } from './ui.js?v=4d208003';
+import { unavailable } from './mgmt.js?v=288370f7';
 import { idleChoices, pinIssue } from './locking.js?v=198c7ce4';
 import { creationOptions, registrationJSON, passkeyCardState, ceremonyError, staleNote } from './passkeys.js?v=0fe3526c';
 

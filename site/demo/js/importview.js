@@ -3,7 +3,7 @@
 // step. Everything from either source is untrusted third-party text and is
 // only ever placed with textContent (see dom.js's el and ui.js's chip/field).
 import { el } from './dom.js?v=65858b99';
-import { button, iconButton, segmented } from './ui.js?v=c9bbb094';
+import { button, iconButton, segmented } from './ui.js?v=4d208003';
 import { validLogin, validCode, reportRows, reportTitle } from './import.js?v=c3e33f93';
 
 export function createImportModal({ mgmt, notify, onImported }) {

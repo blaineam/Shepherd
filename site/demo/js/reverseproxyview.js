@@ -3,8 +3,8 @@
 // name and address comes from the server or the owner's typing, so all
 // text is set with textContent and links are built as properties.
 import { el } from './dom.js?v=65858b99';
-import { button, iconButton, toggle, emptyState, unavailableCard, confirmDialog } from './ui.js?v=c9bbb094';
-import { unavailable } from './mgmt.js?v=8b3f5c53';
+import { button, iconButton, toggle, emptyState, unavailableCard, confirmDialog } from './ui.js?v=4d208003';
+import { unavailable } from './mgmt.js?v=288370f7';
 import { parseTarget, formatTarget, formatAllow, hostWarnings, hostBadges, sortHosts, filterHosts, certSummary, hostBody, publicURL } from './reverseproxy.js?v=ae77c7ec';
 import { dnsProviderSummary, usedByText, sourceText, tokenBody } from './secrets.js?v=c0f86999';
 
