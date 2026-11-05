@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -588,4 +589,122 @@ func TestMissingSegmentFileIsToleratedByQuery(t *testing.T) {
 		t.Errorf("a deleted segment must not break queries: %d %v", len(got), err)
 	}
 	s.Close()
+}
+
+// segmentsOldestFirst lists the segment files in the order they were written,
+// which is the order their names were minted in -- the manifest keeps the
+// times, the file system does not.
+func segmentsOldestFirst(t *testing.T, s *Store) []string {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	segs := append([]segInfo(nil), s.man.Segments...)
+	sort.SliceStable(segs, func(i, j int) bool { return segs[i].Min.Before(segs[j].Min) })
+	var out []string
+	for _, sg := range segs {
+		out = append(out, s.segPath(sg.ID))
+	}
+	return out
+}
+
+func manySegments(t *testing.T, dir string) *Store {
+	t.Helper()
+	s := open(t, dir, func(o *Options) { o.SegmentMaxBytes = 300; o.FlushEntries = 2 })
+	for i := 0; i < 20; i++ {
+		s.Append(entry(t0.Add(time.Duration(i)*time.Hour), "192.0.2.5", fmt.Sprintf("h%02d.example.com", i), "allowed"))
+	}
+	s.Flush()
+	if st := s.Stats(); st.Segments < 4 {
+		t.Fatalf("this test needs several segments: %+v", st)
+	}
+	return s
+}
+
+func TestLimitedQueryReadsOnlyTheNewestSegments(t *testing.T) {
+	dir := t.TempDir()
+	s := manySegments(t, dir)
+	defer s.Close()
+
+	// Ruin the oldest half on disk. A query for the newest few entries must
+	// not touch them, so it must not notice: anything it read and could not
+	// decrypt would be counted in Span.Skipped.
+	files := segmentsOldestFirst(t, s)
+	for _, path := range files[:len(files)/2] {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, bytes.Repeat([]byte("x"), int(info.Size())), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, span, err := s.Query(dnsengine.HistoryQuery{Limit: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names(got) != "h17.example.com,h18.example.com,h19.example.com" {
+		t.Errorf("newest 3 = %q, want the last three entries", names(got))
+	}
+	if span.Skipped != 0 {
+		t.Errorf("Span.Skipped = %d: the oldest segments were read although the newest ones already answered the query", span.Skipped)
+	}
+	// Span still describes the whole store, which comes from the manifest
+	// rather than from the segments this query read.
+	if !span.Oldest.Equal(t0) || !span.Newest.Equal(t0.Add(19*time.Hour)) {
+		t.Errorf("span = %v..%v, want the whole store %v..%v", span.Oldest, span.Newest, t0, t0.Add(19*time.Hour))
+	}
+
+	// An unlimited query does read them all, and says what it could not read.
+	_, span, err = s.Query(dnsengine.HistoryQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if span.Skipped == 0 {
+		t.Error("an unlimited query read every segment, so the ruined ones must be reported in Span.Skipped")
+	}
+}
+
+func TestLimitedQueryKeepsTheNewestMatchesAcrossSegments(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir, func(o *Options) { o.SegmentMaxBytes = 300; o.FlushEntries = 2 })
+	defer s.Close()
+	// Two clients interleaved, so the newest matches for one of them are
+	// spread across segments that also hold entries that do not match.
+	for i := 0; i < 20; i++ {
+		client := "192.0.2.5"
+		if i%2 == 1 {
+			client = "192.0.2.6"
+		}
+		s.Append(entry(t0.Add(time.Duration(i)*time.Hour), client, fmt.Sprintf("h%02d.example.com", i), "allowed"))
+	}
+	s.Flush()
+
+	got, _, err := s.Query(dnsengine.HistoryQuery{Client: "192.0.2.6", Limit: 3})
+	if err != nil || names(got) != "h15.example.com,h17.example.com,h19.example.com" {
+		t.Errorf("newest 3 for one client = %q (%v)", names(got), err)
+	}
+	// A limit larger than the store returns everything that matches.
+	got, _, _ = s.Query(dnsengine.HistoryQuery{Client: "192.0.2.6", Limit: 50})
+	if len(got) != 10 {
+		t.Errorf("limit above the number of matches = %d entries, want 10", len(got))
+	}
+	// A limit alongside a time range still obeys both.
+	got, _, _ = s.Query(dnsengine.HistoryQuery{From: t0.Add(2 * time.Hour), To: t0.Add(6 * time.Hour), Limit: 2})
+	if names(got) != "h05.example.com,h06.example.com" {
+		t.Errorf("newest 2 within a range = %q", names(got))
+	}
+}
+
+func TestUnflushedEntriesWinOverSegmentsUnderALimit(t *testing.T) {
+	dir := t.TempDir()
+	s := manySegments(t, dir)
+	defer s.Close()
+	// Not flushed, so it is only in memory: it is still the newest entry
+	// there is, and a limit of one must return it.
+	s.Append(entry(t0.Add(50*time.Hour), "192.0.2.5", "newest.example.com", "allowed"))
+	got, _, err := s.Query(dnsengine.HistoryQuery{Limit: 1})
+	if err != nil || names(got) != "newest.example.com" {
+		t.Errorf("limit 1 = %q (%v), want the unflushed newest entry", names(got), err)
+	}
 }

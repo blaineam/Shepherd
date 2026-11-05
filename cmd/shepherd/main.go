@@ -378,8 +378,18 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 			}
 		}
 		if !store.Locked() { // bring the recent past back into the live view after a restart
+			// This runs before DNS is served, because the live view numbers
+			// its entries in order and live queries must not be numbered
+			// behind the past. So it says that it is working, and says how
+			// long it took when that was long enough to notice: a household
+			// is waiting for its resolver on this path.
+			log.Printf("history: loading the recent past into the live view")
+			began := time.Now()
 			past, _, _ := store.Query(dnsengine.HistoryQuery{Limit: cfg.DNS.LogSize})
 			engine.Log.Preload(past)
+			if took := time.Since(began); took > time.Second {
+				log.Printf("history: loaded %d entries in %s", len(past), took.Round(time.Millisecond))
+			}
 		}
 		engine.Log.SetSink(store.Append)
 		go store.Run(ctx)

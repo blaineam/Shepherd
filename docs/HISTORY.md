@@ -34,6 +34,21 @@ The portal's history view and `GET /api/history` take a time range, a device, an
 search, and return the newest matches. The globe's replay uses the same data. After a restart the live
 view is repopulated from the last entries.
 
+### What a search costs
+
+History is kept in sealed segments of at most 16 MiB, each recorded in the manifest with the time of
+its oldest and newest entry. A search that asks for the newest N matches walks the segments newest
+first and stops as soon as the remaining ones all end before the Nth match it already has, so it
+reads a few megabytes rather than the whole store. An unlimited search still reads everything, and
+the reported span (how far back history reaches) always comes from the manifest, so it does not
+depend on what the search had to read.
+
+This is what makes a restart quick. The live view is repopulated by one query for the newest
+`dns.log_size` entries, and that happens **before** DNS is served -- the view numbers its entries in
+order, so the past cannot be loaded behind live queries. Reading the whole store there once cost a
+household fifty seconds without DNS on a 77 MB history; the startup log now says that the load is
+happening, and how long it took when it was slow enough to matter.
+
 A blocked row also offers "Allow" next to Replay: a one-click, domain-specific allow rule (`POST
 /api/rules`), the same mechanism and endpoint the HUD inspector's own block/allow buttons use. It only
 overrides that one domain going forward, not the list or rule that matched — a deliberately narrower,

@@ -13,6 +13,20 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Fixed
+- **A restart no longer leaves the network without DNS for a minute.** Shepherd binds its DNS
+  listeners only after startup finishes, and one step of startup was reading the entire encrypted
+  history: the live view is repopulated from the newest `dns.log_size` entries after a restart, but
+  the query behind it decrypted every segment in the store, sorted all of it, and only then kept the
+  newest few thousand. On a 77 MB history (102 segments, 30 days) that was **52 seconds before DNS
+  came up**, with 4 GiB of memory at the peak and nothing logged while it happened, so a slow start
+  was indistinguishable from a hung one. A limited history query now walks the segments newest first
+  and stops once no older segment can hold a newer match, trimming as it goes: the same restart
+  binds DNS in **2 seconds** and peaks at 350 MiB, with the live view populated exactly as before.
+  The portal's own history searches get the same saving. Startup also says when it is loading the
+  past, and how long that took when it was slow enough to notice. See
+  [docs/HISTORY.md](docs/HISTORY.md#what-a-search-costs).
+
 ## [1.1.0] - 2026-11-04
 
 A setting that could only be reached by editing `shepherd.toml` is now in the portal, and it is a

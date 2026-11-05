@@ -422,6 +422,20 @@ func scanSegment(path string, master []byte, fn func(dnsengine.Entry)) (skipped 
 }
 
 // Query returns matching entries oldest first, keeping only the newest q.Limit.
+//
+// A limited query reads as few segments as it can. The segments are walked
+// newest first and the walk stops as soon as no older segment could hold an
+// entry newer than the newest q.Limit already found, because every remaining
+// segment ends before the ones already read. That matters on a real store: a
+// 30-day history is a hundred segments or more, and the live view asks only
+// for the newest few thousand entries when the process starts. Reading all of
+// them took about fifty seconds here, and all of it before DNS could be
+// served.
+//
+// Span still describes the whole store, from the manifest alone, since it is
+// how far back history reaches and must not depend on what one query read.
+// Span.Skipped, by contrast, counts the unreadable frames found in the
+// segments this query actually read.
 func (s *Store) Query(q dnsengine.HistoryQuery) ([]dnsengine.Entry, dnsengine.Span, error) {
 	s.mu.Lock()
 	if s.master == nil {
@@ -442,15 +456,49 @@ func (s *Store) Query(q dnsengine.HistoryQuery) ([]dnsengine.Entry, dnsengine.Sp
 			span.Newest = t
 		}
 	}
-	var out []dnsengine.Entry
 	for _, sg := range segs {
 		if sg.Count == 0 {
 			continue
 		}
 		widen(sg.Min)
 		widen(sg.Max)
+	}
+
+	var out []dnsengine.Entry
+	// The pending entries are the newest there are, and they are already in
+	// memory, so they come first: anything they contribute raises the bar a
+	// segment has to clear to be worth reading.
+	for _, e := range pending {
+		if q.Match(e) {
+			out = append(out, e)
+		}
+	}
+	// cut is the time of the oldest entry still in the newest q.Limit, once
+	// that many have been found. A segment whose newest entry is no later
+	// than cut cannot displace any of them.
+	cut := time.Time{}
+	trim := func() {
+		if q.Limit <= 0 {
+			return
+		}
+		sort.SliceStable(out, func(i, j int) bool { return out[i].Time.Before(out[j].Time) })
+		out = dnsengine.Newest(out, q.Limit)
+		if len(out) == q.Limit {
+			cut = out[0].Time
+		}
+	}
+	trim()
+
+	sort.SliceStable(segs, func(i, j int) bool { return segs[i].Max.After(segs[j].Max) })
+	for _, sg := range segs {
+		if sg.Count == 0 {
+			continue
+		}
 		if (!q.From.IsZero() && sg.Max.Before(q.From)) || (!q.To.IsZero() && sg.Min.After(q.To)) {
 			continue
+		}
+		if !cut.IsZero() && !sg.Max.After(cut) {
+			break // and so does every segment after this one
 		}
 		skipped, err := scanSegment(s.segPath(sg.ID), master, func(e dnsengine.Entry) {
 			if q.Match(e) {
@@ -461,13 +509,9 @@ func (s *Store) Query(q dnsengine.HistoryQuery) ([]dnsengine.Entry, dnsengine.Sp
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			span.Skipped++
 		}
+		trim() // keeps the result, and this loop's memory, bounded by q.Limit
 	}
-	for _, e := range pending {
-		widen(e.Time)
-		if q.Match(e) {
-			out = append(out, e)
-		}
-	}
+
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.Before(out[j].Time) })
 	return dnsengine.Newest(out, q.Limit), span, nil
 }
