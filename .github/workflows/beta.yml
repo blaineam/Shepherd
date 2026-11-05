@@ -1,6 +1,11 @@
 # Every push to main builds one rolling beta and deletes the previous betas, so
 # the Releases page only ever shows the newest beta. Versions follow SemVer:
 # the next planned release from VERSION plus -beta.<run number>.
+#
+# Not every push gets one: a beta must be NEWER than the newest stable release,
+# or it is worse than no beta at all (SemVer puts X.Y.Z-beta.N before X.Y.Z, so
+# everyone on the release would stop being offered updates). scripts/beta-guard
+# decides, and docs/RELEASING.md says when it declines.
 name: Beta
 on:
   push:
@@ -11,7 +16,33 @@ concurrency:
 permissions:
   contents: write
 jobs:
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.guard.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Is this commit one that should publish a beta?
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The newest stable release by version, not by the date it was made.
+          latest=$(gh release list --limit 200 --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease == false) | .tagName' \
+            | sed 's/^v//' | sort -V | tail -1)
+          set +e
+          scripts/beta-guard --latest-stable "$latest"
+          rc=$?
+          set -e
+          case "$rc" in
+            0)  echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            10) echo "publish=false" >> "$GITHUB_OUTPUT" ;;
+            *)  echo "beta-guard could not decide (exit $rc)"; exit 1 ;;
+          esac
   beta:
+    needs: guard
+    if: needs.guard.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

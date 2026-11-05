@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Proves beta-guard skips the commits that must not publish a beta, and
+# publishes on the ones that must. Each case is a throwaway repository, so
+# this says nothing about the version this tree happens to be on.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+fail=0
+
+# repo VERSION [released versions...] builds a tree the guard can read.
+repo() {
+  rm -rf "$work/r" && mkdir -p "$work/r" && cd "$work/r" || exit 1
+  git init -q . && git config user.email t@example.com && git config user.name t
+  printf '%s\n' "$1" > VERSION
+  shift
+  {
+    echo "# Changelog"
+    echo
+    echo "## [Unreleased]"
+    echo
+    for v in "$@"; do printf '## [%s] - 2026-01-01\n\n- something\n\n' "$v"; done
+  } > CHANGELOG.md
+}
+
+# check NAME WANT_EXIT WANT_TEXT [guard args...]
+check() {
+  name=$1 want=$2 text=$3
+  shift 3
+  "$here/beta-guard" "$@" >"$work/o" 2>&1
+  rc=$?
+  if [ "$rc" -ne "$want" ]; then
+    echo "FAIL $name: exit $rc, want $want"; sed 's/^/    /' "$work/o"; fail=1; return
+  fi
+  if [ -n "$text" ] && ! grep -q "$text" "$work/o"; then
+    echo "FAIL $name: output lacks '$text'"; sed 's/^/    /' "$work/o"; fail=1; return
+  fi
+  echo "ok   $name"
+}
+
+repo 1.2.0 1.1.1 1.1.0
+check "a development VERSION publishes a beta" 0 "publish"
+
+repo 1.1.1 1.1.1 1.1.0
+check "the release commit itself publishes nothing" 10 "release commit"
+
+# The gap that killed the beta channel after 1.0.0: released, never bumped.
+repo 1.0.0 1.0.0
+check "a VERSION left at the released version publishes nothing" 10 "release commit"
+
+repo 1.2.0 1.1.1
+check "newer than the newest stable release publishes" 0 "publish" --latest-stable v1.1.1
+check "not newer than the newest stable release publishes nothing" 10 "not newer than the newest stable" --latest-stable v1.3.0
+check "the same version as the newest stable publishes nothing" 10 "not newer than the newest stable" --latest-stable 1.2.0
+# 1.1.10 beats 1.1.9: the comparison is by number, not by string.
+check "versions compare as numbers" 0 "publish" --version 1.1.10 --latest-stable 1.1.9
+check "an empty --latest-stable is ignored, not treated as a version" 0 "publish" --latest-stable ""
+check "misuse is an error, not a skip" 2 "usage" --what
+
+exit "$fail"

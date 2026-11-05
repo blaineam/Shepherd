@@ -13,6 +13,20 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Fixed
+- **The rolling beta can no longer be older than the release it follows.** Cutting 1.1.1 started the
+  Beta workflow on the release commit as well, where `VERSION` is the version being released, and it
+  published `1.1.1-beta.113` a few seconds after the Release workflow had already deleted the betas
+  it could see. SemVer puts `1.1.1-beta.113` *before* `1.1.1`, so for as long as that prerelease was
+  the newest thing on the beta channel, every install on 1.1.1 was being offered an update older
+  than itself -- the same way the beta channel went quiet for a day after 1.0.0 shipped with
+  `VERSION` left at `1.0.0`. `scripts/beta-guard` now decides whether a commit should publish a beta
+  at all: not on a release commit (a `## [X.Y.Z]` section for the current `VERSION` means that
+  version is released, not in development), and not when `VERSION` is no newer than the newest
+  published stable release. The Beta workflow skips the build instead of failing, and says why.
+  `scripts/test-beta-guard` covers both cases and runs in CI. See
+  [docs/RELEASING.md](docs/RELEASING.md#when-a-push-gets-no-beta).
+
 ## [1.1.1] - 2026-11-04
 
 One fix, for the restart: Shepherd binds its DNS listeners only once startup has finished, and

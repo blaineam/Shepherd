@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# beta-guard: decides whether this commit should publish a rolling beta.
+#
+#   beta-guard [--version X.Y.Z] [--latest-stable X.Y.Z]
+#
+# Exit 0 to publish, 10 to skip (with the reason on stdout); 2 for misuse.
+# A skip is not a failure: there is simply nothing to publish a beta of.
+#
+# Two things make a beta wrong rather than merely pointless, and both have
+# happened:
+#
+#  1. A release commit. VERSION holds the NEXT planned release, so a section
+#     for it in CHANGELOG.md means that version is released, not in
+#     development -- this is the release commit itself, or a VERSION that was
+#     never bumped back afterwards. A beta built there is X.Y.Z-beta.N, which
+#     SemVer orders BEFORE X.Y.Z: everyone already on the release would be
+#     offered an "update" older than what they run, or, more likely, never be
+#     offered anything again. After 1.0.0 shipped, VERSION stayed at 1.0.0 and
+#     the beta channel was dead for a day for exactly this reason.
+#
+#  2. A beta no newer than the newest stable release, whatever the changelog
+#     says. The Release workflow deletes the betas it finds, so a beta
+#     published seconds after that cleanup survives it and becomes the newest
+#     prerelease while being older than the release it followed. That is how
+#     1.1.1-beta.113 appeared after 1.1.1.
+#
+# See docs/RELEASING.md.
+set -u
+
+version=""
+latest=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --version) version=${2:?--version needs X.Y.Z}; shift 2 ;;
+    --latest-stable) latest=${2-}; shift 2 ;;
+    *) echo "usage: beta-guard [--version X.Y.Z] [--latest-stable X.Y.Z]" >&2; exit 2 ;;
+  esac
+done
+
+# The repository being checked is the one we are standing in, like
+# release-notes; the script's own location is only the fallback.
+here=$(cd "$(dirname "$0")" && pwd)
+root=$(git rev-parse --show-toplevel 2>/dev/null) || root=""
+[ -n "$root" ] || root=$(cd "$here/.." && pwd)
+[ -n "$version" ] || version=$(tr -d '[:space:]' < "$root/VERSION")
+
+if [ -n "$(cd "$root" && "$here/release-notes" "$version" 2>/dev/null)" ]; then
+  echo "skip: CHANGELOG.md already has a section for $version, so this is a release commit, not development."
+  echo "      A ${version}-beta.N would be older than $version. Bump VERSION to the next planned release."
+  exit 10
+fi
+
+# Strip a leading v so either spelling works from the workflow.
+latest=${latest#v}
+if [ -n "$latest" ]; then
+  newest=$(printf '%s\n%s\n' "$latest" "$version" | sort -V | tail -1)
+  if [ "$newest" = "$latest" ]; then
+    echo "skip: $version is not newer than the newest stable release ($latest), so its beta would be too."
+    exit 10
+  fi
+fi
+
+echo "publish: $version is in development${latest:+ and newer than the newest stable release ($latest)}."
+exit 0

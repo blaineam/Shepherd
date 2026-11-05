@@ -27,6 +27,8 @@ jobs:
         run: node --test internal/portal/web/test/
       - name: Leak guard self-test
         run: scripts/test-leakcheck
+      - name: Beta guard self-test
+        run: scripts/test-beta-guard
       - name: Leak guard on the whole tree
         run: scripts/leakcheck --all
       - name: The site's demo is the portal it advertises
