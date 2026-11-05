@@ -13,6 +13,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-04
+
+A setting that could only be reached by editing `shepherd.toml` is now in the portal, and it is a
+per-device setting as well as a network-wide one: the one device on a network that cannot cope with
+a withheld `AAAA` answer can be handed the real one on its own card, while nothing changes for the
+rest.
+
 ### Added
 - **AAAA filtering is a portal setting, and can be set per device.** `dns.filter_aaaa` was
   reachable only by editing `shepherd.toml` and restarting, which is the wrong place for it: the
@@ -38,7 +45,6 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   family, and now says so instead of claiming AAAA records are never withheld.
 
 ### Fixed
-
 - The public demo's modules are stamped with a content hash, so a returning visitor can no longer be served a fresh
   `app.js` alongside modules cached from an earlier version. The site's CDN serves `.js` with a year-long lifetime, and
   the cache buster on the site side can only stamp URLs written in HTML or CSS — not the ~70 modules `app.js` imports.
