@@ -13,6 +13,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-04
+
+One fix, for the restart: Shepherd binds its DNS listeners only once startup has finished, and
+repopulating the live view from the encrypted history was reading the whole store to produce the
+newest few thousand entries. A household on 1.1.0 or earlier loses DNS for as long as that takes,
+which is a minute on a month of history.
+
 ### Fixed
 - **A restart no longer leaves the network without DNS for a minute.** Shepherd binds its DNS
   listeners only after startup finishes, and one step of startup was reading the entire encrypted
