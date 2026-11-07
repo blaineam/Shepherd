@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "generated_at": "2026-11-01T18:48:02Z",
-  "source": "NVD CVE API 2.0 and CISA KEV, built by cmd/vulnfeed: 1923 CVEs considered, 20 exploited-in-the-wild, 219 critical, 332 high",
+  "generated_at": "2026-11-07T11:57:53Z",
+  "source": "NVD CVE API 2.0 and CISA KEV, built by cmd/vulnfeed: 1927 CVEs considered, 20 exploited-in-the-wild, 219 critical, 335 high",
   "signatures": [
     {
       "id": "kev-cve-2010-4344",
@@ -10468,7 +10468,7 @@
       "id": "nvd-high-openssl",
       "name": "OpenSSL with known high-severity CVEs",
       "severity": "high",
-      "description": "This OpenSSL version falls inside the affected range of at least one of 78 CVEs the NVD rates high (CVSS 7.0 to 8.9) and exploitable over the network with no credentials and no user interaction. The matched CVE identifiers are in the evidence; look each up at nvd.nist.gov/vuln/detail/\u003cid\u003e. A distribution that backports fixes without changing the version string will show up here too, so check what your vendor actually patched; otherwise update OpenSSL to a current release.",
+      "description": "This OpenSSL version falls inside the affected range of at least one of 81 CVEs the NVD rates high (CVSS 7.0 to 8.9) and exploitable over the network with no credentials and no user interaction. The matched CVE identifiers are in the evidence; look each up at nvd.nist.gov/vuln/detail/\u003cid\u003e. A distribution that backports fixes without changing the version string will show up here too, so check what your vendor actually patched; otherwise update OpenSSL to a current release.",
       "match": {
         "product": "openssl",
         "versions": [
@@ -12260,6 +12260,21 @@
             "cve": "CVE-2023-5363"
           },
           {
+            "gte": "3.2.0",
+            "lt": "3.2.4",
+            "cve": "CVE-2024-12797"
+          },
+          {
+            "gte": "3.3.0",
+            "lt": "3.3.3",
+            "cve": "CVE-2024-12797"
+          },
+          {
+            "gte": "3.4.0",
+            "lt": "3.4.1",
+            "cve": "CVE-2024-12797"
+          },
+          {
             "gte": "3.0.0",
             "lt": "3.0.15",
             "cve": "CVE-2024-6119"
@@ -12373,6 +12388,21 @@
             "gte": "3.6.0",
             "lt": "3.6.1",
             "cve": "CVE-2025-69421"
+          },
+          {
+            "gte": "3.5.0",
+            "lt": "3.5.8",
+            "cve": "CVE-2026-14456"
+          },
+          {
+            "gte": "3.6.0",
+            "lt": "3.6.4",
+            "cve": "CVE-2026-14456"
+          },
+          {
+            "gte": "4.0.0",
+            "lt": "4.0.2",
+            "cve": "CVE-2026-14456"
           },
           {
             "gte": "3.4.0",
@@ -12747,6 +12777,16 @@
             "gte": "4.0.0",
             "lt": "4.0.2",
             "cve": "CVE-2026-54874"
+          },
+          {
+            "gte": "3.6.0",
+            "lt": "3.6.4",
+            "cve": "CVE-2026-54876"
+          },
+          {
+            "gte": "4.0.0",
+            "lt": "4.0.2",
+            "cve": "CVE-2026-54876"
           },
           {
             "gte": "3.0.0",
