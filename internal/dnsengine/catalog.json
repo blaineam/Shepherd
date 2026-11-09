@@ -672,9 +672,9 @@
     "description": "Facebook and its CDN and API hostnames.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/facebook",
-        "format": "domains",
-        "size_bytes": 146
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/facebook.yml",
+        "format": "adblock",
+        "size_bytes": 11412
       },
       {
         "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/facebook.txt",
@@ -682,11 +682,11 @@
         "size_bytes": 934943
       }
     ],
-    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 22371,
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 22813,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "instagram",
@@ -696,16 +696,16 @@
     "description": "Instagram app and CDN.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/instagram",
-        "format": "domains",
-        "size_bytes": 31
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/instagram.yml",
+        "format": "adblock",
+        "size_bytes": 2455
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 2,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 72,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "whatsapp",
@@ -715,9 +715,9 @@
     "description": "WhatsApp messaging and calls.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/whatsapp",
-        "format": "domains",
-        "size_bytes": 26
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/whatsapp.yml",
+        "format": "adblock",
+        "size_bytes": 1177
       },
       {
         "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/whatsapp.txt",
@@ -725,11 +725,11 @@
         "size_bytes": 8388
       }
     ],
-    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 228,
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 239,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "messenger",
@@ -739,16 +739,16 @@
     "description": "Facebook Messenger.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/messenger",
+        "url": "https://raw.githubusercontent.com/blaineam/Shepherd/main/lists/services/messenger.txt",
         "format": "domains",
-        "size_bytes": 65
+        "size_bytes": 178
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 3,
+    "license": "Shepherd service lists, AGPL-3.0. https://github.com/blaineam/Shepherd/tree/main/lists/services",
+    "homepage": "https://github.com/blaineam/Shepherd/tree/main/lists/services",
+    "approx_entries": 6,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "meta",
@@ -763,11 +763,11 @@
       "whatsapp",
       "messenger"
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry; Shepherd service lists, AGPL-3.0. https://github.com/blaineam/Shepherd/tree/main/lists/services",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
     "approx_entries": 0,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "discord",
@@ -777,16 +777,16 @@
     "description": "Discord chat, voice and CDN.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/discord",
-        "format": "domains",
-        "size_bytes": 67
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/discord.yml",
+        "format": "adblock",
+        "size_bytes": 1869
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 5,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 26,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "tiktok",
@@ -796,9 +796,9 @@
     "description": "TikTok app, CDN and analytics.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/tiktok",
-        "format": "domains",
-        "size_bytes": 2082
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/tiktok.yml",
+        "format": "adblock",
+        "size_bytes": 1465
       },
       {
         "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/tiktok.txt",
@@ -806,11 +806,11 @@
         "size_bytes": 126628
       }
     ],
-    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 3815,
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 3852,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "snapchat",
@@ -820,16 +820,16 @@
     "description": "Snapchat app and CDN.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/snapchat",
-        "format": "domains",
-        "size_bytes": 161
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/snapchat.yml",
+        "format": "adblock",
+        "size_bytes": 2611
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 10,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 6,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "twitter",
@@ -839,9 +839,9 @@
     "description": "X, formerly Twitter, including t.co and media.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/twitter",
-        "format": "domains",
-        "size_bytes": 71
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/twitter.yml",
+        "format": "adblock",
+        "size_bytes": 838
       },
       {
         "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/twitter.txt",
@@ -849,11 +849,11 @@
         "size_bytes": 38266
       }
     ],
-    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 1200,
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 1223,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "reddit",
@@ -863,16 +863,16 @@
     "description": "Reddit and its media hosts.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/reddit",
-        "format": "domains",
-        "size_bytes": 74
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/reddit.yml",
+        "format": "adblock",
+        "size_bytes": 1387
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
     "approx_entries": 5,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "pinterest",
@@ -882,16 +882,16 @@
     "description": "Pinterest and regional domains.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/pinterest",
-        "format": "domains",
-        "size_bytes": 684
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/pinterest.yml",
+        "format": "adblock",
+        "size_bytes": 2196
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
     "approx_entries": 49,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "tumblr",
@@ -901,16 +901,16 @@
     "description": "Tumblr blogs.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/tumblr",
-        "format": "domains",
-        "size_bytes": 11
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/tumblr.yml",
+        "format": "adblock",
+        "size_bytes": 629
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
     "approx_entries": 1,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "mastodon",
@@ -920,16 +920,16 @@
     "description": "Popular Mastodon instances.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/mastodon",
-        "format": "domains",
-        "size_bytes": 643
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/mastodon.yml",
+        "format": "adblock",
+        "size_bytes": 3025
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 51,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 99,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "bereal",
@@ -939,16 +939,16 @@
     "description": "BeReal.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/bereal",
+        "url": "https://raw.githubusercontent.com/blaineam/Shepherd/main/lists/services/bereal.txt",
         "format": "domains",
-        "size_bytes": 19
+        "size_bytes": 80
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 2,
+    "license": "Shepherd service lists, AGPL-3.0. https://github.com/blaineam/Shepherd/tree/main/lists/services",
+    "homepage": "https://github.com/blaineam/Shepherd/tree/main/lists/services",
+    "approx_entries": 3,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "vk",
@@ -958,16 +958,16 @@
     "description": "VK social network.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/vk",
-        "format": "domains",
-        "size_bytes": 87
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/vk.yml",
+        "format": "adblock",
+        "size_bytes": 1510
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 8,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 20,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "9gag",
@@ -977,16 +977,16 @@
     "description": "9GAG meme site.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/9gag",
-        "format": "domains",
-        "size_bytes": 20
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/9gag.yml",
+        "format": "adblock",
+        "size_bytes": 1308
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
     "approx_entries": 2,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "imgur",
@@ -996,16 +996,16 @@
     "description": "Imgur image hosting.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/imgur",
-        "format": "domains",
-        "size_bytes": 10
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/imgur.yml",
+        "format": "adblock",
+        "size_bytes": 6126
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
     "approx_entries": 1,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "youtube",
@@ -1015,9 +1015,9 @@
     "description": "YouTube, YouTube Kids and video CDN.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/youtube",
-        "format": "domains",
-        "size_bytes": 261
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/youtube.yml",
+        "format": "adblock",
+        "size_bytes": 4666
       },
       {
         "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/youtube.txt",
@@ -1025,11 +1025,11 @@
         "size_bytes": 1052881
       }
     ],
-    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 24298,
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 24474,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "netflix",
@@ -1039,16 +1039,16 @@
     "description": "Netflix streaming.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/netflix",
-        "format": "domains",
-        "size_bytes": 73
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/netflix.yml",
+        "format": "adblock",
+        "size_bytes": 1029
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 6,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 24,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "disneyplus",
@@ -1058,16 +1058,16 @@
     "description": "Disney+ streaming.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/disneyplus",
-        "format": "domains",
-        "size_bytes": 123
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/disneyplus.yml",
+        "format": "adblock",
+        "size_bytes": 4703
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 6,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 8,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "primevideo",
@@ -1077,16 +1077,16 @@
     "description": "Amazon Prime Video streaming hostnames (not the shopping site).",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/primevideo",
-        "format": "domains",
-        "size_bytes": 31
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/amazon_streaming.yml",
+        "format": "adblock",
+        "size_bytes": 1866
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 2,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 29,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "hulu",
@@ -1096,16 +1096,16 @@
     "description": "Hulu streaming.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/hulu",
-        "format": "domains",
-        "size_bytes": 9
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/hulu.yml",
+        "format": "adblock",
+        "size_bytes": 813
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
     "approx_entries": 1,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "hbomax",
@@ -1115,16 +1115,16 @@
     "description": "HBO Max streaming.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/hbomax",
-        "format": "domains",
-        "size_bytes": 19
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/hbomax.yml",
+        "format": "adblock",
+        "size_bytes": 752
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 2,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 13,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "twitch",
@@ -1134,16 +1134,16 @@
     "description": "Twitch live streaming.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/twitch",
-        "format": "domains",
-        "size_bytes": 104
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/twitch.yml",
+        "format": "adblock",
+        "size_bytes": 477
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 8,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 6,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "spotify",
@@ -1153,16 +1153,16 @@
     "description": "Spotify music streaming.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/spotify",
-        "format": "domains",
-        "size_bytes": 294
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/spotify.yml",
+        "format": "adblock",
+        "size_bytes": 1950
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 12,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 13,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "dailymotion",
@@ -1172,16 +1172,16 @@
     "description": "Dailymotion video.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/dailymotion",
-        "format": "domains",
-        "size_bytes": 39
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/dailymotion.yml",
+        "format": "adblock",
+        "size_bytes": 673
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
     "approx_entries": 3,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "vimeo",
@@ -1191,16 +1191,16 @@
     "description": "Vimeo video.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/vimeo",
-        "format": "domains",
-        "size_bytes": 71
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/vimeo.yml",
+        "format": "adblock",
+        "size_bytes": 1530
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 4,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 16,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "telegram",
@@ -1210,16 +1210,16 @@
     "description": "Telegram messaging.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/telegram",
-        "format": "domains",
-        "size_bytes": 89
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/telegram.yml",
+        "format": "adblock",
+        "size_bytes": 1031
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 4,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 17,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "signal",
@@ -1229,16 +1229,16 @@
     "description": "Signal messaging.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/signal",
-        "format": "domains",
-        "size_bytes": 49
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/signal.yml",
+        "format": "adblock",
+        "size_bytes": 2112
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
     "approx_entries": 2,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "skype",
@@ -1248,16 +1248,16 @@
     "description": "Skype calls and chat.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/skype",
-        "format": "domains",
-        "size_bytes": 103
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/skype.yml",
+        "format": "adblock",
+        "size_bytes": 1923
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 5,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 8,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "zoom",
@@ -1267,16 +1267,16 @@
     "description": "Zoom video meetings.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/zoom",
+        "url": "https://raw.githubusercontent.com/blaineam/Shepherd/main/lists/services/zoom.txt",
         "format": "domains",
-        "size_bytes": 48
+        "size_bytes": 88
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
+    "license": "Shepherd service lists, AGPL-3.0. https://github.com/blaineam/Shepherd/tree/main/lists/services",
+    "homepage": "https://github.com/blaineam/Shepherd/tree/main/lists/services",
     "approx_entries": 4,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "google-chat",
@@ -1286,16 +1286,16 @@
     "description": "Google Chat.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/google-chat",
+        "url": "https://raw.githubusercontent.com/blaineam/Shepherd/main/lists/services/google-chat.txt",
         "format": "domains",
-        "size_bytes": 16
+        "size_bytes": 117
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 1,
+    "license": "Shepherd service lists, AGPL-3.0. https://github.com/blaineam/Shepherd/tree/main/lists/services",
+    "homepage": "https://github.com/blaineam/Shepherd/tree/main/lists/services",
+    "approx_entries": 3,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "steam",
@@ -1305,16 +1305,16 @@
     "description": "Steam store, chat and downloads.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/steam",
-        "format": "domains",
-        "size_bytes": 272
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/steam.yml",
+        "format": "adblock",
+        "size_bytes": 1806
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 12,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 35,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "roblox",
@@ -1324,16 +1324,16 @@
     "description": "Roblox.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/roblox",
-        "format": "domains",
-        "size_bytes": 22
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/roblox.yml",
+        "format": "adblock",
+        "size_bytes": 520
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 2,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 13,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "epicgames",
@@ -1343,16 +1343,16 @@
     "description": "Epic Games store and launcher.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/fortnite",
-        "format": "domains",
-        "size_bytes": 14
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/epic_games.yml",
+        "format": "adblock",
+        "size_bytes": 2233
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 1,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 4,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "fortnite",
@@ -1362,9 +1362,9 @@
     "description": "Fortnite.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/fortnite",
-        "format": "domains",
-        "size_bytes": 14
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/epic_games.yml",
+        "format": "adblock",
+        "size_bytes": 2233
       },
       {
         "url": "https://raw.githubusercontent.com/blocklistproject/Lists/master/fortnite.txt",
@@ -1372,11 +1372,11 @@
         "size_bytes": 647
       }
     ],
-    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 6,
+    "license": "The Block List Project, Unlicense (public domain). https://github.com/blocklistproject/Lists; AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 10,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "minecraft",
@@ -1386,16 +1386,16 @@
     "description": "Minecraft.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/minecraft",
-        "format": "domains",
-        "size_bytes": 47
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/minecraft.yml",
+        "format": "adblock",
+        "size_bytes": 3417
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 3,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 6,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "xboxlive",
@@ -1405,16 +1405,16 @@
     "description": "Xbox Live online services.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/xboxlive",
-        "format": "domains",
-        "size_bytes": 22
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/xboxlive.yml",
+        "format": "adblock",
+        "size_bytes": 1103
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 2,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 8,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "playstation-network",
@@ -1424,16 +1424,16 @@
     "description": "PlayStation Network online services.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/playstation-network",
-        "format": "domains",
-        "size_bytes": 16
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/playstation.yml",
+        "format": "adblock",
+        "size_bytes": 1083
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 1,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 8,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "blizzard",
@@ -1443,16 +1443,16 @@
     "description": "Blizzard and Battle.net.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/blizzard",
-        "format": "domains",
-        "size_bytes": 24
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/activision_blizzard.yml",
+        "format": "adblock",
+        "size_bytes": 430
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 2,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 6,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "leagueoflegends",
@@ -1462,16 +1462,16 @@
     "description": "League of Legends.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/leagueoflegends",
-        "format": "domains",
-        "size_bytes": 38
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/leagueoflegends.yml",
+        "format": "adblock",
+        "size_bytes": 839
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 2,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 5,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "tinder",
@@ -1481,16 +1481,16 @@
     "description": "Tinder dating app.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/tinder",
-        "format": "domains",
-        "size_bytes": 41
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/tinder.yml",
+        "format": "adblock",
+        "size_bytes": 682
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
     "approx_entries": 3,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "chatgpt",
@@ -1500,16 +1500,16 @@
     "description": "ChatGPT.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/chatgpt",
-        "format": "domains",
-        "size_bytes": 16
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/chatgpt.yml",
+        "format": "adblock",
+        "size_bytes": 2115
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 1,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 4,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "ebay",
@@ -1519,16 +1519,16 @@
     "description": "eBay marketplace.",
     "sources": [
       {
-        "url": "https://raw.githubusercontent.com/nextdns/services/main/services/ebay",
-        "format": "domains",
-        "size_bytes": 272
+        "url": "https://raw.githubusercontent.com/AdguardTeam/HostlistsRegistry/main/services/ebay.yml",
+        "format": "adblock",
+        "size_bytes": 10209
       }
     ],
-    "license": "NextDNS services lists, MIT License (c) NextDNS. https://github.com/nextdns/services",
-    "homepage": "https://github.com/nextdns/services",
-    "approx_entries": 27,
+    "license": "AdGuard HostlistsRegistry services, GPL-3.0. https://github.com/AdguardTeam/HostlistsRegistry",
+    "homepage": "https://github.com/AdguardTeam/HostlistsRegistry",
+    "approx_entries": 319,
     "recommended": false,
-    "verified_at": "2026-10-29"
+    "verified_at": "2026-11-09"
   },
   {
     "id": "adobe",

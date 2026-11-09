@@ -1,0 +1,4 @@
+# Google Chat. Maintained in the Shepherd repository.
+chat.google.com
+chat.googleapis.com
+dynamite-pa.googleapis.com

@@ -1,0 +1,7 @@
+# Facebook Messenger. Maintained in the Shepherd repository.
+messenger.com
+m.me
+edge-chat.messenger.com
+edge-chat.facebook.com
+chat-e2ee.facebook.com
+chat-e2ee-mini.facebook.com

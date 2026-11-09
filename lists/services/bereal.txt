@@ -1,0 +1,4 @@
+# BeReal. Maintained in the Shepherd repository.
+bere.al
+bereal.com
+bereal.team

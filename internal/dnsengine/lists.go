@@ -53,6 +53,12 @@ func ParseList(r io.Reader) (map[string]struct{}, error) {
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
+		// AdGuard HostlistsRegistry service files are YAML whose rules are list
+		// items: `  - '||youtube.com^'`. Unwrap the item; the other YAML keys
+		// (id, name, icon_svg, ...) fall through as unrecognised lines.
+		if rest, ok := strings.CutPrefix(line, "- "); ok {
+			line = strings.Trim(strings.TrimSpace(rest), `'"`)
+		}
 		if line == "" || line[0] == '#' || line[0] == '!' || line[0] == '[' {
 			continue
 		}

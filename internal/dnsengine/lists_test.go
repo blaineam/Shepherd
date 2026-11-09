@@ -199,6 +199,33 @@ func TestValidDomain(t *testing.T) {
 	}
 }
 
+func TestParseListReadsAdGuardServiceYAML(t *testing.T) {
+	src := `id: youtube
+name: YouTube
+group: streaming
+icon_svg: '<svg xmlns="http://www.w3.org/2000/svg"><path d="M1 2"/></svg>'
+rules:
+  - '||youtube.com^'
+  - "||youtu.be^"
+  - ||ytimg.com^
+  - '||youtube^'
+  - '||googlevideo.com^$important'
+`
+	set, err := ParseList(strings.NewReader(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"youtube.com", "youtu.be", "ytimg.com"}
+	if len(set) != len(want) {
+		t.Fatalf("got %v, want %v", set, want)
+	}
+	for _, d := range want {
+		if _, ok := set[d]; !ok {
+			t.Errorf("missing %s in %v", d, set)
+		}
+	}
+}
+
 func TestParseListReportsOversizedLines(t *testing.T) {
 	_, err := ParseList(strings.NewReader(strings.Repeat("a", 2<<20)))
 	if err == nil {

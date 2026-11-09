@@ -28,7 +28,8 @@ switch it on, from the publisher, and caches it on your machine.
 |---|---|---|
 | [HaGeZi DNS Blocklists](https://github.com/hagezi/dns-blocklists) | the `hagezi-*` lists (ads, trackers, threat intelligence, popups, gambling, piracy, native tracker lists, and more) | GPL-3.0 |
 | [The Block List Project](https://github.com/blocklistproject/Lists) | the `blp-*` lists, Adobe, and the Facebook, WhatsApp, TikTok, X, YouTube and Fortnite app lists | Unlicense (public domain) |
-| [NextDNS services lists](https://github.com/nextdns/services) | most app entries (Instagram, Messenger, Discord, Snapchat, Reddit, streaming, gaming, messaging and other services) | MIT, (c) NextDNS |
+| [AdGuard HostlistsRegistry services](https://github.com/AdguardTeam/HostlistsRegistry/tree/main/services) | most app entries (Instagram, Discord, Snapchat, Reddit, streaming, gaming, messaging and other services) | GPL-3.0 |
+| [Shepherd service lists](../lists/services) | BeReal, Messenger, Zoom and Google Chat, which AdGuard does not cover; maintained in this repository | AGPL-3.0 (this project) |
 | [StevenBlack/hosts](https://github.com/StevenBlack/hosts) | `stevenblack-unified` | MIT |
 | [AdGuard DNS filter](https://github.com/AdguardTeam/AdGuardSDNSFilter) | `adguard-dns` | GPL-3.0 |
 

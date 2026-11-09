@@ -1,0 +1,5 @@
+# Zoom. Maintained in the Shepherd repository.
+zoom.us
+zoom.com
+zoomgov.com
+zoom.com.cn

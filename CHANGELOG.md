@@ -14,6 +14,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ## [Unreleased]
 
 ### Fixed
+- **App blocking works again for the 42 services that used NextDNS's lists.** NextDNS took down
+  `github.com/nextdns/services`, so Instagram, Discord, Reddit, Netflix, Steam and the rest of the
+  app catalog stopped refreshing (the nightly *Blocklist URLs* check caught it: 42/84 reachable).
+  Those entries now pull AdGuard's maintained per-service lists from
+  [HostlistsRegistry](https://github.com/AdguardTeam/HostlistsRegistry), and the list parser reads
+  their YAML rule items. BeReal, Messenger, Zoom and Google Chat, which AdGuard does not cover, use
+  small lists kept in this repository under `lists/services/`.
 - **The rolling beta can no longer be older than the release it follows.** Cutting 1.1.1 started the
   Beta workflow on the release commit as well, where `VERSION` is the version being released, and it
   published `1.1.1-beta.113` a few seconds after the Release workflow had already deleted the betas
