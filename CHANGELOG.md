@@ -13,6 +13,11 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-11-09
+
+Two fixes: app blocking for 42 services stopped refreshing when their upstream lists were taken
+down, and the rolling beta could be published older than the release it followed.
+
 ### Fixed
 - **App blocking works again for the 42 services that used NextDNS's lists.** NextDNS took down
   `github.com/nextdns/services`, so Instagram, Discord, Reddit, Netflix, Steam and the rest of the
@@ -33,6 +38,9 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   published stable release. The Beta workflow skips the build instead of failing, and says why.
   `scripts/test-beta-guard` covers both cases and runs in CI. See
   [docs/RELEASING.md](docs/RELEASING.md#when-a-push-gets-no-beta).
+
+### Changed
+- The GeoIP database reader is updated to `maxminddb-golang` 2.9.0.
 
 ## [1.1.1] - 2026-11-04
 
