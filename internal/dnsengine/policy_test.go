@@ -200,10 +200,10 @@ func TestPolicySwitchesAreScopeable(t *testing.T) {
 	}
 	// Enabled only for one group.
 	g := scopedFilter(t, map[string]ScopeConfig{"group:adults": {Policies: map[string]bool{PolicyPrivateRelay: true}}})
-	if d := g.CheckFor("192.0.2.1", "mask-api.icloud.com", cs); !d.Blocked || d.Scope != "group:adults" {
+	if d := g.CheckFor("192.0.2.1", "mask-h2.icloud.com", cs); !d.Blocked || d.Scope != "group:adults" {
 		t.Errorf("group policy = %+v", d)
 	}
-	if g.CheckFor("192.0.2.2", "mask-api.icloud.com", cs).Blocked {
+	if g.CheckFor("192.0.2.2", "mask-h2.icloud.com", cs).Blocked {
 		t.Error("policy leaked outside its group")
 	}
 	// An allow rule overrides a policy at the same scope.

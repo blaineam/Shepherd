@@ -13,11 +13,13 @@ import (
 
 // PolicyPrivateRelay makes the resolver answer NXDOMAIN for the hostnames
 // Apple devices use to reach iCloud Private Relay, which is Apple's documented
-// way for a network to signal that it does not allow the relay.
+// way for a network to signal that it does not allow the relay. Only the two
+// names Apple documents belong here: Siri looks up mask-api.icloud.com on
+// every request, so a broader list can break more than the relay.
 const PolicyPrivateRelay = "apple-private-relay"
 
 var policyDomains = map[string][]string{
-	PolicyPrivateRelay: {"mask.icloud.com", "mask-h2.icloud.com", "mask-api.icloud.com"},
+	PolicyPrivateRelay: {"mask.icloud.com", "mask-h2.icloud.com"},
 }
 
 // KnownPolicies lists every built-in policy name.

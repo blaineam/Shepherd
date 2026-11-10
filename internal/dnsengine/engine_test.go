@@ -267,14 +267,17 @@ func TestEngineEndToEnd(t *testing.T) {
 	}
 
 	// Private Relay hostnames get NXDOMAIN, as Apple documents for networks.
-	for _, host := range []string{"mask.icloud.com.", "mask-h2.icloud.com.", "mask-api.icloud.com."} {
+	for _, host := range []string{"mask.icloud.com.", "mask-h2.icloud.com."} {
 		if r := ask(t, addr, host, dns.TypeA); r.Rcode != dns.RcodeNameError {
 			t.Errorf("%s rcode = %s, want NXDOMAIN", host, dns.RcodeToString[r.Rcode])
 		}
 	}
-	// icloud.com itself is untouched.
-	if r := ask(t, addr, "www.icloud.com.", dns.TypeA); r.Rcode != dns.RcodeSuccess {
-		t.Errorf("www.icloud.com rcode = %s", dns.RcodeToString[r.Rcode])
+	// icloud.com itself is untouched, and so is mask-api.icloud.com: Apple
+	// does not list it, and Siri looks it up on every request.
+	for _, host := range []string{"www.icloud.com.", "mask-api.icloud.com."} {
+		if r := ask(t, addr, host, dns.TypeA); r.Rcode != dns.RcodeSuccess {
+			t.Errorf("%s rcode = %s, want NOERROR", host, dns.RcodeToString[r.Rcode])
+		}
 	}
 
 	// Log and stats saw it all. Wait for every query's entry to land (see
@@ -288,10 +291,10 @@ func TestEngineEndToEnd(t *testing.T) {
 			relay++
 		}
 	}
-	if relay != 3 {
-		t.Errorf("log recorded %d private relay blocks, want 3", relay)
+	if relay != 2 {
+		t.Errorf("log recorded %d private relay blocks, want 2", relay)
 	}
-	if s := e.Stats.Snapshot(); s.Blocked != 5 || s.Cached != 1 {
+	if s := e.Stats.Snapshot(); s.Blocked != 4 || s.Cached != 1 {
 		t.Errorf("stats = %+v", s)
 	}
 }

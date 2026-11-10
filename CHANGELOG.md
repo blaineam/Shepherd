@@ -13,6 +13,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- The Private Relay policy now blocks only the two names Apple documents for networks,
+  `mask.icloud.com` and `mask-h2.icloud.com`. It also blocked `mask-api.icloud.com`, which Apple does
+  not list and which an iPhone looks up on every Siri request; with it blocked, Siri answered every
+  request with a network error.
+
 ## [1.1.2] - 2026-11-09
 
 Two fixes: app blocking for 42 services stopped refreshing when their upstream lists were taken

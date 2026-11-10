@@ -426,7 +426,7 @@ func TestQA_AllowlistBeatsEveryBlock(t *testing.T) {
 func TestQA_PrivateRelayHostnamesAreNXDOMAINWhenThePolicyIsOn(t *testing.T) {
 	r := newQAResolver(t)
 	e, addr := qaEngine(t, qaPool(t, time.Second, r.Addr), nil)
-	relay := []string{"mask.icloud.com.", "mask-h2.icloud.com.", "mask-api.icloud.com.", "sub.mask.icloud.com."}
+	relay := []string{"mask.icloud.com.", "mask-h2.icloud.com.", "sub.mask.icloud.com."}
 
 	// Policy off: they resolve like any name.
 	for _, h := range relay {
