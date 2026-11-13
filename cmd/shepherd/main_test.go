@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -24,6 +25,13 @@ import (
 func TestMain(m *testing.M) {
 	// Cheap Argon2id for the passphrase tests; production keeps the strong defaults.
 	argonTime, argonMemKiB = 1, 64
+	// The tests that run the whole daemon use the default configuration,
+	// which opens decoy ports (docs/DETECT.md). A test run must not open
+	// real listeners on fixed ports of the machine it runs on; the tests of
+	// the decoys themselves swap in their own listener.
+	decoyListen = func(network, addr string) (net.Listener, error) {
+		return nil, errors.New("decoy ports are not opened in tests")
+	}
 	os.Exit(m.Run())
 }
 
@@ -328,6 +336,18 @@ func start(t *testing.T, cfg string) *running {
 		q := new(dns.Msg)
 		q.SetQuestion("mask.icloud.com.", dns.TypeA) // answered locally; a name that went upstream would leave a slow query behind
 		if _, _, err := (&dns.Client{Timeout: 300 * time.Millisecond}).Exchange(q, r.dnsAddr); err == nil {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	// The portal binds in its own goroutine, so DNS answering does not mean
+	// the portal is listening yet: on a loaded runner the first API call
+	// could be refused (TestUpgradeEndToEndIssuesWithTheImportedToken, on
+	// the second start of one data directory). Wait for it as well.
+	for time.Now().Before(deadline) {
+		c, err := net.DialTimeout("tcp", strings.TrimPrefix(r.portalBase, "http://"), 300*time.Millisecond)
+		if err == nil {
+			c.Close()
 			break
 		}
 		time.Sleep(30 * time.Millisecond)
