@@ -40,6 +40,14 @@ const (
 	// restampAfter bounds how often a device that is merely seen again
 	// (nothing else changed) gets a new sync stamp.
 	restampAfter = 5 * time.Minute
+
+	// reuseWindow is how long an address that no device currently holds is
+	// still attributed to the device that held it last. A host with two
+	// network cards answering ARP for one address makes the neighbor table
+	// hand that address back and forth, and for a moment nobody holds it; a
+	// DNS query in that gap must reach the host that owns it, not mint a new
+	// (quarantined) device.
+	reuseWindow = 24 * time.Hour
 )
 
 // Options configures a Registry. The zero value is usable.
@@ -223,6 +231,9 @@ func (r *Registry) observeLocked(o Observation) (string, []Event) {
 		}
 	} else {
 		d = r.byIP[ip]
+		if d == nil && hasIP {
+			d = r.lastHolder(ip, now)
+		}
 		if d == nil && strongName {
 			d = r.findByName(host, false)
 		}
@@ -254,6 +265,26 @@ func (r *Registry) observeLocked(o Observation) (string, []Event) {
 		evs = append(evs, Event{Kind: EventRenamed, DeviceID: d.ID, OldName: before, NewName: d.DisplayName()})
 	}
 	return d.ID, evs
+}
+
+// lastHolder returns the live device that most recently held ip, if it did so
+// within reuseWindow, for an address nobody holds right now.
+func (r *Registry) lastHolder(ip netip.Addr, now time.Time) *Device {
+	s := ip.String()
+	var best *Device
+	for _, d := range r.devices {
+		if d.Deleted || !contains(d.PastIPs, s) {
+			continue
+		}
+		seen := d.IPSeen[s]
+		if seen.IsZero() || now.Sub(seen) > reuseWindow {
+			continue
+		}
+		if best == nil || seen.After(best.IPSeen[s]) || seen.Equal(best.IPSeen[s]) && d.ID < best.ID {
+			best = d
+		}
+	}
+	return best
 }
 
 // newDevice creates and indexes a device. Devices with a MAC get a
@@ -594,7 +625,7 @@ func (r *Registry) mergeLocked(dst, src *Device, now time.Time) {
 	if src.LastSeen.After(dst.LastSeen) {
 		dst.LastSeen = src.LastSeen
 	}
-	dst.Groups = sortedUnion(dst.Groups, src.Groups)
+	dst.Groups = mergeGroups(dst.Groups, src.Groups)
 	dst.Tags = sortedUnion(dst.Tags, src.Tags)
 	if src.Notes != "" && src.Notes != dst.Notes {
 		if dst.Notes == "" {
@@ -637,6 +668,31 @@ func (r *Registry) mergeLocked(dst, src *Device, now time.Time) {
 	r.trimIPs(dst, "")
 	r.stamp(dst)
 	r.dirty = true
+}
+
+// mergeGroups unions two group lists, except that Quarantine does not
+// outlive a merge with a device that has a real group. Quarantine is the
+// holding pen for a device nobody has sorted yet; when an unsorted stub (an
+// address seen before its MAC) turns out to be a device the user already
+// placed, the stub's pen must not follow it in and block what the user's own
+// groups allow. Quarantine survives only when no side has anywhere else to be.
+func mergeGroups(a, b []string) []string {
+	out := sortedUnion(a, b)
+	if !contains(out, QuarantineGroupID) {
+		return out
+	}
+	real := func(gs []string) bool {
+		for _, g := range gs {
+			if g != QuarantineGroupID {
+				return true
+			}
+		}
+		return false
+	}
+	if (real(a) && !contains(a, QuarantineGroupID)) || (real(b) && !contains(b, QuarantineGroupID)) {
+		return remove(out, QuarantineGroupID)
+	}
+	return out
 }
 
 func sortedUnion(a, b []string) []string {

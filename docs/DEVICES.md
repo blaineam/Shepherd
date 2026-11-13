@@ -19,7 +19,7 @@ about; this registry itself still only listens.)
 | **Tailscale** | the device name behind each tailnet (`100.x`) address, from the local `tailscaled` (off by default) | `devices.tailscale` |
 | **MAC vendor** | the manufacturer, from a table of the IEEE's public assignments built into the binary | always |
 
-A device is keyed by MAC when known, otherwise by IP, and merges when a MAC is learned later. Phones that rotate a private
+A device is keyed by MAC when known, otherwise by IP, and merges when a MAC is learned later. An address that no device holds at the moment (for example a host with two network cards both answering for one address) is attributed for a day to the device that held it last, instead of becoming a new device. Phones that rotate a private
 (randomized) address are folded into the device that already holds the IP or the announced name instead of multiplying.
 Addresses are tracked as they change: a device keeps its identity, its groups and its name when DHCP gives it a new address.
 
@@ -104,7 +104,8 @@ names, groups and tags of the sources, which are removed along with their device
 
 A newly discovered device lands in the reserved **Quarantine** group automatically, so nothing new on your network gets the run of it
 before you have looked at it. Assigning a device to *any other* group releases it from quarantine in the same step; moving it back in
-later is still allowed. To release a device without putting it anywhere else, remove it from quarantine directly (the same bulk "remove
+later is still allowed. When a quarantined stub (an address seen before its MAC) turns out to be a device you already sorted, merging them
+keeps your groups and drops Quarantine. To release a device without putting it anywhere else, remove it from quarantine directly (the same bulk "remove
 from group" action, pointed at Quarantine).
 
 Quarantine is a group like any other for policy purposes: set its rules on the Blocking screen (scope: **A group** → Quarantine) the same

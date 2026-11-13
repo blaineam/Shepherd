@@ -40,6 +40,8 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Fixed
 
+- A host with two network cards on one address (a NAS answering ARP from both) no longer ends up in Quarantine. While the neighbor table was handing the address back and forth nobody held it, and the next DNS query from it created a new quarantined device that blocked the host's own lookups. An address nobody holds now goes back to the device that held it within the last day.
+- Merging a device that only sat in Quarantine (an address seen before its MAC) into a device you already sorted no longer drags Quarantine into the sorted device's groups. Quarantine survives a merge only when no side has any other group.
 - Shepherd no longer binds 127.0.0.1 and `[::1]` unless asked. `dns.listen_loopback` now defaults to **off**, so DNS listens only on the addresses in `dns.listen`; set `listen_loopback = true` to get the loopback listeners back.
 - A device seen both on Wi-Fi and through Tailscale keeps its Tailscale address. The one-IPv4-per-radio cap counted the tailnet address (Tailscale's IPv4 and IPv6 ranges) as a DHCP lease, so merging a phone's two records retired it and the phone's Tailscale queries no longer matched the device.
 - The Private Relay policy now blocks only the two names Apple documents for networks,
