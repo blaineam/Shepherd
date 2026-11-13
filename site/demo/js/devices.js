@@ -8,13 +8,13 @@ import { parseQuery, stringifyQuery, addFilter, removeFilter, formatFilter, hasG
 import { applyBulkLocal, planUndo, describeBulk, parseTags, normTag } from './bulk.js?v=59d2b697';
 import { TYPES, typeLabel, typeIcon, GROUP_COLORS } from './devtypes.js?v=0c35dd83';
 import { icon, iconButton, button, chip, segmented, toggle, emptyState, openPopover, openMenu, confirmDialog, relTime, unavailableCard, debounce } from './ui.js?v=4d208003';
-import { unavailable } from './mgmt.js?v=288370f7';
+import { unavailable } from './mgmt.js?v=c6c70744';
 import { rangeWindow, fillSeries, sumPoints, areaPaths, axisLabels, timeLabels, fmtBytes } from './traffic.js?v=cd821019';
 import { TIMER_CHOICES, MODES, deviceMode, countdown, countdownShort, modePatch, applyModeLocal } from './wander.js?v=b40b3e3f';
 import { reservedLabel } from './dhcp.js?v=769b13a6';
 import { createImportModal } from './importview.js?v=b346adcf';
-import { severityLabel, severityBadgeClass } from './alarms.js?v=a5e2e2d9';
-import { activeFindings, resolvedFindings, findingTooltip } from './vulnscan.js?v=31027ae4';
+import { severityLabel, severityBadgeClass } from './alarms.js?v=fa35f297';
+import { activeFindings, resolvedFindings, findingTooltip } from './vulnscan.js?v=5e2318a5';
 import { mergeAttention, attentionReasonLabel } from './attention.js?v=e8e791aa';
 import { WATCH_CHOICES, watchSwitchOf, deviceBadge, fmtBitsPerSecond, fmtPacketsPerSecond, fmtTotalBytes } from './watch.js?v=79562f0e';
 import { DEVICE_AAAA_CHOICES, deviceAAAAChoice, aaaaSwitchOf } from './aaaa.js?v=4601fb63';

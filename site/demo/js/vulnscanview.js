@@ -11,9 +11,9 @@
 // duplicating the finding detail rendering a second time.
 import { el } from './dom.js?v=65858b99';
 import { icon, button, segmented, emptyState, unavailableCard, relTime } from './ui.js?v=4d208003';
-import { unavailable } from './mgmt.js?v=288370f7';
-import { SEVERITIES, severityLabel, severityBadgeClass } from './alarms.js?v=a5e2e2d9';
-import { flattenFindings, matchRow, scanSummary, findingTooltip, feedSummary } from './vulnscan.js?v=31027ae4';
+import { unavailable } from './mgmt.js?v=c6c70744';
+import { SEVERITIES, severityLabel, severityBadgeClass } from './alarms.js?v=fa35f297';
+import { flattenFindings, matchRow, scanSummary, findingTooltip, feedSummary } from './vulnscan.js?v=5e2318a5';
 
 const STATES = [['active', 'Active'], ['resolved', 'Resolved']];
 

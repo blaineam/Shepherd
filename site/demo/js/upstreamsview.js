@@ -4,7 +4,7 @@
 import { el } from './dom.js?v=65858b99';
 import { icon, iconButton, button, emptyState, unavailableCard, confirmDialog, segmented } from './ui.js?v=4d208003';
 import { classifyAddr, KIND_LABEL, isEncrypted, move, presetVariants, parseBootstrap, healthLabel, selftestSummary } from './upstreams.js?v=f59ab5b8';
-import { unavailable } from './mgmt.js?v=288370f7';
+import { unavailable } from './mgmt.js?v=c6c70744';
 import { AAAA_CHOICES, aaaaChoice, aaaaSummary, aaaaExceptions, exceptionNote } from './aaaa.js?v=4601fb63';
 import { fmtNum } from './format.js?v=86b54455';
 

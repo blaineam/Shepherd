@@ -6,7 +6,7 @@
 // from the owner's typing, so all text is set with textContent.
 import { el } from './dom.js?v=65858b99';
 import { button, emptyState, unavailableCard, confirmDialog, relTime } from './ui.js?v=4d208003';
-import { unavailable } from './mgmt.js?v=288370f7';
+import { unavailable } from './mgmt.js?v=c6c70744';
 import { validateReservation, validateRange, suggestRange, rangeSummary, conflictTone, alphaNote, modeLabel, stateSummary, consequences, sortLeases, filterLeases, leaseBody, originLabel, normalizeMAC } from './dhcp.js?v=769b13a6';
 
 // inPool is the note beside a reserved address that sits inside the dynamic

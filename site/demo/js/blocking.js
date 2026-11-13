@@ -7,7 +7,7 @@ import { NETWORK, sameScope, scopeLabel, itemStatus, nextItemValue, rulesView, s
 import { normalizeGeoBlock, listFor, countryStatus, setCountry } from './geoscope.js?v=1ef8005f';
 import { COUNTRIES } from './countries.js?v=1670de04';
 import { groupCatalog, listStatus, fmtCount, sources, safeHref, bundleProgress, matchesQuery } from './catalog.js?v=96855bed';
-import { unavailable } from './mgmt.js?v=288370f7';
+import { unavailable } from './mgmt.js?v=c6c70744';
 
 const TABS = [['apps', 'Apps and categories'], ['lists', 'Blocklists'], ['custom', 'Your lists'], ['rules', 'Domain rules'], ['switches', 'Settings'], ['geo', 'Countries']];
 
