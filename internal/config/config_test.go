@@ -873,17 +873,21 @@ func TestWatchIPv6IsOffByDefaultAndSettable(t *testing.T) {
 	}
 }
 
-func TestDNSListenAddrsAddsLoopbackByDefault(t *testing.T) {
+func TestDNSListenAddrsAddsLoopbackOnlyWhenEnabled(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// On by default: when Shepherd is its own host's resolver, loopback is
-	// the one address that cannot vanish with an interface.
-	if !cfg.DNS.LoopbackEnabled() {
-		t.Fatal("dns.listen_loopback must default to on")
+	// Off by default: Shepherd listens only on the addresses dns.listen names.
+	if cfg.DNS.LoopbackEnabled() {
+		t.Fatal("dns.listen_loopback must default to off")
 	}
 	cfg.DNS.Listen = []string{"192.0.2.20:53"}
+	if got := cfg.DNS.ListenAddrs(); !slices.Equal(got, []string{"192.0.2.20:53"}) {
+		t.Fatalf("addrs = %v, want only the configured address", got)
+	}
+	on := true
+	cfg.DNS.ListenLoopback = &on
 	got := cfg.DNS.ListenAddrs()
 	want := []string{"192.0.2.20:53", "127.0.0.1:53", "[::1]:53"}
 	if !slices.Equal(got, want) {
@@ -914,26 +918,27 @@ func TestDNSListenAddrsPortAndDeduplication(t *testing.T) {
 			[]string{"not-an-address"}, []string{"not-an-address"}},
 	}
 	for _, c := range cases {
-		d := DNS{Listen: c.listen}
+		on := true
+		d := DNS{Listen: c.listen, ListenLoopback: &on}
 		if got := d.ListenAddrs(); !slices.Equal(got, c.want) {
 			t.Errorf("%s: addrs = %v, want %v", c.name, got, c.want)
 		}
 	}
 }
 
-func TestDNSListenLoopbackCanBeTurnedOff(t *testing.T) {
+func TestDNSListenLoopbackCanBeTurnedOn(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "shepherd.toml")
-	if err := os.WriteFile(path, []byte("[dns]\nlisten = [\"192.0.2.20:53\"]\nlisten_loopback = false\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("[dns]\nlisten = [\"192.0.2.20:53\"]\nlisten_loopback = true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DNS.LoopbackEnabled() {
-		t.Fatal("an explicit false must win over the default")
+	if !cfg.DNS.LoopbackEnabled() {
+		t.Fatal("an explicit true must enable it")
 	}
-	if got := cfg.DNS.ListenAddrs(); !slices.Equal(got, []string{"192.0.2.20:53"}) {
+	if got := cfg.DNS.ListenAddrs(); !slices.Equal(got, []string{"192.0.2.20:53", "127.0.0.1:53", "[::1]:53"}) {
 		t.Fatalf("addrs = %v", got)
 	}
 }
@@ -941,7 +946,8 @@ func TestDNSListenLoopbackCanBeTurnedOff(t *testing.T) {
 // The loopback addresses Shepherd adds are identifiable, because startup
 // treats them as best-effort while the configured ones stay strict.
 func TestDNSAddedLoopbackAddrsAreOnlyTheOnesShepherdAdds(t *testing.T) {
-	d := DNS{Listen: []string{"192.0.2.20:53"}}
+	on := true
+	d := DNS{Listen: []string{"192.0.2.20:53"}, ListenLoopback: &on}
 	if got, want := d.AddedLoopbackAddrs(), []string{"127.0.0.1:53", "[::1]:53"}; !slices.Equal(got, want) {
 		t.Fatalf("added = %v, want %v", got, want)
 	}
@@ -952,8 +958,9 @@ func TestDNSAddedLoopbackAddrsAreOnlyTheOnesShepherdAdds(t *testing.T) {
 		name string
 		d    DNS
 	}{
-		{"already configured", DNS{Listen: []string{"127.0.0.1:53", "[::1]:53"}}},
-		{"wildcard covers it", DNS{Listen: []string{"0.0.0.0:53"}}},
+		{"already configured", DNS{Listen: []string{"127.0.0.1:53", "[::1]:53"}, ListenLoopback: &on}},
+		{"wildcard covers it", DNS{Listen: []string{"0.0.0.0:53"}, ListenLoopback: &on}},
+		{"off by default", DNS{Listen: []string{"192.0.2.20:53"}}},
 		{"switched off", DNS{Listen: []string{"192.0.2.20:53"}, ListenLoopback: &off}},
 		{"nothing configured", DNS{}},
 	} {

@@ -147,6 +147,14 @@ func startDevices(ctx context.Context, cfg config.Config, engine *dnsengine.Engi
 		}
 	}
 
+	if dc.Enabled && dc.Tailscale {
+		ts := &devices.TailscaleSource{Sink: reg, Socket: dc.TailscaleSocket,
+			OnError: func(err error) {
+				logs.log("devices: tailscale (is tailscaled's socket mounted? devices.tailscale_socket)", err)
+			}}
+		run("tailscale", ts.Run)
+	}
+
 	save := func() {
 		if err := reg.Save(path); err != nil {
 			logs.log("devices: saving", err)

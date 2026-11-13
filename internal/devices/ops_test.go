@@ -295,6 +295,32 @@ func TestMergeDevices(t *testing.T) {
 	}
 }
 
+// A phone seen once through Tailscale (no MAC) and once on Wi-Fi with a
+// randomized MAC keeps both IPv4 addresses after a merge: the tailnet one is
+// not a DHCP lease and must not be retired by the one-IPv4-per-radio cap.
+func TestMergeKeepsTailnetAddress(t *testing.T) {
+	r, _ := newReg(t)
+	ts := r.Observe(Observation{Source: SourceDNS, IP: "100.64.0.7"})  // leakcheck:allow tailnet fixture
+	r.Observe(Observation{Source: SourceDNS, IP: "fd7a:115c:a1e0::7"}) // leakcheck:allow tailnet fixture
+	wifi := r.Observe(Observation{MAC: macA, IP: "192.0.2.9"})
+	if err := r.Merge(ts, wifi); err != nil {
+		t.Fatal(err)
+	}
+	d := mustDevice(t, r, ts)
+	if !contains(d.IPs, "100.64.0.7") || !contains(d.IPs, "192.0.2.9") { // leakcheck:allow tailnet fixture
+		t.Fatalf("want both IPv4 addresses current, got %v (past %v)", d.IPs, d.PastIPs)
+	}
+	// A new Wi-Fi lease still replaces the old one, and the tailnet address stays.
+	r.Observe(Observation{MAC: macA, IP: "192.0.2.10"})
+	d = mustDevice(t, r, ts)
+	if !contains(d.IPs, "100.64.0.7") || contains(d.IPs, "192.0.2.9") || !contains(d.IPs, "192.0.2.10") { // leakcheck:allow tailnet fixture
+		t.Fatalf("lease churn: got %v (past %v)", d.IPs, d.PastIPs)
+	}
+	if dev, _ := r.ScopesFor("100.64.0.7"); dev != ts { // leakcheck:allow tailnet fixture
+		t.Fatalf("tailnet address no longer maps to the device: %q", dev)
+	}
+}
+
 func TestMergeErrors(t *testing.T) {
 	r, _ := newReg(t)
 	a, b, _ := seed(t, r)

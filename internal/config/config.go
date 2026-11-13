@@ -248,7 +248,13 @@ type Devices struct {
 	ReverseDNS bool `toml:"reverse_dns"`
 	// ReverseDNSServer is that resolver, "ip" or "ip:port". Empty uses the
 	// default gateway found in /proc/net/route (Linux only).
-	ReverseDNSServer    string `toml:"reverse_dns_server"`
+	ReverseDNSServer string `toml:"reverse_dns_server"`
+	// Tailscale names tailnet devices by asking the local tailscaled which
+	// device owns each 100.x address. Off by default: it needs tailscaled's
+	// socket reachable from Shepherd (mount it into the container).
+	Tailscale bool `toml:"tailscale"`
+	// TailscaleSocket is that socket; empty is /var/run/tailscale/tailscaled.sock.
+	TailscaleSocket     string `toml:"tailscale_socket"`
 	SaveIntervalSeconds int    `toml:"save_interval_seconds"`
 	// QuarantineNewDevices puts every newly discovered device into the
 	// reserved Quarantine group until you move it somewhere else, so it never
@@ -648,7 +654,8 @@ type DNS struct {
 	// hostnames of tls:// and https:// upstreams.
 	Bootstrap []string `toml:"bootstrap"`
 	// ListenLoopback also serves on 127.0.0.1 and [::1], on the same port
-	// as the first address in Listen. On by default, and worth leaving on:
+	// as the first address in Listen. Off by default (Shepherd listens only on
+	// what dns.listen names), but worth turning on:
 	// when Shepherd is the resolver its own host uses, a loopback listener
 	// is the one address that cannot disappear with an interface. Without
 	// it, a host pointed at Shepherd's LAN address loses name resolution
@@ -1039,9 +1046,8 @@ func (c Config) validateDHCP() error {
 }
 
 // LoopbackEnabled reports whether dns.listen_loopback is on. It defaults to
-// true, which is why the field is a pointer: an explicit "false" in the file
-// has to be distinguishable from an absent key.
-func (d DNS) LoopbackEnabled() bool { return d.ListenLoopback == nil || *d.ListenLoopback }
+// false: Shepherd must not bind addresses the owner did not list.
+func (d DNS) LoopbackEnabled() bool { return d.ListenLoopback != nil && *d.ListenLoopback }
 
 // ListenAddrs is the set of addresses to serve DNS on: everything in
 // dns.listen, plus the loopback addresses when dns.listen_loopback is on

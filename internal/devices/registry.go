@@ -191,7 +191,7 @@ func (r *Registry) observeLocked(o Observation) (string, []Event) {
 	if now.IsZero() {
 		now = r.now()
 	}
-	strongName := (o.Source == SourceMDNS || o.Source == SourceDHCP) && usableName(host)
+	strongName := (o.Source == SourceMDNS || o.Source == SourceDHCP || o.Source == SourceTailscale) && usableName(host)
 
 	var d *Device
 	created, learned := false, false
@@ -433,9 +433,23 @@ func v4Limit(d *Device) int {
 	return max(1, n)
 }
 
+// Tailscale gives each node a fixed address in these ranges. It does not come
+// from a MAC or a DHCP lease, so it never counts toward the caps below: a
+// phone seen on Wi-Fi and through Tailscale keeps both addresses.
+var (
+	tailnetV4 = netip.MustParsePrefix("100.64.0.0/10")       // leakcheck:allow the CGNAT block itself, not a host
+	tailnetV6 = netip.MustParsePrefix("fd7a:115c:a1e0::/48") // leakcheck:allow Tailscale's ULA block, not a host
+)
+
+func isTailnet(s string) bool {
+	a, err := netip.ParseAddr(s)
+	return err == nil && (tailnetV4.Contains(a.Unmap()) || tailnetV6.Contains(a))
+}
+
 // trimIPs enforces the per-family cap on current addresses: one IPv4 per
 // MAC (DHCP churn replaces rather than accumulates) and a handful of IPv6
 // addresses (privacy addresses rotate). The oldest-seen address goes first.
+// Tailnet addresses are exempt (see isTailnet).
 func (r *Registry) trimIPs(d *Device, keep string) {
 	for _, v4 := range []bool{true, false} {
 		limit := maxCurrentV6
@@ -445,7 +459,7 @@ func (r *Registry) trimIPs(d *Device, keep string) {
 		for {
 			var cur []string
 			for _, s := range d.IPs {
-				if isV4(s) == v4 {
+				if isV4(s) == v4 && !isTailnet(s) {
 					cur = append(cur, s)
 				}
 			}

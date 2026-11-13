@@ -13,8 +13,14 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+
+- `devices.tailscale` (off by default) names tailnet devices: Shepherd reads the local `tailscaled` API over its unix socket (`devices.tailscale_socket`) once a minute and applies each online node's name to its tailnet addresses, so queries over Tailscale show the device rather than an unnamed address. See docs/DEVICES.md.
+
 ### Fixed
 
+- Shepherd no longer binds 127.0.0.1 and `[::1]` unless asked. `dns.listen_loopback` now defaults to **off**, so DNS listens only on the addresses in `dns.listen`; set `listen_loopback = true` to get the loopback listeners back.
+- A device seen both on Wi-Fi and through Tailscale keeps its Tailscale address. The one-IPv4-per-radio cap counted the tailnet address (Tailscale's IPv4 and IPv6 ranges) as a DHCP lease, so merging a phone's two records retired it and the phone's Tailscale queries no longer matched the device.
 - The Private Relay policy now blocks only the two names Apple documents for networks,
   `mask.icloud.com` and `mask-h2.icloud.com`. It also blocked `mask-api.icloud.com`, which Apple does
   not list and which an iPhone looks up on every Siri request; with it blocked, Siri answered every

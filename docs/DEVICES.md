@@ -16,6 +16,7 @@ about; this registry itself still only listens.)
 | **Neighbor table** | the MAC address behind each IP, from the operating system's ARP and neighbor tables, every 30 s | `devices.neighbors` |
 | **mDNS** | the names devices announce about themselves (`kitchen-tablet`, model hints, services) | `devices.mdns` |
 | **Reverse DNS** | the name your router gave a newly seen address (a PTR lookup to one resolver) | `devices.reverse_dns` |
+| **Tailscale** | the device name behind each tailnet (`100.x`) address, from the local `tailscaled` (off by default) | `devices.tailscale` |
 | **MAC vendor** | the manufacturer, from a table of the IEEE's public assignments built into the binary | always |
 
 A device is keyed by MAC when known, otherwise by IP, and merges when a MAC is learned later. Phones that rotate a private
@@ -43,6 +44,11 @@ A device's display name is the first that exists:
 
 Rename a device (set an alias) and every query log line, including those already in the history, keeps the name it had when it was
 recorded; new lines use the new name. Clear the alias to go back to the learned name.
+
+Tailscale names need DNS queries to arrive from the device's own tailnet address, so point the tailnet's DNS nameserver at Shepherd's
+Tailscale address (a subnet router would otherwise make every tailnet device look like the router). Shepherd reads `tailscaled`'s local API over its
+unix socket (`devices.tailscale = true`; `devices.tailscale_socket`, default `/var/run/tailscale/tailscaled.sock`), read-only, once a minute, and
+names every online node. In Docker, mount the socket into the container, e.g. `-v /var/run/tailscale:/var/run/tailscale`. Offline nodes are not added.
 
 Reverse DNS asks the **default gateway** (Linux: from `/proc/net/route`) unless you set `devices.reverse_dns_server`. Elsewhere,
 set it or the names from PTR records are skipped. Lookups are rate limited, cached for hours, and go to that one server only, never to the

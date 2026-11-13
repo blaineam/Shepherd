@@ -366,7 +366,8 @@ const (
 	SourceMDNS       SourceKind = "mdns"
 	SourceReverseDNS SourceKind = "rdns"
 	SourceDHCP       SourceKind = "dhcp"
-	SourceDNS        SourceKind = "dns" // a DNS query came from this IP
+	SourceDNS        SourceKind = "dns"       // a DNS query came from this IP
+	SourceTailscale  SourceKind = "tailscale" // a name from the local tailscaled
 	SourceManual     SourceKind = "manual"
 )
 

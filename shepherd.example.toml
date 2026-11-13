@@ -29,7 +29,8 @@ no_default_lists = false
 # answering queries.
 listen = ["127.0.0.1:5353"]
 # Also serve on 127.0.0.1 and [::1], on the port of the first address above.
-# On by default, and worth leaving on if this host uses Shepherd as its own
+# Off by default: Shepherd listens only on the addresses in `listen`. Worth
+# turning on if this host uses Shepherd as its own
 # resolver: loopback is the one address that cannot disappear with an
 # interface. On a real install a wired interface lost carrier, its LAN
 # address went with it, and the host could no longer resolve anything --
@@ -44,7 +45,7 @@ listen = ["127.0.0.1:5353"]
 # an interface no longer stops Shepherd answering on the others -- but one
 # another process is holding is still a startup failure, because then
 # something else is answering DNS on it and starting anyway would hide that.
-listen_loopback = true
+listen_loopback = false
 # Upstream resolvers: "9.9.9.10", "9.9.9.10:5353", "tcp://ip", "tls://host[:853]" (DoT),
 # "https://host/dns-query" (DoH). See docs/UPSTREAMS.md. This only seeds the list: once
 # you change it in the portal, <data_dir>/upstreams.json wins.
@@ -99,6 +100,8 @@ neighbor_interval_seconds = 30
 mdns = true                      # listen for multicast DNS announcements
 reverse_dns = true               # ask one resolver for the name of each new address
 reverse_dns_server = ""          # "ip" or "ip:port"; empty uses the default gateway (Linux)
+tailscale = false                # name tailnet (100.x) devices from the local tailscaled; mount its socket first
+tailscale_socket = ""            # empty = /var/run/tailscale/tailscaled.sock
 save_interval_seconds = 60       # the registry is kept in <data_dir>/devices.json
 quarantine_new_devices = true    # a new device joins the reserved Quarantine group until you move it
 
