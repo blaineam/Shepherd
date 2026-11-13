@@ -25,6 +25,8 @@ import (
 	"shepherd/internal/accountability"
 	"shepherd/internal/alarms"
 	"shepherd/internal/arp"
+	"shepherd/internal/decoy"
+	"shepherd/internal/detect"
 	"shepherd/internal/devices"
 	"shepherd/internal/dhcp"
 	"shepherd/internal/dnsengine"
@@ -127,6 +129,12 @@ type Deps struct {
 	// off, and ThreatsEnabled says so to the portal.
 	Threats        *threats.Engine
 	ThreatsEnabled bool
+	// Detect is the behaviour checks and Decoy the decoy ports
+	// (docs/DETECT.md); nil means off. DetectEnabled says whether [detect]
+	// is on at all.
+	Detect        *detect.Engine
+	Decoy         *decoy.Decoy
+	DetectEnabled bool
 	// Update is the self-update service (docs/UPDATE.md); nil means the
 	// checker is off.
 	Update Updater
@@ -763,6 +771,7 @@ func (s *Server) routes() {
 	h("POST /api/update/apply", s.applyUpdate)
 	h("GET /api/threats", s.getThreats)
 	h("POST /api/threats/refresh", s.refreshThreats)
+	h("GET /api/detect", s.getDetect)
 	h("GET /api/alarms/ntfy", s.getNtfy)
 	h("PUT /api/alarms/ntfy", s.putNtfy)
 	h("PATCH /api/alarms/ntfy", s.patchNtfy)

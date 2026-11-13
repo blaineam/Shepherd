@@ -114,6 +114,59 @@ export function matchLine(m) {
   return { who, text: who + ' ' + did + ' ' + (x.name || x.indicator || '?') + via + ', on the ' + (x.feed_id || '?') + ' feed.' };
 }
 
+// ---- Detections (docs/DETECT.md)
+
+// What each kind of finding is called on the Detections tab.
+export const FINDING_KINDS = {
+  'encrypted-dns': 'Encrypted-DNS resolver',
+  'dns-silent': 'Not using Shepherd for DNS',
+  'dns-random-names': 'Machine-made names',
+  'dns-tunnel': 'Data in DNS',
+  'dns-beacon': 'Regular check-in',
+  'new-country': 'New country',
+  'upload-spike': 'Large upload',
+};
+
+// detectIntro says what the checks are doing right now: still learning, and
+// whether the ones that need byte counts have any.
+export function detectIntro(d, now = Date.now()) {
+  const st = (d && d.status) || {};
+  const parts = [];
+  if (st.learning && st.learning_until) {
+    const days = Math.max(1, Math.ceil((Date.parse(st.learning_until) - now) / 86400000));
+    parts.push('Still learning what is normal here, for about ' + days + ' more day' + (days === 1 ? '' : 's') + ': the beacon and new-country checks only watch until then.');
+  } else {
+    parts.push('Watching ' + Number(st.devices || 0).toLocaleString() + ' devices against ' + Number(st.domains || 0).toLocaleString() + ' domains this network has looked up.');
+  }
+  if (!st.traffic) parts.push('The silent-device and large-upload checks are off until bandwidth is being recorded.');
+  return parts.join(' ');
+}
+
+// findingLine words one finding for the list.
+export function findingLine(f) {
+  const x = f || {};
+  return { who: x.device || x.client || 'A device', kind: FINDING_KINDS[x.kind] || x.kind || 'Finding', text: x.summary || '' };
+}
+
+// decoyLine says which decoy ports are open and which could not be.
+export function decoyLine(dc) {
+  const ports = (dc && dc.ports) || [];
+  if (!dc || !dc.enabled || !ports.length) return { tone: 'muted', text: 'Decoy ports are off (detect.decoy_ports is empty in shepherd.toml).' };
+  const open = ports.filter((p) => p.listening).map((p) => p.port);
+  const shut = ports.filter((p) => !p.listening).map((p) => p.port);
+  if (!open.length) return { tone: 'warn', text: 'No decoy port could be opened (' + shut.join(', ') + '). They are in use on this host, or Shepherd may not bind them.' };
+  return {
+    tone: 'good',
+    text: 'Listening on ' + open.join(', ') + ' and serving nothing: any connection is an alarm.' + (shut.length ? ' Skipped ' + shut.join(', ') + ' (in use, or not permitted).' : ''),
+  };
+}
+
+// touchLine words one connection to a decoy port.
+export function touchLine(t) {
+  const x = t || {};
+  return (x.source || '?') + ' connected to port ' + (x.port || '?') + (x.count > 1 ? ' (' + x.count + ' times so far)' : '') + '.';
+}
+
 // Delivery preferences (docs/ALARMS.md "When"): the part of the alarm
 // preferences the Notifications tab edits. Pure, so the tests need no DOM.
 

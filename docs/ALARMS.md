@@ -277,6 +277,14 @@ alarm is recorded at medium severity on all channels, so a typo never loses an a
 | `port-opened` (ports feature, future) | high | all | yes (install and device) |
 | `new-inbound-exposure` (future) | critical | all | no |
 | `threat-match` (internal/threats) | critical | all | no |
+| `encrypted-dns-lookup` (internal/detect, docs/DETECT.md) | medium | all | yes (install and device) |
+| `dns-bypass` (internal/detect) | medium | all | yes (install and device) |
+| `dns-random-names` (internal/detect) | high | all | no |
+| `dns-tunnel` (internal/detect) | medium | all | yes (install period only) |
+| `dns-beacon` (internal/detect) | medium | all | yes (install and device) |
+| `new-destination-country` (internal/detect) | medium | all | yes (install and device) |
+| `upload-spike` (internal/detect) | high | all | yes (install period only) |
+| `decoy-touched` (internal/decoy) | high | all | no |
 | `self-update` (internal/update) | low | all | no |
 | `storage-over-budget` (cmd/shepherd, docs/UPDATE.md "Retention") | low | portal | no |
 | `vulnerability-found` (internal/vulnscan) | high (the finding's own severity overrides this per event) | all | no |

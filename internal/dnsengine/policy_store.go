@@ -148,10 +148,7 @@ func freshPolicy(cat *CatalogSet) PolicyData {
 	for _, id := range cat.Recommended() {
 		d.Network.Items[id] = true
 	}
-	d.Network.Policies = map[string]bool{}
-	for name := range policyDomains {
-		d.Network.Policies[name] = true
-	}
+	fillPolicyDefaults(&d)
 	return d
 }
 
@@ -277,6 +274,13 @@ func OpenPolicyStore(path string, f *Filter, opts PolicyOptions) (*PolicyStore, 
 		}
 		if err := s.data.validate(); err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		// A policy this version added that the file has never heard of
+		// takes its default, once, and is then the owner's to change.
+		if fillPolicyDefaults(&s.data) {
+			if err := writePolicyFile(path, s.data); err != nil {
+				return nil, err
+			}
 		}
 	case errors.Is(err, os.ErrNotExist):
 		seed := cat

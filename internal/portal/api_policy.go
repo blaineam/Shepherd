@@ -19,6 +19,14 @@ var switchInfo = map[string][2]string{
 		"Block Apple iCloud Private Relay",
 		"Answers NXDOMAIN for the hostnames Apple devices use to reach iCloud Private Relay, which is Apple's documented way for a network to say it does not allow the relay. Devices show a notice that the relay is unavailable here.",
 	},
+	dnsengine.PolicyDoHCanary: {
+		"Keep browsers on this resolver",
+		"Answers NXDOMAIN for use-application-dns.net, the name a browser checks before switching itself to DNS over HTTPS. A negative answer is the documented signal to keep using the network's resolver, so browser lookups stay filtered and visible. It breaks nothing.",
+	},
+	dnsengine.PolicyEncryptedDNS: {
+		"Block public encrypted-DNS resolvers",
+		"Answers NXDOMAIN for the names of the well-known public DNS-over-HTTPS and DNS-over-TLS resolvers, so an app or device set to use one by name falls back to this resolver. A phone with a private DNS provider set in strict mode loses its lookups until that setting is cleared. Does nothing about a resolver reached by address.",
+	},
 }
 
 type scopeJSON struct {

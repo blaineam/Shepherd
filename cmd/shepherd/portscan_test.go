@@ -54,7 +54,7 @@ func TestStartPortscanScansKnownDevicesAndPersists(t *testing.T) {
 	cfg.DataDir = tempDir(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s, err := startPortscan(ctx, cfg, reg)
+	s, err := startPortscan(ctx, cfg, reg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestStartPortscanUsesTheConfiguredInterval(t *testing.T) {
 	// The long interval means Run's ticker never fires again in this test;
 	// just prove it starts cleanly and wait for its one immediate scan (and
 	// save) to finish before the temp dir is torn down.
-	if _, err := startPortscan(ctx, cfg, reg); err != nil {
+	if _, err := startPortscan(ctx, cfg, reg, nil); err != nil {
 		cancel()
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestStartPortscanUsesTheExposureSeam(t *testing.T) {
 	cfg.Portscan.WANExposure.Enabled = false
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s, err := startPortscan(ctx, cfg, reg)
+	s, err := startPortscan(ctx, cfg, reg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestStartPortscanWANExposureDisabledNeverSetsExposure(t *testing.T) {
 	cfg.Portscan.WANExposure.Enabled = false
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s, err := startPortscan(ctx, cfg, reg)
+	s, err := startPortscan(ctx, cfg, reg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestStartPortscanIgnoresUnreadableHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	if _, err := startPortscan(ctx, cfg, reg); err != nil {
+	if _, err := startPortscan(ctx, cfg, reg, nil); err != nil {
 		cancel()
 		t.Fatalf("startPortscan must tolerate a corrupt history file: %v", err)
 	}

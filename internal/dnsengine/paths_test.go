@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -556,7 +557,7 @@ func TestRulesErrorsAndRemoval(t *testing.T) {
 	if f.Check("a.example").Blocked {
 		t.Error("removed rule still blocks")
 	}
-	if got := KnownPolicies(); len(got) != 1 || got[0] != PolicyPrivateRelay {
+	if got := KnownPolicies(); !slices.Equal(got, []string{PolicyPrivateRelay, PolicyDoHCanary, PolicyEncryptedDNS}) {
 		t.Errorf("KnownPolicies = %v", got)
 	}
 

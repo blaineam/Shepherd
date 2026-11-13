@@ -330,8 +330,14 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		deps.Threats, deps.ThreatsEnabled = threatEngine, true
 	}
 
+	// ---- Behaviour checks and decoy ports (docs/DETECT.md) --------------
+	// After the threat feeds, whose hook on the DNS engine this one chains
+	// onto, and before the port scan, which must not report the decoys.
+	det := startDetect(ctx, cfg, engine, registry, trafficStore, deps.Alarms)
+	deps.Detect, deps.Decoy, deps.DetectEnabled = det.engine, det.decoy, cfg.Detect.Enabled
+
 	if cfg.Portscan.Enabled {
-		scanner, err := startPortscan(ctx, cfg, registry)
+		scanner, err := startPortscan(ctx, cfg, registry, det.skipPort)
 		if err != nil {
 			return err
 		}

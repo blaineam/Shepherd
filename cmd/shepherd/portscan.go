@@ -31,13 +31,15 @@ var (
 // <data>/portscan.json, and starts its periodic scan of every known device's
 // common ports (docs/PORTSCAN.md). History is saved after every scan,
 // scheduled or manual, so the portal's "scan now" persists too.
-func startPortscan(ctx context.Context, cfg config.Config, reg *devices.Registry) (*portscan.Scanner, error) {
+// skip, when not nil, leaves a port on an address out of every scan
+// (Shepherd's own decoy listeners, cmd/shepherd/detect.go).
+func startPortscan(ctx context.Context, cfg config.Config, reg *devices.Registry, skip func(ip string, port int) bool) (*portscan.Scanner, error) {
 	exposure := portscanExposure
 	if exposure == nil && cfg.Portscan.WANExposure.Enabled {
 		every := time.Duration(cfg.Portscan.WANExposure.RefreshIntervalSeconds) * time.Second
 		exposure = upnpigd.NewChecker(upnpigd.NewClient(), every)
 	}
-	s := portscan.New(portscan.Options{Dial: portscanDial, Exposure: exposure})
+	s := portscan.New(portscan.Options{Dial: portscanDial, Exposure: exposure, Skip: skip})
 	path := filepath.Join(cfg.DataDir, "portscan.json")
 	if err := s.Load(path); err != nil && !os.IsNotExist(err) {
 		log.Printf("portscan: ignoring unreadable history %s: %v", path, err)

@@ -500,3 +500,59 @@ func TestStoreConcurrentEdits(t *testing.T) {
 		<-done
 	}
 }
+
+// A policy added after an install's policy.json was written takes its
+// default the first time the newer version opens the file, and keeps
+// whatever the owner chose after that.
+func TestOpenPolicyStoreFillsNewPolicyDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.json")
+	old := `{"version":1,"network":{"policies":{"apple-private-relay":false}}}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenPolicyStore(path, NewFilter(), PolicyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol := s.Snapshot().Network.Policies
+	if pol[PolicyPrivateRelay] {
+		t.Error("the owner's Private Relay choice was overwritten")
+	}
+	if !pol[PolicyDoHCanary] {
+		t.Error("the DoH canary should default on for an existing install")
+	}
+	if on, set := pol[PolicyEncryptedDNS]; !set || on {
+		t.Errorf("encrypted-dns should be recorded as off, got set=%v on=%v", set, on)
+	}
+	if !s.filter.Check("use-application-dns.net").Blocked {
+		t.Error("the canary name is not answered negatively")
+	}
+	if s.filter.Check("dns.google").Blocked {
+		t.Error("resolver names are blocked although the policy is off")
+	}
+	b, _ := os.ReadFile(path)
+	if !strings.Contains(string(b), PolicyDoHCanary) {
+		t.Error("the filled defaults were not written back")
+	}
+
+	// The owner turns the canary off; reopening must not turn it back on.
+	if err := s.SetPolicy(NetworkScope(), PolicyDoHCanary, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPolicy(NetworkScope(), PolicyEncryptedDNS, true); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := OpenPolicyStore(path, NewFilter(), PolicyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s2.Snapshot().Network.Policies[PolicyDoHCanary] {
+		t.Error("reopening re-enabled a policy the owner turned off")
+	}
+	if !s2.filter.Check("x.dns.google").Blocked || !s2.filter.Check("cloudflare-dns.com").Blocked {
+		t.Error("encrypted-dns is on but resolver names resolve")
+	}
+	if len(EncryptedDNSResolvers()) == 0 {
+		t.Error("no resolver names")
+	}
+}

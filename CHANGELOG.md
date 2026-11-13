@@ -16,6 +16,27 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 ### Added
 
 - `devices.tailscale` (off by default) names tailnet devices: Shepherd reads the local `tailscaled` API over its unix socket (`devices.tailscale_socket`) once a minute and applies each online node's name to its tailnet addresses, so queries over Tailscale show the device rather than an unnamed address. See docs/DEVICES.md.
+- **Detections** ([docs/DETECT.md](docs/DETECT.md)): seven behaviour checks that raise an alarm
+  naming the device, from the lookups Shepherd already answers and the byte counts it already
+  reads from the router. Nothing is in the path of your traffic and nothing is blocked. A device
+  that looks up a public encrypted-DNS resolver (`encrypted-dns-lookup`); one that moves traffic
+  for a day without asking Shepherd anything (`dns-bypass`); a burst of machine-made names that do
+  not exist (`dns-random-names`); data carried in long DNS names (`dns-tunnel`); a name new to the
+  network asked for by one device on a fixed interval (`dns-beacon`); a camera, TV or other
+  single-purpose device reaching a country it never has (`new-destination-country`); and an upload
+  far beyond a device's own record (`upload-spike`). The beacon and new-country checks watch for
+  seven days before they report. On by default (`[detect]`), with a **Detections** tab on the
+  Alarms screen.
+- **Decoy ports.** Shepherd listens on Telnet (23, 2323), remote desktop (3389) and VNC (5900) and
+  serves nothing from them, so a device probing its neighbours raises `decoy-touched`. A port
+  already in use is skipped; Shepherd's own port and vulnerability scans leave them out. Set
+  `detect.decoy_ports = []` to turn them off.
+- **Keep browsers on this resolver**, a policy switch on the Blocking screen, on by default,
+  including on existing installs: answers NXDOMAIN for `use-application-dns.net`, the documented
+  signal that stops a browser switching itself to DNS over HTTPS.
+- **Block public encrypted-DNS resolvers**, a second switch, off by default: answers NXDOMAIN for
+  the names of the well-known public DoH and DoT resolvers. A phone with a private DNS provider set
+  in strict mode loses its lookups while it is on.
 
 ### Fixed
 

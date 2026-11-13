@@ -470,3 +470,36 @@ func TestRunWithoutIntervalScansOnceAndReturns(t *testing.T) {
 		t.Fatalf("OnScan called %d times, want 1", n)
 	}
 }
+
+// Skip leaves one port on one address out of a scan: it is never dialled
+// and never reported open, while the same port elsewhere still is.
+func TestScanHonoursSkip(t *testing.T) {
+	var dialled []string
+	var mu sync.Mutex
+	open := fakeDial(map[string]bool{addr("192.0.2.1", 23): true, addr("192.0.2.2", 23): true})
+	s := New(Options{
+		Ports: []int{23},
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			mu.Lock()
+			dialled = append(dialled, address)
+			mu.Unlock()
+			return open(ctx, network, address)
+		},
+		Skip: func(ip string, port int) bool { return ip == "192.0.2.1" && port == 23 },
+	})
+	res := s.Scan(context.Background(), []Target{{DeviceID: "self", IP: "192.0.2.1"}, {DeviceID: "other", IP: "192.0.2.2"}})
+	if len(dialled) != 1 || dialled[0] != addr("192.0.2.2", 23) {
+		t.Errorf("dialled = %v", dialled)
+	}
+	for _, d := range res {
+		openPorts := 0
+		for _, p := range d.Ports {
+			if p.Open {
+				openPorts++
+			}
+		}
+		if (d.DeviceID == "self") == (openPorts == 1) {
+			t.Errorf("%s: %+v", d.DeviceID, d.Ports)
+		}
+	}
+}

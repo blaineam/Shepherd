@@ -12,6 +12,7 @@ import { pushSupport, permissionLine, urlBase64ToUint8Array, subscribeBody, defa
 import {
   SEVERITIES, STATES, severityLabel, severityBadgeClass, stateLabel,
   MUTE_PRESETS, MUTE_SCOPES, bulkSummary, ruleMatchSummary, feedLine, matchLine,
+  detectIntro, findingLine, decoyLine, touchLine,
   hoursOf, deliveryLine, digestFromForm,
 } from './alarms.js';
 
@@ -47,13 +48,14 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
   const countEl = title.lastChild;
 
   const viewSeg = segmented(
-    [{ id: 'alarms', label: 'Alarms' }, { id: 'rules', label: 'Rules' }, { id: 'push', label: 'Notifications' }, { id: 'threats', label: 'Threat feeds' }], view,
+    [{ id: 'alarms', label: 'Alarms' }, { id: 'rules', label: 'Rules' }, { id: 'push', label: 'Notifications' }, { id: 'threats', label: 'Threat feeds' }, { id: 'detect', label: 'Detections' }], view,
     (id) => {
       view = id;
       paintAll();
       if (id === 'rules') loadRules();
       else if (id === 'push') { loadPush(); loadPrefs(); }
       else if (id === 'threats') loadThreats();
+      else if (id === 'detect') loadDetect();
       else load(true);
     }, 'Alarms view',
   );
@@ -139,7 +141,9 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
   prefsWrap.hidden = true;
   const threatsWrap = el('section', 'al-rules-wrap panel-lite');
   threatsWrap.hidden = true;
-  main.append(wrap, rulesWrap, pushWrap, prefsWrap, threatsWrap);
+  const detectWrap = el('section', 'al-rules-wrap panel-lite');
+  detectWrap.hidden = true;
+  main.append(wrap, rulesWrap, pushWrap, prefsWrap, threatsWrap, detectWrap);
   root.append(head, main);
 
   // ------------------------------------------------------------- loading
@@ -869,6 +873,83 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
     threatsWrap.append(list);
   }
 
+  // ------------------------------------------------------------- detections
+  let detections = null;
+  let detectError = null;
+
+  async function loadDetect() {
+    try {
+      detections = await mgmt.detect();
+      detectError = null;
+    } catch (e) { detectError = e; }
+    paintDetect();
+  }
+
+  function paintDetect() {
+    detectWrap.replaceChildren();
+    const h = el('div', 'card-h');
+    h.append(el('h3', 'card-t', 'Detections'));
+    if (detections && detections.enabled) h.append(button('Refresh', 'ghost', loadDetect));
+    detectWrap.append(h);
+    if (detectError) {
+      detectWrap.append(unavailable(detectError) ? unavailableCard('Detections') : emptyState('Could not load the detections', detectError.message, button('Try again', 'ghost', loadDetect)));
+      return;
+    }
+    if (!detections) return;
+    if (!detections.enabled) {
+      detectWrap.append(el('p', 'al-push-line muted', 'Detections are turned off in shepherd.toml ([detect]).'));
+      return;
+    }
+    detectWrap.append(el('p', 'muted small', 'Shepherd watches how devices behave, from the lookups it answers and the byte counts it reads from the router: a device taking its lookups elsewhere, machine-made names, data carried in DNS, a new name asked for on a fixed interval, a camera or TV reaching a new country, an upload far beyond a device\u2019s own record. Nothing is in the path of your traffic, and a finding raises an alarm rather than blocking.'));
+    detectWrap.append(el('p', 'muted small', detectIntro(detections)));
+
+    const dl = decoyLine(detections.decoy);
+    const dh = el('div', 'card-h');
+    dh.append(el('h3', 'card-t', 'Decoy ports'));
+    dh.append(el('span', 'badge ' + (dl.tone === 'warn' ? 'warn' : dl.tone === 'good' ? 'good' : 'muted'), dl.tone === 'good' ? 'listening' : dl.tone === 'warn' ? 'not listening' : 'off'));
+    detectWrap.append(dh);
+    detectWrap.append(el('p', 'muted small', dl.text));
+    const touches = (detections.decoy && detections.decoy.touches) || [];
+    if (touches.length) {
+      const tl = el('div', 'al-push-devs list-rows');
+      for (const t of touches) {
+        const row = el('div', 'list-row');
+        const main = el('div', 'lr-main');
+        main.append(el('div', 'lr-name', touchLine(t)));
+        main.append(el('p', 'lr-desc muted small', t.time ? relTime(t.time) : ''));
+        row.append(main);
+        tl.append(row);
+      }
+      detectWrap.append(tl);
+    } else if (dl.tone === 'good') {
+      detectWrap.append(el('p', 'muted small', 'Nothing has tried them.'));
+    }
+
+    const findings = detections.findings || [];
+    const fh = el('div', 'card-h');
+    fh.append(el('h3', 'card-t', 'Recent findings' + (findings.length ? ' (' + findings.length + ')' : '')));
+    detectWrap.append(fh);
+    if (!findings.length) {
+      detectWrap.append(emptyState('Nothing out of the ordinary', 'No device has tripped a check since Shepherd started. Findings also appear as alarms.'));
+      return;
+    }
+    const list = el('div', 'al-push-devs list-rows');
+    for (const f of findings) {
+      const line = findingLine(f);
+      const row = el('div', 'list-row');
+      const main = el('div', 'lr-main');
+      main.append(el('div', 'lr-name', line.who));
+      main.append(el('p', 'lr-desc', line.text));
+      const meta = el('div', 'lr-meta');
+      meta.append(el('span', 'badge muted', line.kind));
+      main.append(meta);
+      main.append(el('p', 'lr-desc muted small', f.time ? relTime(f.time) : ''));
+      row.append(main);
+      list.append(row);
+    }
+    detectWrap.append(list);
+  }
+
   // ------------------------------------------------------------- view switching
   function paintAll() {
     wrap.hidden = view !== 'alarms';
@@ -876,6 +957,7 @@ export function createAlarms({ root, mgmt, notify, toaster }) {
     pushWrap.hidden = view !== 'push';
     prefsWrap.hidden = view !== 'push';
     threatsWrap.hidden = view !== 'threats';
+    detectWrap.hidden = view !== 'detect';
     sevSel.hidden = stateSel.hidden = searchBox.hidden = archToggle.hidden = view !== 'alarms';
   }
 

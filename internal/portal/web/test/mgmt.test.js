@@ -250,6 +250,12 @@ test('update endpoints', async () => {
   assert.deepEqual([calls[2][0], calls[2][1].method], ['/api/update/apply', 'POST']);
 });
 
+test('detections endpoint', async () => {
+  const { calls, m } = rig();
+  await m.detect();
+  assert.equal(calls[0][0], '/api/detect');
+});
+
 test('threat feed endpoints', async () => {
   const { calls, m } = rig();
   await m.threats();

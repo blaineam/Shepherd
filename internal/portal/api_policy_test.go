@@ -82,8 +82,14 @@ func TestPolicyGroupScopeBlocksOnlyThatGroup(t *testing.T) {
 	if rules := net["rules"].(map[string]any); len(rules["allow"].([]any)) != 0 || len(rules["block"].([]any)) != 0 {
 		t.Errorf("rules = %v", rules)
 	}
-	if len(p["switches"].([]any)) != 1 || p["switches"].([]any)[0].(map[string]any)["title"] == "" {
+	switches := p["switches"].([]any)
+	if len(switches) != 3 {
 		t.Errorf("switches = %v", p["switches"])
+	}
+	for _, sw := range switches {
+		if m := sw.(map[string]any); m["title"] == "" || m["description"] == "" {
+			t.Errorf("switch %v has no title or description", m["name"])
+		}
 	}
 
 	p = h.ok("POST", "/api/policy/items", `{"scope":{"kind":"group","id":"kids"},"item":"social","enabled":true}`, 200)

@@ -89,6 +89,10 @@ type Options struct {
 	// section). Left nil (the default), WAN-exposure checking is disabled
 	// entirely and PortRecord.Exposure stays empty for every port.
 	Exposure ExposureChecker
+	// Skip, when set, leaves one port on one address out of every scan. It
+	// is how Shepherd's own decoy listeners (internal/decoy) stay out of
+	// its own findings: they are open on purpose, on this host only.
+	Skip func(ip string, port int) bool
 }
 
 // Scanner runs gentle TCP connect scans and keeps the resulting history. It
@@ -99,6 +103,7 @@ type Scanner struct {
 	concurrency int
 	timeout     time.Duration
 	exposure    ExposureChecker
+	skip        func(ip string, port int) bool
 
 	// OnScan, when set, is called with the result after every completed
 	// Scan, whether triggered by Run's schedule or a manual call. Set it
@@ -142,6 +147,7 @@ func New(opts Options) *Scanner {
 		concurrency: opts.Concurrency,
 		timeout:     opts.Timeout,
 		exposure:    opts.Exposure,
+		skip:        opts.Skip,
 		history:     map[string]*DeviceScan{},
 	}
 	if s.dial == nil {
@@ -199,6 +205,9 @@ func (s *Scanner) Scan(ctx context.Context, targets []Target) []DeviceScan {
 		for _, port := range s.ports {
 			if ctx.Err() != nil {
 				break
+			}
+			if s.skip != nil && s.skip(t.IP, port) {
+				continue
 			}
 			wg.Add(1)
 			sem <- struct{}{}

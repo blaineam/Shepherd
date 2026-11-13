@@ -18,8 +18,81 @@ import (
 // every request, so a broader list can break more than the relay.
 const PolicyPrivateRelay = "apple-private-relay"
 
+// PolicyDoHCanary answers NXDOMAIN for use-application-dns.net, the canary
+// name a browser looks up before it switches itself to DNS over HTTPS. A
+// negative answer is the documented way for a network to say "keep using
+// the resolver you were given", so the browser's lookups stay where the
+// blocklists and the history can see them. It breaks nothing: the name
+// exists only to be asked about. On by default. See docs/DETECT.md.
+const PolicyDoHCanary = "doh-canary"
+
+// PolicyEncryptedDNS answers NXDOMAIN for the host names of the well-known
+// public encrypted-DNS resolvers (EncryptedDNSResolvers), so an app or a
+// device set to use one by name cannot find it and falls back to the
+// network's resolver. Off by default: a phone whose owner set a private DNS
+// provider by name in strict mode loses its lookups entirely until that
+// setting is cleared, which is the owner's call to make. It does nothing
+// about a device that reaches a resolver by address. See docs/DETECT.md.
+const PolicyEncryptedDNS = "encrypted-dns"
+
+// encryptedDNSResolvers are the host names of public resolvers that answer
+// DNS over HTTPS or TLS. A name here also covers its subdomains. The list
+// is short on purpose: the providers a browser, a phone's private-DNS
+// setting or an app actually ships with, not every resolver that exists.
+var encryptedDNSResolvers = []string{
+	"dns.google", "dns64.dns.google",
+	"cloudflare-dns.com", "one.one.one.one",
+	"dns.quad9.net", "dns9.quad9.net", "dns10.quad9.net", "dns11.quad9.net",
+	"doh.opendns.com", "dns.opendns.com", "dns.umbrella.com",
+	"dns.adguard-dns.com", "dns.adguard.com", "dns-family.adguard.com", "dns-unfiltered.adguard.com",
+	"unfiltered.adguard-dns.com", "family.adguard-dns.com",
+	"dns.nextdns.io",
+	"doh.cleanbrowsing.org",
+	"dns.mullvad.net", "doh.mullvad.net",
+	"dns.controld.com", "freedns.controld.com",
+	"doh.dns.sb", "dns.sb",
+	"doh.libredns.gr",
+	"dns.alidns.com", "doh.pub", "dot.pub", "doh.360.cn",
+	"dns.switch.ch",
+	"doh.xfinity.com", "dot.xfinity.com",
+}
+
+// EncryptedDNSResolvers returns the resolver names PolicyEncryptedDNS
+// covers, for the detector that reports a device looking one up
+// (internal/detect).
+func EncryptedDNSResolvers() []string { return slices.Clone(encryptedDNSResolvers) }
+
 var policyDomains = map[string][]string{
 	PolicyPrivateRelay: {"mask.icloud.com", "mask-h2.icloud.com"},
+	PolicyDoHCanary:    {"use-application-dns.net"},
+	PolicyEncryptedDNS: encryptedDNSResolvers,
+}
+
+// policyDefaults is what a policy is at network scope when the owner has
+// never chosen: on a fresh install, and on an existing one the first time
+// it runs a version that knows the policy.
+var policyDefaults = map[string]bool{
+	PolicyPrivateRelay: true,
+	PolicyDoHCanary:    true,
+	PolicyEncryptedDNS: false,
+}
+
+// fillPolicyDefaults gives every built-in policy the network scope has no
+// choice for its default, and reports whether it changed anything. It is
+// how a policy added in a later version reaches an install whose
+// policy.json predates it.
+func fillPolicyDefaults(d *PolicyData) bool {
+	if d.Network.Policies == nil {
+		d.Network.Policies = map[string]bool{}
+	}
+	changed := false
+	for name := range policyDomains {
+		if _, set := d.Network.Policies[name]; !set {
+			d.Network.Policies[name] = policyDefaults[name]
+			changed = true
+		}
+	}
+	return changed
 }
 
 // KnownPolicies lists every built-in policy name.

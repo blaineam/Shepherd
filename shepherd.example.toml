@@ -171,6 +171,20 @@ check_hours = 24
 enabled = true
 interval_hours = 6
 
+[detect]
+# Behaviour checks and decoy ports (docs/DETECT.md). Alarms, never blocks,
+# from data Shepherd already has: a device that looks up a public
+# encrypted-DNS resolver or moves traffic without asking Shepherd anything,
+# bursts of machine-made names, data carried in DNS, a new name asked for
+# on a metronome, a single-purpose device reaching a new country, and an
+# upload far beyond a device's own record. The last two and the silent-device
+# check need bandwidth read from the router (docs/TRAFFIC.md) or the map.
+enabled = true
+# TCP ports Shepherd listens on and serves nothing from: a connection to one
+# is a device probing its neighbours. A port already in use is skipped.
+# [] turns the decoys off and keeps the other checks.
+decoy_ports = [23, 2323, 3389, 5900]
+
 [accountability]
 # Accountability-partner email alerts (docs/ACCOUNTABILITY.md): email a
 # trusted contact when a device in a group or scope they chose accesses a

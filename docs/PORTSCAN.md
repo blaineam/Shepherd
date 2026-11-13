@@ -24,6 +24,10 @@ Not built: no vulnerability scanning (see [VULNSCAN.md](VULNSCAN.md), which deep
 findings), no credential checking, no service version detection. A device reported as having port 23 open
 just means something answered a TCP connection on port 23. Shepherd does not try to find out what.
 
+Shepherd's own decoy ports ([DETECT.md](DETECT.md)) are open on purpose on the host it runs on, so a scan
+leaves those ports on that host out (`portscan.Options.Skip`): they are never reported as open and never
+reach the vulnerability scan.
+
 ## The port list
 
 `portscan.DefaultPorts`, checked on every device, every scan:

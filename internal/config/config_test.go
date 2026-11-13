@@ -1135,3 +1135,26 @@ nft = "/usr/sbin/nft"
 		t.Errorf("DHCP = %+v", d)
 	}
 }
+
+func TestDetectDefaultsAndDecoyPortValidation(t *testing.T) {
+	d := Default().Detect
+	if !d.Enabled || len(d.DecoyPorts) != 4 {
+		t.Errorf("detect defaults = %+v", d)
+	}
+	path := filepath.Join(t.TempDir(), "c.toml")
+	if err := os.WriteFile(path, []byte("[detect]\ndecoy_ports = []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil || !cfg.Detect.Enabled || len(cfg.Detect.DecoyPorts) != 0 {
+		t.Errorf("empty decoy list: %+v %v", cfg.Detect, err)
+	}
+	for _, bad := range []string{"0", "70000"} {
+		if err := os.WriteFile(path, []byte("[detect]\ndecoy_ports = [23, "+bad+"]\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "detect.decoy_ports") {
+			t.Errorf("port %s should be rejected: %v", bad, err)
+		}
+	}
+}

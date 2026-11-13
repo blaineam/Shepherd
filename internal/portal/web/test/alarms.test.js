@@ -4,6 +4,7 @@ import {
   SEVERITIES, STATES, severityLabel, severityBadgeClass, stateLabel,
   MUTE_PRESETS, MUTE_SCOPES, alarmQuery, bulkSummary, ruleMatchSummary,
   feedLine, matchLine, hoursOf, deliveryLine, digestFromForm,
+  FINDING_KINDS, detectIntro, findingLine, decoyLine, touchLine,
 } from '../js/alarms.js';
 
 test('severity and state presentation', () => {
@@ -95,4 +96,42 @@ test('digestFromForm validates the interval and the time', () => {
   assert.match(digestFromForm({ enabled: true, mode: 'every', hours: 'x' }).error, /at least one minute/);
   assert.deepEqual(digestFromForm({ enabled: true, mode: 'at', at: '08:00' }), { digest: { enabled: true, every: '6h', at: '08:00' } });
   assert.match(digestFromForm({ enabled: true, mode: 'at', at: '8am' }).error, /HH:MM/);
+});
+
+test('detectIntro says whether the checks are still learning and what is switched off', () => {
+  const now = Date.parse('2026-11-01T12:00:00Z');
+  const learning = detectIntro({ status: { learning: true, learning_until: '2026-11-04T06:00:00Z', traffic: true } }, now);
+  assert.match(learning, /about 3 more days/);
+  assert.doesNotMatch(learning, /bandwidth/);
+  assert.match(detectIntro({ status: { learning: true, learning_until: '2026-11-01T13:00:00Z', traffic: true } }, now), /about 1 more day:/);
+  const steady = detectIntro({ status: { learning: false, devices: 82, domains: 12345, traffic: false } }, now);
+  assert.match(steady, /Watching 82 devices against 12,345 domains/);
+  assert.match(steady, /off until bandwidth is being recorded/);
+  assert.match(detectIntro(null), /Watching 0 devices/);
+});
+
+test('findingLine names the device and the kind of finding', () => {
+  assert.deepEqual(findingLine({ kind: 'dns-beacon', device: 'Camera', summary: 'Camera checks in.' }), { who: 'Camera', kind: 'Regular check-in', text: 'Camera checks in.' });
+  assert.deepEqual(findingLine({ kind: 'future-kind', client: '192.0.2.9' }), { who: '192.0.2.9', kind: 'future-kind', text: '' });
+  assert.deepEqual(findingLine(null), { who: 'A device', kind: 'Finding', text: '' });
+  assert.equal(Object.keys(FINDING_KINDS).length, 7);
+});
+
+test('decoyLine words open, skipped, failed and disabled decoy ports', () => {
+  assert.equal(decoyLine(null).tone, 'muted');
+  assert.equal(decoyLine({ enabled: false, ports: [] }).tone, 'muted');
+  const all = decoyLine({ enabled: true, ports: [{ port: 23, listening: true }, { port: 3389, listening: true }] });
+  assert.equal(all.tone, 'good');
+  assert.match(all.text, /Listening on 23, 3389 and serving nothing/);
+  assert.doesNotMatch(all.text, /Skipped/);
+  assert.match(decoyLine({ enabled: true, ports: [{ port: 23, listening: true }, { port: 5900, listening: false, error: 'in use' }] }).text, /Skipped 5900/);
+  const none = decoyLine({ enabled: true, ports: [{ port: 23, listening: false }] });
+  assert.equal(none.tone, 'warn');
+  assert.match(none.text, /No decoy port could be opened \(23\)/);
+});
+
+test('touchLine words a connection to a decoy port', () => {
+  assert.equal(touchLine({ source: '192.0.2.7', port: 23, count: 1 }), '192.0.2.7 connected to port 23.');
+  assert.equal(touchLine({ source: '192.0.2.7', port: 23, count: 4 }), '192.0.2.7 connected to port 23 (4 times so far).');
+  assert.equal(touchLine(null), '? connected to port ?.');
 });

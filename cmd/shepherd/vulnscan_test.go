@@ -127,7 +127,7 @@ func TestStartVulnscanProbesPortscanResultsAndRaisesAlarm(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ps, err := startPortscan(ctx, cfg, reg)
+	ps, err := startPortscan(ctx, cfg, reg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +385,7 @@ func TestStartVulnscanAppliesTheFeedAndRescansOnChange(t *testing.T) {
 	cfg.Vulnscan.FeedURL = "file://" + feedPath
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ps, err := startPortscan(ctx, cfg, reg)
+	ps, err := startPortscan(ctx, cfg, reg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +471,7 @@ func TestStartVulnscanWithoutAFeedURLReturnsNoUpdater(t *testing.T) {
 	cfg.Vulnscan.FeedURL = ""
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ps, err := startPortscan(ctx, cfg, reg)
+	ps, err := startPortscan(ctx, cfg, reg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

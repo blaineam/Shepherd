@@ -60,7 +60,17 @@ const (
 	TypeDHCPRogueServer = "dhcp-rogue-server"
 	TypeDHCPNATFailed   = "dhcp-nat-failed"
 	TypeDHCPLeaseReset  = "dhcp-lease-reset"
-	TypeTest            = "test"
+	// The behaviour checks and decoy ports (internal/detect, internal/decoy,
+	// docs/DETECT.md); cmd/shepherd/detect.go is the mapping.
+	TypeEncryptedDNSLookup = "encrypted-dns-lookup"
+	TypeDNSBypass          = "dns-bypass"
+	TypeDNSRandomNames     = "dns-random-names"
+	TypeDNSTunnel          = "dns-tunnel"
+	TypeDNSBeacon          = "dns-beacon"
+	TypeNewCountry         = "new-destination-country"
+	TypeUploadSpike        = "upload-spike"
+	TypeDecoyTouched       = "decoy-touched"
+	TypeTest               = "test"
 )
 
 // AlarmType describes a kind of alarm: how it reads, how severe it is by
@@ -128,6 +138,14 @@ func BuiltinTypes() []AlarmType {
 		all(TypeDHCPNATFailed, "DHCP mode could not configure NAT", "Shepherd could not install the forwarding rules routed devices need, so it has stopped routing them. They move back to the router at their next renewal.", SeverityCritical, false, false),
 		portal(all(TypeDHCPLeaseReset, "DHCP lease file reset", "Shepherd could not read its DHCP lease file and started with none. Addresses are re-learned as devices renew.", SeverityMedium, false, false)),
 		all(TypeDNSUpstreamDegraded, "Upstream DNS degraded", "An upstream resolver is failing more than a few percent of its queries, or is far slower than the others.", SeverityMedium, false, false),
+		all(TypeEncryptedDNSLookup, "Encrypted-DNS resolver looked up", "A device looked up a public DNS-over-HTTPS or DNS-over-TLS resolver. One that uses it sends its lookups where Shepherd cannot filter or see them.", SeverityMedium, true, true),
+		all(TypeDNSBypass, "Device is not using Shepherd for DNS", "A device moved real traffic for a day without one lookup reaching Shepherd, so nothing it does is filtered.", SeverityMedium, true, true),
+		all(TypeDNSRandomNames, "Burst of machine-made names", "One device asked for many domains that do not exist and look generated, the way malware hunts for its controller.", SeverityHigh, false, false),
+		all(TypeDNSTunnel, "Data carried in DNS", "One device asked for many long, distinct names under one domain, which can carry data out through DNS.", SeverityMedium, true, false),
+		all(TypeDNSBeacon, "Regular check-in to a new name", "One device looks up a name on a fixed interval that no other device asks for and the network had never seen.", SeverityMedium, true, true),
+		all(TypeNewCountry, "Device reached a new country", "A single-purpose device's lookup resolved to a country none of its lookups ever had.", SeverityMedium, true, true),
+		all(TypeUploadSpike, "Unusually large upload", "A device uploaded far more in an hour than it ever has.", SeverityHigh, true, false),
+		all(TypeDecoyTouched, "Decoy port touched", "Something connected to a port Shepherd listens on and serves nothing from: a device probing its neighbours.", SeverityHigh, false, false),
 		func() AlarmType {
 			t := all(TypeTest, "Test notification", "Sent on request to check that notifications arrive.", SeverityHigh, false, false)
 			t.Bypass = true

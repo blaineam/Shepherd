@@ -42,6 +42,7 @@ type Config struct {
 	Portscan       Portscan       `toml:"portscan"`
 	Vulnscan       Vulnscan       `toml:"vulnscan"`
 	Threats        Threats        `toml:"threats"`
+	Detect         Detect         `toml:"detect"`
 	Update         Update         `toml:"update"`
 	Retention      Retention      `toml:"retention"`
 	TLS            TLS            `toml:"tls"`
@@ -452,6 +453,22 @@ type Threats struct {
 	IntervalHours int `toml:"interval_hours"`
 }
 
+// Detect controls the behaviour checks and the decoy ports
+// (internal/detect, internal/decoy, docs/DETECT.md): alarms for a device
+// that takes its lookups elsewhere, asks for machine-made names, carries
+// data in DNS, beacons, reaches a country it never has or uploads far more
+// than it ever has, and for anything that connects to a port nothing has a
+// reason to. On by default: every check reads data Shepherd already has
+// and none is in the path of anyone's traffic.
+type Detect struct {
+	Enabled bool `toml:"enabled"`
+	// DecoyPorts are the TCP ports Shepherd listens on and serves nothing
+	// from, so that a connection to one is an alarm. A port already in use
+	// or one the process may not bind is skipped. An empty list turns the
+	// decoys off and leaves the other checks on.
+	DecoyPorts []int `toml:"decoy_ports"`
+}
+
 // TLS obtains and renews a real certificate for the portal's own hostname
 // via the ACME protocol's DNS-01 challenge against Cloudflare DNS
 // (docs/TLS.md) — the first, additive step of roadmap item 18 ("Access").
@@ -720,6 +737,7 @@ func Default() Config {
 		Portscan:       Portscan{Enabled: true, IntervalSeconds: 6 * 3600, WANExposure: WANExposure{Enabled: true, RefreshIntervalSeconds: 600}},
 		Vulnscan:       Vulnscan{Enabled: true, IntervalSeconds: 24 * 3600, FeedURL: vulnscan.DefaultFeedURL, FeedRefreshSeconds: 6 * 3600},
 		Threats:        Threats{Enabled: true, IntervalHours: 6},
+		Detect:         Detect{Enabled: true, DecoyPorts: []int{23, 2323, 3389, 5900}},
 		Update:         Update{Enabled: true, Channel: "stable", CheckHours: 24},
 		Nethealth:      Nethealth{Enabled: false, IntervalSeconds: 120, BufferbloatEnabled: false, BufferbloatIntervalSeconds: 3600},
 		Selftest:       Selftest{Enabled: true, IntervalSeconds: 60, GoodName: "example.com", MaxErrorPercent: 5, WindowMinutes: 15, AlarmCooldownMinutes: 30},
@@ -855,6 +873,11 @@ func (c Config) Validate() error {
 	}
 	if c.Threats.IntervalHours < 1 {
 		return errors.New("threats.interval_hours must be at least 1")
+	}
+	for _, p := range c.Detect.DecoyPorts {
+		if p < 1 || p > 65535 {
+			return fmt.Errorf("detect.decoy_ports: %d is not a TCP port", p)
+		}
 	}
 	if c.Vulnscan.IntervalSeconds < 300 {
 		return errors.New("vulnscan.interval_seconds must be at least 300")

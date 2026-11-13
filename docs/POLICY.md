@@ -33,7 +33,7 @@ everywhere, and a fetched list is checked before it is used: an empty list, one 
 ### Recommended items and first run
 
 Protection is opt-out. On a **new install** the recommended entries (a general ads, trackers and malware list and a
-threat feed) are on at network scope, and so is the Apple Private Relay switch. You can turn any of them off.
+threat feed) are on at network scope, and so are the Apple Private Relay switch and the switch that keeps browsers on this resolver ([DETECT.md](DETECT.md)); the switch that blocks public encrypted-DNS resolvers is off. You can turn any of them off.
 
 ### Upgrading an install that predates the policy store
 
