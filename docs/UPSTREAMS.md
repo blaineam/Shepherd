@@ -55,6 +55,16 @@ answer unhealthy, and fails over, but you should still:
 - **test** an encrypted upstream from the network it will run on, not from your laptop on another network;
 - remember that a plain upstream exposes your queries to your ISP and anyone on the path; encrypted ones only to the resolver you chose.
 
+## Connection reuse
+
+A DoT upstream keeps up to two idle connections and reuses them (RFC 7858), so a lookup costs one round trip
+instead of a fresh TCP and TLS handshake. A connection idle for more than nine seconds is dropped instead of
+reused (resolvers hang up on idle clients and middleboxes forget quiet flows), and one that turns out to be dead
+is retried at once on a fresh connection without counting as a failure of the upstream. A fresh connection
+resumes the previous TLS session when it can. The speed Shepherd ranks upstreams by includes the handshake
+whenever a connection had to be made, so a resolver that is slow to connect ranks behind one that is not.
+Removing an upstream closes its connections.
+
 ## Configuration
 
 ```toml

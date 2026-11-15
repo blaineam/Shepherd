@@ -53,6 +53,7 @@ const (
 	TypeDNSCanaryFailed     = "dns-canary-failed"
 	TypeDNSLANUncovered     = "dns-lan-uncovered"
 	TypeDNSUpstreamDegraded = "dns-upstream-degraded"
+	TypeNetworkLinkLost     = "network-link-lost" // internal/linkwatch
 	// DHCP mode's findings (internal/dhcp, docs/DHCP.md). All three are
 	// about the two ways this mode can hurt: another server answering on
 	// the same segment, and a kernel that will not take the rules that
@@ -137,6 +138,7 @@ func BuiltinTypes() []AlarmType {
 		all(TypeDHCPRogueServer, "Another DHCP server is answering", "A DHCP reply came from something other than Shepherd. Two servers on one segment hand out addresses unpredictably, so Shepherd has stopped serving.", SeverityCritical, false, false),
 		all(TypeDHCPNATFailed, "DHCP mode could not configure NAT", "Shepherd could not install the forwarding rules routed devices need, so it has stopped routing them. They move back to the router at their next renewal.", SeverityCritical, false, false),
 		portal(all(TypeDHCPLeaseReset, "DHCP lease file reset", "Shepherd could not read its DHCP lease file and started with none. Addresses are re-learned as devices renew.", SeverityMedium, false, false)),
+		all(TypeNetworkLinkLost, "Network link lost", "The address Shepherd serves DNS on went away for a while (no carrier, the interface taken down, or the address removed). Every lookup in the house failed for that long; reported when the link came back, with its duration.", SeverityHigh, false, false),
 		all(TypeDNSUpstreamDegraded, "Upstream DNS degraded", "An upstream resolver is failing more than a few percent of its queries, or is far slower than the others.", SeverityMedium, false, false),
 		all(TypeEncryptedDNSLookup, "Encrypted-DNS resolver looked up", "A device looked up a public DNS-over-HTTPS or DNS-over-TLS resolver. One that uses it sends its lookups where Shepherd cannot filter or see them.", SeverityMedium, true, true),
 		all(TypeDNSBypass, "Device is not using Shepherd for DNS", "A device moved real traffic for a day without one lookup reaching Shepherd, so nothing it does is filtered.", SeverityMedium, true, true),

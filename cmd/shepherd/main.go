@@ -367,6 +367,8 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	deps.NethealthEnabled = cfg.Nethealth.Enabled
 	deps.NethealthBufferbloatEnabled = cfg.Nethealth.BufferbloatEnabled
 
+	startLinkwatch(ctx, cfg, deps.Alarms)
+
 	var skipped skipSet
 	if st := startSelftest(ctx, cfg, engine, &skipped, deps.Alarms); st != nil {
 		deps.Selftest = st

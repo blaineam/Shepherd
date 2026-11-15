@@ -44,6 +44,10 @@ type Upstream struct {
 	clientOnce sync.Once
 	client     *dohClient
 
+	idle     dotIdle // pooled DoT connections (see dotpool.go)
+	tlsOnce  sync.Once
+	tlsCache tls.ClientSessionCache
+
 	mu      sync.Mutex
 	healthy bool
 	fails   int
@@ -295,24 +299,57 @@ func (u *Upstream) exchange(ctx context.Context, m *dns.Msg, timeout time.Durati
 	return resp, rtt, err
 }
 
+// exchangeDoT asks over a pooled connection when one is idle, and otherwise
+// dials. A pooled connection that fails is not the upstream's fault (the far
+// end or a middlebox had already let it go), so the query moves on to the
+// next idle one or a fresh dial, and only a failure on a fresh connection
+// counts against the upstream.
 func (u *Upstream) exchangeDoT(ctx context.Context, m *dns.Msg, timeout time.Duration) (*dns.Msg, time.Duration, error) {
+	cfg := u.dotClientConfig()
+	if reuse := min(timeout, dotReuseTimeout); ctx.Err() == nil {
+		rc := &dns.Client{Net: "tcp-tls", Timeout: reuse, TLSConfig: cfg}
+		for {
+			conn := u.idle.get()
+			if conn == nil {
+				break
+			}
+			resp, rtt, err := rc.ExchangeWithConnContext(ctx, m, conn)
+			if err == nil {
+				u.idle.put(conn)
+				return resp, rtt, nil
+			}
+			_ = conn.Close()
+			if ctx.Err() != nil {
+				return nil, 0, err
+			}
+		}
+	}
 	targets, err := u.targets(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
-	c := &dns.Client{Net: "tcp-tls", Timeout: timeout, TLSConfig: &tls.Config{
-		ServerName: u.serverName, MinVersion: tls.VersionTLS12, RootCAs: u.env.roots,
-	}}
+	c := &dns.Client{Net: "tcp-tls", Timeout: timeout, TLSConfig: cfg}
 	var lastErr error
 	for i, t := range targets {
 		if i == 2 || ctx.Err() != nil {
 			break
 		}
-		resp, rtt, err := c.ExchangeContext(ctx, m, t)
-		if err == nil {
-			return resp, rtt, nil
+		start := time.Now()
+		conn, err := c.DialContext(ctx, t)
+		if err != nil {
+			lastErr = err
+			continue
 		}
-		lastErr = err
+		resp, _, err := c.ExchangeWithConnContext(ctx, m, conn)
+		if err != nil {
+			_ = conn.Close()
+			lastErr = err
+			continue
+		}
+		u.idle.put(conn)
+		// The whole cost, handshake included, so ranking by speed is honest
+		// about a resolver that is slow to connect.
+		return resp, time.Since(start), nil
 	}
 	if lastErr == nil {
 		lastErr = ctx.Err()

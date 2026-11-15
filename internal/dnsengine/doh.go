@@ -64,6 +64,7 @@ func (u *Upstream) closeIdle() {
 	if u.network == "https" {
 		u.dohClient().tr.CloseIdleConnections()
 	}
+	u.idle.closeAll()
 }
 
 // dialContext resolves the URL host through the bootstrap resolvers (never the

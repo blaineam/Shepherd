@@ -15,6 +15,11 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Added
 
+- **Link watch** ([docs/LINKWATCH.md](docs/LINKWATCH.md)). Shepherd now checks, once a second, that
+  the address it serves DNS on is still up, and raises a `network-link-lost` alarm when it comes back
+  with the interface, the cause (no carrier, interface down, address removed) and how long it was
+  gone. Drops of a few seconds, which the two-minute network-health probes cannot see and which
+  fail every lookup in the house, are now explained.
 - `devices.tailscale` (off by default) names tailnet devices: Shepherd reads the local `tailscaled` API over its unix socket (`devices.tailscale_socket`) once a minute and applies each online node's name to its tailnet addresses, so queries over Tailscale show the device rather than an unnamed address. See docs/DEVICES.md.
 - **Detections** ([docs/DETECT.md](docs/DETECT.md)): seven behaviour checks that raise an alarm
   naming the device, from the lookups Shepherd already answers and the byte counts it already
@@ -40,6 +45,11 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Fixed
 
+- DNS over TLS upstreams reuse their connections. Every encrypted lookup used to open a new TCP and
+  TLS connection, paying the handshake on each one (not counted in the speed Shepherd reported for
+  the upstream) and exposing each to a timeout. Up to two idle connections are kept per upstream, a
+  dead one is retried on a fresh connection without counting against the upstream, and TLS sessions
+  resume. The speed used to rank upstreams now includes the handshake.
 - A host with two network cards on one address (a NAS answering ARP from both) no longer ends up in Quarantine. While the neighbor table was handing the address back and forth nobody held it, and the next DNS query from it created a new quarantined device that blocked the host's own lookups. An address nobody holds now goes back to the device that held it within the last day.
 - Merging a device that only sat in Quarantine (an address seen before its MAC) into a device you already sorted no longer drags Quarantine into the sorted device's groups. Quarantine survives a merge only when no side has any other group.
 - Shepherd no longer binds 127.0.0.1 and `[::1]` unless asked. `dns.listen_loopback` now defaults to **off**, so DNS listens only on the addresses in `dns.listen`; set `listen_loopback = true` to get the loopback listeners back.
