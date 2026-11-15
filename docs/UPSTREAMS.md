@@ -55,6 +55,13 @@ answer unhealthy, and fails over, but you should still:
 - **test** an encrypted upstream from the network it will run on, not from your laptop on another network;
 - remember that a plain upstream exposes your queries to your ISP and anyone on the path; encrypted ones only to the resolver you chose.
 
+## Finding an encrypted resolver's address
+
+A DoT or DoH upstream given by name is found through the bootstrap resolvers (never the system resolver), asking for IPv4 and
+IPv6 separately. A question that gets no reply is asked once more. If one family is still missing, Shepherd uses what it has but
+asks again after five seconds, and it never lets a refresh replace a known address with nothing, so one lost packet cannot leave an
+upstream with only addresses the network cannot reach. A name that simply has no records for a family is complete as it is.
+
 ## Connection reuse
 
 A DoT upstream keeps up to two idle connections and reuses them (RFC 7858), so a lookup costs one round trip

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"sync"
 	"time"
 
@@ -26,6 +27,11 @@ func DefaultBootstrapServers() []string { return []string{"9.9.9.9", "1.1.1.1"} 
 const (
 	bootMinTTL = 60 * time.Second
 	bootMaxTTL = time.Hour
+	// bootPartialTTL is how long an answer is trusted when one address
+	// family could not be fetched (a lost UDP packet): long enough not to
+	// hammer the bootstrap resolvers, far shorter than the usual floor so
+	// the missing addresses arrive quickly.
+	bootPartialTTL = 5 * time.Second
 )
 
 // upstreamEnv is shared by every upstream of a pool.
@@ -63,6 +69,15 @@ type bootCall struct {
 	done  chan struct{}
 	addrs []netip.Addr
 	err   error
+}
+
+// bootResult is what one resolution learned. lost4/lost6 mean that family's
+// query failed (it timed out or was refused), which is different from the
+// family having no records: an empty answer is complete, a lost one is not.
+type bootResult struct {
+	addrs        []netip.Addr
+	ttl          time.Duration
+	lost4, lost6 bool
 }
 
 func newBootstrap() *bootstrap {
@@ -151,12 +166,21 @@ func (b *bootstrap) startLocked(host string) *bootCall {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
-		addrs, ttl, err := b.resolve(ctx, host, servers)
+		r, err := b.resolve(ctx, host, servers)
+		addrs := r.addrs
 		b.mu.Lock()
 		if err == nil {
 			now := b.now()
-			ttl = min(max(ttl, bootMinTTL), bootMaxTTL)
-			b.cache[host] = &bootEntry{addrs: addrs, refreshAt: now.Add(ttl * 3 / 4), expires: now.Add(ttl)}
+			ttl := min(max(r.ttl, bootMinTTL), bootMaxTTL)
+			refresh := now.Add(ttl * 3 / 4)
+			if r.lost4 || r.lost6 {
+				// Part of the answer is missing. Keep what was known for the
+				// missing family (a refresh must never replace a working
+				// address with nothing), and ask again soon.
+				addrs = mergeKnown(addrs, b.cache[host], r.lost4, r.lost6)
+				refresh = now.Add(bootPartialTTL)
+			}
+			b.cache[host] = &bootEntry{addrs: addrs, refreshAt: refresh, expires: now.Add(ttl)}
 		}
 		delete(b.inflight, host)
 		b.mu.Unlock()
@@ -166,7 +190,11 @@ func (b *bootstrap) startLocked(host string) *bootCall {
 	return c
 }
 
-func (b *bootstrap) resolve(ctx context.Context, host string, servers []string) ([]netip.Addr, time.Duration, error) {
+// resolve asks each bootstrap server in turn for both address families. A
+// query that is lost is tried once more, and a family that is still lost is
+// reported in the result, so a caller never mistakes "the packet was dropped"
+// for "this host has no IPv4 address".
+func (b *bootstrap) resolve(ctx context.Context, host string, servers []string) (bootResult, error) {
 	fqdn := dns.Fqdn(host)
 	var lastErr error
 	for _, s := range servers {
@@ -187,7 +215,13 @@ func (b *bootstrap) resolve(ctx context.Context, host string, servers []string) 
 				m := new(dns.Msg)
 				m.SetQuestion(fqdn, qt)
 				m.RecursionDesired = true
-				resp, err := b.query(ctx, s, m)
+				var resp *dns.Msg
+				var err error
+				for attempt := 0; attempt < 2; attempt++ {
+					if resp, err = b.query(ctx, s, m); err == nil || ctx.Err() != nil {
+						break
+					}
+				}
 				if err != nil {
 					res[i].err = err
 					return
@@ -200,16 +234,16 @@ func (b *bootstrap) resolve(ctx context.Context, host string, servers []string) 
 			}()
 		}
 		wg.Wait()
-		var addrs []netip.Addr
-		ttl := time.Duration(0)
+		var out bootResult
 		for _, r := range res {
-			addrs = append(addrs, r.addrs...)
-			if r.ttl > 0 && (ttl == 0 || r.ttl < ttl) {
-				ttl = r.ttl
+			out.addrs = append(out.addrs, r.addrs...)
+			if r.ttl > 0 && (out.ttl == 0 || r.ttl < out.ttl) {
+				out.ttl = r.ttl
 			}
 		}
-		if len(addrs) > 0 {
-			return addrs, ttl, nil
+		out.lost4, out.lost6 = res[0].err != nil, res[1].err != nil
+		if len(out.addrs) > 0 {
+			return out, nil
 		}
 		switch {
 		case res[0].err != nil:
@@ -225,7 +259,32 @@ func (b *bootstrap) resolve(ctx context.Context, host string, servers []string) 
 	if lastErr == nil {
 		lastErr = errors.New("no bootstrap resolver reachable")
 	}
-	return nil, 0, fmt.Errorf("bootstrap: cannot resolve %s: %w", host, lastErr)
+	return bootResult{}, fmt.Errorf("bootstrap: cannot resolve %s: %w", host, lastErr)
+}
+
+// mergeKnown adds to a partial answer the addresses a previous entry held for
+// the family that was lost. IPv4 stays ahead of IPv6, the order DoT dials in.
+func mergeKnown(fresh []netip.Addr, old *bootEntry, lost4, lost6 bool) []netip.Addr {
+	out := append([]netip.Addr(nil), fresh...)
+	if old != nil {
+		for _, a := range old.addrs {
+			if (a.Is4() && lost4) || (a.Is6() && lost6) {
+				if !slices.Contains(out, a) {
+					out = append(out, a)
+				}
+			}
+		}
+	}
+	slices.SortStableFunc(out, func(x, y netip.Addr) int {
+		switch {
+		case x.Is4() && !y.Is4():
+			return -1
+		case !x.Is4() && y.Is4():
+			return 1
+		}
+		return 0
+	})
+	return out
 }
 
 func extractAddrs(resp *dns.Msg) ([]netip.Addr, time.Duration) {

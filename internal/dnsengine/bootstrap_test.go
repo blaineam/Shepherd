@@ -365,3 +365,86 @@ func TestDoTSecondAddressAndBootstrapFailure(t *testing.T) {
 		t.Fatal("expected a context error")
 	}
 }
+
+// ---- a lost query must not leave an upstream with only half its addresses ----
+
+// lossyQuery wraps the real bootstrap query and fails the first `drop` A
+// queries (or all of them, when drop is negative), the way a lost UDP packet
+// does.
+func lossyQuery(b *bootstrap, drop int) {
+	real := b.query
+	var mu sync.Mutex
+	b.query = func(ctx context.Context, server string, m *dns.Msg) (*dns.Msg, error) {
+		if m.Question[0].Qtype == dns.TypeA {
+			mu.Lock()
+			if drop != 0 {
+				if drop > 0 {
+					drop--
+				}
+				mu.Unlock()
+				return nil, errors.New("i/o timeout")
+			}
+			mu.Unlock()
+		}
+		return real(ctx, server, m)
+	}
+}
+
+func TestBootstrapRetriesALostQuery(t *testing.T) {
+	fb := newFakeBoot(t, "dns.example.com", "192.0.2.10", "2001:db8::10")
+	b, _ := testBoot(t, fb)
+	lossyQuery(b, 1)
+	got, err := b.lookup(context.Background(), "dns.example.com")
+	if err != nil || addrStrings(got) != "192.0.2.10,2001:db8::10" {
+		t.Fatalf("one lost A query must not cost the IPv4 address: %v, %v", got, err)
+	}
+}
+
+func TestBootstrapPartialAnswerIsRetriedSoonNotCachedForAMinute(t *testing.T) {
+	fb := newFakeBoot(t, "dns.example.com", "192.0.2.10", "2001:db8::10")
+	b, clk := testBoot(t, fb)
+	lossyQuery(b, -1) // every A query is lost
+	got, err := b.lookup(context.Background(), "dns.example.com")
+	if err != nil || addrStrings(got) != "2001:db8::10" {
+		t.Fatalf("with A lost, the IPv6 address is all there is: %v, %v", got, err)
+	}
+	// The network recovers. Well inside the 60 s floor a full answer is fetched.
+	b.query = bootstrapQuery
+	clk.advance(bootPartialTTL + time.Second)
+	if _, err := b.lookup(context.Background(), "dns.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the missing family to be fetched", func() bool {
+		got, _ := b.lookup(context.Background(), "dns.example.com")
+		return addrStrings(got) == "192.0.2.10,2001:db8::10"
+	})
+}
+
+func TestBootstrapRefreshThatLosesAFamilyKeepsTheKnownAddresses(t *testing.T) {
+	fb := newFakeBoot(t, "dns.example.com", "192.0.2.10", "2001:db8::10")
+	b, clk := testBoot(t, fb)
+	if _, err := b.lookup(context.Background(), "dns.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	lossyQuery(b, -1)
+	clk.advance(2 * time.Hour)
+	got, err := b.lookup(context.Background(), "dns.example.com")
+	if err != nil || !strings.Contains(addrStrings(got), "192.0.2.10") {
+		t.Fatalf("a refresh that lost its A answer replaced a working IPv4 address with nothing: %v, %v", got, err)
+	}
+}
+
+func TestBootstrapEmptyFamilyIsNotAFailure(t *testing.T) {
+	fb := newFakeBoot(t, "dns.example.com", "192.0.2.10") // genuinely no AAAA
+	b, clk := testBoot(t, fb)
+	if _, err := b.lookup(context.Background(), "dns.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	clk.advance(bootPartialTTL + time.Second)
+	if _, err := b.lookup(context.Background(), "dns.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if n := fb.aCalls.Load(); n != 1 {
+		t.Fatalf("a host with no AAAA record is complete, not partial: resolved %d times", n)
+	}
+}

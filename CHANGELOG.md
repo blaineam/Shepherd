@@ -45,6 +45,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Fixed
 
+- A single lost bootstrap packet could take an encrypted upstream out for minutes. Shepherd finds
+  a DoT or DoH resolver's address by asking for its IPv4 and IPv6 addresses separately over plain
+  UDP, once each. If only the IPv4 question was lost, the answer was kept with just the IPv6
+  address for at least a minute, and a refresh could replace a working IPv4 address with it. On a
+  network with no IPv6 route that upstream then failed every query until the next refresh. A lost
+  question is now asked again, an answer with a family missing is trusted for five seconds instead
+  of a minute, and a refresh that loses a family keeps the addresses already known for it.
 - DNS over TLS upstreams reuse their connections. Every encrypted lookup used to open a new TCP and
   TLS connection, paying the handshake on each one (not counted in the speed Shepherd reported for
   the upstream) and exposing each to a timeout. Up to two idle connections are kept per upstream, a
