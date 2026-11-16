@@ -15,6 +15,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Added
 
+- **Backends** ([docs/BACKENDS.md](docs/BACKENDS.md)), the first step towards Shepherd as a dashboard
+  over a router you already run. `internal/backends` defines per-ability interfaces (devices, flows,
+  alarms, rules, rename, dismiss) and a capability report, so the portal can show only what a given
+  product supports. The first backend is Firewalla MSP: it reads devices, flows, alarms and rules,
+  and creates, pauses, resumes and deletes rules, renames devices and dismisses alarms. A read-only
+  connection refuses every write before a request is sent. Not wired into the portal yet, and tested
+  against a fake MSP only.
 - **Firewalla MSP bandwidth** ([docs/TRAFFIC.md](docs/TRAFFIC.md#firewalla-msp)). Connect a Firewalla
   MSP account under "Read from your router" on the Bandwidth screen with a personal access token
   (a Read Only one is enough) and Shepherd records the bytes each device has downloaded and
