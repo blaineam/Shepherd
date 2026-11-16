@@ -15,6 +15,8 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Added
 
+- **Blocked devices stay on the list.** A client Shepherd blocks no longer disappears: it stays on
+  the Devices list marked blocked, survives a restart, and has an **Unblock** button.
 - **UniFi backend** ([docs/BACKENDS.md](docs/BACKENDS.md#unifi)). Connect a UniFi console with an
   Integration API key on the new **Router** screen. Shepherd lists clients, devices and your
   user-defined firewall policies, and, behind **Allow changes**, pauses, resumes and deletes a policy

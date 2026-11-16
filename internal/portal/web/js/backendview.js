@@ -351,12 +351,19 @@ export function createBackend({ root, mgmt, notify }) {
     const ul = el('ul', 'up-list');
     for (const d of devs) {
       const li = el('li', 'up-item');
-      li.append(el('span', d.Online ? 'dot' : 'dot bad'), el('span', 'up-addr', d.Name || d.MAC || d.Native), el('span', 'muted small', [d.IP, d.Group].filter(Boolean).join(' · ')));
+      li.append(el('span', d.Online && !d.Blocked ? 'dot' : 'dot bad'), el('span', 'up-addr', d.Name || d.MAC || d.Native), el('span', 'muted small', [d.IP, d.Group].filter(Boolean).join(' · ')));
+      if (d.Blocked) li.append(el('span', 'muted small', 'blocked'));
       if (can(data, 'devices:block') && d.Native) {
-        const bl = button('Block', 'ghost', () => act({
-          title: 'Block this device?', text: (d.Name || d.Native) + ' loses its network access. Unblock it from your console\'s client list.',
-          confirm: 'Block', danger: true, send: () => mgmt.backendBlock(d.Box, d.Native, true), done: 'Device blocked',
-        }));
+        const name = d.Name || d.Native;
+        const bl = d.Blocked
+          ? button('Unblock', 'ghost', () => act({
+            title: 'Unblock this device?', text: name + ' can use the network again.',
+            confirm: 'Unblock', send: () => mgmt.backendBlock(d.Box, d.Native, false), done: 'Device unblocked',
+          }))
+          : button('Block', 'ghost', () => act({
+            title: 'Block this device?', text: name + ' loses its network access. Shepherd keeps it on this list so you can unblock it here.',
+            confirm: 'Block', danger: true, send: () => mgmt.backendBlock(d.Box, d.Native, true), done: 'Device blocked',
+          }));
         bl.disabled = busy;
         li.append(bl);
       }

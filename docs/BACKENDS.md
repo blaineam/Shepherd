@@ -120,12 +120,18 @@ The request list can be narrowed to one device. That asks Firewalla itself
 (`device.id:"AA:BB:..."` in the query), so it reaches past the recent requests Shepherd already
 holds.
 
+## Blocked devices
+
+UniFi stops listing a client once it is blocked. Shepherd remembers each device it blocks (stored in
+`backend-<name>-blocked.json` beside the other state), keeps it on the Devices list marked
+**blocked**, and offers **Unblock** there. If the console later reports the client connected, it was
+unblocked elsewhere and Shepherd forgets it. A device blocked in the console itself, not through
+Shepherd, is not known to Shepherd and still has to be unblocked there.
+
 ## Not built yet
 
 - Target-list management.
 - Creating UniFi firewall policies.
-- Unblocking a UniFi client from Shepherd (a blocked client leaves the connected list; unblock it
-  from the console's client list).
 
 ## Verified against
 

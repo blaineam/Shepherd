@@ -590,3 +590,69 @@ func TestBlockingAndUnblockingADeviceIsAuditedAndAsksTheBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestABlockedDeviceStaysListedUntilItIsUnblocked(t *testing.T) {
+	now := time.Unix(1000, 0)
+	path := t.TempDir() + "/blocked.json"
+	f := &fake{devices: []backends.Device{{MAC: "02005e000001", Name: "Tablet", Native: "client-1", Box: "site", Online: true}}}
+	mk := func() *Hub {
+		return New(Options{Backend: f, BlockedPath: path, Now: func() time.Time { return now }})
+	}
+	h := mk()
+	h.Refresh(ctx)
+	ref := backends.DeviceRef{Box: "site", Native: "client-1"}
+	if err := h.BlockClient(ctx, ref, true); err != nil {
+		t.Fatal(err)
+	}
+	// The console stops listing the client once it is blocked.
+	f.devices = nil
+	h.Refresh(ctx)
+	check := func(h *Hub, want bool) {
+		t.Helper()
+		var got *backends.Device
+		for _, d := range h.Snapshot().Devices {
+			if d.Native == "client-1" {
+				d := d
+				got = &d
+			}
+		}
+		if want && (got == nil || !got.Blocked || got.Online || got.Name != "Tablet") {
+			t.Fatalf("blocked device missing or wrong: %+v", got)
+		}
+		if !want && got != nil {
+			t.Fatalf("still listed: %+v", got)
+		}
+	}
+	check(h, true)
+	check(mk(), true) // survives a restart
+	if err := h.BlockClient(ctx, ref, false); err != nil {
+		t.Fatal(err)
+	}
+	check(h, false)
+	check(mk(), false)
+}
+
+func TestAFailedBlockIsNotRemembered(t *testing.T) {
+	now := time.Unix(1000, 0)
+	f := &fake{writeErr: backends.ErrReadOnly}
+	h := newHub(t, f, &sinks{}, &now)
+	_ = h.BlockClient(ctx, backends.DeviceRef{Native: "client-9"}, true)
+	if len(h.Snapshot().Devices) != 0 {
+		t.Fatalf("%+v", h.Snapshot().Devices)
+	}
+}
+
+func TestABlockedDeviceSeenOnlineAgainWasUnblockedElsewhere(t *testing.T) {
+	now := time.Unix(1000, 0)
+	f := &fake{devices: []backends.Device{{Name: "Tablet", Native: "client-1", Box: "site", Online: true}}}
+	h := newHub(t, f, &sinks{}, &now)
+	h.Refresh(ctx)
+	_ = h.BlockClient(ctx, backends.DeviceRef{Box: "site", Native: "client-1"}, true)
+	if d := h.Snapshot().Devices; len(d) != 1 || !d[0].Blocked {
+		t.Fatalf("listed but not marked: %+v", d)
+	}
+	h.Refresh(ctx) // the console still reports it connected: unblocked there
+	if d := h.Snapshot().Devices; len(d) != 1 || d[0].Blocked {
+		t.Fatalf("not forgotten: %+v", d)
+	}
+}

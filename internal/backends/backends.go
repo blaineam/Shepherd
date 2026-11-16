@@ -185,6 +185,10 @@ type Device struct {
 	Box string
 	// Native is the product's own identifier, which a rename needs.
 	Native string
+	// Blocked is true for a device Shepherd cut off. The product stops
+	// listing a blocked client, so the hub remembers it and keeps it on
+	// the list until it is unblocked.
+	Blocked bool
 }
 
 // DeviceRef identifies a device for a write.

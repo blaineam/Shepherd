@@ -115,6 +115,7 @@ func (m *backendManager) Reload() {
 		Resolve:      m.resolve,
 		StatePath:    filepath.Join(m.dataDir, "backend-"+conn.name+".json"),
 		SchedulePath: filepath.Join(m.dataDir, "backend-"+conn.name+"-schedules.json"),
+		BlockedPath:  filepath.Join(m.dataDir, "backend-"+conn.name+"-blocked.json"),
 		Logf:         log.Printf,
 	})
 	ctx, cancel := context.WithCancel(m.parent)

@@ -67,6 +67,9 @@ type Options struct {
 	// SchedulePath keeps the rule schedules (schedule.go). Empty keeps
 	// them in memory only.
 	SchedulePath string
+	// BlockedPath keeps the devices Shepherd blocked (blocked.go). Empty
+	// keeps them in memory only.
+	BlockedPath string
 
 	Now  func() time.Time
 	Logf func(string, ...any)
@@ -129,6 +132,8 @@ type Hub struct {
 
 	schedules  []Schedule
 	schedRetry map[string]time.Time
+
+	blocked map[string]backends.Device
 }
 
 // New returns a Hub. Nothing is read until Run or Refresh.
@@ -142,9 +147,10 @@ func New(o Options) *Hub {
 	if o.Logf == nil {
 		o.Logf = func(string, ...any) {}
 	}
-	h := &Hub{o: o, errs: map[string]error{}, seenFlows: map[string]time.Time{}, totals: map[string]Total{}, schedRetry: map[string]time.Time{}, seenAlarms: map[string]bool{}, started: o.Now()}
+	h := &Hub{o: o, errs: map[string]error{}, seenFlows: map[string]time.Time{}, totals: map[string]Total{}, schedRetry: map[string]time.Time{}, seenAlarms: map[string]bool{}, blocked: map[string]backends.Device{}, started: o.Now()}
 	h.loadState()
 	h.loadSchedules()
+	h.loadBlocked()
 	return h
 }
 
@@ -223,6 +229,7 @@ func (h *Hub) Refresh(ctx context.Context) {
 		if err == nil {
 			h.mu.Lock()
 			h.devices = d
+			h.forgetOnlineBlockedLocked()
 			h.mu.Unlock()
 		}
 		record("devices", err)
@@ -468,7 +475,7 @@ func (h *Hub) Snapshot() Snapshot {
 	return Snapshot{
 		Name: h.o.Backend.Name(), ReadOnly: h.o.Backend.ReadOnly(),
 		Capabilities: h.capabilities(), Status: st,
-		Devices:   append([]backends.Device(nil), h.devices...),
+		Devices:   h.devicesWithBlockedLocked(),
 		Rules:     append([]backends.Rule(nil), h.rules...),
 		Alarms:    append([]backends.Alarm(nil), h.alarms...),
 		Flows:     append([]backends.Flow(nil), h.flows...),
@@ -632,6 +639,11 @@ func (h *Hub) BlockClient(ctx context.Context, ref backends.DeviceRef, block boo
 		err = cb.UnblockClient(ctx, ref)
 	}
 	h.record(action, ref.Native, err)
+	if err == nil {
+		h.mu.Lock()
+		h.noteBlockedLocked(ref, block)
+		h.mu.Unlock()
+	}
 	return err
 }
 
