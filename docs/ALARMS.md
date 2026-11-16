@@ -300,6 +300,7 @@ alarm is recorded at medium severity on all channels, so a typo never loses an a
 | `dns-lan-uncovered` (internal/selftest) | medium | all | no |
 | `dns-upstream-degraded` (internal/selftest) | medium | all | no |
 | `network-link-lost` (internal/linkwatch) | high | all | no |
+| `backend-alarm` (internal/backends/hub) | medium | all | no |
 | `test` | high | all | no, and it **bypasses** mute rules, quiet hours and learning mode |
 
 "Install and device" means the type is also suppressed for a device that was first seen recently (see

@@ -344,6 +344,11 @@ type Firewalla struct {
 	// Box limits the reading to one Firewalla box; empty reads them all.
 	Box     string `json:"box,omitempty"`
 	Enabled bool   `json:"enabled"`
+	// Writes lets the dashboard change things on the account: rules,
+	// device names, alarms. Off unless the owner turns it on, whatever
+	// the token itself allows, so connecting for bandwidth never gives
+	// the portal the power to change a firewall.
+	Writes bool `json:"writes,omitempty"`
 	Meta
 }
 
@@ -853,6 +858,18 @@ func (s *Store) SetFirewallaEnabled(on bool) (bool, error) {
 		return false, nil
 	}
 	w.Enabled = on
+	w.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return true, s.mutate(func(f *file) { f.Firewalla = &w })
+}
+
+// SetFirewallaWrites turns the dashboard's write access on or off. It
+// returns false when no account is stored.
+func (s *Store) SetFirewallaWrites(on bool) (bool, error) {
+	w, ok := s.Firewalla()
+	if !ok {
+		return false, nil
+	}
+	w.Writes = on
 	w.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
 	return true, s.mutate(func(f *file) { f.Firewalla = &w })
 }

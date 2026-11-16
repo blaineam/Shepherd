@@ -77,6 +77,16 @@ func TestRuleSpecValidation(t *testing.T) {
 	if err := dev.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	for _, tt := range TargetTypes {
+		if err := (RuleSpec{Action: "allow", TargetType: tt, Target: "x"}).Validate(); err != nil {
+			t.Errorf("target type %s: %v", tt, err)
+		}
+	}
+	for _, st := range ScopeTypes {
+		if err := (RuleSpec{Action: "allow", TargetType: "domain", Target: "x", ScopeType: st, Scope: "v"}).Validate(); err != nil {
+			t.Errorf("scope type %s: %v", st, err)
+		}
+	}
 	bad := map[string]RuleSpec{
 		"action":        {Action: "drop", TargetType: "domain", Target: "x"},
 		"no action":     {TargetType: "domain", Target: "x"},
@@ -84,7 +94,7 @@ func TestRuleSpecValidation(t *testing.T) {
 		"no target":     {Action: "block", TargetType: "domain", Target: "  "},
 		"scope no type": {Action: "block", TargetType: "domain", Target: "x", Scope: "m"},
 		"device no mac": {Action: "block", TargetType: "domain", Target: "x", ScopeType: "device"},
-		"unknown scope": {Action: "block", TargetType: "domain", Target: "x", ScopeType: "group", Scope: "kids"},
+		"unknown scope": {Action: "block", TargetType: "domain", Target: "x", ScopeType: "vlan", Scope: "5"},
 	}
 	for name, s := range bad {
 		if err := s.Validate(); !errors.Is(err, ErrInvalid) {

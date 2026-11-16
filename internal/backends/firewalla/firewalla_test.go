@@ -101,7 +101,7 @@ func TestDevicesAreNormalizedAndCarryWhatARenameNeeds(t *testing.T) {
 	}
 	tv := got[0]
 	if tv.MAC != "02005e000001" || tv.Name != "TV" || tv.Group != "Kids" || tv.Network != "Home" ||
-		!tv.Online || tv.Download != 90 || tv.Upload != 10 || tv.Vendor != "Acme" {
+		!tv.Online || tv.Down24h != 90 || tv.Up24h != 10 || tv.Vendor != "Acme" {
 		t.Fatalf("tv = %+v", tv)
 	}
 	if tv.Ref() != (backends.DeviceRef{Box: "box-1", Native: "02:00:5E:00:00:01"}) {
@@ -149,7 +149,7 @@ func TestFlowsBecomeRequestsAndPageByCursor(t *testing.T) {
 func TestAlarmsReadAndActiveOnlyIsAskedFor(t *testing.T) {
 	f := &fakeMSP{answers: map[string]string{"GET /v2/alarms": `{"count":1,"next_cursor":null,"results":[
 	 {"aid":7,"type":5,"message":"Found a new device","ts":1664522841.9,"gid":"box-1",
-	  "device":{"id":"02:00:5E:00:00:03","name":"Phone"}}]}`}}
+	  "remote":{"domain":"Evil.Example."},"device":{"id":"02:00:5E:00:00:03","name":"Phone"}}]}`}}
 	c := newClient(t, f, func(c *Config) { c.Box = "box-1" })
 	page, err := c.Alarms(ctx, backends.AlarmQuery{ActiveOnly: true, Limit: 10})
 	if err != nil || len(page.Alarms) != 1 || page.Next != "" {
@@ -160,14 +160,14 @@ func TestAlarmsReadAndActiveOnlyIsAskedFor(t *testing.T) {
 		t.Fatalf("query = %v", q)
 	}
 	al := page.Alarms[0]
-	if al.ID != "7" || al.Type != "5" || al.DeviceMAC != "02005e000003" || al.Ref() != (backends.AlarmRef{Box: "box-1", ID: "7"}) {
+	if al.ID != "7" || al.Type != "New Device" || al.Domain != "evil.example" || al.DeviceMAC != "02005e000003" || al.Ref() != (backends.AlarmRef{Box: "box-1", ID: "7"}) {
 		t.Fatalf("alarm = %+v", al)
 	}
 }
 
 func TestRulesReadWithPausedState(t *testing.T) {
 	f := &fakeMSP{answers: map[string]string{"GET /v2/rules": `{"count":2,"results":[
-	 {"id":"r1","action":"block","gid":"box-1","status":"active","ts":1730447709.7,
+	 {"id":"r1","name":"No ads","action":"block","gid":"box-1","status":"active","ts":1730447709.7,
 	  "target":{"type":"domain","value":"example.com","dnsOnly":true},"scope":{"type":"device","value":"02:00:5E:00:00:01"}},
 	 {"id":"r2","action":"allow","gid":"box-1","status":"paused","notes":"n","target":{"type":"ip","value":"198.51.100.1"}}]}`}}
 	c := newClient(t, f, func(c *Config) { c.Box = "box-1" })
@@ -179,7 +179,7 @@ func TestRulesReadWithPausedState(t *testing.T) {
 		t.Fatalf("query = %q", f.last().RawQuery)
 	}
 	r1, r2 := rules[0], rules[1]
-	if r1.Paused || r1.ScopeType != "device" || r1.Scope != "02005e000001" || r1.Target != "example.com" {
+	if r1.Name != "No ads" || !r1.DNSOnly || r1.Paused || r1.ScopeType != "device" || r1.Scope != "02005e000001" || r1.Target != "example.com" {
 		t.Fatalf("r1 = %+v", r1)
 	}
 	if !r2.Paused || r2.ScopeType != "" || r2.Notes != "n" {
@@ -191,7 +191,7 @@ func TestCreatingARuleSendsWhatMSPDocuments(t *testing.T) {
 	f := &fakeMSP{answers: map[string]string{"POST /v2/rules": `{"id":"new","action":"block","gid":"box-1","status":"active","target":{"type":"domain","value":"example.com"}}`}}
 	c := newClient(t, f, nil)
 	rule, err := c.CreateRule(ctx, backends.RuleSpec{
-		Action: "block", TargetType: "domain", Target: " example.com ", DNSOnly: true,
+		Action: "block", TargetType: "domain", Target: " example.com ",
 		ScopeType: "device", Scope: "02005e000001", Notes: "from Shepherd", Box: "box-1",
 	})
 	if err != nil || rule.ID != "new" {
@@ -214,25 +214,41 @@ func TestCreatingARuleSendsWhatMSPDocuments(t *testing.T) {
 	}
 }
 
-func TestANetworkWideRuleHasNoScopeAndNeedsABox(t *testing.T) {
+func TestANetworkWideRuleHasNoScopeAndNoBoxMeansEveryBox(t *testing.T) {
 	f := &fakeMSP{answers: map[string]string{"POST /v2/rules": `{"id":"x"}`}}
-	c := newClient(t, f, func(c *Config) { c.Box = "box-1" })
+	c := newClient(t, f, nil)
 	if _, err := c.CreateRule(ctx, backends.RuleSpec{Action: "allow", TargetType: "ip", Target: "198.51.100.1"}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(f.last().Body, `"scope"`) {
-		t.Fatalf("a network-wide rule carried a scope: %s", f.last().Body)
+	body := f.last().Body
+	if strings.Contains(body, `"scope"`) {
+		t.Fatalf("a network-wide rule carried a scope: %s", body)
+	}
+	// With no box named, no gid is sent: MSP applies the rule to every box.
+	if strings.Contains(body, `"gid"`) {
+		t.Fatalf("body = %s", body)
 	}
 	// dnsOnly means nothing for an IP target and is not sent.
-	if strings.Contains(f.last().Body, "dnsOnly") {
-		t.Fatalf("body = %s", f.last().Body)
+	if strings.Contains(body, "dnsOnly") {
+		t.Fatalf("body = %s", body)
 	}
+}
 
-	// With no box configured, one must be named: MSP cannot guess.
-	c2 := newClient(t, &fakeMSP{}, nil)
-	_, err := c2.CreateRule(ctx, backends.RuleSpec{Action: "block", TargetType: "domain", Target: "a.example"})
-	if !errors.Is(err, backends.ErrInvalid) {
-		t.Fatalf("err = %v", err)
+func TestDomainRulesAreDNSOnlyUnlessConnectionsAreAskedFor(t *testing.T) {
+	f := &fakeMSP{answers: map[string]string{"POST /v2/rules": `{"id":"x"}`}}
+	c := newClient(t, f, func(c *Config) { c.Box = "box-1" })
+	for _, tc := range []struct {
+		conns bool
+		want  string
+	}{{false, `"dnsOnly":true`}, {true, `"dnsOnly":false`}} {
+		spec := backends.RuleSpec{Action: "block", TargetType: "category", Target: "gamble", BlockConnections: tc.conns, ScopeType: "group", Scope: "kids"}
+		if _, err := c.CreateRule(ctx, spec); err != nil {
+			t.Fatal(err)
+		}
+		body := f.last().Body
+		if !strings.Contains(body, tc.want) || !strings.Contains(body, `"gid":"box-1"`) || !strings.Contains(body, `"scope":{"type":"group","value":"kids"}`) {
+			t.Fatalf("connections=%v body = %s", tc.conns, body)
+		}
 	}
 }
 
@@ -371,7 +387,7 @@ func TestUnreadableOrOutOfRangeFiguresAreZeroNotFailures(t *testing.T) {
 		t.Fatalf("%+v, %v", got, err)
 	}
 	for _, d := range got {
-		if d.Download != 0 || d.Upload != 0 {
+		if d.Down24h != 0 || d.Up24h != 0 {
 			t.Fatalf("%+v", d)
 		}
 	}
@@ -462,5 +478,21 @@ func TestMACsAreWrittenTheWayMSPWritesThem(t *testing.T) {
 	}
 	if got := macWithColons("not-a-mac"); got != "not-a-mac" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestReadOnlyCanBeSwitchedWithoutReconnecting(t *testing.T) {
+	f := &fakeMSP{}
+	c := newClient(t, f, func(c *Config) { c.ReadOnly = true })
+	if err := c.DeleteRule(ctx, "r"); !errors.Is(err, backends.ErrReadOnly) {
+		t.Fatal(err)
+	}
+	c.SetReadOnly(false)
+	if err := c.DeleteRule(ctx, "r"); err != nil || f.count() != 1 {
+		t.Fatalf("%v after %d requests", err, f.count())
+	}
+	c.SetReadOnly(true)
+	if err := c.DeleteRule(ctx, "r"); !errors.Is(err, backends.ErrReadOnly) || f.count() != 1 {
+		t.Fatalf("%v after %d requests", err, f.count())
 	}
 }

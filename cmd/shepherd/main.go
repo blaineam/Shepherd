@@ -250,7 +250,13 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	// Where Watch mode cannot run, per-device bandwidth can instead be read
 	// from the owner's own router (docs/TRAFFIC.md). Nothing starts until
 	// they connect one in the portal.
-	routerUsage := startRouterUsage(ctx, sec, registry, trafficStore, watchEngine)
+	// The dashboard hub (docs/BACKENDS.md) reads a connected Firewalla's
+	// devices, flows, alarms and rules. Its flows also feed the bandwidth
+	// reader below, so it is started first.
+	backend := startBackend(ctx, sec, registry, engine.Log, deps.Alarms, cfg.DataDir)
+	defer backend.Stop()
+	deps.Backend = backend
+	routerUsage := startRouterUsage(ctx, sec, registry, trafficStore, watchEngine, backend)
 	defer routerUsage.Stop()
 	deps.RouterUsage = routerUsage
 

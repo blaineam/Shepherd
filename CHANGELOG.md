@@ -15,22 +15,18 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Added
 
-- **Backends** ([docs/BACKENDS.md](docs/BACKENDS.md)), the first step towards Shepherd as a dashboard
-  over a router you already run. `internal/backends` defines per-ability interfaces (devices, flows,
-  alarms, rules, rename, dismiss) and a capability report, so the portal can show only what a given
-  product supports. The first backend is Firewalla MSP: it reads devices, flows, alarms and rules,
-  and creates, pauses, resumes and deletes rules, renames devices and dismisses alarms. A read-only
-  connection refuses every write before a request is sent. Not wired into the portal yet, and tested
-  against a fake MSP only.
-- **Firewalla MSP bandwidth** ([docs/TRAFFIC.md](docs/TRAFFIC.md#firewalla-msp)). Connect a Firewalla
-  MSP account under "Read from your router" on the Bandwidth screen with a personal access token
-  (a Read Only one is enough) and Shepherd records the bytes each device has downloaded and
-  uploaded, from the MSP API's device list. The token is checked before it is stored, kept in
-  `secrets.json`, never returned by any endpoint, and sent only to `firewalla.net` over https.
-  When more than one router is connected, a UniFi controller wins, then Firewalla, then eero.
-  Firewalla documents the totals but not the period they cover, so Shepherd reads them as running
-  totals and treats a fall as a reset; it has been tested against a fake MSP, not a live account.
-
+- **Firewalla dashboard** ([docs/BACKENDS.md](docs/BACKENDS.md)). Connect a Firewalla MSP account under
+  "Read from your router" and a new **Firewalla** screen shows what your boxes see and lets you change
+  what they enforce. Reading: each flow becomes a history entry beside Shepherd's own lookups (with the
+  device resolved), MSP's active alarms are raised as `backend-alarm` alarms, and devices and rules are
+  listed. Changing is a separate switch, **Allow changes**, off by default: block a request in one
+  click, add block or allow rules, pause, resume or delete them, rename devices, dismiss alarms. Every
+  change is previewed, confirmed, refused by the server without `confirm: true`, and recorded in a
+  change log. Per-device bandwidth comes from the same flows, added up into exact counters. A
+  per-ability backend contract (`internal/backends`) means other products can plug in; UniFi's
+  documented API has no request log, so it would supply controls and Shepherd's DNS history the
+  requests. The token is kept in `secrets.json`, never returned, and sent only to `firewalla.net` over
+  https. Tested against a fake MSP, not a live account.
 - **Link watch** ([docs/LINKWATCH.md](docs/LINKWATCH.md)). Shepherd now checks, once a second, that
   the address it serves DNS on is still up, and raises a `network-link-lost` alarm when it comes back
   with the interface, the cause (no carrier, interface down, address removed) and how long it was

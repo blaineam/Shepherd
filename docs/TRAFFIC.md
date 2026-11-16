@@ -159,28 +159,25 @@ measurements and eero's are estimates.
 
 ### Firewalla MSP
 
-A Firewalla MSP account lists every device its boxes know, with the bytes each has downloaded and
-uploaded, over the documented MSP API (<https://docs.firewalla.net>). It is a `KindCounters`
-source: Shepherd differences consecutive reads and treats a total that falls as a reset, which
-costs one interval and never records negative traffic.
+A connected Firewalla's bandwidth comes from the **flows** its boxes report, not from the per-device
+totals on its device list: MSP documents `totalDownload` and `totalUpload` as the last 24 hours, a
+rolling window that cannot be differenced into traffic. The dashboard hub
+([BACKENDS.md](BACKENDS.md)) ingests each flow once, adds the bytes up per device into running
+counters, and the bandwidth reader differences those, so it is a `KindCounters` source and exact
+for the flows MSP reports.
 
-Connecting it is one form: your MSP address (`mydomain.firewalla.net`, or `firewalla.net` if you
-sign in on the shared domain), a **personal access token**, and optionally one box's ID if the
-account has several. Make the token under *MSP Settings -> MSP API* and give it **Read Only**;
-Shepherd issues one `GET /v2/devices` per poll and nothing else. The token is checked against MSP
-before it is stored, and is kept in `secrets.json` and never returned by any endpoint.
+Two things follow. Only traffic since Shepherd started counts, so the first reading is a baseline
+and the older flows it backfills for the request list are not mistaken for a burst. And the figures
+are as complete as MSP's flow records, which can arrive a little after the traffic they describe.
+
+Connecting is the same form as everything else here: your MSP address (`mydomain.firewalla.net`, or
+`firewalla.net` on the shared domain), a **personal access token**, and optionally one box's ID. The
+token is checked against MSP before it is stored and is kept in `secrets.json`, never returned by
+any endpoint. A Read Only token is enough for bandwidth and the dashboard's reading.
 
 The token goes to exactly one place. The address must be your own domain on `firewalla.net` (or
 `firewalla.net` itself), over https, and redirects are refused, so a mistyped address cannot carry
 the token to another server.
-
-A VPN profile or network interface, which MSP also lists as a device, has no MAC and is left out.
-A device listed by more than one box is the sum of what each box saw.
-
-**What is not yet verified.** Firewalla documents `totalDownload` and `totalUpload` on each device
-but not the period they cover. Shepherd reads them as running totals; if your account reports a
-rolling window instead, the figures will come out low, and the reading should be treated as a
-floor until that is confirmed against a live account. The tests run against a fake MSP.
 
 When several routers are connected, a UniFi controller wins, then Firewalla, then eero.
 

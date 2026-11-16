@@ -4,11 +4,14 @@ package main
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"shepherd/internal/devices"
+	"shepherd/internal/dnsengine"
 	"shepherd/internal/secrets"
 	"shepherd/internal/traffic"
 	"shepherd/internal/watch"
@@ -79,7 +82,7 @@ func TestRouterUsageStaysIdleUntilItIsConnectedAndSwitchedOn(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	m := startRouterUsage(ctx, sec, reg, store, nil)
+	m := startRouterUsage(ctx, sec, reg, store, nil, nil)
 	defer m.Stop()
 	if st := m.Status(); st.Source != "" || st.LastError != "" {
 		t.Fatalf("status with nothing connected = %+v", st)
@@ -133,7 +136,7 @@ func TestAControllerWinsOverAnEeroSession(t *testing.T) {
 	store := traffic.NewStore(traffic.Options{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	m := startRouterUsage(ctx, sec, reg, store, nil)
+	m := startRouterUsage(ctx, sec, reg, store, nil, nil)
 	defer m.Stop()
 
 	// eero alone.
@@ -176,7 +179,7 @@ func TestAControllerAddressThatCannotBeUsedIsReported(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	m := startRouterUsage(ctx, sec, testRegistry(), traffic.NewStore(traffic.Options{}), nil)
+	m := startRouterUsage(ctx, sec, testRegistry(), traffic.NewStore(traffic.Options{}), nil, nil)
 	defer m.Stop()
 	if st := m.Status(); st.Source != "unifi" {
 		t.Fatalf("a usable controller did not start: %+v", st)
@@ -187,13 +190,32 @@ func testRegistry() *devices.Registry {
 	return devices.New(devices.Options{NodeID: "test", Vendor: func(string) string { return "" }})
 }
 
-// Firewalla MSP reports byte totals, so it beats eero's sampled rates, and
-// a UniFi controller beats both.
+// quietMSP is a transport for a Firewalla that never answers, so tests
+// start a real hub without touching the network.
+type quietMSP struct{}
+
+func (quietMSP) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("no network in tests")
+}
+
+func testBackend(t *testing.T, sec *secrets.Store) *backendManager {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	m := &backendManager{parent: ctx, sec: sec, reg: testRegistry(), qlog: dnsengine.NewQueryLog(10), dataDir: t.TempDir(), transport: quietMSP{}}
+	t.Cleanup(m.Stop)
+	m.Reload()
+	return m
+}
+
+// A connected Firewalla's flows add up to real byte counts, so it beats
+// eero's sampled rates, and a UniFi controller beats both.
 func TestFirewallaWinsOverEeroAndLosesToAController(t *testing.T) {
 	sec := testSecrets(t)
+	backend := testBackend(t, sec)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	m := startRouterUsage(ctx, sec, testRegistry(), traffic.NewStore(traffic.Options{}), nil)
+	m := startRouterUsage(ctx, sec, testRegistry(), traffic.NewStore(traffic.Options{}), nil, backend)
 	defer m.Stop()
 
 	if _, err := sec.SetEero(secrets.Eero{Token: "eero-token-abc", NetworkID: "3001", Enabled: true}); err != nil {
@@ -207,6 +229,7 @@ func TestFirewallaWinsOverEeroAndLosesToAController(t *testing.T) {
 	if _, err := sec.SetFirewalla(secrets.Firewalla{BaseURL: "https://home.firewalla.net", Token: "tok", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
+	backend.Reload()
 	m.Reload()
 	if st := m.Status(); st.Source != "firewalla" || st.Estimated {
 		t.Fatalf("with eero and firewalla = %+v, want firewalla and not estimated", st)
@@ -226,25 +249,25 @@ func TestFirewallaWinsOverEeroAndLosesToAController(t *testing.T) {
 	if _, err := sec.SetFirewallaEnabled(false); err != nil {
 		t.Fatal(err)
 	}
+	backend.Reload()
 	m.Reload()
 	if st := m.Status(); st.Source != "eero" {
 		t.Fatalf("with both switched off = %+v", st)
 	}
 }
 
-func TestAFirewallaAddressThatCannotBeUsedIsReported(t *testing.T) {
+func TestAFirewallaAddressThatCannotBeUsedIsReportedAndStartsNothing(t *testing.T) {
 	sec := testSecrets(t)
 	// Stored directly, as a hand-edited secrets.json would be: the store
-	// only insists on https, the source insists on firewalla.net.
+	// only insists on https, the backend insists on firewalla.net.
 	if _, err := sec.SetFirewalla(secrets.Firewalla{BaseURL: "https://evil.example.com", Token: "tok", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	m := startRouterUsage(ctx, sec, testRegistry(), traffic.NewStore(traffic.Options{}), nil)
-	defer m.Stop()
-	st := m.Status()
-	if st.Source != "" || !strings.Contains(st.LastError, "firewalla.net") {
-		t.Fatalf("a token for a foreign host must not start a collector: %+v", st)
+	b := testBackend(t, sec)
+	if b.hub() != nil || !strings.Contains(b.LastError(), "firewalla.net") {
+		t.Fatalf("a token for a foreign host must not start a hub: hub %v, error %q", b.hub(), b.LastError())
+	}
+	if _, ok := b.Snapshot(); ok {
+		t.Fatal("no snapshot without a hub")
 	}
 }

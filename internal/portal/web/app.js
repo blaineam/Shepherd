@@ -23,6 +23,7 @@ import { createPolicyStore } from './js/policystore.js';
 import { createDevices } from './js/devices.js';
 import { createBlocking, createDevicePolicy } from './js/blocking.js';
 import { createUpstreams } from './js/upstreamsview.js';
+import { createBackend } from './js/backendview.js';
 import { createAlarms } from './js/alarmsview.js';
 import { createVulnscan } from './js/vulnscanview.js';
 import { createNethealth } from './js/nethealthview.js';
@@ -467,7 +468,7 @@ async function pollStatus() {
 // ---------------------------------------------------------------- management screens
 const mgmt = createMgmt(api);
 const policyStore = createPolicyStore({ mgmt });
-const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'vulnscan', 'network', 'traffic', 'upstreams', 'dhcp', 'proxy', 'history', 'accountability', 'locking', 'details'];
+const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'vulnscan', 'network', 'traffic', 'firewalla', 'upstreams', 'dhcp', 'proxy', 'history', 'accountability', 'locking', 'details'];
 
 const blocking = createBlocking({
   root: $('#view-blocking'), mgmt, store: policyStore, notify,
@@ -494,6 +495,7 @@ const trafficView = createTraffic({
   onOpenDevice: (id) => { showView('devices'); devicesView.openDevice(id); },
 });
 const upstreamsView = createUpstreams({ root: $('#view-upstreams'), mgmt, notify });
+const backendView = createBackend({ root: $('#view-firewalla'), mgmt, notify });
 const proxyView = createReverseProxy({ root: $('#view-proxy'), mgmt, notify });
 const dhcpView = createDhcp({
   root: $('#view-dhcp'), mgmt, notify,
@@ -530,6 +532,7 @@ function showView(name) {
   try { history.replaceState(null, '', location.pathname + location.search + (hud ? '' : '#' + name)); } catch { /* ignore */ }
   if (name === 'details') details.loadUpdate();
   if (name !== 'upstreams') upstreamsView.hide();
+  if (name !== 'firewalla') backendView.hide();
   if (name !== 'proxy') proxyView.hide();
   if (name !== 'dhcp') dhcpView.hide();
   if (name !== 'alarms') alarmsView.hide();
@@ -544,6 +547,7 @@ function showView(name) {
   else if (name === 'traffic') trafficView.show().catch(() => {});
   else if (name === 'network') networkView.show();
   else if (name === 'upstreams') upstreamsView.show();
+  else if (name === 'firewalla') backendView.show();
   else if (name === 'proxy') proxyView.show();
   else if (name === 'dhcp') dhcpView.show();
   else if (name === 'history') historyView.show();

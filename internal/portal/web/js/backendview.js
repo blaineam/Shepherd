@@ -1,0 +1,299 @@
+// The Firewalla dashboard: what the box sees (requests, alarms, devices)
+// and the controls over what it enforces (rules, names). Reading is always
+// available; every change is switched on separately, previewed, and
+// confirmed. All text from the server is placed with textContent.
+import { el } from './dom.js';
+import { button, emptyState, unavailableCard, confirmDialog } from './ui.js';
+import { unavailable } from './mgmt.js';
+import { fmtDateTime } from './format.js';
+import { can, statusLine, blockSpecFromFlow, ruleSummary, requestLine, auditLine } from './backend.js';
+
+export function createBackend({ root, mgmt, notify }) {
+  let data = null;
+  let loadError = null;
+  let timer = 0;
+  let busy = false;
+  let started = false;
+  // The rule form the owner is filling in, and the preview awaiting a yes.
+  const draft = { action: 'block', target_type: 'domain', target: '', scope_type: '', scope: '', block_connections: false };
+
+  root.replaceChildren();
+  const head = el('div', 'pg-head stack');
+  const title = el('h2', 'pg-title');
+  title.append(el('span', '', 'Firewalla'));
+  head.append(title, el('p', 'pg-sub muted', 'What your Firewalla sees, and the controls over what it enforces. Reading is always on; changes are off until you allow them.'));
+  const body = el('div', 'bk-body');
+  root.append(head, body);
+
+  async function load() {
+    try {
+      data = await mgmt.backend();
+      loadError = null;
+    } catch (e) {
+      loadError = e;
+    }
+    paint();
+  }
+
+  const run = async (fn) => {
+    if (busy) return;
+    busy = true;
+    paint();
+    try { await fn(); } catch (e) { notify(e.message); }
+    busy = false;
+    paint();
+  };
+
+  // act confirms a change in words, then sends it. The server refuses a
+  // write that does not say confirm:true, so this is the only way through.
+  async function act({ title: t, text, confirm, danger, send, done }) {
+    if (!(await confirmDialog({ title: t, body: text, confirm, danger }))) return;
+    await run(async () => {
+      const r = await send();
+      if (r && typeof r === 'object' && 'devices' in r) data = r;
+      else data = await mgmt.backend();
+      notify(done);
+    });
+  }
+
+  const card = (heading, sub) => {
+    const c = el('section', 'card bk-card');
+    const h = el('div', 'card-h');
+    h.append(el('h3', 'card-t', heading));
+    if (sub) h.append(el('span', 'muted small', sub));
+    c.append(h);
+    return c;
+  };
+
+  function header() {
+    const c = el('section', 'card bk-card');
+    const line = statusLine(data);
+    const p = el('p', 'ru-line ' + line.tone, line.text);
+    p.setAttribute('role', 'status');
+    c.append(p);
+    if (!data || !data.running) return c;
+    const acts = el('div', 'ru-acts');
+    const refresh = button('Refresh', 'ghost', () => run(async () => { data = await mgmt.backendRefresh(); }));
+    refresh.disabled = busy;
+    acts.append(refresh);
+    const sw = el('label', 'switch');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = !!data.writes;
+    box.disabled = busy;
+    box.addEventListener('change', async () => {
+      if (box.checked) {
+        const ok = await confirmDialog({
+          title: 'Allow changes to your Firewalla?',
+          body: 'Shepherd will be able to add, pause and delete rules, rename devices and dismiss alarms. Each one still asks you first. The token must have Full Access for them to work.',
+          confirm: 'Allow changes',
+        });
+        if (!ok) { box.checked = false; return; }
+      }
+      run(async () => { data = await mgmt.backendWrites(box.checked); });
+    });
+    sw.append(box, el('span', '', 'Allow changes'));
+    acts.append(sw);
+    c.append(acts);
+    return c;
+  }
+
+  // ----------------------------------------------------------------- rules
+  function rulesCard() {
+    const rules = data.rules || [];
+    const c = card('Rules', rules.length + ' on your Firewalla');
+    if (!rules.length) c.append(el('p', 'muted small', 'No rules.'));
+    const ul = el('ul', 'up-list');
+    for (const r of rules) {
+      const li = el('li', 'up-item' + (r.Paused ? ' muted' : ''));
+      li.append(el('span', 'up-addr', ruleSummary(r, data.devices)));
+      if (r.Paused) li.append(el('span', 'muted small', 'paused'));
+      if (can(data, 'rules:write')) {
+        const pause = button(r.Paused ? 'Resume' : 'Pause', 'ghost', () => act({
+          title: (r.Paused ? 'Resume' : 'Pause') + ' this rule?', text: ruleSummary(r, data.devices),
+          confirm: r.Paused ? 'Resume' : 'Pause',
+          send: () => (r.Paused ? mgmt.backendRuleResume(r.ID) : mgmt.backendRulePause(r.ID)),
+          done: r.Paused ? 'Rule resumed' : 'Rule paused',
+        }));
+        const del = button('Delete', 'ghost', () => act({
+          title: 'Delete this rule?', text: ruleSummary(r, data.devices) + '. This cannot be undone from Shepherd.',
+          confirm: 'Delete', danger: true, send: () => mgmt.backendRuleDelete(r.ID), done: 'Rule deleted',
+        }));
+        pause.disabled = busy; del.disabled = busy;
+        li.append(pause, del);
+      }
+      ul.append(li);
+    }
+    c.append(ul);
+    if (can(data, 'rules:write')) c.append(ruleForm());
+    return c;
+  }
+
+  function ruleForm() {
+    const form = el('form', 'ru-form ru-grid');
+    form.append(el('h4', 'ru-sub', 'Add a rule'));
+    const action = el('select');
+    action.setAttribute('aria-label', 'Action');
+    for (const a of ['block', 'allow']) { const o = el('option', '', a === 'block' ? 'Block' : 'Allow'); o.value = a; action.append(o); }
+    action.value = draft.action;
+    action.addEventListener('change', () => { draft.action = action.value; });
+    const type = el('select');
+    type.setAttribute('aria-label', 'What to match');
+    for (const t of data.target_types || ['domain', 'ip']) { const o = el('option', '', t); o.value = t; type.append(o); }
+    type.value = draft.target_type;
+    type.addEventListener('change', () => { draft.target_type = type.value; });
+    const target = el('input');
+    target.type = 'text'; target.placeholder = 'example.com'; target.required = true; target.value = draft.target;
+    target.setAttribute('aria-label', 'Target');
+    target.addEventListener('input', () => { draft.target = target.value; });
+    const scope = el('select');
+    scope.setAttribute('aria-label', 'Which device');
+    const all = el('option', '', 'Every device'); all.value = ''; scope.append(all);
+    for (const d of data.devices || []) {
+      if (!d.MAC) continue;
+      const o = el('option', '', d.Name || d.MAC); o.value = d.MAC; scope.append(o);
+    }
+    scope.value = draft.scope;
+    scope.addEventListener('change', () => { draft.scope = scope.value; draft.scope_type = scope.value ? 'device' : ''; });
+    const go = el('button', '', 'Review');
+    go.disabled = busy;
+    form.append(action, type, target, scope, go);
+    form.addEventListener('submit', (ev) => { ev.preventDefault(); reviewRule({ ...draft, target: draft.target.trim() }, true); });
+    return form;
+  }
+
+  // reviewRule asks the server what the rule would do, then asks the owner.
+  async function reviewRule(spec, fromForm) {
+    let preview;
+    try {
+      preview = await mgmt.backendRulePreview(spec);
+    } catch (e) { notify(e.message); return; }
+    const warn = preview.network_wide ? ' It applies to every device on your network.' : '';
+    await act({
+      title: 'Add this rule?', text: preview.summary + '.' + warn, confirm: 'Add rule', danger: preview.network_wide && spec.action === 'block',
+      send: () => mgmt.backendRuleCreate(spec),
+      done: 'Rule added',
+    });
+    if (fromForm) draft.target = '';
+  }
+
+  // -------------------------------------------------------------- requests
+  function requestsCard() {
+    const flows = (data.flows || []).slice(0, 40);
+    const c = card('Recent requests', 'newest first');
+    if (!flows.length) { c.append(el('p', 'muted small', 'Nothing yet.')); return c; }
+    const ul = el('ul', 'up-list');
+    for (const f of flows) {
+      const line = requestLine(f);
+      const li = el('li', 'up-item' + (line.blocked ? ' bad' : ''));
+      li.append(el('span', 'muted small mono', fmtDateTime(new Date(f.Time).getTime()).slice(-8)), el('span', 'up-addr', line.what), el('span', 'muted small', line.who + (line.blocked ? ' (blocked)' : '')));
+      const spec = blockSpecFromFlow(f);
+      if (spec && !line.blocked && can(data, 'rules:write')) {
+        const b = button('Block', 'ghost', () => reviewRule(spec, false));
+        b.disabled = busy;
+        li.append(b);
+      }
+      ul.append(li);
+    }
+    c.append(ul);
+    return c;
+  }
+
+  // ---------------------------------------------------------------- alarms
+  function alarmsCard() {
+    const alarms = data.alarms || [];
+    const c = card('Alarms', alarms.length + ' active');
+    if (!alarms.length) { c.append(el('p', 'muted small', 'No active alarms.')); return c; }
+    const ul = el('ul', 'up-list');
+    for (const a of alarms) {
+      const li = el('li', 'up-item');
+      li.append(el('span', 'muted small', a.Type), el('span', 'up-addr', a.Message));
+      if (can(data, 'alarms:dismiss')) {
+        const b = button('Dismiss', 'ghost', () => act({
+          title: 'Dismiss this alarm?', text: a.Message, confirm: 'Dismiss',
+          send: () => mgmt.backendAlarmDismiss(a.Box, a.ID), done: 'Alarm dismissed',
+        }));
+        b.disabled = busy;
+        li.append(b);
+      }
+      ul.append(li);
+    }
+    c.append(ul);
+    return c;
+  }
+
+  // --------------------------------------------------------------- devices
+  function devicesCard() {
+    const devs = data.devices || [];
+    const c = card('Devices', devs.length + ' known');
+    if (!devs.length) { c.append(el('p', 'muted small', 'No devices.')); return c; }
+    const ul = el('ul', 'up-list');
+    for (const d of devs) {
+      const li = el('li', 'up-item');
+      li.append(el('span', d.Online ? 'dot' : 'dot bad'), el('span', 'up-addr', d.Name || d.MAC || d.Native), el('span', 'muted small', [d.IP, d.Group].filter(Boolean).join(' · ')));
+      if (can(data, 'devices:rename') && d.Native) {
+        const b = button('Rename', 'ghost', async () => {
+          const name = window.prompt('New name (up to 32 characters)', d.Name || '');
+          if (name === null || !name.trim()) return;
+          await act({
+            title: 'Rename this device?', text: (d.Name || d.Native) + ' becomes ' + name.trim() + ' on your Firewalla.', confirm: 'Rename',
+            send: () => mgmt.backendRename(d.Box, d.Native, name.trim()), done: 'Device renamed',
+          });
+        });
+        b.disabled = busy;
+        li.append(b);
+      }
+      ul.append(li);
+    }
+    c.append(ul);
+    return c;
+  }
+
+  function auditCard() {
+    const rows = data.audit || [];
+    if (!rows.length) return null;
+    const c = card('Changes made from Shepherd', 'newest first');
+    const ul = el('ul', 'up-list');
+    for (const a of rows.slice(0, 25)) {
+      const li = el('li', 'up-item small' + (a.error ? ' bad' : ''));
+      li.append(el('span', 'muted mono', fmtDateTime(new Date(a.time).getTime()).slice(-8)), el('span', '', auditLine({ action: a.action, target: a.target, Error: a.error })));
+      ul.append(li);
+    }
+    c.append(ul);
+    return c;
+  }
+
+  function paint() {
+    if (loadError) {
+      body.replaceChildren(unavailable(loadError) ? unavailableCard('The router dashboard') : emptyState('Could not load', loadError.message));
+      return;
+    }
+    if (!data) { body.replaceChildren(el('p', 'muted', 'Loading.')); return; }
+    const parts = [header()];
+    if (data.running) {
+      const grid = el('div', 'up-grid');
+      const a = el('div', 'up-col');
+      const b = el('div', 'up-col');
+      if (can(data, 'rules')) a.append(rulesCard());
+      if (can(data, 'flows')) a.append(requestsCard());
+      if (can(data, 'alarms')) b.append(alarmsCard());
+      if (can(data, 'devices')) b.append(devicesCard());
+      const au = auditCard();
+      if (au) b.append(au);
+      grid.append(a, b);
+      parts.push(grid);
+    }
+    body.replaceChildren(...parts);
+  }
+
+  return {
+    root,
+    async show() {
+      started = true;
+      await load();
+      clearInterval(timer);
+      timer = setInterval(() => { if (started && !busy && !root.contains(document.activeElement)) load(); }, 15000);
+    },
+    hide() { started = false; clearInterval(timer); timer = 0; },
+  };
+}

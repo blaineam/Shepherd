@@ -30,19 +30,52 @@ UniFi's documented API manages the network (devices, clients, firewall and DNS p
 report requests or raise alarms. That is the case for pairing: with a UniFi network, Shepherd's DNS
 history supplies the requests, and the backend supplies the controls.
 
-## Status
+## What it does today (Firewalla)
 
-- **Built:** the contract and its tests; the Firewalla MSP backend (`internal/backends/firewalla`)
-  with every read and write above, tested against a fake MSP. The bandwidth reader
-  (`internal/routerusage`, [TRAFFIC.md](TRAFFIC.md#firewalla-msp)) uses the same token.
-- **Next:** ingestion (flows into the history store, alarms into the alarm engine, devices into the
-  registry), the portal's rule and device controls with preview, confirmation and an audit trail,
-  the `dashboard` mode that turns the DNS engine off, and a UniFi backend.
+Connect an account under **Read from your router** on the Bandwidth screen, then open **Firewalla**
+in the sidebar.
 
-## Not verified
+**Reading** (always on once connected, every 30 seconds):
 
-Everything here was written from Firewalla's published documentation and run against a fake. Not yet
-confirmed against a live account: the query syntax for filtering flows by device, the exact
-`status` values on rules, how a network-wide rule is expressed, and the period `totalDownload`
-covers. Where Shepherd had to guess it says so in the code, and nothing writes to a box until the
-owner turns writes on.
+- **Requests.** Each flow becomes a history entry of type `FLOW`, so it appears in Activity and
+  History beside the lookups Shepherd answers itself, with the device resolved by MAC. A flow MSP
+  blocked is a blocked entry. Each flow is ingested once, and a restart resumes from the last flow
+  seen rather than repeating the last few minutes.
+- **Alarms.** MSP's active alarms are raised as `backend-alarm` alarms, once each. Alarms older
+  than a day when Shepherd first connects are shown but not announced.
+- **Devices and rules** are listed on the screen. Devices are matched to Shepherd's by MAC.
+- **Bandwidth** comes from the same flows ([TRAFFIC.md](TRAFFIC.md#firewalla-msp)).
+
+**Changing** is a separate switch, **Allow changes**, off by default and independent of what the
+token permits, so connecting for reading never gives the portal the power to change a firewall.
+With it on:
+
+- **Block** a request: one click on a request row proposes "block this domain for that device",
+  DNS-only (Firewalla's default and the gentlest block).
+- **Add a rule** from a form: block or allow, a domain, address, network, category, app, region or
+  target list, for every device or one.
+- **Pause, resume, delete** a rule. **Rename** a device. **Dismiss** an alarm.
+
+Every change is previewed in words, confirmed in a dialog, and refused by the server unless it says
+`confirm: true`, so nothing can change a rule by accident. A rule that applies to every device says
+so before it is made. Each attempt, successful or not, is recorded in the change log on the screen
+and in Shepherd's log. A Read Only token is refused up front, before any request is sent.
+
+A rule with no box named applies to every box on the account, which is how MSP treats a rule with
+no `gid`.
+
+## Not built yet
+
+- A `dashboard` mode that turns Shepherd's own DNS engine off when Firewalla does the filtering.
+  The hub runs beside the DNS server today.
+- A UniFi backend.
+- Time-limit rules, schedules and target-list management. MSP can create only block and allow
+  rules over the API.
+- Filtering flows by device on the MSP side; the list is filtered in Shepherd.
+
+## Verified against
+
+Everything here was written from Firewalla's published documentation and examples and run against a
+fake MSP, not a live account. The query syntax (`ts:`, `box:`, `status:`) and the data models were
+checked against docs.firewalla.net; the request and response shapes of writes were not exercised
+against a real box. Run it read-only first.

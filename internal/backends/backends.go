@@ -142,15 +142,18 @@ func Has(b Backend, c Capability) bool {
 // separators, which is what Shepherd's registry keys on; it is empty for
 // something that is not a hardware device, such as a VPN profile.
 type Device struct {
-	MAC      string
-	Name     string
-	IP       string
-	Vendor   string
-	Online   bool
-	Group    string
-	Network  string
-	Download uint64 // bytes, as the product counts them
-	Upload   uint64
+	MAC     string
+	Name    string
+	IP      string
+	Vendor  string
+	Online  bool
+	Group   string
+	Network string
+	// Down24h and Up24h are what the product reports for the last 24
+	// hours. They are a rolling window, not a running total, so they must
+	// not be differenced into traffic.
+	Down24h uint64
+	Up24h   uint64
 	// Box names where the product keeps it (Firewalla's box ID), which a
 	// rename needs. Opaque to everything else.
 	Box string
@@ -184,6 +187,8 @@ type Flow struct {
 	Category  string
 	Country   string
 	Box       string
+	// Count is how many connections or sessions the record stands for.
+	Count int
 }
 
 // FlowQuery selects flows. From and To bound the time range; a zero From
@@ -204,8 +209,9 @@ type FlowPage struct {
 type Alarm struct {
 	ID        string
 	Time      time.Time
-	Type      string
+	Type      string // the product's own name for the kind of alarm
 	Message   string
+	Domain    string // the remote host, when the alarm names one
 	DeviceMAC string
 	Device    string
 	Box       string
@@ -237,12 +243,17 @@ type AlarmPage struct {
 // Rule is an access rule as a product holds it.
 type Rule struct {
 	ID         string
-	Action     string // "block" or "allow"
-	TargetType string // "domain", "ip", "category"
+	Action     string // "block", "allow" or "timelimit"
+	TargetType string // see TargetTypes
 	Target     string
-	// ScopeType is "device" for one device, "" for the whole network.
+	// DNSOnly is true when a domain, category, app or list rule applies to
+	// name lookups only.
+	DNSOnly bool
+	// ScopeType is "device", "group", "user" or "network", or "" when the
+	// rule applies to every device.
 	ScopeType string
-	Scope     string // the device's MAC when ScopeType is "device"
+	Scope     string // a device's MAC when ScopeType is "device"
+	Name      string
 	Paused    bool
 	Notes     string
 	Created   time.Time
@@ -254,14 +265,33 @@ type RuleSpec struct {
 	Action     string
 	TargetType string
 	Target     string
-	// DNSOnly limits a domain rule to name lookups, which is what a DNS
-	// block means. Left false it also blocks the connection.
-	DNSOnly   bool
-	ScopeType string
-	Scope     string
-	Notes     string
-	// Box says which box gets the rule when the account has several.
+	// BlockConnections makes a domain, category, app or list rule act on
+	// the connection as well as the name lookup. Left false the rule is
+	// DNS-only, which is Firewalla's default for those targets.
+	BlockConnections bool
+	ScopeType        string
+	Scope            string
+	Notes            string
+	// Box limits the rule to one box. Empty applies it to every box on the
+	// account, including ones added later.
 	Box string
+}
+
+// TargetTypes and ScopeTypes are what Shepherd will create. The product
+// knows more (internet, intranet, remotePort); these cover what a person
+// blocks from a request or an alarm.
+var (
+	TargetTypes = []string{"domain", "ip", "net", "category", "app", "region", "targetlist"}
+	ScopeTypes  = []string{"device", "group", "user", "network"}
+)
+
+func oneOf(v string, set []string) bool {
+	for _, s := range set {
+		if s == v {
+			return true
+		}
+	}
+	return false
 }
 
 // Validate refuses a spec Shepherd would not send, naming the problem.
@@ -271,25 +301,23 @@ func (s RuleSpec) Validate() error {
 	default:
 		return invalid("the action must be block or allow")
 	}
-	switch s.TargetType {
-	case "domain", "ip", "category":
-	default:
-		return invalid("the target type must be domain, ip or category")
+	if !oneOf(s.TargetType, TargetTypes) {
+		return invalid("the target type must be one of " + strings.Join(TargetTypes, ", "))
 	}
 	if strings.TrimSpace(s.Target) == "" {
 		return invalid("a rule needs a target")
 	}
-	switch s.ScopeType {
-	case "":
+	if s.ScopeType == "" {
 		if s.Scope != "" {
 			return invalid("a scope value needs a scope type")
 		}
-	case "device":
-		if strings.TrimSpace(s.Scope) == "" {
-			return invalid("a device rule needs the device")
-		}
-	default:
-		return invalid("the scope must be a device or the whole network")
+		return nil
+	}
+	if !oneOf(s.ScopeType, ScopeTypes) {
+		return invalid("the scope must be one of " + strings.Join(ScopeTypes, ", ") + ", or empty for every device")
+	}
+	if strings.TrimSpace(s.Scope) == "" {
+		return invalid("a " + s.ScopeType + " rule needs its " + s.ScopeType)
 	}
 	return nil
 }

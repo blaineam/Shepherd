@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"shepherd/internal/backends"
@@ -49,6 +50,7 @@ type Client struct {
 	cfg  Config
 	base string
 	hc   *http.Client
+	ro   atomic.Bool
 }
 
 // New returns a Client. The connection is not made until the first call.
@@ -69,19 +71,25 @@ func New(cfg Config) (*Client, error) {
 	if tr == nil {
 		tr = http.DefaultTransport
 	}
-	return &Client{cfg: cfg, base: base, hc: &http.Client{
+	c := &Client{cfg: cfg, base: base, hc: &http.Client{
 		Transport: tr, Timeout: cfg.Timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return errors.New("firewalla: redirects are not followed")
 		},
-	}}, nil
+	}}
+	c.ro.Store(cfg.ReadOnly)
+	return c, nil
 }
 
 // Name implements backends.Backend.
 func (c *Client) Name() string { return "firewalla" }
 
 // ReadOnly implements backends.Backend.
-func (c *Client) ReadOnly() bool { return c.cfg.ReadOnly }
+func (c *Client) ReadOnly() bool { return c.ro.Load() }
+
+// SetReadOnly changes whether writes are refused, without reconnecting,
+// so the owner can switch write access on or off from the portal.
+func (c *Client) SetReadOnly(ro bool) { c.ro.Store(ro) }
 
 const maxResponse = 16 << 20
 
@@ -148,7 +156,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 }
 
 func (c *Client) writable() error {
-	if c.cfg.ReadOnly {
+	if c.ro.Load() {
 		return backends.ErrReadOnly
 	}
 	return nil
@@ -216,7 +224,9 @@ type wireFlow struct {
 	Upload    num      `json:"upload"`
 	Category  string   `json:"category"`
 	Region    string   `json:"region"`
+	Count     num      `json:"count"`
 	Device    wireRef  `json:"device"`
+	Source    *wireRef `json:"source"`
 	Dest      *wireRef `json:"destination"`
 }
 
@@ -227,12 +237,16 @@ type wireAlarm struct {
 	TS      num         `json:"ts"`
 	GID     string      `json:"gid"`
 	Device  wireRef     `json:"device"`
+	Remote  struct {
+		Domain string `json:"domain"`
+		IP     string `json:"ip"`
+	} `json:"remote"`
 }
 
 type wireTarget struct {
 	Type    string `json:"type"`
 	Value   string `json:"value"`
-	DNSOnly bool   `json:"dnsOnly,omitempty"`
+	DNSOnly *bool  `json:"dnsOnly,omitempty"`
 }
 
 type wireScope struct {
@@ -242,9 +256,10 @@ type wireScope struct {
 
 type wireRule struct {
 	ID        string     `json:"id"`
+	Name      string     `json:"name,omitempty"`
 	Action    string     `json:"action"`
 	Direction string     `json:"direction,omitempty"`
-	GID       string     `json:"gid"`
+	GID       string     `json:"gid,omitempty"`
 	Notes     string     `json:"notes"`
 	Status    string     `json:"status"`
 	TS        num        `json:"ts"`
@@ -274,7 +289,7 @@ func (c *Client) Devices(ctx context.Context) ([]backends.Device, error) {
 		out = append(out, backends.Device{
 			MAC: routerusage.NormalizeMAC(d.ID), Name: d.Name, IP: d.IP, Vendor: d.MACVendor,
 			Online: d.Online, Group: d.Group.Name, Network: d.Network.Name,
-			Download: d.TotalDownload.bytes(), Upload: d.TotalUpload.bytes(),
+			Down24h: d.TotalDownload.bytes(), Up24h: d.TotalUpload.bytes(),
 			Box: d.GID, Native: d.ID,
 		})
 	}
@@ -312,14 +327,21 @@ func (c *Client) Flows(ctx context.Context, fq backends.FlowQuery) (backends.Flo
 			Blocked: f.Block, Download: f.Download.bytes(), Upload: f.Upload.bytes(),
 			Category: f.Category, Country: f.Region, Box: f.GID,
 		}
-		if f.Dest != nil {
-			fl.RemoteIP = f.Dest.IP
-			// MSP names a destination by its domain when it knows one and
+		// The remote end is the destination of an outbound flow and the
+		// source of an inbound one. A local flow has no remote host.
+		remote := f.Dest
+		if f.Direction == "inbound" {
+			remote = f.Source
+		}
+		if remote != nil && f.Direction != "local" {
+			fl.RemoteIP = remote.IP
+			// MSP names a remote host by its domain when it knows one and
 			// by its address otherwise.
-			if f.Dest.Name != "" && f.Dest.Name != f.Dest.IP {
-				fl.Domain = strings.ToLower(strings.TrimSuffix(f.Dest.Name, "."))
+			if remote.Name != "" && remote.Name != remote.IP {
+				fl.Domain = strings.ToLower(strings.TrimSuffix(remote.Name, "."))
 			}
 		}
+		fl.Count = int(f.Count)
 		out.Flows = append(out.Flows, fl)
 	}
 	return out, nil
@@ -346,11 +368,26 @@ func (c *Client) Alarms(ctx context.Context, aq backends.AlarmQuery) (backends.A
 	out := backends.AlarmPage{Next: raw.NextCursor, Alarms: make([]backends.Alarm, 0, len(raw.Results))}
 	for _, a := range raw.Results {
 		out.Alarms = append(out.Alarms, backends.Alarm{
-			ID: a.AID.String(), Time: a.TS.time(), Type: a.Type.String(), Message: a.Message,
-			DeviceMAC: routerusage.NormalizeMAC(a.Device.ID), Device: a.Device.Name, Box: a.GID,
+			ID: a.AID.String(), Time: a.TS.time(), Type: alarmTypeName(a.Type.String()), Message: a.Message,
+			Domain: strings.ToLower(strings.TrimSuffix(a.Remote.Domain, ".")), DeviceMAC: routerusage.NormalizeMAC(a.Device.ID), Device: a.Device.Name, Box: a.GID,
 		})
 	}
 	return out, nil
+}
+
+// alarmTypes are MSP's numbered alarm kinds (docs.firewalla.net, Alarm).
+var alarmTypes = map[string]string{
+	"1": "Security Activity", "2": "Abnormal Upload", "3": "Large Bandwidth Usage", "4": "Monthly Data Plan",
+	"5": "New Device", "6": "Device Back Online", "7": "Device Offline", "8": "Video Activity",
+	"9": "Gaming Activity", "10": "Porn Activity", "11": "VPN Activity", "12": "VPN Connection Restored",
+	"13": "VPN Connection Error", "14": "Open Port", "15": "Internet Connectivity Update", "16": "Large Upload",
+}
+
+func alarmTypeName(n string) string {
+	if name, ok := alarmTypes[n]; ok {
+		return name
+	}
+	return "Alarm " + n
 }
 
 func setPaging(q url.Values, limit int, cursor string) {
@@ -384,13 +421,15 @@ func (c *Client) Rules(ctx context.Context) ([]backends.Rule, error) {
 
 func toRule(r wireRule) backends.Rule {
 	rule := backends.Rule{
-		ID: r.ID, Action: r.Action, TargetType: r.Target.Type, Target: r.Target.Value,
-		Paused: r.Status == "paused", Notes: r.Notes, Created: r.TS.time(), Box: r.GID,
+		ID: r.ID, Name: r.Name, Action: r.Action, TargetType: r.Target.Type, Target: r.Target.Value,
+		DNSOnly: r.Target.DNSOnly != nil && *r.Target.DNSOnly, Paused: r.Status == "paused", Notes: r.Notes, Created: r.TS.time(), Box: r.GID,
 	}
 	if r.Scope != nil {
 		rule.ScopeType, rule.Scope = r.Scope.Type, r.Scope.Value
 		if rule.ScopeType == "device" {
-			rule.Scope = routerusage.NormalizeMAC(rule.Scope)
+			if mac := routerusage.NormalizeMAC(rule.Scope); mac != "" {
+				rule.Scope = mac
+			}
 		}
 	}
 	return rule
@@ -406,16 +445,25 @@ func (c *Client) CreateRule(ctx context.Context, spec backends.RuleSpec) (backen
 	if err := spec.Validate(); err != nil {
 		return backends.Rule{}, err
 	}
-	box := firstNonEmpty(spec.Box, c.cfg.Box)
-	if box == "" {
-		return backends.Rule{}, fmt.Errorf("%w: name the box the rule is for", backends.ErrInvalid)
-	}
+	// With no box named the rule applies to every box on the account, which
+	// is what MSP does with a rule that has no gid.
 	body := wireRule{
-		Action: spec.Action, Direction: "bidirection", GID: box, Notes: spec.Notes,
-		Target: wireTarget{Type: spec.TargetType, Value: strings.TrimSpace(spec.Target), DNSOnly: spec.DNSOnly && spec.TargetType == "domain"},
+		Action: spec.Action, Direction: "bidirection", GID: firstNonEmpty(spec.Box, c.cfg.Box), Notes: spec.Notes,
+		Target: wireTarget{Type: spec.TargetType, Value: strings.TrimSpace(spec.Target)},
 	}
-	if spec.ScopeType == "device" {
-		body.Scope = &wireScope{Type: "device", Value: macWithColons(spec.Scope)}
+	switch spec.TargetType {
+	case "domain", "category", "app", "targetlist":
+		// MSP defaults these to DNS-only; say so explicitly either way so
+		// what is sent is what the preview described.
+		dnsOnly := !spec.BlockConnections
+		body.Target.DNSOnly = &dnsOnly
+	}
+	if spec.ScopeType != "" {
+		value := strings.TrimSpace(spec.Scope)
+		if spec.ScopeType == "device" {
+			value = macWithColons(value)
+		}
+		body.Scope = &wireScope{Type: spec.ScopeType, Value: value}
 	}
 	var got wireRule
 	if err := c.do(ctx, http.MethodPost, "/v2/rules", nil, body, &got); err != nil {

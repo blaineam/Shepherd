@@ -21,7 +21,7 @@ import (
 // networks where Watch mode cannot run. Nothing starts, and no stored
 // credential is touched, until the owner connects a router in the portal;
 // the Manager is returned so the portal can restart it when they do.
-func startRouterUsage(ctx context.Context, sec *secrets.Store, reg *devices.Registry, store *traffic.Store, watchEngine *watch.Engine) *routerusage.Manager {
+func startRouterUsage(ctx context.Context, sec *secrets.Store, reg *devices.Registry, store *traffic.Store, watchEngine *watch.Engine, backend *backendManager) *routerusage.Manager {
 	build := func() (*routerusage.Collector, bool, error) {
 		// A UniFi controller keeps real byte counters, so it wins over
 		// Firewalla's totals and eero's sampled rates when connected and on.
@@ -31,11 +31,11 @@ func startRouterUsage(ctx context.Context, sec *secrets.Store, reg *devices.Regi
 			}
 			return newCollector(src, routerusage.UniFiNeedsSignIn, reg, store, watchEngine), true, nil
 		}
-		// Firewalla MSP also reports byte totals, so it beats eero too.
-		if src, ok, err := firewallaSource(sec); ok || err != nil {
-			if err != nil {
-				return nil, false, err
-			}
+		// A connected Firewalla's flows, added up, are real byte counts, so
+		// they beat eero's sampled rates. They come from the dashboard hub,
+		// which is why this needs it.
+		if backend != nil && backend.hub() != nil {
+			src := routerusage.NewFeed("firewalla", backend.samples)
 			return newCollector(src, routerusage.FirewallaNeedsSignIn, reg, store, watchEngine), true, nil
 		}
 		e, ok := sec.Eero()
@@ -75,22 +75,6 @@ func unifiSource(sec *secrets.Store) (routerusage.Source, bool, error) {
 		Password:        u.Password,
 		Site:            u.Site,
 		AllowSelfSigned: u.AllowSelfSigned,
-	})
-	if err != nil {
-		return nil, false, err
-	}
-	return src, true, nil
-}
-
-// firewallaSource builds the Firewalla MSP source, if the owner has
-// connected an account and left it on. ok is false when they have not.
-func firewallaSource(sec *secrets.Store) (routerusage.Source, bool, error) {
-	f, ok := sec.Firewalla()
-	if !ok || !f.Enabled {
-		return nil, false, nil
-	}
-	src, err := routerusage.NewFirewalla(routerusage.FirewallaConfig{
-		BaseURL: f.BaseURL, Token: f.Token, Box: f.Box,
 	})
 	if err != nil {
 		return nil, false, err

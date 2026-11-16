@@ -25,6 +25,8 @@ import (
 	"shepherd/internal/accountability"
 	"shepherd/internal/alarms"
 	"shepherd/internal/arp"
+	"shepherd/internal/backends"
+	"shepherd/internal/backends/hub"
 	"shepherd/internal/decoy"
 	"shepherd/internal/detect"
 	"shepherd/internal/devices"
@@ -251,6 +253,11 @@ type Deps struct {
 	// no cmd/shepherd wiring gets.
 	RouterUsage UsageReader
 
+	// Backend is the dashboard over a router or firewall the owner has
+	// connected (internal/backends, docs/BACKENDS.md). Nil in a build
+	// without it; the endpoints then say so.
+	Backend BackendHub
+
 	// Traffic is the bandwidth history (docs/TRAFFIC.md), fed by Watch
 	// mode. Nil gets an empty, memory-only store so the API still answers.
 	Traffic *traffic.Store
@@ -322,6 +329,28 @@ type UsageReader interface {
 	// Reload re-reads the stored connection and starts, stops or restarts
 	// the collector to match.
 	Reload()
+}
+
+// BackendHub is what the portal needs from the dashboard hub: its latest
+// view, and the writes it can make. Every write is refused by the hub when
+// the connection is read-only.
+type BackendHub interface {
+	// Reload re-reads the stored connection and starts, stops or restarts
+	// the hub to match.
+	Reload()
+	// LastError is why the hub could not start, "" otherwise.
+	LastError() string
+	// Snapshot is the latest view; ok is false when no hub is running.
+	Snapshot() (hub.Snapshot, bool)
+	// Refresh reads everything now.
+	Refresh(ctx context.Context)
+
+	PreviewRule(spec backends.RuleSpec) (hub.RulePreview, error)
+	CreateRule(ctx context.Context, spec backends.RuleSpec) (backends.Rule, error)
+	SetRulePaused(ctx context.Context, id string, paused bool) error
+	DeleteRule(ctx context.Context, id string) error
+	RenameDevice(ctx context.Context, ref backends.DeviceRef, name string) error
+	DismissAlarm(ctx context.Context, ref backends.AlarmRef) error
 }
 
 // WatchEngine is what the portal needs from Watch mode's engine
@@ -723,6 +752,16 @@ func (s *Server) routes() {
 	h("POST /api/routerusage/unifi", s.connectUniFi)
 	h("POST /api/routerusage/unifi/enabled", s.setUniFiEnabled)
 	h("DELETE /api/routerusage/unifi", s.forgetUniFi)
+	h("GET /api/backend", s.getBackend)
+	h("POST /api/backend/refresh", s.refreshBackend)
+	h("POST /api/backend/writes", s.setBackendWrites)
+	h("POST /api/backend/rules/preview", s.previewBackendRule)
+	h("POST /api/backend/rules", s.createBackendRule)
+	h("POST /api/backend/rules/{id}/pause", s.pauseBackendRule)
+	h("POST /api/backend/rules/{id}/resume", s.resumeBackendRule)
+	h("POST /api/backend/rules/{id}/delete", s.deleteBackendRule)
+	h("POST /api/backend/devices/rename", s.renameBackendDevice)
+	h("POST /api/backend/alarms/dismiss", s.dismissBackendAlarm)
 	h("POST /api/routerusage/firewalla", s.connectFirewalla)
 	h("POST /api/routerusage/firewalla/enabled", s.setFirewallaEnabled)
 	h("DELETE /api/routerusage/firewalla", s.forgetFirewalla)

@@ -5,6 +5,7 @@ package portal
 import (
 	"errors"
 	"net/http"
+	"shepherd/internal/backends/firewalla"
 	"strings"
 
 	"shepherd/internal/importers"
@@ -348,16 +349,16 @@ func (s *Server) connectFirewalla(w http.ResponseWriter, r *http.Request) {
 		notFound(w, "this build cannot read bandwidth from a router")
 		return
 	}
-	src, err := routerusage.NewFirewalla(routerusage.FirewallaConfig{
-		BaseURL: b.BaseURL, Token: b.Token, Box: b.Box, Transport: s.FirewallaTransport,
+	src, err := firewalla.New(firewalla.Config{
+		BaseURL: b.BaseURL, Token: b.Token, Box: b.Box, ReadOnly: true, Transport: s.FirewallaTransport,
 	})
 	if err != nil {
 		bad(w, err.Error())
 		return
 	}
 	// Check it before storing it, so a typo is a message here rather than
-	// a collector that never works.
-	if _, err := src.Poll(r.Context()); err != nil {
+	// a dashboard that never works.
+	if _, err := src.Devices(r.Context()); err != nil {
 		bad(w, err.Error())
 		return
 	}
@@ -372,7 +373,7 @@ func (s *Server) connectFirewalla(w http.ResponseWriter, r *http.Request) {
 		serverFault(w, "the Firewalla account could not be saved")
 		return
 	}
-	s.RouterUsage.Reload()
+	s.reloadFirewalla()
 	writeJSON(w, s.routerUsageJSON())
 }
 
@@ -396,7 +397,7 @@ func (s *Server) setFirewallaEnabled(w http.ResponseWriter, r *http.Request) {
 		notFound(w, "no Firewalla account is connected")
 		return
 	}
-	s.RouterUsage.Reload()
+	s.reloadFirewalla()
 	writeJSON(w, s.routerUsageJSON())
 }
 
@@ -409,6 +410,15 @@ func (s *Server) forgetFirewalla(w http.ResponseWriter, r *http.Request) {
 		serverFault(w, "the Firewalla account could not be forgotten")
 		return
 	}
-	s.RouterUsage.Reload()
+	s.reloadFirewalla()
 	writeJSON(w, s.routerUsageJSON())
+}
+
+// reloadFirewalla restarts what reads from a Firewalla account. The hub
+// goes first, because the bandwidth reader takes its counters from it.
+func (s *Server) reloadFirewalla() {
+	if s.Backend != nil {
+		s.Backend.Reload()
+	}
+	s.RouterUsage.Reload()
 }
