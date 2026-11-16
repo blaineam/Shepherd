@@ -496,3 +496,47 @@ func TestReadOnlyCanBeSwitchedWithoutReconnecting(t *testing.T) {
 		t.Fatalf("%v after %d requests", err, f.count())
 	}
 }
+
+func TestFlowsCanBeFilteredToOneDeviceOnTheMSPSide(t *testing.T) {
+	f := &fakeMSP{answers: map[string]string{"GET /v2/flows": `{"results":[]}`}}
+	c := newClient(t, f, func(c *Config) { c.Box = "box-1" })
+	if _, err := c.Flows(ctx, backends.FlowQuery{DeviceMAC: "02-00-5e-00-00-01", From: time.Unix(100, 0), To: time.Unix(200, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	q, _ := url.ParseQuery(f.last().RawQuery)
+	want := `ts:100-200 box:box-1 device.id:"02:00:5E:00:00:01"`
+	if q.Get("query") != want {
+		t.Fatalf("query = %q, want %q", q.Get("query"), want)
+	}
+	if _, err := c.Flows(ctx, backends.FlowQuery{DeviceMAC: "nonsense"}); !errors.Is(err, backends.ErrInvalid) {
+		t.Fatalf("a bad address must be refused before a request: %v", err)
+	}
+}
+
+func TestTimeLimitAndScheduledRulesCarryTheirUsageAndSchedule(t *testing.T) {
+	f := &fakeMSP{answers: map[string]string{"GET /v2/rules": `{"results":[
+	 {"id":"t1","action":"timelimit","status":"active","target":{"type":"app","value":"youtube"},
+	  "scope":{"type":"group","value":"kids"},"timeUsage":{"quota":60,"used":45}},
+	 {"id":"s1","action":"block","status":"paused","resumeTs":1700003600,
+	  "target":{"type":"category","value":"games"},"schedule":{"duration":28800,"cronTime":"0 21 * * *"}}]}`}}
+	rules, err := newClient(t, f, nil).Rules(ctx)
+	if err != nil || len(rules) != 2 {
+		t.Fatalf("%+v, %v", rules, err)
+	}
+	tl, sc := rules[0], rules[1]
+	if tl.Action != "timelimit" || tl.QuotaMinutes != 60 || tl.UsedMinutes != 45 || tl.ScopeType != "group" {
+		t.Fatalf("time limit = %+v", tl)
+	}
+	if sc.Schedule != "0 21 * * * for 480 min" || !sc.Paused || sc.ResumeAt.Unix() != 1700003600 {
+		t.Fatalf("scheduled = %+v", sc)
+	}
+}
+
+func TestTheProductsTimeLimitsCannotBeCreatedOverItsAPI(t *testing.T) {
+	// MSP documents block and allow only for POST /v2/rules, so Shepherd
+	// refuses a time limit instead of sending something MSP will reject.
+	_, err := newClient(t, &fakeMSP{}, nil).CreateRule(ctx, backends.RuleSpec{Action: "timelimit", TargetType: "app", Target: "youtube"})
+	if !errors.Is(err, backends.ErrInvalid) {
+		t.Fatalf("err = %v", err)
+	}
+}

@@ -38,6 +38,9 @@ const (
 	CapRuleWrite    Capability = "rules:write"
 	CapDeviceRename Capability = "devices:rename"
 	CapAlarmDismiss Capability = "alarms:dismiss"
+	// CapSchedule is Shepherd's own: it holds a time window for a rule and
+	// pauses and resumes the rule to match (internal/backends/hub).
+	CapSchedule Capability = "rules:schedule"
 )
 
 // Errors every backend maps its failures onto. Use errors.Is.
@@ -194,9 +197,11 @@ type Flow struct {
 // FlowQuery selects flows. From and To bound the time range; a zero From
 // leaves the product's default window (Firewalla's is the last 24 hours).
 type FlowQuery struct {
-	From, To time.Time
-	Limit    int    // at most 500
-	Cursor   string // from a previous page's Next
+	// DeviceMAC limits the flows to one device (a MAC, any separators).
+	DeviceMAC string
+	From, To  time.Time
+	Limit     int    // at most 500
+	Cursor    string // from a previous page's Next
 }
 
 // FlowPage is one page, newest first. Next is empty on the last page.
@@ -258,6 +263,14 @@ type Rule struct {
 	Notes     string
 	Created   time.Time
 	Box       string
+	// Schedule is when the product itself applies the rule, in words, ""
+	// for always.
+	Schedule string
+	// QuotaMinutes and UsedMinutes describe a time-limit rule: the daily
+	// allowance and how much of it is used. Zero for any other rule.
+	QuotaMinutes, UsedMinutes int
+	// ResumeAt is when a paused rule resumes by itself, zero if it does not.
+	ResumeAt time.Time
 }
 
 // RuleSpec is a rule to create.

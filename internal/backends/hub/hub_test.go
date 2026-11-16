@@ -312,7 +312,7 @@ func TestSnapshotCarriesCapabilitiesAndIsACopy(t *testing.T) {
 	h := newHub(t, f, &sinks{}, &now)
 	h.Refresh(ctx)
 	snap := h.Snapshot()
-	if len(snap.Capabilities) != 7 || snap.ReadOnly || snap.Name != "fakewall" {
+	if len(snap.Capabilities) != 8 || snap.ReadOnly || snap.Name != "fakewall" {
 		t.Fatalf("snapshot = %+v", snap)
 	}
 	snap.Rules[0].ID = "mutated"

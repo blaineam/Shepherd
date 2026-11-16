@@ -6,7 +6,7 @@ import { el } from './dom.js';
 import { button, emptyState, unavailableCard, confirmDialog } from './ui.js';
 import { unavailable } from './mgmt.js';
 import { fmtDateTime } from './format.js';
-import { can, statusLine, blockSpecFromFlow, ruleSummary, requestLine, auditLine } from './backend.js';
+import { can, statusLine, blockSpecFromFlow, ruleSummary, requestLine, auditLine, DAY_NAMES, scheduleText, scheduleFor, scheduleBody, scheduleProblem } from './backend.js';
 
 export function createBackend({ root, mgmt, notify }) {
   let data = null;
@@ -15,6 +15,12 @@ export function createBackend({ root, mgmt, notify }) {
   let busy = false;
   let started = false;
   // The rule form the owner is filling in, and the preview awaiting a yes.
+  // Which rule's schedule form is open, and what is in it.
+  let schedOpen = '';
+  const sched = { days: new Set([1, 2, 3, 4, 5]), start: '21:00', end: '07:00' };
+  // The device the request list is narrowed to, and what came back.
+  let flowDevice = '';
+  let flowsFiltered = null;
   const draft = { action: 'block', target_type: 'domain', target: '', scope_type: '', scope: '', block_connections: false };
 
   root.replaceChildren();
@@ -121,12 +127,69 @@ export function createBackend({ root, mgmt, notify }) {
         }));
         pause.disabled = busy; del.disabled = busy;
         li.append(pause, del);
+        if (can(data, 'rules:schedule') && !scheduleFor(data.schedules, r.ID)) {
+          const sb = button('Schedule', 'ghost', () => { schedOpen = schedOpen === r.ID ? '' : r.ID; paint(); });
+          sb.disabled = busy;
+          li.append(sb);
+        }
       }
       ul.append(li);
+      const sc = scheduleFor(data.schedules, r.ID);
+      if (sc) ul.append(scheduleLine(sc));
+      if (schedOpen === r.ID) ul.append(scheduleForm(r));
     }
     c.append(ul);
     if (can(data, 'rules:write')) c.append(ruleForm());
     return c;
+  }
+
+  // A scheduled rule is enforced only inside its window; Shepherd pauses
+  // and resumes it to match.
+  function scheduleLine(sc) {
+    const li = el('li', 'up-item small');
+    li.append(el('span', 'muted', scheduleText(sc)));
+    const rm = button('Remove schedule', 'ghost', () => act({
+      title: 'Remove this schedule?', text: scheduleText(sc) + '. The rule stays as it is now; you choose what happens to it.',
+      confirm: 'Remove', send: () => mgmt.backendScheduleDelete(sc.id), done: 'Schedule removed',
+    }));
+    rm.disabled = busy;
+    li.append(rm);
+    return li;
+  }
+
+  function scheduleForm(rule) {
+    const li = el('li', 'up-item');
+    const form = el('form', 'ru-form');
+    form.append(el('span', 'muted small', 'Enforce this rule only:'));
+    const boxes = el('span', 'bk-days');
+    DAY_NAMES.forEach((name, i) => {
+      const lab = el('label', 'switch');
+      const cb = el('input');
+      cb.type = 'checkbox'; cb.checked = sched.days.has(i);
+      cb.addEventListener('change', () => { if (cb.checked) sched.days.add(i); else sched.days.delete(i); });
+      lab.append(cb, el('span', '', name));
+      boxes.append(lab);
+    });
+    const start = el('input'); start.type = 'time'; start.value = sched.start; start.setAttribute('aria-label', 'From');
+    start.addEventListener('input', () => { sched.start = start.value; });
+    const end = el('input'); end.type = 'time'; end.value = sched.end; end.setAttribute('aria-label', 'Until');
+    end.addEventListener('input', () => { sched.end = end.value; });
+    const go = el('button', '', 'Save schedule');
+    const cancel = button('Cancel', 'ghost', () => { schedOpen = ''; paint(); });
+    form.append(boxes, el('span', 'muted small', 'from'), start, el('span', 'muted small', 'until'), end, go, cancel);
+    form.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const problem = scheduleProblem(sched.days, sched.start, sched.end);
+      if (problem) { notify(problem); return; }
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      const body = scheduleBody(rule.ID, sched.days, sched.start, sched.end, tz);
+      act({
+        title: 'Schedule this rule?', text: ruleSummary(rule, data.devices) + '. ' + scheduleText({ ...body }) + '. Shepherd will pause the rule outside this window and resume it inside.',
+        confirm: 'Save schedule', send: () => mgmt.backendScheduleAdd(body), done: 'Schedule saved',
+      }).then(() => { schedOpen = ''; paint(); });
+    });
+    li.append(form);
+    return li;
   }
 
   function ruleForm() {
@@ -179,9 +242,23 @@ export function createBackend({ root, mgmt, notify }) {
 
   // -------------------------------------------------------------- requests
   function requestsCard() {
-    const flows = (data.flows || []).slice(0, 40);
-    const c = card('Recent requests', 'newest first');
-    if (!flows.length) { c.append(el('p', 'muted small', 'Nothing yet.')); return c; }
+    const flows = (flowDevice && flowsFiltered ? flowsFiltered : (data.flows || [])).slice(0, 40);
+    const c = card('Recent requests', flowDevice ? 'for one device' : 'newest first');
+    const pick = el('select');
+    pick.setAttribute('aria-label', 'Show requests from');
+    const every = el('option', '', 'All devices'); every.value = ''; pick.append(every);
+    for (const d of data.devices || []) {
+      if (!d.MAC) continue;
+      const o = el('option', '', d.Name || d.MAC); o.value = d.MAC; pick.append(o);
+    }
+    pick.value = flowDevice;
+    pick.disabled = busy;
+    pick.addEventListener('change', () => run(async () => {
+      flowDevice = pick.value;
+      flowsFiltered = flowDevice ? (await mgmt.backendFlows({ device: flowDevice, limit: 100 })).flows : null;
+    }));
+    c.append(pick);
+    if (!flows.length) { c.append(el('p', 'muted small', flowDevice ? 'No requests from this device.' : 'Nothing yet.')); return c; }
     const ul = el('ul', 'up-list');
     for (const f of flows) {
       const line = requestLine(f);

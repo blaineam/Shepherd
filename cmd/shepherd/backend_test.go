@@ -4,17 +4,24 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"shepherd/internal/alarms"
 	"shepherd/internal/backends"
+	"shepherd/internal/backends/hub"
+	"shepherd/internal/config"
 	"shepherd/internal/devices"
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/secrets"
@@ -228,3 +235,108 @@ func TestTheBackendResolvesDevicesByMACThenAddress(t *testing.T) {
 }
 
 func alarmsEvent() alarms.Event { return alarms.Event{Type: alarms.TypeBackendAlarm, Title: "x"} }
+
+// Dashboard mode: Shepherd serves no DNS at all and is only a portal.
+func TestDashboardModeServesNoDNSAndStillServesThePortal(t *testing.T) {
+	dir := t.TempDir()
+	dnsPort, webPort := freePort(t), freePort(t)
+	cfg := fmt.Sprintf(`data_dir = %q
+[dns]
+enabled = false
+listen = ["127.0.0.1:%d"]
+upstreams = ["192.0.2.53"]
+[portal]
+listen = "127.0.0.1:%d"
+[map]
+enabled = false
+[devices]
+neighbors = false
+mdns = false
+reverse_dns = false
+[arp]
+enabled = false
+[portscan.wan_exposure]
+enabled = false
+`, filepath.Join(dir, "data"), dnsPort, webPort)
+	path := filepath.Join(dir, "shepherd.toml")
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, path, false, os.Stdout) }()
+	r := &running{t: t, portalBase: fmt.Sprintf("http://127.0.0.1:%d", webPort)}
+	awaitBackend(t, "the portal token", func() bool {
+		b, err := os.ReadFile(filepath.Join(dir, "data", "portal-token"))
+		r.token = strings.TrimSpace(string(b))
+		return err == nil && len(r.token) >= 32
+	})
+	var out map[string]any
+	awaitBackend(t, "the portal to answer", func() bool {
+		req, _ := http.NewRequest("GET", r.portalBase+"/api/backend", nil)
+		req.Header.Set("Authorization", "Bearer "+r.token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode == 200 && json.NewDecoder(resp.Body).Decode(&out) == nil
+	})
+	if out["available"] != true || out["connected"] != false {
+		t.Fatalf("backend view = %v", out)
+	}
+
+	// The DNS port was never taken.
+	pc, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", dnsPort))
+	if err != nil {
+		t.Fatalf("dashboard mode bound the DNS port: %v", err)
+	}
+	pc.Close()
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run returned %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("run did not stop")
+	}
+}
+
+func TestDNSIsOnUnlessSwitchedOff(t *testing.T) {
+	off, on := false, true
+	if !(config.DNS{}).On() || !(config.DNS{Enabled: &on}).On() || (config.DNS{Enabled: &off}).On() {
+		t.Fatal("dns.enabled defaults to on and only false turns it off")
+	}
+}
+
+func TestFlowsAndSchedulesGoThroughTheManager(t *testing.T) {
+	none := &backendManager{parent: context.Background(), sec: testSecrets(t), qlog: dnsengine.NewQueryLog(1)}
+	if _, err := none.QueryFlows(context.Background(), backends.FlowQuery{}); !errors.Is(err, errNoBackend) {
+		t.Fatal(err)
+	}
+	if _, err := none.AddSchedule(context.Background(), hub.Schedule{}); !errors.Is(err, errNoBackend) {
+		t.Fatal(err)
+	}
+	if err := none.DeleteSchedule("x"); !errors.Is(err, errNoBackend) {
+		t.Fatal(err)
+	}
+
+	m, _, _ := connected(t, true)
+	awaitBackend(t, "the rules", func() bool { s, ok := m.Snapshot(); return ok && s.Status.LastPoll != nil })
+	page, err := m.QueryFlows(context.Background(), backends.FlowQuery{DeviceMAC: "02005e000001"})
+	if err != nil || len(page.Flows) != 1 {
+		t.Fatalf("%+v, %v", page, err)
+	}
+	if _, err := m.AddSchedule(context.Background(), hub.Schedule{RuleID: "nope", Days: []int{1}, Start: "09:00", End: "10:00", TZ: "UTC"}); !errors.Is(err, backends.ErrInvalid) {
+		t.Fatalf("a schedule for a rule that is not there: %v", err)
+	}
+	if err := m.DeleteSchedule("nope"); !errors.Is(err, backends.ErrNotFound) {
+		t.Fatal(err)
+	}
+	m.Refresh(context.Background())
+	if m.raise(alarms.Event{Type: alarms.TypeBackendAlarm, Title: "x"}) {
+		t.Fatal("there is no alarm engine in this test")
+	}
+}

@@ -1246,3 +1246,4 @@ button.tf-trend { cursor: pointer; } button.tf-trend:hover { border-color: var(-
 /* Router dashboard (Firewalla) */
 .bk-body { display: flex; flex-direction: column; gap: 14px; }
 .bk-card .up-item { flex-wrap: wrap; }
+.bk-days { display: inline-flex; gap: 6px; flex-wrap: wrap; }

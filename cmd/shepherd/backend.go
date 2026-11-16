@@ -83,9 +83,10 @@ func (m *backendManager) Reload() {
 	}
 	h := hub.New(hub.Options{
 		Backend: c, FlowSink: m.qlog.Add, AlarmSink: m.raise,
-		Resolve:   m.resolve,
-		StatePath: filepath.Join(m.dataDir, "backend-firewalla.json"),
-		Logf:      log.Printf,
+		Resolve:      m.resolve,
+		StatePath:    filepath.Join(m.dataDir, "backend-firewalla.json"),
+		SchedulePath: filepath.Join(m.dataDir, "backend-schedules.json"),
+		Logf:         log.Printf,
 	})
 	ctx, cancel := context.WithCancel(m.parent)
 	done := make(chan struct{})
@@ -227,6 +228,30 @@ func (m *backendManager) DismissAlarm(ctx context.Context, ref backends.AlarmRef
 		return errNoBackend
 	}
 	return h.DismissAlarm(ctx, ref)
+}
+
+func (m *backendManager) QueryFlows(ctx context.Context, q backends.FlowQuery) (backends.FlowPage, error) {
+	h := m.hub()
+	if h == nil {
+		return backends.FlowPage{}, errNoBackend
+	}
+	return h.QueryFlows(ctx, q)
+}
+
+func (m *backendManager) AddSchedule(ctx context.Context, s hub.Schedule) (hub.Schedule, error) {
+	h := m.hub()
+	if h == nil {
+		return hub.Schedule{}, errNoBackend
+	}
+	return h.AddSchedule(ctx, s)
+}
+
+func (m *backendManager) DeleteSchedule(id string) error {
+	h := m.hub()
+	if h == nil {
+		return errNoBackend
+	}
+	return h.DeleteSchedule(id)
 }
 
 // Refresh reads everything now, for the portal's refresh button.

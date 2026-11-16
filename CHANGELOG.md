@@ -15,6 +15,12 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Added
 
+- **Dashboard mode, schedules and device filtering** ([docs/BACKENDS.md](docs/BACKENDS.md)).
+  `dns.enabled = false` serves no DNS and makes Shepherd a portal over the router or firewall that
+  does the filtering. A rule can be given a **schedule**: Shepherd pauses it outside a window of days
+  and times and resumes it inside, which is how a time limit is made when the product's API cannot
+  create its own. Firewalla's native time-limit rules are shown with their usage. The request list can
+  be narrowed to one device, asked of Firewalla itself.
 - **Firewalla dashboard** ([docs/BACKENDS.md](docs/BACKENDS.md)). Connect a Firewalla MSP account under
   "Read from your router" and a new **Firewalla** screen shows what your boxes see and lets you change
   what they enforce. Reading: each flow becomes a history entry beside Shepherd's own lookups (with the

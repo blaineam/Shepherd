@@ -345,6 +345,13 @@ type BackendHub interface {
 	// Refresh reads everything now.
 	Refresh(ctx context.Context)
 
+	// QueryFlows asks the backend for requests directly, for a filter such
+	// as one device's.
+	QueryFlows(ctx context.Context, q backends.FlowQuery) (backends.FlowPage, error)
+	// AddSchedule and DeleteSchedule keep a time window for a rule.
+	AddSchedule(ctx context.Context, s hub.Schedule) (hub.Schedule, error)
+	DeleteSchedule(id string) error
+
 	PreviewRule(spec backends.RuleSpec) (hub.RulePreview, error)
 	CreateRule(ctx context.Context, spec backends.RuleSpec) (backends.Rule, error)
 	SetRulePaused(ctx context.Context, id string, paused bool) error
@@ -760,6 +767,9 @@ func (s *Server) routes() {
 	h("POST /api/backend/rules/{id}/pause", s.pauseBackendRule)
 	h("POST /api/backend/rules/{id}/resume", s.resumeBackendRule)
 	h("POST /api/backend/rules/{id}/delete", s.deleteBackendRule)
+	h("GET /api/backend/flows", s.backendFlows)
+	h("POST /api/backend/schedules", s.addBackendSchedule)
+	h("POST /api/backend/schedules/{id}/delete", s.deleteBackendSchedule)
 	h("POST /api/backend/devices/rename", s.renameBackendDevice)
 	h("POST /api/backend/alarms/dismiss", s.dismissBackendAlarm)
 	h("POST /api/routerusage/firewalla", s.connectFirewalla)

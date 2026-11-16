@@ -59,7 +59,9 @@ export function ruleSummary(rule, devices = []) {
     where = 'the ' + r.ScopeType + (r.Scope ? ' ' + r.Scope : '');
   }
   const how = r.DNSOnly ? ', name lookups only' : '';
-  return verb + ' ' + (r.TargetType || 'target') + ' ' + (r.Target || '') + ' for ' + where + how;
+  let usage = '';
+  if (r.QuotaMinutes) usage = ', ' + r.UsedMinutes + ' of ' + r.QuotaMinutes + ' min used today';
+  return verb + ' ' + (r.TargetType || 'target') + ' ' + (r.Target || '') + ' for ' + where + how + usage;
 }
 
 // requestLine is one request as a row: what, for whom, and the outcome.
@@ -74,4 +76,45 @@ export function requestLine(flow) {
 export function auditLine(a) {
   const e = a || {};
   return (e.Error ? 'Failed: ' : '') + e.action + ' ' + e.target + (e.Error ? ' (' + e.Error + ')' : '');
+}
+
+export const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+// daysText writes a set of weekdays the way a person would: "every day",
+// "weekdays", "weekends", a run like "Sun–Thu", or a list.
+export function daysText(days) {
+  const d = [...new Set(days || [])].sort((a, b) => a - b);
+  if (d.length === 7) return 'every day';
+  const key = d.join(',');
+  if (key === '1,2,3,4,5') return 'weekdays';
+  if (key === '0,6') return 'weekends';
+  const run = d.length > 2 && d.every((v, i) => i === 0 || v === d[i - 1] + 1);
+  if (run) return DAY_NAMES[d[0]] + '–' + DAY_NAMES[d[d.length - 1]];
+  return d.map((v) => DAY_NAMES[v]).join(', ');
+}
+
+// scheduleText reads a schedule: the rule enforces inside the window.
+export function scheduleText(s) {
+  const x = s || {};
+  const over = x.end <= x.start ? ' (into the next day)' : '';
+  return 'Enforced ' + daysText(x.days) + ' ' + x.start + '–' + x.end + over + ' (' + x.tz + ')';
+}
+
+// scheduleFor finds the schedule that governs a rule, if any.
+export function scheduleFor(schedules, ruleId) {
+  return (schedules || []).find((s) => s.rule_id === ruleId) || null;
+}
+
+// scheduleBody builds the request from the form's pieces. days is a set of
+// weekday numbers; tz comes from the browser.
+export function scheduleBody(ruleId, days, start, end, tz) {
+  return { rule_id: ruleId, days: [...days].sort((a, b) => a - b), start, end, tz };
+}
+
+// scheduleProblem says what is wrong with a form before it is sent, or ''.
+export function scheduleProblem(days, start, end) {
+  if (!days || !days.size) return 'Choose at least one day.';
+  if (!/^\d\d:\d\d$/.test(start || '') || !/^\d\d:\d\d$/.test(end || '')) return 'Set both times.';
+  if (start === end) return 'The start and end must differ.';
+  return '';
 }

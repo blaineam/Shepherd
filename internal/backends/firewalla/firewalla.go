@@ -255,16 +255,25 @@ type wireScope struct {
 }
 
 type wireRule struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name,omitempty"`
-	Action    string     `json:"action"`
-	Direction string     `json:"direction,omitempty"`
-	GID       string     `json:"gid,omitempty"`
-	Notes     string     `json:"notes"`
-	Status    string     `json:"status"`
-	TS        num        `json:"ts"`
-	Target    wireTarget `json:"target"`
-	Scope     *wireScope `json:"scope,omitempty"`
+	ID        string `json:"id"`
+	Name      string `json:"name,omitempty"`
+	Action    string `json:"action"`
+	Direction string `json:"direction,omitempty"`
+	GID       string `json:"gid,omitempty"`
+	Notes     string `json:"notes"`
+	Status    string `json:"status"`
+	ResumeTS  num    `json:"resumeTs"`
+	Schedule  *struct {
+		Duration num    `json:"duration"`
+		Cron     string `json:"cronTime"`
+	} `json:"schedule,omitempty"`
+	TimeUsage *struct {
+		Quota num `json:"quota"`
+		Used  num `json:"used"`
+	} `json:"timeUsage,omitempty"`
+	TS     num        `json:"ts"`
+	Target wireTarget `json:"target"`
+	Scope  *wireScope `json:"scope,omitempty"`
 }
 
 type page[T any] struct {
@@ -310,6 +319,15 @@ func (c *Client) Flows(ctx context.Context, fq backends.FlowQuery) (backends.Flo
 	}
 	if c.cfg.Box != "" {
 		terms = append(terms, "box:"+c.cfg.Box)
+	}
+	if fq.DeviceMAC != "" {
+		mac := macWithColons(fq.DeviceMAC)
+		if routerusage.NormalizeMAC(mac) == "" {
+			return backends.FlowPage{}, fmt.Errorf("%w: that is not a device address", backends.ErrInvalid)
+		}
+		// The qualifier is a path into the flow, and a value with colons
+		// must be quoted (docs.firewalla.net, Searching).
+		terms = append(terms, `device.id:"`+mac+`"`)
 	}
 	if len(terms) > 0 {
 		q.Set("query", strings.Join(terms, " "))
@@ -423,6 +441,15 @@ func toRule(r wireRule) backends.Rule {
 	rule := backends.Rule{
 		ID: r.ID, Name: r.Name, Action: r.Action, TargetType: r.Target.Type, Target: r.Target.Value,
 		DNSOnly: r.Target.DNSOnly != nil && *r.Target.DNSOnly, Paused: r.Status == "paused", Notes: r.Notes, Created: r.TS.time(), Box: r.GID,
+	}
+	if r.Schedule != nil && r.Schedule.Cron != "" {
+		rule.Schedule = fmt.Sprintf("%s for %d min", r.Schedule.Cron, int(r.Schedule.Duration/60))
+	}
+	if r.TimeUsage != nil {
+		rule.QuotaMinutes, rule.UsedMinutes = int(r.TimeUsage.Quota), int(r.TimeUsage.Used)
+	}
+	if r.Status == "paused" {
+		rule.ResumeAt = r.ResumeTS.time()
 	}
 	if r.Scope != nil {
 		rule.ScopeType, rule.Scope = r.Scope.Type, r.Scope.Value

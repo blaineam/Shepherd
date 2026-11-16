@@ -339,8 +339,14 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	// ---- Behaviour checks and decoy ports (docs/DETECT.md) --------------
 	// After the threat feeds, whose hook on the DNS engine this one chains
 	// onto, and before the port scan, which must not report the decoys.
-	det := startDetect(ctx, cfg, engine, registry, trafficStore, deps.Alarms)
-	deps.Detect, deps.Decoy, deps.DetectEnabled = det.engine, det.decoy, cfg.Detect.Enabled
+	// Not in dashboard mode: its checks are built on the lookups Shepherd
+	// answers, and with none answered "this device never asks Shepherd
+	// anything" would be true of every device.
+	var det detectParts
+	if cfg.DNS.On() {
+		det = startDetect(ctx, cfg, engine, registry, trafficStore, deps.Alarms)
+	}
+	deps.Detect, deps.Decoy, deps.DetectEnabled = det.engine, det.decoy, cfg.Detect.Enabled && cfg.DNS.On()
 
 	if cfg.Portscan.Enabled {
 		scanner, err := startPortscan(ctx, cfg, registry, det.skipPort)
@@ -373,11 +379,12 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	deps.NethealthEnabled = cfg.Nethealth.Enabled
 	deps.NethealthBufferbloatEnabled = cfg.Nethealth.BufferbloatEnabled
 
-	startLinkwatch(ctx, cfg, deps.Alarms)
-
 	var skipped skipSet
-	if st := startSelftest(ctx, cfg, engine, &skipped, deps.Alarms); st != nil {
-		deps.Selftest = st
+	if cfg.DNS.On() {
+		startLinkwatch(ctx, cfg, deps.Alarms)
+		if st := startSelftest(ctx, cfg, engine, &skipped, deps.Alarms); st != nil {
+			deps.Selftest = st
+		}
 	}
 
 	if cfg.History.Mode == "encrypted" {
@@ -485,6 +492,19 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 		setupSrv.Started(runningSetup(cfg, token, policy, &skipped, tlsMgr))
 	}
 
+	if !cfg.DNS.On() {
+		// Dashboard mode (docs/BACKENDS.md): no resolver, only the portal
+		// and whatever backend is connected. Wait for the portal to fail or
+		// the process to be stopped.
+		log.Printf("shepherd %s: dashboard mode (dns.enabled = false): serving no DNS; portal on http://%s", version, cfg.Portal.Listen)
+		log.Printf("portal token is in %s (or run with -print-token)", filepath.Join(cfg.DataDir, "portal-token"))
+		select {
+		case err := <-portalErr:
+			return err
+		case <-ctx.Done():
+			return nil
+		}
+	}
 	log.Printf("shepherd %s: dns on %v, portal on http://%s", version, cfg.DNS.ListenAddrs(), cfg.Portal.Listen)
 	log.Printf("portal token is in %s (or run with -print-token)", filepath.Join(cfg.DataDir, "portal-token"))
 	// An address this host no longer has is a warning, not a reason to

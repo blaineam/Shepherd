@@ -64,14 +64,42 @@ and in Shepherd's log. A Read Only token is refused up front, before any request
 A rule with no box named applies to every box on the account, which is how MSP treats a rule with
 no `gid`.
 
+## Dashboard mode
+
+Set `dns.enabled = false` and Shepherd serves no DNS at all: no listener is bound, the DNS
+self-test, the link watch on the DNS address and the lookup-based behaviour checks are not started
+(they would only report that nothing asks Shepherd anything), and the process is the portal plus
+whatever backend you connected. Your router or firewall keeps doing the filtering; Shepherd shows
+and controls it. Remove the line, or set it to `true`, to serve DNS again; nothing else changes.
+
+## Schedules (time-window rules)
+
+Neither product lets Shepherd create its native time-limit rules over the API (Firewalla's
+`POST /v2/rules` takes `block` and `allow` only), but both let it pause and resume a rule. So
+Shepherd holds the window itself: on a rule, **Schedule** picks days and a start and end time, and
+Shepherd pauses the rule outside that window and resumes it inside, checking every 30 seconds.
+"Block games on school nights, 21:00 to 07:00" is a block rule with a schedule. A window that ends
+before it starts runs past midnight; the morning part belongs to the day it started on. Times are
+in the browser's time zone, because a container's own clock is usually UTC.
+
+A scheduled rule follows its schedule: resume it by hand outside the window and the next check
+pauses it again, so remove the schedule to take the rule back. A change that fails (a box offline)
+is retried every five minutes rather than every check. Schedules need **Allow changes** and are
+kept in `backend-schedules.json` in the data directory.
+
+Firewalla's own **time-limit** rules (a daily quota of minutes) are shown with how much is used,
+and can be paused, resumed and deleted, but not created from Shepherd.
+
+## Filtering requests by device
+
+The request list can be narrowed to one device. That asks Firewalla itself
+(`device.id:"AA:BB:..."` in the query), so it reaches past the recent requests Shepherd already
+holds.
+
 ## Not built yet
 
-- A `dashboard` mode that turns Shepherd's own DNS engine off when Firewalla does the filtering.
-  The hub runs beside the DNS server today.
 - A UniFi backend.
-- Time-limit rules, schedules and target-list management. MSP can create only block and allow
-  rules over the API.
-- Filtering flows by device on the MSP side; the list is filtered in Shepherd.
+- Target-list management.
 
 ## Verified against
 

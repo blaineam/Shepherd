@@ -24,6 +24,7 @@ type fakeHub struct {
 	calls    []string
 	err      error // returned by every write
 	previews int
+	queries  []backends.FlowQuery
 }
 
 func (f *fakeHub) Reload()           { f.mu.Lock(); f.reloads++; f.mu.Unlock() }
@@ -43,6 +44,19 @@ func (f *fakeHub) PreviewRule(s backends.RuleSpec) (hub.RulePreview, error) {
 	}
 	return hub.RulePreview{Summary: "Block " + s.Target, NetworkWide: s.ScopeType == ""}, nil
 }
+func (f *fakeHub) QueryFlows(_ context.Context, q backends.FlowQuery) (backends.FlowPage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.queries = append(f.queries, q)
+	if f.err != nil {
+		return backends.FlowPage{}, f.err
+	}
+	return backends.FlowPage{Flows: []backends.Flow{{Domain: "x.example", DeviceMAC: q.DeviceMAC}}, Next: "c2"}, nil
+}
+func (f *fakeHub) AddSchedule(_ context.Context, s hub.Schedule) (hub.Schedule, error) {
+	return s, f.write("schedule " + s.RuleID + " " + s.Start + "-" + s.End + " " + s.TZ)
+}
+func (f *fakeHub) DeleteSchedule(id string) error { return f.write("unschedule " + id) }
 func (f *fakeHub) write(call string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -262,4 +276,60 @@ func TestSavingFailuresOnTheWriteSwitchAreReported(t *testing.T) {
 	h, _ := backendHarness(t)
 	wedgeSecrets(t, h)
 	h.expect("POST", "/api/backend/writes", `{"enabled":true}`, 500)
+}
+
+func TestRequestsCanBeFilteredToOneDevice(t *testing.T) {
+	h, fh := backendHarness(t)
+	out := h.ok("GET", "/api/backend/flows?device=02005e000001&limit=25", "", 200)
+	flows, _ := out["flows"].([]any)
+	if len(flows) != 1 || out["next"] != "c2" {
+		t.Fatalf("out = %v", out)
+	}
+	if q := fh.queries[0]; q.DeviceMAC != "02005e000001" || q.Limit != 25 {
+		t.Fatalf("query = %+v", q)
+	}
+	// Defaults and bounds.
+	h.ok("GET", "/api/backend/flows?limit=99999&cursor=abc", "", 200)
+	if q := fh.queries[1]; q.Limit != 100 || q.Cursor != "abc" || q.DeviceMAC != "" {
+		t.Fatalf("query = %+v", q)
+	}
+	fh.err = backends.ErrInvalid
+	h.expect("GET", "/api/backend/flows?device=zz", "", 400)
+	h2 := newHarness(t)
+	h2.expect("GET", "/api/backend/flows", "", 404)
+}
+
+func TestSchedulesNeedConfirmAndReachTheHub(t *testing.T) {
+	h, fh := backendHarness(t)
+	body := `{"rule_id":"r1","days":[1,2],"start":"21:00","end":"07:00","tz":"America/New_York"`
+	h.expect("POST", "/api/backend/schedules", body+`}`, 400)
+	h.ok("POST", "/api/backend/schedules", body+`,"confirm":true}`, 200)
+	h.ok("POST", "/api/backend/schedules/abc/delete", `{"confirm":true}`, 200)
+	h.expect("POST", "/api/backend/schedules/abc/delete", `{}`, 400)
+	want := "schedule r1 21:00-07:00 America/New_York|unschedule abc"
+	if got := strings.Join(fh.wrote(), "|"); got != want {
+		t.Fatalf("writes = %s", got)
+	}
+	fh.err = backends.ErrReadOnly
+	h.expect("POST", "/api/backend/schedules", body+`,"confirm":true}`, 403)
+	h2 := newHarness(t)
+	h2.expect("POST", "/api/backend/schedules", `{"confirm":true}`, 404)
+	h2.expect("POST", "/api/backend/schedules/x/delete", `{"confirm":true}`, 404)
+}
+
+func TestWriteFailuresAreReportedForEveryKindOfChange(t *testing.T) {
+	h, fh := backendHarness(t)
+	fh.err = backends.ErrRefused
+	for path, body := range map[string]string{
+		"/api/backend/rules":                `{"action":"block","target_type":"domain","target":"a.example","confirm":true}`,
+		"/api/backend/devices/rename":       `{"box":"b","native":"d","name":"n","confirm":true}`,
+		"/api/backend/alarms/dismiss":       `{"box":"b","id":"1","confirm":true}`,
+		"/api/backend/schedules/abc/delete": `{"confirm":true}`,
+		"/api/backend/rules/r1/pause":       `{"confirm":true}`,
+	} {
+		h.expect("POST", path, body, 502)
+	}
+	for _, p := range []string{"/api/backend/rules", "/api/backend/devices/rename", "/api/backend/alarms/dismiss", "/api/backend/schedules/abc/delete", "/api/backend/rules/r1/pause", "/api/backend/rules/r1/resume", "/api/backend/rules/r1/delete"} {
+		h.expect("POST", p, `{bad`, 400)
+	}
 }

@@ -64,6 +64,9 @@ type Options struct {
 	// a restart resumes where it stopped instead of ingesting the last few
 	// minutes a second time. Empty keeps nothing.
 	StatePath string
+	// SchedulePath keeps the rule schedules (schedule.go). Empty keeps
+	// them in memory only.
+	SchedulePath string
 
 	Now  func() time.Time
 	Logf func(string, ...any)
@@ -101,6 +104,7 @@ type Snapshot struct {
 	Alarms       []backends.Alarm      `json:"alarms"`
 	Flows        []backends.Flow       `json:"flows"`
 	Audit        []AuditEntry          `json:"audit"`
+	Schedules    []Schedule            `json:"schedules"`
 }
 
 // Hub polls one backend.
@@ -122,6 +126,9 @@ type Hub struct {
 	seenFlows  map[string]time.Time
 	seenAlarms map[string]bool
 	started    time.Time
+
+	schedules  []Schedule
+	schedRetry map[string]time.Time
 }
 
 // New returns a Hub. Nothing is read until Run or Refresh.
@@ -135,8 +142,9 @@ func New(o Options) *Hub {
 	if o.Logf == nil {
 		o.Logf = func(string, ...any) {}
 	}
-	h := &Hub{o: o, errs: map[string]error{}, seenFlows: map[string]time.Time{}, totals: map[string]Total{}, seenAlarms: map[string]bool{}, started: o.Now()}
+	h := &Hub{o: o, errs: map[string]error{}, seenFlows: map[string]time.Time{}, totals: map[string]Total{}, schedRetry: map[string]time.Time{}, seenAlarms: map[string]bool{}, started: o.Now()}
 	h.loadState()
+	h.loadSchedules()
 	return h
 }
 
@@ -181,12 +189,16 @@ func (h *Hub) Run(ctx context.Context) {
 	h.Refresh(ctx)
 	t := time.NewTicker(h.o.Interval)
 	defer t.Stop()
+	s := time.NewTicker(scheduleEvery)
+	defer s.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 			h.Refresh(ctx)
+		case <-s.C:
+			h.ApplySchedules(ctx)
 		}
 	}
 }
@@ -230,6 +242,7 @@ func (h *Hub) Refresh(ctx context.Context) {
 		h.lastPoll = &now
 	}
 	h.mu.Unlock()
+	h.ApplySchedules(ctx)
 }
 
 func (h *Hub) refreshRules(ctx context.Context) error {
@@ -396,6 +409,26 @@ func trunc(s string, n int) string {
 	return s
 }
 
+// capabilities is the backend's own plus the ones the hub adds. Schedules
+// need a backend that can pause and resume rules and may be written to.
+func (h *Hub) capabilities() []backends.Capability {
+	caps := backends.Capabilities(h.o.Backend)
+	if backends.Has(h.o.Backend, backends.CapRuleWrite) {
+		caps = append(caps, backends.CapSchedule)
+	}
+	return caps
+}
+
+// QueryFlows asks the backend for flows directly, for a filter the polled
+// list does not cover, such as one device's older requests.
+func (h *Hub) QueryFlows(ctx context.Context, q backends.FlowQuery) (backends.FlowPage, error) {
+	fr, ok := h.o.Backend.(backends.FlowReader)
+	if !ok {
+		return backends.FlowPage{}, errUnsupported
+	}
+	return fr.Flows(ctx, q)
+}
+
 // ---- reading for the portal --------------------------------------------------
 
 // Total is the bytes one device has moved since the hub started, as the
@@ -434,12 +467,13 @@ func (h *Hub) Snapshot() Snapshot {
 	}
 	return Snapshot{
 		Name: h.o.Backend.Name(), ReadOnly: h.o.Backend.ReadOnly(),
-		Capabilities: backends.Capabilities(h.o.Backend), Status: st,
-		Devices: append([]backends.Device(nil), h.devices...),
-		Rules:   append([]backends.Rule(nil), h.rules...),
-		Alarms:  append([]backends.Alarm(nil), h.alarms...),
-		Flows:   append([]backends.Flow(nil), h.flows...),
-		Audit:   append([]AuditEntry(nil), h.audit...),
+		Capabilities: h.capabilities(), Status: st,
+		Devices:   append([]backends.Device(nil), h.devices...),
+		Rules:     append([]backends.Rule(nil), h.rules...),
+		Alarms:    append([]backends.Alarm(nil), h.alarms...),
+		Flows:     append([]backends.Flow(nil), h.flows...),
+		Audit:     append([]AuditEntry(nil), h.audit...),
+		Schedules: append([]Schedule(nil), h.schedules...),
 	}
 }
 

@@ -663,6 +663,13 @@ type Privacy struct {
 }
 
 type DNS struct {
+	// Enabled turns Shepherd's own DNS server on (the default) or off. Off
+	// is dashboard mode (docs/BACKENDS.md): Shepherd serves no DNS, filters
+	// nothing itself, and is a portal over the router or firewall that
+	// does, such as a Firewalla. Everything that only makes sense with a
+	// DNS server running (the self-test, the link watch on its address,
+	// the behaviour checks built on lookups) stays off with it.
+	Enabled *bool `toml:"enabled"`
 	// Listen holds host:port addresses; each is served over UDP and TCP.
 	Listen []string `toml:"listen"`
 	// Upstreams are resolvers: "9.9.9.10", "tcp://1.1.1.1", "tls://dns.quad9.net:853".
@@ -1071,6 +1078,10 @@ func (c Config) validateDHCP() error {
 // LoopbackEnabled reports whether dns.listen_loopback is on. It defaults to
 // false: Shepherd must not bind addresses the owner did not list.
 func (d DNS) LoopbackEnabled() bool { return d.ListenLoopback != nil && *d.ListenLoopback }
+
+// On reports whether Shepherd serves DNS itself. It is on unless
+// dns.enabled is set to false.
+func (d DNS) On() bool { return d.Enabled == nil || *d.Enabled }
 
 // ListenAddrs is the set of addresses to serve DNS on: everything in
 // dns.listen, plus the loopback addresses when dns.listen_loopback is on

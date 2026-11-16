@@ -6,10 +6,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"shepherd/internal/backends"
+	"shepherd/internal/backends/hub"
 )
 
 // The dashboard over a connected router or firewall (docs/BACKENDS.md).
@@ -52,6 +54,7 @@ func (s *Server) backendJSON() map[string]any {
 		out["alarms"] = nonNil(snap.Alarms)
 		out["flows"] = nonNil(snap.Flows)
 		out["audit"] = nonNil(snap.Audit)
+		out["schedules"] = nonNil(snap.Schedules)
 		out["target_types"] = backends.TargetTypes
 		out["scope_types"] = backends.ScopeTypes
 	}
@@ -252,4 +255,59 @@ func backendError(w http.ResponseWriter, err error) {
 	default:
 		http.Error(w, "the router could not do that: "+err.Error(), http.StatusBadGateway)
 	}
+}
+
+// backendFlows reads requests straight from the backend, for a filter the
+// polled list does not cover: ?device=<mac>&limit=<n>&cursor=<c>.
+func (s *Server) backendFlows(w http.ResponseWriter, r *http.Request) {
+	if !s.haveBackend(w) {
+		return
+	}
+	q := backends.FlowQuery{DeviceMAC: r.URL.Query().Get("device"), Cursor: r.URL.Query().Get("cursor"), Limit: 100}
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 500 {
+		q.Limit = n
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), backendWriteTimeout)
+	defer cancel()
+	page, err := s.Backend.QueryFlows(ctx, q)
+	if err != nil {
+		backendError(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"flows": nonNil(page.Flows), "next": page.Next})
+}
+
+type scheduleBody struct {
+	RuleID  string `json:"rule_id"`
+	Days    []int  `json:"days"`
+	Start   string `json:"start"`
+	End     string `json:"end"`
+	TZ      string `json:"tz"`
+	Confirm bool   `json:"confirm"`
+}
+
+func (s *Server) addBackendSchedule(w http.ResponseWriter, r *http.Request) {
+	var b scheduleBody
+	if !decode(w, r, &b, smallBody) || !s.haveBackend(w) || !confirmed(w, b.Confirm) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), backendWriteTimeout)
+	defer cancel()
+	if _, err := s.Backend.AddSchedule(ctx, hub.Schedule{RuleID: b.RuleID, Days: b.Days, Start: b.Start, End: b.End, TZ: b.TZ}); err != nil {
+		backendError(w, err)
+		return
+	}
+	writeJSON(w, s.backendJSON())
+}
+
+func (s *Server) deleteBackendSchedule(w http.ResponseWriter, r *http.Request) {
+	var b confirmBody
+	if !decode(w, r, &b, smallBody) || !s.haveBackend(w) || !confirmed(w, b.Confirm) {
+		return
+	}
+	if err := s.Backend.DeleteSchedule(r.PathValue("id")); err != nil {
+		backendError(w, err)
+		return
+	}
+	writeJSON(w, s.backendJSON())
 }

@@ -21,6 +21,11 @@ data_dir = "data"
 no_default_lists = false
 
 [dns]
+# Dashboard mode: set to false to serve no DNS at all and use Shepherd as a
+# portal over a router or firewall that does the filtering, such as a
+# Firewalla (docs/BACKENDS.md). The self-test, the link watch on this
+# address and the lookup-based behaviour checks stay off with it.
+# enabled = false
 # host:port addresses, each served over UDP and TCP. Use your LAN address
 # (not 0.0.0.0) on hosts where system DNS already holds 127.0.0.1:53. List
 # one address per interface you want this reachable on — e.g. a wired LAN

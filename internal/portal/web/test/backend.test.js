@@ -67,3 +67,41 @@ test('the change log marks failures', () => {
   assert.equal(auditLine({ action: 'delete rule', target: 'r1' }), 'delete rule r1');
   assert.equal(auditLine({ action: 'delete rule', target: 'r1', Error: 'read-only' }), 'Failed: delete rule r1 (read-only)');
 });
+
+import { daysText, scheduleText, scheduleFor, scheduleBody, scheduleProblem } from '../js/backend.js';
+
+test('weekdays read the way a person says them', () => {
+  assert.equal(daysText([0, 1, 2, 3, 4, 5, 6]), 'every day');
+  assert.equal(daysText([5, 4, 3, 2, 1]), 'weekdays');
+  assert.equal(daysText([6, 0]), 'weekends');
+  assert.equal(daysText([0, 1, 2, 3, 4]), 'Sun–Thu');
+  assert.equal(daysText([1, 3]), 'Mon, Wed');
+  assert.equal(daysText([2]), 'Tue');
+  assert.equal(daysText(null), '');
+});
+
+test('a schedule says when the rule is enforced and when it spills past midnight', () => {
+  assert.equal(scheduleText({ days: [0, 1, 2, 3, 4], start: '21:00', end: '07:00', tz: 'America/New_York' }),
+    'Enforced Sun–Thu 21:00–07:00 (into the next day) (America/New_York)');
+  assert.equal(scheduleText({ days: [1, 2, 3, 4, 5], start: '15:00', end: '18:00', tz: 'UTC' }), 'Enforced weekdays 15:00–18:00 (UTC)');
+});
+
+test('the schedule that governs a rule is found by its rule id', () => {
+  const list = [{ id: 'a', rule_id: 'r1' }, { id: 'b', rule_id: 'r2' }];
+  assert.equal(scheduleFor(list, 'r2').id, 'b');
+  assert.equal(scheduleFor(list, 'r9'), null);
+  assert.equal(scheduleFor(null, 'r1'), null);
+});
+
+test('the schedule form is checked before it is sent and sends sorted days', () => {
+  assert.equal(scheduleProblem(new Set(), '21:00', '07:00'), 'Choose at least one day.');
+  assert.equal(scheduleProblem(new Set([1]), '', '07:00'), 'Set both times.');
+  assert.equal(scheduleProblem(new Set([1]), '21:00', '21:00'), 'The start and end must differ.');
+  assert.equal(scheduleProblem(new Set([1]), '21:00', '07:00'), '');
+  assert.deepEqual(scheduleBody('r1', new Set([3, 1]), '21:00', '07:00', 'UTC'), { rule_id: 'r1', days: [1, 3], start: '21:00', end: '07:00', tz: 'UTC' });
+});
+
+test('a time-limit rule shows how much of its allowance is used', () => {
+  assert.equal(ruleSummary({ Action: 'timelimit', TargetType: 'app', Target: 'youtube', ScopeType: 'group', Scope: 'kids', QuotaMinutes: 60, UsedMinutes: 45 }),
+    'Time limit app youtube for the group kids, 45 of 60 min used today');
+});
