@@ -607,7 +607,7 @@ func (f fwRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return
 func TestConnectingFirewallaChecksTheTokenBeforeStoringIt(t *testing.T) {
 	h := newHarnessWith(t, onDisk(t))
 	h.srv.RouterUsage = &fakeUsage{}
-	h.srv.FirewallaTransport, _ = firewallaTransport(t, "good-token")
+	h.srv.BackendTransport, _ = firewallaTransport(t, "good-token")
 
 	h.expect("POST", "/api/routerusage/firewalla", `{"base_url":"home.firewalla.net","token":"wrong"}`, 400)
 	if _, ok := h.srv.Secrets.Firewalla(); ok {
@@ -636,7 +636,7 @@ func TestConnectingFirewallaChecksTheTokenBeforeStoringIt(t *testing.T) {
 func TestFirewallaSwitchesOffAndIsForgotten(t *testing.T) {
 	h := newHarnessWith(t, onDisk(t))
 	h.srv.RouterUsage = &fakeUsage{}
-	h.srv.FirewallaTransport, _ = firewallaTransport(t, "tok")
+	h.srv.BackendTransport, _ = firewallaTransport(t, "tok")
 	h.ok("POST", "/api/routerusage/firewalla", `{"base_url":"home.firewalla.net","token":"tok"}`, 200)
 
 	if out := h.ok("POST", "/api/routerusage/firewalla/enabled", `{"enabled":false}`, 200); out["enabled"] != false {
@@ -657,7 +657,7 @@ func TestFirewallaSwitchesOffAndIsForgotten(t *testing.T) {
 func TestTheScreenNamesTheRouterThatIsInEffect(t *testing.T) {
 	h := newHarnessWith(t, onDisk(t))
 	h.srv.RouterUsage = &fakeUsage{}
-	h.srv.FirewallaTransport, _ = firewallaTransport(t, "tok")
+	h.srv.BackendTransport, _ = firewallaTransport(t, "tok")
 	if _, err := h.srv.Secrets.SetEero(secrets.Eero{Token: "eero-token-abc", NetworkID: "3001", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -683,7 +683,7 @@ func TestWithoutAReaderTheFirewallaEndpointsSaySo(t *testing.T) {
 func TestFirewallaChangesThatCouldNotBeSavedAreReported(t *testing.T) {
 	h := newHarnessWith(t, onDisk(t))
 	h.srv.RouterUsage = &fakeUsage{}
-	h.srv.FirewallaTransport, _ = firewallaTransport(t, "tok")
+	h.srv.BackendTransport, _ = firewallaTransport(t, "tok")
 	wedgeSecrets(t, h)
 	h.expect("POST", "/api/routerusage/firewalla", `{"base_url":"home.firewalla.net","token":"tok"}`, 500)
 }
@@ -691,7 +691,7 @@ func TestFirewallaChangesThatCouldNotBeSavedAreReported(t *testing.T) {
 func TestFirewallaSwitchAndForgetFailuresAreReported(t *testing.T) {
 	h := newHarnessWith(t, onDisk(t))
 	h.srv.RouterUsage = &fakeUsage{}
-	h.srv.FirewallaTransport, _ = firewallaTransport(t, "tok")
+	h.srv.BackendTransport, _ = firewallaTransport(t, "tok")
 	h.ok("POST", "/api/routerusage/firewalla", `{"base_url":"home.firewalla.net","token":"tok"}`, 200)
 	wedgeSecrets(t, h)
 	h.expect("POST", "/api/routerusage/firewalla/enabled", `{"enabled":false}`, 500)

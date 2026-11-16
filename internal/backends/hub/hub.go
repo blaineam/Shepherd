@@ -490,8 +490,8 @@ type RulePreview struct {
 
 // PreviewRule validates spec and describes it. It sends nothing.
 func (h *Hub) PreviewRule(spec backends.RuleSpec) (RulePreview, error) {
-	if _, ok := h.o.Backend.(backends.RuleManager); !ok {
-		return RulePreview{}, backends.ErrInvalid
+	if _, ok := h.o.Backend.(backends.RuleCreator); !ok {
+		return RulePreview{}, errUnsupported
 	}
 	if err := spec.Validate(); err != nil {
 		return RulePreview{}, err
@@ -553,7 +553,7 @@ var errUnsupported = fmt.Errorf("%w: this backend cannot do that", backends.ErrI
 
 // CreateRule creates a rule and refreshes the rule list.
 func (h *Hub) CreateRule(ctx context.Context, spec backends.RuleSpec) (backends.Rule, error) {
-	rm, ok := h.o.Backend.(backends.RuleManager)
+	rm, ok := h.o.Backend.(backends.RuleCreator)
 	if !ok {
 		return backends.Rule{}, errUnsupported
 	}
@@ -614,6 +614,24 @@ func (h *Hub) RenameDevice(ctx context.Context, ref backends.DeviceRef, name str
 			}
 		}
 	}
+	return err
+}
+
+// BlockClient cuts a device off the network, or with block false restores it.
+func (h *Hub) BlockClient(ctx context.Context, ref backends.DeviceRef, block bool) error {
+	cb, ok := h.o.Backend.(backends.ClientBlocker)
+	if !ok {
+		return errUnsupported
+	}
+	var err error
+	action := "block device"
+	if block {
+		err = cb.BlockClient(ctx, ref)
+	} else {
+		action = "unblock device"
+		err = cb.UnblockClient(ctx, ref)
+	}
+	h.record(action, ref.Native, err)
 	return err
 }
 

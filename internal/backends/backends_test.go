@@ -34,6 +34,8 @@ func (readsOnly2) SetRulePaused(context.Context, string, bool) error     { retur
 func (readsOnly2) DeleteRule(context.Context, string) error              { return nil }
 func (readsOnly2) RenameDevice(context.Context, DeviceRef, string) error { return nil }
 func (readsOnly2) DismissAlarm(context.Context, AlarmRef) error          { return nil }
+func (readsOnly2) BlockClient(context.Context, DeviceRef) error          { return nil }
+func (readsOnly2) UnblockClient(context.Context, DeviceRef) error        { return nil }
 
 func TestCapabilitiesAreWhatTheBackendImplements(t *testing.T) {
 	got := Capabilities(readsOnly{})
@@ -47,7 +49,7 @@ func TestCapabilitiesAreWhatTheBackendImplements(t *testing.T) {
 
 func TestAReadOnlyConnectionNeverAdvertisesWrites(t *testing.T) {
 	full := Capabilities(everything{})
-	want := []Capability{CapDevices, CapFlows, CapAlarms, CapRules, CapRuleWrite, CapDeviceRename, CapAlarmDismiss}
+	want := []Capability{CapDevices, CapFlows, CapAlarms, CapRules, CapRuleWrite, CapRuleCreate, CapDeviceRename, CapDeviceBlock, CapAlarmDismiss}
 	if len(full) != len(want) {
 		t.Fatalf("full = %v, want %v", full, want)
 	}
@@ -58,7 +60,7 @@ func TestAReadOnlyConnectionNeverAdvertisesWrites(t *testing.T) {
 	}
 	ro := Capabilities(everything{stub: stub{ro: true}})
 	for _, c := range ro {
-		if c == CapRuleWrite || c == CapDeviceRename || c == CapAlarmDismiss {
+		if c == CapRuleWrite || c == CapRuleCreate || c == CapDeviceBlock || c == CapDeviceRename || c == CapAlarmDismiss {
 			t.Fatalf("a read-only backend offers %s", c)
 		}
 	}
@@ -109,5 +111,19 @@ func TestRefsCarryWhatAWriteNeeds(t *testing.T) {
 	}
 	if r := (Alarm{Box: "b", ID: "1"}).Ref(); r != (AlarmRef{Box: "b", ID: "1"}) {
 		t.Fatalf("%+v", r)
+	}
+}
+
+// A backend that can pause and delete rules but not create them (UniFi).
+type pausesOnly struct{ stub }
+
+func (pausesOnly) Rules(context.Context) ([]Rule, error)             { return nil, nil }
+func (pausesOnly) SetRulePaused(context.Context, string, bool) error { return nil }
+func (pausesOnly) DeleteRule(context.Context, string) error          { return nil }
+
+func TestCreatingARuleIsItsOwnCapability(t *testing.T) {
+	b := pausesOnly{}
+	if !Has(b, CapRuleWrite) || Has(b, CapRuleCreate) {
+		t.Fatalf("capabilities = %v", Capabilities(b))
 	}
 }

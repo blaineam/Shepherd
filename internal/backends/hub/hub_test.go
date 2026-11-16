@@ -126,6 +126,20 @@ func (f *fake) RenameDevice(_ context.Context, d backends.DeviceRef, name string
 	return f.writeErr
 }
 
+func (f *fake) BlockClient(_ context.Context, d backends.DeviceRef) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "block "+d.Native)
+	return f.writeErr
+}
+
+func (f *fake) UnblockClient(_ context.Context, d backends.DeviceRef) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "unblock "+d.Native)
+	return f.writeErr
+}
+
 func (f *fake) DismissAlarm(_ context.Context, a backends.AlarmRef) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -312,7 +326,7 @@ func TestSnapshotCarriesCapabilitiesAndIsACopy(t *testing.T) {
 	h := newHub(t, f, &sinks{}, &now)
 	h.Refresh(ctx)
 	snap := h.Snapshot()
-	if len(snap.Capabilities) != 8 || snap.ReadOnly || snap.Name != "fakewall" {
+	if len(snap.Capabilities) != 10 || snap.ReadOnly || snap.Name != "fakewall" {
 		t.Fatalf("snapshot = %+v", snap)
 	}
 	snap.Rules[0].ID = "mutated"
@@ -446,6 +460,8 @@ func TestABackendThatCannotDoSomethingSaysSo(t *testing.T) {
 		"delete":  h.DeleteRule(ctx, "r"),
 		"rename":  h.RenameDevice(ctx, backends.DeviceRef{}, "n"),
 		"dismiss": h.DismissAlarm(ctx, backends.AlarmRef{}),
+		"block":   h.BlockClient(ctx, backends.DeviceRef{}, true),
+		"unblock": h.BlockClient(ctx, backends.DeviceRef{}, false),
 	} {
 		if !errors.Is(err, backends.ErrInvalid) {
 			t.Errorf("%s: %v", name, err)
@@ -548,5 +564,29 @@ func TestUnreadableOrFutureStateIsIgnored(t *testing.T) {
 	h.Refresh(ctx)
 	if len(logged) < 2 {
 		t.Fatalf("a rename failure was not reported: %v", logged)
+	}
+}
+
+func TestBlockingAndUnblockingADeviceIsAuditedAndAsksTheBackend(t *testing.T) {
+	now := time.Unix(1000, 0)
+	f := &fake{}
+	h := newHub(t, f, &sinks{}, &now)
+	ref := backends.DeviceRef{Box: "site", Native: "client-1"}
+	if err := h.BlockClient(ctx, ref, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.BlockClient(ctx, ref, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(f.calls, ",") != "block client-1,unblock client-1" {
+		t.Fatalf("calls = %v", f.calls)
+	}
+	a := h.Snapshot().Audit
+	if len(a) != 2 || a[0].Action != "unblock device" || a[1].Action != "block device" {
+		t.Fatalf("audit = %+v", a)
+	}
+	f.writeErr = backends.ErrReadOnly
+	if err := h.BlockClient(ctx, ref, true); !errors.Is(err, backends.ErrReadOnly) {
+		t.Fatal(err)
 	}
 }

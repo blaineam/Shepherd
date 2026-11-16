@@ -12,6 +12,8 @@ import (
 
 	"shepherd/internal/backends"
 	"shepherd/internal/backends/hub"
+	"shepherd/internal/backends/unifi"
+	"shepherd/internal/secrets"
 )
 
 // The dashboard over a connected router or firewall (docs/BACKENDS.md).
@@ -30,13 +32,13 @@ func (s *Server) backendJSON() map[string]any {
 		"connected": false,
 		"running":   false,
 	}
-	if w, ok := s.Secrets.Firewalla(); ok {
+	if c, ok := s.backendConn(); ok {
 		out["connected"] = true
-		out["name"] = "firewalla"
-		out["address"] = w.BaseURL
-		out["box"] = w.Box
-		out["enabled"] = w.Enabled
-		out["writes"] = w.Writes
+		out["name"] = c.name
+		out["address"] = c.address
+		out["box"] = c.scope
+		out["enabled"] = c.enabled
+		out["writes"] = c.writes
 	}
 	if s.Backend == nil {
 		return out
@@ -69,6 +71,25 @@ func nonNil[T any](v []T) []T {
 	return v
 }
 
+// backendConnection is the stored connection the dashboard reads from.
+type backendConnection struct {
+	name, address, scope string
+	enabled, writes      bool
+}
+
+// backendConn is the connection that is, or would be, in effect: a
+// Firewalla if one is stored (it also reports requests), else a UniFi
+// console.
+func (s *Server) backendConn() (backendConnection, bool) {
+	if w, ok := s.Secrets.Firewalla(); ok {
+		return backendConnection{"firewalla", w.BaseURL, w.Box, w.Enabled, w.Writes}, true
+	}
+	if u, ok := s.Secrets.UniFiAPI(); ok {
+		return backendConnection{"unifi", u.BaseURL, u.Site, u.Enabled, u.Writes}, true
+	}
+	return backendConnection{}, false
+}
+
 func (s *Server) getBackend(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.backendJSON())
 }
@@ -95,13 +116,21 @@ func (s *Server) setBackendWrites(w http.ResponseWriter, r *http.Request) {
 		notFound(w, "this build has no router dashboard")
 		return
 	}
-	ok, err := s.Secrets.SetFirewallaWrites(b.Enabled)
+	var (
+		ok  bool
+		err error
+	)
+	if _, stored := s.Secrets.Firewalla(); stored {
+		ok, err = s.Secrets.SetFirewallaWrites(b.Enabled)
+	} else {
+		ok, err = s.Secrets.SetUniFiAPIWrites(b.Enabled)
+	}
 	if err != nil {
 		serverFault(w, "the setting could not be saved")
 		return
 	}
 	if !ok {
-		notFound(w, "no Firewalla account is connected")
+		notFound(w, "no router or firewall is connected")
 		return
 	}
 	s.Backend.Reload()
@@ -309,5 +338,101 @@ func (s *Server) deleteBackendSchedule(w http.ResponseWriter, r *http.Request) {
 		backendError(w, err)
 		return
 	}
+	writeJSON(w, s.backendJSON())
+}
+
+func (s *Server) blockBackendDevice(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Box     string `json:"box"`
+		Native  string `json:"native"`
+		Block   bool   `json:"block"`
+		Confirm bool   `json:"confirm"`
+	}
+	if !decode(w, r, &b, smallBody) || !s.haveBackend(w) || !confirmed(w, b.Confirm) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), backendWriteTimeout)
+	defer cancel()
+	if err := s.Backend.BlockClient(ctx, backends.DeviceRef{Box: b.Box, Native: b.Native}, b.Block); err != nil {
+		backendError(w, err)
+		return
+	}
+	writeJSON(w, s.backendJSON())
+}
+
+// ---- connecting a UniFi console --------------------------------------------
+
+// A UniFi console is connected with an Integration API key, made under
+// Settings, Control Plane, Integrations. It is checked by reading the
+// console once before it is stored, and never returned by any endpoint.
+
+func (s *Server) connectUniFiAPI(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		BaseURL         string `json:"base_url"`
+		APIKey          string `json:"api_key"`
+		Site            string `json:"site"`
+		AllowSelfSigned bool   `json:"allow_self_signed"`
+	}
+	if !decode(w, r, &b, smallBody) || !s.haveBackend(w) {
+		return
+	}
+	src, err := unifi.New(unifi.Config{
+		BaseURL: b.BaseURL, APIKey: b.APIKey, Site: b.Site, AllowSelfSigned: b.AllowSelfSigned,
+		ReadOnly: true, Transport: s.BackendTransport,
+	})
+	if err != nil {
+		bad(w, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), backendWriteTimeout)
+	defer cancel()
+	if _, err := src.Devices(ctx); err != nil {
+		bad(w, err.Error())
+		return
+	}
+	base, _ := unifi.NormalizeURL(b.BaseURL)
+	if _, err := s.Secrets.SetUniFiAPI(secrets.UniFiAPI{
+		BaseURL: base, APIKey: b.APIKey, Site: b.Site, AllowSelfSigned: b.AllowSelfSigned, Enabled: true,
+	}); err != nil {
+		if errors.Is(err, secrets.ErrInvalid) {
+			bad(w, err.Error())
+			return
+		}
+		serverFault(w, "the console could not be saved")
+		return
+	}
+	s.Backend.Reload()
+	writeJSON(w, s.backendJSON())
+}
+
+func (s *Server) setUniFiAPIEnabled(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !decode(w, r, &b, smallBody) || !s.haveBackend(w) {
+		return
+	}
+	ok, err := s.Secrets.SetUniFiAPIEnabled(b.Enabled)
+	if err != nil {
+		serverFault(w, "the setting could not be saved")
+		return
+	}
+	if !ok {
+		notFound(w, "no UniFi console is connected")
+		return
+	}
+	s.Backend.Reload()
+	writeJSON(w, s.backendJSON())
+}
+
+func (s *Server) forgetUniFiAPI(w http.ResponseWriter, r *http.Request) {
+	if !s.haveBackend(w) {
+		return
+	}
+	if err := s.Secrets.ClearUniFiAPI(); err != nil {
+		serverFault(w, "the console could not be forgotten")
+		return
+	}
+	s.Backend.Reload()
 	writeJSON(w, s.backendJSON())
 }

@@ -25,6 +25,7 @@ import (
 	"shepherd/internal/devices"
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/secrets"
+	"shepherd/internal/traffic"
 )
 
 // liveMSP is a Firewalla that answers: one device, one flow that has just
@@ -338,5 +339,92 @@ func TestFlowsAndSchedulesGoThroughTheManager(t *testing.T) {
 	m.Refresh(context.Background())
 	if m.raise(alarms.Event{Type: alarms.TypeBackendAlarm, Title: "x"}) {
 		t.Fatal("there is no alarm engine in this test")
+	}
+}
+
+func TestAUniFiConsoleRunsTheHubButIsNotAFlowSource(t *testing.T) {
+	sec := testSecrets(t)
+	if _, err := sec.SetUniFiAPI(secrets.UniFiAPI{BaseURL: "https://192.0.2.10", APIKey: "k", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	b := testBackend(t, sec)
+	if b.active() != "unifi" {
+		t.Fatalf("active = %q", b.active())
+	}
+	snap, ok := b.Snapshot()
+	if !ok || snap.Name != "unifi" || !snap.ReadOnly {
+		t.Fatalf("snapshot = %+v, %v", snap, ok)
+	}
+	// Its bandwidth does not come from the hub: UniFi reports no flows.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := startRouterUsage(ctx, sec, testRegistry(), traffic.NewStore(traffic.Options{}), nil, b)
+	defer m.Stop()
+	if st := m.Status(); st.Source == "firewalla" {
+		t.Fatalf("status = %+v", st)
+	}
+
+	// Writes are switched in place, without restarting the hub.
+	first := b.hub()
+	if _, err := sec.SetUniFiAPIWrites(true); err != nil {
+		t.Fatal(err)
+	}
+	b.Reload()
+	if b.hub() != first {
+		t.Fatal("switching writes restarted the hub")
+	}
+	if snap, _ := b.Snapshot(); snap.ReadOnly {
+		t.Fatal("writes were not switched on")
+	}
+	// Changing the key does restart it.
+	if _, err := sec.SetUniFiAPI(secrets.UniFiAPI{BaseURL: "https://192.0.2.10", APIKey: "k2", Enabled: true, Writes: true}); err != nil {
+		t.Fatal(err)
+	}
+	b.Reload()
+	if b.hub() == first || b.hub() == nil {
+		t.Fatal("a new key must get a new hub")
+	}
+	// A UniFi backend can block a client; the live Firewalla fake cannot.
+	if err := b.BlockClient(context.Background(), backends.DeviceRef{Native: "c1"}, true); errors.Is(err, errNoBackend) {
+		t.Fatal(err)
+	}
+}
+
+func TestAFirewallaIsPreferredWhenBothAreConnected(t *testing.T) {
+	sec := testSecrets(t)
+	if _, err := sec.SetUniFiAPI(secrets.UniFiAPI{BaseURL: "https://192.0.2.10", APIKey: "k", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sec.SetFirewalla(secrets.Firewalla{BaseURL: "https://home.firewalla.net", Token: "t", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	b := testBackend(t, sec)
+	if b.active() != "firewalla" {
+		t.Fatalf("active = %q", b.active())
+	}
+	if _, err := sec.SetFirewallaEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	b.Reload()
+	if b.active() != "unifi" {
+		t.Fatalf("after switching the Firewalla off, active = %q", b.active())
+	}
+	if _, err := sec.SetUniFiAPIEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	b.Reload()
+	if b.active() != "" {
+		t.Fatalf("with both off, active = %q", b.active())
+	}
+}
+
+func TestABackendThatCannotBeBuiltIsReported(t *testing.T) {
+	sec := testSecrets(t)
+	if _, err := sec.SetUniFiAPI(secrets.UniFiAPI{BaseURL: "https://192.0.2.10/network", APIKey: "k", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	b := testBackend(t, sec)
+	if b.hub() != nil || !strings.Contains(b.LastError(), "console address") {
+		t.Fatalf("hub %v error %q", b.hub(), b.LastError())
 	}
 }

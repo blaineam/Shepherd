@@ -34,7 +34,7 @@ func startRouterUsage(ctx context.Context, sec *secrets.Store, reg *devices.Regi
 		// A connected Firewalla's flows, added up, are real byte counts, so
 		// they beat eero's sampled rates. They come from the dashboard hub,
 		// which is why this needs it.
-		if backend != nil && backend.hub() != nil {
+		if backend != nil && backend.active() == "firewalla" {
 			src := routerusage.NewFeed("firewalla", backend.samples)
 			return newCollector(src, routerusage.FirewallaNeedsSignIn, reg, store, watchEngine), true, nil
 		}

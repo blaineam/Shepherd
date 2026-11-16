@@ -327,3 +327,78 @@ func TestAStoredFirewallaAccountThatIsNotValidRefusesToLoad(t *testing.T) {
 		t.Fatal("Open accepted an unusable account")
 	}
 }
+
+func TestUniFiAPIKeyIsStoredSwitchedAndForgotten(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	s := openAt(t, path)
+	if _, ok := s.UniFiAPI(); ok {
+		t.Fatal("a fresh store holds no console")
+	}
+	got, err := s.SetUniFiAPI(UniFiAPI{BaseURL: " https://192.0.2.10/ ", APIKey: " key ", Site: " Home ", Enabled: true, AllowSelfSigned: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.BaseURL != "https://192.0.2.10" || got.APIKey != "key" || got.Site != "Home" {
+		t.Fatalf("saved %+v, want it trimmed", got)
+	}
+	if again, ok := openAt(t, path).UniFiAPI(); !ok || again.APIKey != "key" || !again.AllowSelfSigned {
+		t.Fatalf("after reload = %+v, %v", again, ok)
+	}
+	if ok, err := s.SetUniFiAPIWrites(true); !ok || err != nil {
+		t.Fatalf("= %v, %v", ok, err)
+	}
+	if u, _ := s.UniFiAPI(); !u.Writes || !u.Enabled {
+		t.Fatalf("%+v", u)
+	}
+	if ok, err := s.SetUniFiAPIEnabled(false); !ok || err != nil {
+		t.Fatalf("= %v, %v", ok, err)
+	}
+	if u, _ := s.UniFiAPI(); u.Enabled || u.APIKey == "" {
+		t.Fatalf("switching off disturbed the key: %+v", u)
+	}
+	if err := s.ClearUniFiAPI(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.UniFiAPI(); ok {
+		t.Fatal("the console is still stored")
+	}
+	if ok, err := s.SetUniFiAPIEnabled(true); ok || err != nil {
+		t.Fatalf("with nothing stored = %v, %v", ok, err)
+	}
+	if ok, err := s.SetUniFiAPIWrites(true); ok || err != nil {
+		t.Fatalf("with nothing stored = %v, %v", ok, err)
+	}
+}
+
+func TestUniFiAPIRefusesWhatItCouldNotUseAndNeverFormatsItsKey(t *testing.T) {
+	s := openAt(t, "")
+	for name, u := range map[string]UniFiAPI{
+		"no address":        {APIKey: "k"},
+		"no scheme":         {BaseURL: "192.0.2.10", APIKey: "k"},
+		"no key":            {BaseURL: "https://192.0.2.10"},
+		"space in key":      {BaseURL: "https://192.0.2.10", APIKey: "a b"},
+		"control character": {BaseURL: "https://192.0.2.10", APIKey: "a\nb"},
+		"bad site":          {BaseURL: "https://192.0.2.10", APIKey: "k", Site: "a\nb"},
+	} {
+		if _, err := s.SetUniFiAPI(u); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	var unset UniFiAPI
+	if !strings.Contains(unset.String(), "not set") {
+		t.Fatalf("unset = %q", unset.String())
+	}
+	u := UniFiAPI{BaseURL: "https://192.0.2.10", APIKey: "super-secret"}
+	for _, out := range []string{u.String(), u.GoString()} {
+		if strings.Contains(out, "super-secret") {
+			t.Fatalf("the key leaked into %q", out)
+		}
+	}
+	path := filepath.Join(t.TempDir(), FileName)
+	if err := os.WriteFile(path, []byte(`{"version":1,"unifi_api":{"base_url":"nonsense","api_key":"a"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path); err == nil {
+		t.Fatal("Open accepted an unusable console")
+	}
+}

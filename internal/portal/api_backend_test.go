@@ -5,12 +5,17 @@ package portal
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
 
 	"shepherd/internal/backends"
 	"shepherd/internal/backends/hub"
+	"shepherd/internal/secrets"
 )
 
 // fakeHub is a BackendHub that records what it was asked to do.
@@ -95,7 +100,7 @@ func backendHarness(t *testing.T) (*harness, *fakeHub) {
 	}}
 	h.srv.Backend = fh
 	h.srv.RouterUsage = &fakeUsage{}
-	h.srv.FirewallaTransport, _ = firewallaTransport(t, "tok")
+	h.srv.BackendTransport, _ = firewallaTransport(t, "tok")
 	h.ok("POST", "/api/routerusage/firewalla", `{"base_url":"home.firewalla.net","token":"tok"}`, 200)
 	return h, fh
 }
@@ -332,4 +337,129 @@ func TestWriteFailuresAreReportedForEveryKindOfChange(t *testing.T) {
 	for _, p := range []string{"/api/backend/rules", "/api/backend/devices/rename", "/api/backend/alarms/dismiss", "/api/backend/schedules/abc/delete", "/api/backend/rules/r1/pause", "/api/backend/rules/r1/resume", "/api/backend/rules/r1/delete"} {
 		h.expect("POST", p, `{bad`, 400)
 	}
+}
+
+func (f *fakeHub) BlockClient(_ context.Context, r backends.DeviceRef, block bool) error {
+	if block {
+		return f.write("block " + r.Box + "/" + r.Native)
+	}
+	return f.write("unblock " + r.Box + "/" + r.Native)
+}
+
+// unifiConsole serves just enough of a UniFi console for the portal to
+// check an API key against.
+func unifiConsoleTransport(t *testing.T, key string) http.RoundTripper {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-API-KEY") != key {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		p := strings.TrimPrefix(r.URL.Path, "/proxy/network/integration")
+		switch {
+		case p == "/v1/info":
+			fmt.Fprint(w, `{"applicationVersion":"9"}`)
+		case p == "/v1/sites":
+			fmt.Fprint(w, `{"totalCount":1,"data":[{"id":"s1","internalReference":"default","name":"Home"}]}`)
+		case strings.HasSuffix(p, "/clients"):
+			fmt.Fprint(w, `{"totalCount":1,"data":[{"id":"c1","name":"TV","macAddress":"02:00:5e:00:00:01"}]}`)
+		case strings.HasSuffix(p, "/devices"):
+			fmt.Fprint(w, `{"totalCount":0,"data":[]}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	target, _ := url.Parse(srv.URL)
+	return fwRoundTrip(func(r *http.Request) (*http.Response, error) {
+		r = r.Clone(r.Context())
+		r.URL.Scheme, r.URL.Host = target.Scheme, target.Host
+		return http.DefaultTransport.RoundTrip(r)
+	})
+}
+
+func TestConnectingAUniFiConsoleChecksTheKeyAndNeverReturnsIt(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	fh := &fakeHub{running: true}
+	h.srv.Backend = fh
+	h.srv.BackendTransport = unifiConsoleTransport(t, "good-key")
+
+	h.expect("POST", "/api/backend/unifi", `{"base_url":"192.0.2.10","api_key":"wrong"}`, 400)
+	if _, ok := h.srv.Secrets.UniFiAPI(); ok {
+		t.Fatal("a refused key was stored")
+	}
+	h.expect("POST", "/api/backend/unifi", `{"base_url":"ftp://x","api_key":"good-key"}`, 400)
+	h.expect("POST", "/api/backend/unifi", `{"base_url":"192.0.2.10","api_key":""}`, 400)
+	h.expect("POST", "/api/backend/unifi", `{bad`, 400)
+
+	out := h.ok("POST", "/api/backend/unifi", `{"base_url":"192.0.2.10/","api_key":"good-key","site":"Home","allow_self_signed":true}`, 200)
+	if out["name"] != "unifi" || out["address"] != "https://192.0.2.10" || out["enabled"] != true || out["box"] != "Home" {
+		t.Fatalf("view = %v", out)
+	}
+	if u, ok := h.srv.Secrets.UniFiAPI(); !ok || u.APIKey != "good-key" || !u.AllowSelfSigned || u.Writes {
+		t.Fatalf("stored = %+v", u)
+	}
+	_, body := h.call("GET", "/api/backend", "")
+	if strings.Contains(body, "good-key") {
+		t.Fatalf("the key leaked: %s", body)
+	}
+	if fh.reloads == 0 {
+		t.Fatal("connecting did not start the hub")
+	}
+
+	// The write switch applies to the connected console.
+	if out := h.ok("POST", "/api/backend/writes", `{"enabled":true}`, 200); out["writes"] != true {
+		t.Fatalf("view = %v", out)
+	}
+	if u, _ := h.srv.Secrets.UniFiAPI(); !u.Writes {
+		t.Fatal("writes were not stored on the console")
+	}
+	h.ok("POST", "/api/backend/unifi/enabled", `{"enabled":false}`, 200)
+	if out := h.ok("GET", "/api/backend", "", 200); out["enabled"] != false {
+		t.Fatalf("view = %v", out)
+	}
+	h.ok("DELETE", "/api/backend/unifi", "", 200)
+	if _, ok := h.srv.Secrets.UniFiAPI(); ok {
+		t.Fatal("the console is still stored")
+	}
+	h.expect("POST", "/api/backend/unifi/enabled", `{"enabled":true}`, 404)
+	h.expect("POST", "/api/backend/unifi/enabled", `{bad`, 400)
+}
+
+func TestWithNoDashboardTheUniFiEndpointsSaySo(t *testing.T) {
+	h := newHarness(t)
+	h.expect("POST", "/api/backend/unifi", `{"base_url":"192.0.2.10","api_key":"k"}`, 404)
+	h.expect("POST", "/api/backend/unifi/enabled", `{"enabled":true}`, 404)
+	h.expect("DELETE", "/api/backend/unifi", "", 404)
+	h.expect("POST", "/api/backend/devices/block", `{"confirm":true}`, 404)
+}
+
+func TestAFirewallaBeatsAUniFiConsoleInTheView(t *testing.T) {
+	h, _ := backendHarness(t) // a Firewalla is connected
+	if _, err := h.srv.Secrets.SetUniFiAPI(secrets.UniFiAPI{BaseURL: "https://192.0.2.10", APIKey: "k", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if out := h.ok("GET", "/api/backend", "", 200); out["name"] != "firewalla" {
+		t.Fatalf("view = %v", out)
+	}
+	h.ok("POST", "/api/backend/writes", `{"enabled":true}`, 200)
+	if w, _ := h.srv.Secrets.Firewalla(); !w.Writes {
+		t.Fatal("the write switch should follow the connection in effect")
+	}
+	if u, _ := h.srv.Secrets.UniFiAPI(); u.Writes {
+		t.Fatal("the other connection was changed")
+	}
+}
+
+func TestBlockingADeviceNeedsConfirmAndReachesTheHub(t *testing.T) {
+	h, fh := backendHarness(t)
+	h.expect("POST", "/api/backend/devices/block", `{"box":"s","native":"c","block":true}`, 400)
+	h.ok("POST", "/api/backend/devices/block", `{"box":"s","native":"c","block":true,"confirm":true}`, 200)
+	h.ok("POST", "/api/backend/devices/block", `{"box":"s","native":"c","block":false,"confirm":true}`, 200)
+	if got := strings.Join(fh.wrote(), "|"); got != "block s/c|unblock s/c" {
+		t.Fatalf("writes = %s", got)
+	}
+	fh.err = backends.ErrReadOnly
+	h.expect("POST", "/api/backend/devices/block", `{"block":true,"confirm":true}`, 403)
+	h.expect("POST", "/api/backend/devices/block", `{bad`, 400)
 }

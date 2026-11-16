@@ -15,6 +15,12 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Added
 
+- **UniFi backend** ([docs/BACKENDS.md](docs/BACKENDS.md#unifi)). Connect a UniFi console with an
+  Integration API key on the new **Router** screen. Shepherd lists clients, devices and your
+  user-defined firewall policies, and, behind **Allow changes**, pauses, resumes and deletes a policy
+  and blocks a client; policies can be scheduled. It cannot create policies (the published API does
+  not describe their bodies) and UniFi reports no requests or alarms. The same screen now serves
+  Firewalla or UniFi, one at a time, with each control shown only where the product supports it.
 - **Dashboard mode, schedules and device filtering** ([docs/BACKENDS.md](docs/BACKENDS.md)).
   `dns.enabled = false` serves no DNS and makes Shepherd a portal over the router or firewall that
   does the filtering. A rule can be given a **schedule**: Shepherd pauses it outside a window of days

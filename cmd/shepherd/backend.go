@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"shepherd/internal/backends"
 	"shepherd/internal/backends/firewalla"
 	"shepherd/internal/backends/hub"
+	"shepherd/internal/backends/unifi"
 	"shepherd/internal/devices"
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/routerusage"
@@ -39,8 +41,9 @@ type backendManager struct {
 
 	mu     sync.Mutex
 	cur    *hub.Hub
-	client *firewalla.Client
-	key    secrets.Firewalla // what cur was built from, minus the write switch
+	name   string // which backend cur runs
+	setRO  func(bool)
+	key    string // what cur was built from, minus the write switch
 	cancel context.CancelFunc
 	done   chan struct{}
 	err    string
@@ -52,49 +55,85 @@ func startBackend(ctx context.Context, sec *secrets.Store, reg *devices.Registry
 	return m
 }
 
+// connection is the backend the stored settings ask for.
+type connection struct {
+	name    string
+	key     string
+	writes  bool
+	backend backends.Backend
+	setRO   func(bool)
+}
+
+// wanted builds the backend the owner has connected and switched on, or
+// nil when there is none. One backend runs at a time: a Firewalla wins over
+// a UniFi console when both are connected, since it also reports requests.
+func (m *backendManager) wanted() (*connection, error) {
+	if w, ok := m.sec.Firewalla(); ok && w.Enabled {
+		c, err := firewalla.New(firewalla.Config{BaseURL: w.BaseURL, Token: w.Token, Box: w.Box, ReadOnly: !w.Writes, Transport: m.transport})
+		if err != nil {
+			return nil, err
+		}
+		return &connection{name: "firewalla", key: "firewalla|" + w.BaseURL + "|" + w.Token + "|" + w.Box, writes: w.Writes, backend: c, setRO: c.SetReadOnly}, nil
+	}
+	if u, ok := m.sec.UniFiAPI(); ok && u.Enabled {
+		c, err := unifi.New(unifi.Config{BaseURL: u.BaseURL, APIKey: u.APIKey, Site: u.Site, AllowSelfSigned: u.AllowSelfSigned, ReadOnly: !u.Writes, Transport: m.transport})
+		if err != nil {
+			return nil, err
+		}
+		return &connection{name: "unifi", key: fmt.Sprintf("unifi|%s|%s|%s|%t", u.BaseURL, u.APIKey, u.Site, u.AllowSelfSigned), writes: u.Writes, backend: c, setRO: c.SetReadOnly}, nil
+	}
+	return nil, nil
+}
+
 // Reload makes what is running match the stored connection. A change to
 // only the write switch is applied in place, so toggling it never makes the
 // hub forget what it has already ingested.
 func (m *backendManager) Reload() {
-	w, ok := m.sec.Firewalla()
-	want := ok && w.Enabled
-	same := func(a, b secrets.Firewalla) bool {
-		return a.BaseURL == b.BaseURL && a.Token == b.Token && a.Box == b.Box
+	conn, err := m.wanted()
+	if err != nil {
+		m.stop()
+		m.setErr(err.Error())
+		log.Printf("backend: not starting: %v", err)
+		return
 	}
 
 	m.mu.Lock()
-	if m.cur != nil && want && same(m.key, w) {
-		m.client.SetReadOnly(!w.Writes)
+	if m.cur != nil && conn != nil && conn.key == m.key {
+		m.setRO(!conn.writes)
 		m.mu.Unlock()
 		return
 	}
 	m.mu.Unlock()
 
 	m.stop()
-	if !want {
-		m.setErr("")
-		return
-	}
-	c, err := firewalla.New(firewalla.Config{BaseURL: w.BaseURL, Token: w.Token, Box: w.Box, ReadOnly: !w.Writes, Transport: m.transport})
-	if err != nil {
-		m.setErr(err.Error())
-		log.Printf("backend: not starting: %v", err)
+	m.setErr("")
+	if conn == nil {
 		return
 	}
 	h := hub.New(hub.Options{
-		Backend: c, FlowSink: m.qlog.Add, AlarmSink: m.raise,
+		Backend: conn.backend, FlowSink: m.qlog.Add, AlarmSink: m.raise,
 		Resolve:      m.resolve,
-		StatePath:    filepath.Join(m.dataDir, "backend-firewalla.json"),
-		SchedulePath: filepath.Join(m.dataDir, "backend-schedules.json"),
+		StatePath:    filepath.Join(m.dataDir, "backend-"+conn.name+".json"),
+		SchedulePath: filepath.Join(m.dataDir, "backend-"+conn.name+"-schedules.json"),
 		Logf:         log.Printf,
 	})
 	ctx, cancel := context.WithCancel(m.parent)
 	done := make(chan struct{})
 	m.mu.Lock()
-	m.cur, m.client, m.key, m.cancel, m.done, m.err = h, c, w, cancel, done, ""
+	m.cur, m.name, m.setRO, m.key, m.cancel, m.done = h, conn.name, conn.setRO, conn.key, cancel, done
 	m.mu.Unlock()
 	go func() { defer close(done); h.Run(ctx) }()
-	log.Printf("backend: reading %s every %s (writes %s)", c.Name(), hub.DefaultInterval, map[bool]string{true: "on", false: "off"}[w.Writes])
+	log.Printf("backend: reading %s every %s (writes %s)", conn.name, hub.DefaultInterval, map[bool]string{true: "on", false: "off"}[conn.writes])
+}
+
+// active reports the name of the backend that is running, "" for none.
+func (m *backendManager) active() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cur == nil {
+		return ""
+	}
+	return m.name
 }
 
 func (m *backendManager) raise(e alarms.Event) bool {
@@ -130,8 +169,8 @@ func (m *backendManager) setErr(s string) {
 func (m *backendManager) stop() {
 	m.mu.Lock()
 	cancel, done := m.cancel, m.done
-	m.cur, m.client, m.cancel, m.done = nil, nil, nil, nil
-	m.key = secrets.Firewalla{}
+	m.cur, m.name, m.setRO, m.cancel, m.done = nil, "", nil, nil, nil
+	m.key = ""
 	m.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -220,6 +259,14 @@ func (m *backendManager) RenameDevice(ctx context.Context, ref backends.DeviceRe
 		return errNoBackend
 	}
 	return h.RenameDevice(ctx, ref, name)
+}
+
+func (m *backendManager) BlockClient(ctx context.Context, ref backends.DeviceRef, block bool) error {
+	h := m.hub()
+	if h == nil {
+		return errNoBackend
+	}
+	return h.BlockClient(ctx, ref, block)
 }
 
 func (m *backendManager) DismissAlarm(ctx context.Context, ref backends.AlarmRef) error {

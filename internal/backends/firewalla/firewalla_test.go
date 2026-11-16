@@ -335,7 +335,7 @@ func TestAReadOnlyTokenNeverSendsAWrite(t *testing.T) {
 
 func TestAFullAccessTokenAdvertisesEverything(t *testing.T) {
 	c := newClient(t, &fakeMSP{}, nil)
-	if got := backends.Capabilities(c); len(got) != 7 {
+	if got := backends.Capabilities(c); len(got) != 8 {
 		t.Fatalf("capabilities = %v", got)
 	}
 }

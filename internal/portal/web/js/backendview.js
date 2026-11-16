@@ -6,7 +6,7 @@ import { el } from './dom.js';
 import { button, emptyState, unavailableCard, confirmDialog } from './ui.js';
 import { unavailable } from './mgmt.js';
 import { fmtDateTime } from './format.js';
-import { can, statusLine, blockSpecFromFlow, ruleSummary, requestLine, auditLine, DAY_NAMES, scheduleText, scheduleFor, scheduleBody, scheduleProblem } from './backend.js';
+import { can, productName, statusLine, blockSpecFromFlow, ruleSummary, requestLine, auditLine, DAY_NAMES, scheduleText, scheduleFor, scheduleBody, scheduleProblem } from './backend.js';
 
 export function createBackend({ root, mgmt, notify }) {
   let data = null;
@@ -26,8 +26,9 @@ export function createBackend({ root, mgmt, notify }) {
   root.replaceChildren();
   const head = el('div', 'pg-head stack');
   const title = el('h2', 'pg-title');
-  title.append(el('span', '', 'Firewalla'));
-  head.append(title, el('p', 'pg-sub muted', 'What your Firewalla sees, and the controls over what it enforces. Reading is always on; changes are off until you allow them.'));
+  const titleText = el('span', '', 'Router');
+  title.append(titleText);
+  head.append(title, el('p', 'pg-sub muted', 'What your router or firewall sees, and the controls over what it enforces. Reading is always on; changes are off until you allow them.'));
   const body = el('div', 'bk-body');
   root.append(head, body);
 
@@ -71,6 +72,41 @@ export function createBackend({ root, mgmt, notify }) {
     return c;
   };
 
+  // A UniFi console is connected here, with an Integration API key. (A
+  // Firewalla is connected on the Bandwidth screen, with the same token
+  // its bandwidth reading uses.)
+  const udraft = { url: '', key: '', site: '', self: false };
+  function unifiCard() {
+    const c = card('Connect a UniFi console', 'Integration API');
+    c.append(el('p', 'muted small', 'Make an API key under Settings, Control Plane, Integrations in UniFi Network (version 9 or newer). Shepherd lists your clients and firewall policies, and can pause, resume or delete a policy and block a client once you allow changes. It cannot create policies, and UniFi reports no request log, so use Shepherd\'s own DNS for that.'));
+    const form = el('form', 'ru-form ru-grid');
+    const mk = (key, attrs) => {
+      const i = el('input'); Object.assign(i, attrs); i.value = udraft[key];
+      i.addEventListener('input', () => { udraft[key] = i.value; });
+      return i;
+    };
+    const url = mk('url', { type: 'text', placeholder: 'https://192.0.2.10', required: true, autocomplete: 'off' });
+    const key = mk('key', { type: 'password', placeholder: 'API key', required: true, autocomplete: 'off' });
+    const site = mk('site', { type: 'text', placeholder: 'site (default)', autocomplete: 'off' });
+    const over = el('label', 'switch');
+    const cb = el('input'); cb.type = 'checkbox'; cb.checked = udraft.self;
+    cb.addEventListener('change', () => { udraft.self = cb.checked; });
+    over.append(cb, el('span', '', 'Accept its self-signed certificate'));
+    const go = el('button', '', 'Connect');
+    go.disabled = busy;
+    form.append(url, key, site, over, go);
+    form.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      run(async () => {
+        data = await mgmt.backendUniFiConnect({ base_url: url.value.trim(), api_key: key.value, site: site.value.trim(), allow_self_signed: udraft.self });
+        udraft.url = ''; udraft.key = ''; udraft.site = '';
+        notify('Shepherd is now reading your UniFi console');
+      });
+    });
+    c.append(form);
+    return c;
+  }
+
   function header() {
     const c = el('section', 'card bk-card');
     const line = statusLine(data);
@@ -82,6 +118,14 @@ export function createBackend({ root, mgmt, notify }) {
     const refresh = button('Refresh', 'ghost', () => run(async () => { data = await mgmt.backendRefresh(); }));
     refresh.disabled = busy;
     acts.append(refresh);
+    if (data.name === 'unifi') {
+      const off = button('Disconnect', 'ghost', () => act({
+        title: 'Disconnect this console?', text: 'Shepherd forgets the API key. Nothing changes on your console.', confirm: 'Disconnect',
+        send: () => mgmt.backendUniFiForget(), done: 'The console has been forgotten',
+      }));
+      off.disabled = busy;
+      acts.append(off);
+    }
     const sw = el('label', 'switch');
     const box = el('input');
     box.type = 'checkbox';
@@ -90,8 +134,8 @@ export function createBackend({ root, mgmt, notify }) {
     box.addEventListener('change', async () => {
       if (box.checked) {
         const ok = await confirmDialog({
-          title: 'Allow changes to your Firewalla?',
-          body: 'Shepherd will be able to add, pause and delete rules, rename devices and dismiss alarms. Each one still asks you first. The token must have Full Access for them to work.',
+          title: 'Allow changes to your ' + productName(data) + '?',
+          body: 'Shepherd will be able to pause, resume and delete rules and, where the product allows it, add rules, rename or block devices and dismiss alarms. Each one still asks you first. The credential must allow writing for them to work.',
           confirm: 'Allow changes',
         });
         if (!ok) { box.checked = false; return; }
@@ -139,7 +183,7 @@ export function createBackend({ root, mgmt, notify }) {
       if (schedOpen === r.ID) ul.append(scheduleForm(r));
     }
     c.append(ul);
-    if (can(data, 'rules:write')) c.append(ruleForm());
+    if (can(data, 'rules:create')) c.append(ruleForm());
     return c;
   }
 
@@ -265,7 +309,7 @@ export function createBackend({ root, mgmt, notify }) {
       const li = el('li', 'up-item' + (line.blocked ? ' bad' : ''));
       li.append(el('span', 'muted small mono', fmtDateTime(new Date(f.Time).getTime()).slice(-8)), el('span', 'up-addr', line.what), el('span', 'muted small', line.who + (line.blocked ? ' (blocked)' : '')));
       const spec = blockSpecFromFlow(f);
-      if (spec && !line.blocked && can(data, 'rules:write')) {
+      if (spec && !line.blocked && can(data, 'rules:create')) {
         const b = button('Block', 'ghost', () => reviewRule(spec, false));
         b.disabled = busy;
         li.append(b);
@@ -308,6 +352,14 @@ export function createBackend({ root, mgmt, notify }) {
     for (const d of devs) {
       const li = el('li', 'up-item');
       li.append(el('span', d.Online ? 'dot' : 'dot bad'), el('span', 'up-addr', d.Name || d.MAC || d.Native), el('span', 'muted small', [d.IP, d.Group].filter(Boolean).join(' · ')));
+      if (can(data, 'devices:block') && d.Native) {
+        const bl = button('Block', 'ghost', () => act({
+          title: 'Block this device?', text: (d.Name || d.Native) + ' loses its network access. Unblock it from your console\'s client list.',
+          confirm: 'Block', danger: true, send: () => mgmt.backendBlock(d.Box, d.Native, true), done: 'Device blocked',
+        }));
+        bl.disabled = busy;
+        li.append(bl);
+      }
       if (can(data, 'devices:rename') && d.Native) {
         const b = button('Rename', 'ghost', async () => {
           const name = window.prompt('New name (up to 32 characters)', d.Name || '');
@@ -341,12 +393,14 @@ export function createBackend({ root, mgmt, notify }) {
   }
 
   function paint() {
+    titleText.textContent = productName(data);
     if (loadError) {
       body.replaceChildren(unavailable(loadError) ? unavailableCard('The router dashboard') : emptyState('Could not load', loadError.message));
       return;
     }
     if (!data) { body.replaceChildren(el('p', 'muted', 'Loading.')); return; }
     const parts = [header()];
+    if (data.available && !data.connected) parts.push(unifiCard());
     if (data.running) {
       const grid = el('div', 'up-grid');
       const a = el('div', 'up-col');

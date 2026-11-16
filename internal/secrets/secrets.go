@@ -382,6 +382,50 @@ func (f Firewalla) validate() error {
 	return checkField("MSP token", f.Token, true)
 }
 
+// UniFiAPI is a UniFi Network Integration API key (docs/BACKENDS.md). It
+// is separate from the UniFi controller login used for bandwidth, which
+// is a username and password for a different, older interface.
+type UniFiAPI struct {
+	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key"`
+	// Site is a site's name, reference or ID; empty means the default one.
+	Site            string `json:"site,omitempty"`
+	AllowSelfSigned bool   `json:"allow_self_signed"`
+	Enabled         bool   `json:"enabled"`
+	// Writes lets the dashboard change things; see Firewalla.Writes.
+	Writes bool `json:"writes,omitempty"`
+	Meta
+}
+
+// Configured reports whether a console is actually set.
+func (u UniFiAPI) Configured() bool { return u.BaseURL != "" }
+
+// String never includes the key.
+func (u UniFiAPI) String() string {
+	if !u.Configured() {
+		return "unifi api (not set)"
+	}
+	return fmt.Sprintf("unifi api %s (site %q, enabled %v, from %s)", u.BaseURL, u.Site, u.Enabled, u.Source)
+}
+
+// GoString redacts the same way for %#v.
+func (u UniFiAPI) GoString() string { return u.String() }
+
+func (u UniFiAPI) validate() error {
+	if !strings.HasPrefix(u.BaseURL, "http://") && !strings.HasPrefix(u.BaseURL, "https://") {
+		return fmt.Errorf("%w: the console address must start with http:// or https://", ErrInvalid)
+	}
+	if u.APIKey == "" {
+		return fmt.Errorf("%w: the API key is required", ErrInvalid)
+	}
+	for name, v := range map[string]string{"console address": u.BaseURL, "site": u.Site, "API key": u.APIKey} {
+		if err := checkField(name, v, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type file struct {
 	Version int `json:"version"`
 	// A nil record means "never owned": shepherd.toml may still seed it.
@@ -390,6 +434,7 @@ type file struct {
 	Eero        *Eero        `json:"eero,omitempty"`
 	UniFi       *UniFi       `json:"unifi,omitempty"`
 	Firewalla   *Firewalla   `json:"firewalla,omitempty"`
+	UniFiAPI    *UniFiAPI    `json:"unifi_api,omitempty"`
 	Ntfy        *Ntfy        `json:"ntfy,omitempty"`
 }
 
@@ -450,6 +495,11 @@ func Open(path string) (*Store, error) {
 	if w := f.Firewalla; w != nil && w.Configured() {
 		if err := w.validate(); err != nil {
 			return nil, fmt.Errorf("%s: firewalla: %w", path, err)
+		}
+	}
+	if u := f.UniFiAPI; u != nil && u.Configured() {
+		if err := u.validate(); err != nil {
+			return nil, fmt.Errorf("%s: unifi_api: %w", path, err)
 		}
 	}
 	if n := f.Ntfy; n != nil && n.Configured() {
@@ -874,6 +924,60 @@ func (s *Store) SetFirewallaWrites(on bool) (bool, error) {
 	return true, s.mutate(func(f *file) { f.Firewalla = &w })
 }
 
+// UniFiAPI returns the stored console and whether one is actually set.
+func (s *Store) UniFiAPI() (UniFiAPI, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.data.UniFiAPI == nil {
+		return UniFiAPI{}, false
+	}
+	u := *s.data.UniFiAPI
+	return u, u.Configured()
+}
+
+// SetUniFiAPI validates and saves u as the owner's choice from the portal.
+func (s *Store) SetUniFiAPI(u UniFiAPI) (UniFiAPI, error) {
+	u.BaseURL = strings.TrimRight(strings.TrimSpace(u.BaseURL), "/")
+	u.APIKey = strings.TrimSpace(u.APIKey)
+	u.Site = strings.TrimSpace(u.Site)
+	if err := u.validate(); err != nil {
+		return UniFiAPI{}, err
+	}
+	u.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return u, s.mutate(func(f *file) { f.UniFiAPI = &u })
+}
+
+// SetUniFiAPIEnabled flips the switch without disturbing the key. It
+// returns false when nothing is stored.
+func (s *Store) SetUniFiAPIEnabled(on bool) (bool, error) {
+	u, ok := s.UniFiAPI()
+	if !ok {
+		return false, nil
+	}
+	u.Enabled = on
+	u.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return true, s.mutate(func(f *file) { f.UniFiAPI = &u })
+}
+
+// SetUniFiAPIWrites turns the dashboard's write access on or off. It
+// returns false when nothing is stored.
+func (s *Store) SetUniFiAPIWrites(on bool) (bool, error) {
+	u, ok := s.UniFiAPI()
+	if !ok {
+		return false, nil
+	}
+	u.Writes = on
+	u.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return true, s.mutate(func(f *file) { f.UniFiAPI = &u })
+}
+
+// ClearUniFiAPI forgets the console and its key.
+func (s *Store) ClearUniFiAPI() error {
+	return s.mutate(func(f *file) {
+		f.UniFiAPI = &UniFiAPI{Meta: Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}}
+	})
+}
+
 // ClearFirewalla forgets the account and its token.
 func (s *Store) ClearFirewalla() error {
 	return s.mutate(func(f *file) {
@@ -936,6 +1040,10 @@ func (s *Store) mutate(fn func(*file), want ...func() bool) error {
 	if next.Firewalla != nil {
 		w := *next.Firewalla
 		next.Firewalla = &w
+	}
+	if next.UniFiAPI != nil {
+		u := *next.UniFiAPI
+		next.UniFiAPI = &u
 	}
 	if next.Ntfy != nil {
 		n := *next.Ntfy

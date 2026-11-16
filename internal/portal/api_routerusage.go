@@ -350,7 +350,7 @@ func (s *Server) connectFirewalla(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	src, err := firewalla.New(firewalla.Config{
-		BaseURL: b.BaseURL, Token: b.Token, Box: b.Box, ReadOnly: true, Transport: s.FirewallaTransport,
+		BaseURL: b.BaseURL, Token: b.Token, Box: b.Box, ReadOnly: true, Transport: s.BackendTransport,
 	})
 	if err != nil {
 		bad(w, err.Error())

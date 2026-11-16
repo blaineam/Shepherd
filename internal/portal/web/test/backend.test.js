@@ -105,3 +105,23 @@ test('a time-limit rule shows how much of its allowance is used', () => {
   assert.equal(ruleSummary({ Action: 'timelimit', TargetType: 'app', Target: 'youtube', ScopeType: 'group', Scope: 'kids', QuotaMinutes: 60, UsedMinutes: 45 }),
     'Time limit app youtube for the group kids, 45 of 60 min used today');
 });
+
+import { productName } from '../js/backend.js';
+
+test('the product is named the way its owner knows it', () => {
+  assert.equal(productName({ name: 'unifi' }), 'UniFi');
+  assert.equal(productName({ name: 'firewalla' }), 'Firewalla');
+  assert.equal(productName({}), 'Router');
+  assert.equal(productName(null), 'Router');
+});
+
+test('a UniFi firewall policy is shown by name, since its filters cannot be described here', () => {
+  assert.equal(ruleSummary({ Action: 'block', TargetType: 'policy', Name: 'Block IoT to LAN', Target: 'Block IoT to LAN' }), 'Block policy "Block IoT to LAN"');
+  assert.equal(ruleSummary({ Action: 'allow', TargetType: 'policy', ID: 'p9' }), 'Allow policy "p9"');
+});
+
+test('what is connected is named in the status line', () => {
+  const line = statusLine({ available: true, connected: true, enabled: true, running: true, name: 'unifi', read_only: true, address: '', status: { last_poll: 'x' } });
+  assert.match(line.text, /UniFi/);
+  assert.match(statusLine({ available: true, connected: true, enabled: true, running: true, name: 'unifi', status: { needs_token: true } }).text, /UniFi refused the credential/);
+});

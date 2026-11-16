@@ -24,15 +24,39 @@ owner has not marked the credential read-only. A write through a read-only conne
 | Rules (list) | `GET /v2/rules` | firewall policies, ACL rules, DNS policies | allow and block lists |
 | Rules (change) | create block or allow, pause, resume, delete | create, update, delete firewall policies | policy store |
 | Rename device | `PATCH /v2/boxes/:gid/devices/:id` | not documented | registry |
+| Block a device | rule with a device scope | block a client | quarantine |
 | Dismiss alarm | `DELETE /v2/alarms/:gid/:aid` | n/a | alarm engine |
 
 UniFi's documented API manages the network (devices, clients, firewall and DNS policy) but does not
 report requests or raise alarms. That is the case for pairing: with a UniFi network, Shepherd's DNS
 history supplies the requests, and the backend supplies the controls.
 
+## UniFi
+
+Connect a UniFi console on the **Router** screen with an Integration API key (UniFi Network 9 or
+newer: *Settings, Control Plane, Integrations, API Keys*). The address is your console's, such as
+`https://192.0.2.10`; a console's certificate is usually self-signed, so there is a switch to accept
+it, off unless you turn it on. The key is checked by reading the console once before it is stored,
+is kept in `secrets.json` and never returned by any endpoint, and redirects are refused so it is
+sent only where you typed. A site can be named; the default one is used otherwise.
+
+What the published API gives Shepherd, and so what the screen offers:
+
+- **Reading:** connected clients and UniFi devices, and the user-defined firewall policies (UniFi's
+  built-in ones are left out, because pausing or deleting one is not something a dashboard should
+  offer).
+- **Changing**, behind **Allow changes**: pause or resume a policy (disable or enable it), delete a
+  policy, and **block** a client. Policies also take schedules, below.
+- **Not available:** creating a policy (the published reference does not describe the zone and
+  traffic-filter bodies, and Shepherd does not guess at a firewall's), requests and alarms (UniFi's
+  API has neither), renaming a device. For requests on a UniFi network, use Shepherd's own DNS.
+
+One backend runs at a time. If a Firewalla and a UniFi console are both connected, the Firewalla
+is used, because it also reports requests; switch it off to use the console.
+
 ## What it does today (Firewalla)
 
-Connect an account under **Read from your router** on the Bandwidth screen, then open **Firewalla**
+Connect an account under **Read from your router** on the Bandwidth screen, then open **Router**
 in the sidebar.
 
 **Reading** (always on once connected, every 30 seconds):
@@ -98,8 +122,10 @@ holds.
 
 ## Not built yet
 
-- A UniFi backend.
 - Target-list management.
+- Creating UniFi firewall policies.
+- Unblocking a UniFi client from Shepherd (a blocked client leaves the connected list; unblock it
+  from the console's client list).
 
 ## Verified against
 

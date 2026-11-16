@@ -31,11 +31,18 @@ type Capability string
 // The capabilities. A write capability is present only when the backend
 // implements it and the owner has not made the credential read-only.
 const (
-	CapDevices      Capability = "devices"
-	CapFlows        Capability = "flows"
-	CapAlarms       Capability = "alarms"
-	CapRules        Capability = "rules"
-	CapRuleWrite    Capability = "rules:write"
+	CapDevices   Capability = "devices"
+	CapFlows     Capability = "flows"
+	CapAlarms    Capability = "alarms"
+	CapRules     Capability = "rules"
+	CapRuleWrite Capability = "rules:write"
+	// CapRuleCreate is separate from CapRuleWrite: a product may let you
+	// pause and delete its rules over the API without letting you create
+	// one (UniFi's firewall policies need zone and filter schemas the
+	// published API does not describe).
+	CapRuleCreate Capability = "rules:create"
+	// CapDeviceBlock blocks a device from the network outright.
+	CapDeviceBlock  Capability = "devices:block"
 	CapDeviceRename Capability = "devices:rename"
 	CapAlarmDismiss Capability = "alarms:dismiss"
 	// CapSchedule is Shepherd's own: it holds a time window for a rule and
@@ -81,12 +88,22 @@ type AlarmReader interface {
 	Alarms(ctx context.Context, q AlarmQuery) (AlarmPage, error)
 }
 
-// RuleManager lists and changes access rules.
+// RuleManager lists access rules and pauses, resumes and deletes them.
 type RuleManager interface {
 	Rules(ctx context.Context) ([]Rule, error)
-	CreateRule(ctx context.Context, spec RuleSpec) (Rule, error)
 	SetRulePaused(ctx context.Context, id string, paused bool) error
 	DeleteRule(ctx context.Context, id string) error
+}
+
+// RuleCreator creates a rule from a spec.
+type RuleCreator interface {
+	CreateRule(ctx context.Context, spec RuleSpec) (Rule, error)
+}
+
+// ClientBlocker cuts a device off from the network, or restores it.
+type ClientBlocker interface {
+	BlockClient(ctx context.Context, d DeviceRef) error
+	UnblockClient(ctx context.Context, d DeviceRef) error
 }
 
 // DeviceRenamer gives a device a new name on the product.
@@ -120,8 +137,14 @@ func Capabilities(b Backend) []Capability {
 			out = append(out, CapRuleWrite)
 		}
 	}
+	if _, ok := b.(RuleCreator); ok && writable {
+		out = append(out, CapRuleCreate)
+	}
 	if _, ok := b.(DeviceRenamer); ok && writable {
 		out = append(out, CapDeviceRename)
+	}
+	if _, ok := b.(ClientBlocker); ok && writable {
+		out = append(out, CapDeviceBlock)
 	}
 	if _, ok := b.(AlarmDismisser); ok && writable {
 		out = append(out, CapAlarmDismiss)

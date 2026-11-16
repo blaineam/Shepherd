@@ -8,22 +8,30 @@ export function can(data, cap) {
   return !!(data && Array.isArray(data.capabilities) && data.capabilities.includes(cap));
 }
 
+// productName is how the connected product is written on the screen.
+export function productName(data) {
+  const n = (data && data.name) || '';
+  if (n === 'unifi') return 'UniFi';
+  if (n === 'firewalla') return 'Firewalla';
+  return 'Router';
+}
+
 // statusLine is the one sentence under the title, with a tone.
 export function statusLine(data) {
   const d = data || {};
   if (!d.available) return { tone: 'muted', text: 'This build has no router dashboard.' };
   if (!d.connected) {
-    return { tone: 'muted', text: 'No Firewalla is connected. Connect one under "Read from your router" on the Bandwidth screen.' };
+    return { tone: 'muted', text: 'Nothing is connected. Connect a UniFi console below, or a Firewalla under "Read from your router" on the Bandwidth screen.' };
   }
-  if (!d.enabled) return { tone: 'muted', text: 'Connected to ' + (d.address || 'Firewalla') + ', but switched off.' };
+  if (!d.enabled) return { tone: 'muted', text: 'Connected to ' + (d.address || productName(d)) + ', but switched off.' };
   if (d.error) return { tone: 'bad', text: d.error };
   if (!d.running) return { tone: 'muted', text: 'Starting.' };
   const st = d.status || {};
-  if (st.needs_token) return { tone: 'bad', text: 'Firewalla refused the token. Connect again with a new one.' };
+  if (st.needs_token) return { tone: 'bad', text: productName(d) + ' refused the credential. Connect again with a new one.' };
   const errs = Object.entries(st.errors || {});
   if (errs.length) return { tone: 'warn', text: 'Could not read ' + errs.map(([k]) => k).join(', ') + ': ' + errs[0][1] };
   if (!st.last_poll) return { tone: 'muted', text: 'Connected. Waiting for the first reading.' };
-  return { tone: 'good', text: 'Reading ' + (d.address || 'Firewalla') + (d.read_only ? ' (read only).' : ' (changes allowed).') };
+  return { tone: 'good', text: 'Reading ' + (d.address || productName(d)) + (d.read_only ? ' (read only).' : ' (changes allowed).') };
 }
 
 // targetOf picks what a flow is about: the name when there is one,
@@ -51,6 +59,9 @@ const ACTION = { block: 'Block', allow: 'Allow', timelimit: 'Time limit' };
 export function ruleSummary(rule, devices = []) {
   const r = rule || {};
   const verb = ACTION[r.Action] || r.Action || 'Rule';
+  // A UniFi firewall policy is shown by its name; its zones and filters
+  // are not something this screen can describe.
+  if (r.TargetType === 'policy') return verb + ' policy "' + (r.Name || r.Target || r.ID) + '"';
   let where = 'every device';
   if (r.ScopeType === 'device') {
     const d = devices.find((x) => x.MAC === r.Scope);

@@ -120,10 +120,11 @@ type Deps struct {
 	// place the token lives.
 	NewStoredEeroClient func(importers.TokenStore) (*importers.Client, error)
 
-	// FirewallaTransport replaces the HTTP transport used to check a
-	// Firewalla MSP token as it is connected. Nil talks to the real MSP;
-	// tests point it at a fake. The address is still validated as usual.
-	FirewallaTransport http.RoundTripper
+	// BackendTransport replaces the HTTP transport used to check a
+	// Firewalla token or UniFi key as it is connected. Nil talks to the
+	// real service; tests point it at a fake. The address is still
+	// validated as usual.
+	BackendTransport http.RoundTripper
 
 	// Alarms is the alarm engine (docs/ALARMS.md). Nil gives an unwired,
 	// in-memory engine that nothing raises alarms through, so the API still
@@ -356,6 +357,9 @@ type BackendHub interface {
 	CreateRule(ctx context.Context, spec backends.RuleSpec) (backends.Rule, error)
 	SetRulePaused(ctx context.Context, id string, paused bool) error
 	DeleteRule(ctx context.Context, id string) error
+	// BlockClient cuts a device off the network, or with block false
+	// restores it.
+	BlockClient(ctx context.Context, ref backends.DeviceRef, block bool) error
 	RenameDevice(ctx context.Context, ref backends.DeviceRef, name string) error
 	DismissAlarm(ctx context.Context, ref backends.AlarmRef) error
 }
@@ -771,6 +775,10 @@ func (s *Server) routes() {
 	h("POST /api/backend/schedules", s.addBackendSchedule)
 	h("POST /api/backend/schedules/{id}/delete", s.deleteBackendSchedule)
 	h("POST /api/backend/devices/rename", s.renameBackendDevice)
+	h("POST /api/backend/devices/block", s.blockBackendDevice)
+	h("POST /api/backend/unifi", s.connectUniFiAPI)
+	h("POST /api/backend/unifi/enabled", s.setUniFiAPIEnabled)
+	h("DELETE /api/backend/unifi", s.forgetUniFiAPI)
 	h("POST /api/backend/alarms/dismiss", s.dismissBackendAlarm)
 	h("POST /api/routerusage/firewalla", s.connectFirewalla)
 	h("POST /api/routerusage/firewalla/enabled", s.setFirewallaEnabled)
