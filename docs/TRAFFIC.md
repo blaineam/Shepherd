@@ -8,7 +8,7 @@ ways to get the numbers, and the screen says plainly which one is in effect:
   to do this.** It asks the router you already have what each device has moved. Nothing is put in
   the path of your traffic, both directions are covered, and it works on networks where steering
   cannot; what you get depends on what your router will tell you, which is why eero's figures are
-  a floor and UniFi's are exact. eero and UniFi are supported today.
+  a floor and UniFi's are exact. eero, UniFi and Firewalla MSP are supported today.
 - **[Watch mode](WATCH.md)** — **deprecated**, off by default, no new features. It relays each
   device's traffic and counts the bytes, which is exact for uploads, but it is an intervention, it
   only ever sees one direction (downloads are estimated from TCP acknowledgements), and on some
@@ -156,6 +156,33 @@ self-signed certificate**. It is off unless the owner turns it on.
 
 When both a controller and an eero are connected, the controller wins: its numbers are
 measurements and eero's are estimates.
+
+### Firewalla MSP
+
+A Firewalla MSP account lists every device its boxes know, with the bytes each has downloaded and
+uploaded, over the documented MSP API (<https://docs.firewalla.net>). It is a `KindCounters`
+source: Shepherd differences consecutive reads and treats a total that falls as a reset, which
+costs one interval and never records negative traffic.
+
+Connecting it is one form: your MSP address (`mydomain.firewalla.net`, or `firewalla.net` if you
+sign in on the shared domain), a **personal access token**, and optionally one box's ID if the
+account has several. Make the token under *MSP Settings -> MSP API* and give it **Read Only**;
+Shepherd issues one `GET /v2/devices` per poll and nothing else. The token is checked against MSP
+before it is stored, and is kept in `secrets.json` and never returned by any endpoint.
+
+The token goes to exactly one place. The address must be your own domain on `firewalla.net` (or
+`firewalla.net` itself), over https, and redirects are refused, so a mistyped address cannot carry
+the token to another server.
+
+A VPN profile or network interface, which MSP also lists as a device, has no MAC and is left out.
+A device listed by more than one box is the sum of what each box saw.
+
+**What is not yet verified.** Firewalla documents `totalDownload` and `totalUpload` on each device
+but not the period they cover. Shepherd reads them as running totals; if your account reports a
+rolling window instead, the figures will come out low, and the reading should be treated as a
+floor until that is confirmed against a live account. The tests run against a fake MSP.
+
+When several routers are connected, a UniFi controller wins, then Firewalla, then eero.
 
 ### Adding another router
 

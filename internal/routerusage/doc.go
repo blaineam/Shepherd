@@ -17,7 +17,7 @@
 // two shapes it reports and the Collector normalizes both:
 //
 //   - KindCounters: bytes since the router last booted, which is what
-//     UniFi, OpenWrt and the business-grade controllers keep. Differencing
+//     UniFi, Firewalla MSP, OpenWrt and the business-grade controllers keep. Differencing
 //     consecutive reads is exact apart from what is lost to a reset.
 //   - KindRates: the instantaneous rate right now, which is all eero's
 //     cloud API exposes. Integrating samples over time is an estimate and

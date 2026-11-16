@@ -255,3 +255,75 @@ func TestAStoredControllerThatIsNotValidRefusesToLoad(t *testing.T) {
 		t.Fatal("Open accepted an unusable controller")
 	}
 }
+
+func TestFirewallaAccountIsStoredSwitchedAndForgotten(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	s := openAt(t, path)
+	if _, ok := s.Firewalla(); ok {
+		t.Fatal("a fresh store holds no account")
+	}
+	got, err := s.SetFirewalla(Firewalla{BaseURL: " https://home.firewalla.net/ ", Token: " tok ", Box: " gid-1 ", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.BaseURL != "https://home.firewalla.net" || got.Token != "tok" || got.Box != "gid-1" {
+		t.Fatalf("saved %+v, want it trimmed", got)
+	}
+	if again, ok := openAt(t, path).Firewalla(); !ok || again.Token != "tok" || !again.Enabled {
+		t.Fatalf("after reload = %+v, %v", again, ok)
+	}
+	if ok, err := s.SetFirewallaEnabled(false); !ok || err != nil {
+		t.Fatalf("= %v, %v", ok, err)
+	}
+	if w, _ := s.Firewalla(); w.Enabled || w.Token == "" {
+		t.Fatalf("switching off disturbed the token: %+v", w)
+	}
+	if err := s.ClearFirewalla(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.Firewalla(); ok {
+		t.Fatal("the account is still stored")
+	}
+	if ok, err := s.SetFirewallaEnabled(true); ok || err != nil {
+		t.Fatalf("with nothing stored = %v, %v", ok, err)
+	}
+}
+
+func TestFirewallaRefusesWhatItCouldNotUse(t *testing.T) {
+	s := openAt(t, "")
+	for name, w := range map[string]Firewalla{
+		"no address":        {Token: "t"},
+		"not https":         {BaseURL: "http://home.firewalla.net", Token: "t"},
+		"no token":          {BaseURL: "https://home.firewalla.net"},
+		"space in token":    {BaseURL: "https://home.firewalla.net", Token: "a b"},
+		"control character": {BaseURL: "https://home.firewalla.net", Token: "a\nb"},
+		"bad box":           {BaseURL: "https://home.firewalla.net", Token: "t", Box: "a\nb"},
+	} {
+		if _, err := s.SetFirewalla(w); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+}
+
+func TestFirewallaNeverFormatsItsToken(t *testing.T) {
+	var unset Firewalla
+	if !strings.Contains(unset.String(), "not set") {
+		t.Fatalf("unset = %q", unset.String())
+	}
+	w := Firewalla{BaseURL: "https://home.firewalla.net", Token: "super-secret"}
+	for _, out := range []string{w.String(), w.GoString()} {
+		if strings.Contains(out, "super-secret") {
+			t.Fatalf("the token leaked into %q", out)
+		}
+	}
+}
+
+func TestAStoredFirewallaAccountThatIsNotValidRefusesToLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	if err := os.WriteFile(path, []byte(`{"version":1,"firewalla":{"base_url":"nonsense","token":"a"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path); err == nil {
+		t.Fatal("Open accepted an unusable account")
+	}
+}

@@ -142,7 +142,7 @@ type DHCP struct {
 
 // Watch controls Watch mode (docs/WATCH.md), which is DEPRECATED and off by
 // default. Per-device bandwidth now comes from the router over its own API
-// (internal/routerusage: eero and UniFi, docs/TRAFFIC.md), which measures both
+// (internal/routerusage: eero, UniFi and Firewalla, docs/TRAFFIC.md), which measures both
 // directions, puts nothing in the path of your traffic and works on networks
 // where one-sided steering cannot be made reliable at all. Watch mode is kept
 // for the installs already using it and for the forensics in

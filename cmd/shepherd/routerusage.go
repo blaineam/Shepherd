@@ -24,12 +24,19 @@ import (
 func startRouterUsage(ctx context.Context, sec *secrets.Store, reg *devices.Registry, store *traffic.Store, watchEngine *watch.Engine) *routerusage.Manager {
 	build := func() (*routerusage.Collector, bool, error) {
 		// A UniFi controller keeps real byte counters, so it wins over
-		// eero's sampled rates when both are connected and on.
+		// Firewalla's totals and eero's sampled rates when connected and on.
 		if src, ok, err := unifiSource(sec); ok || err != nil {
 			if err != nil {
 				return nil, false, err
 			}
 			return newCollector(src, routerusage.UniFiNeedsSignIn, reg, store, watchEngine), true, nil
+		}
+		// Firewalla MSP also reports byte totals, so it beats eero too.
+		if src, ok, err := firewallaSource(sec); ok || err != nil {
+			if err != nil {
+				return nil, false, err
+			}
+			return newCollector(src, routerusage.FirewallaNeedsSignIn, reg, store, watchEngine), true, nil
 		}
 		e, ok := sec.Eero()
 		if !ok || !e.Enabled || e.NetworkID == "" {
@@ -68,6 +75,22 @@ func unifiSource(sec *secrets.Store) (routerusage.Source, bool, error) {
 		Password:        u.Password,
 		Site:            u.Site,
 		AllowSelfSigned: u.AllowSelfSigned,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return src, true, nil
+}
+
+// firewallaSource builds the Firewalla MSP source, if the owner has
+// connected an account and left it on. ok is false when they have not.
+func firewallaSource(sec *secrets.Store) (routerusage.Source, bool, error) {
+	f, ok := sec.Firewalla()
+	if !ok || !f.Enabled {
+		return nil, false, nil
+	}
+	src, err := routerusage.NewFirewalla(routerusage.FirewallaConfig{
+		BaseURL: f.BaseURL, Token: f.Token, Box: f.Box,
 	})
 	if err != nil {
 		return nil, false, err

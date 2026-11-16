@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -572,4 +573,127 @@ func TestUniFiChangesThatCouldNotBeSavedAreReported(t *testing.T) {
 	wedgeSecrets(t, h)
 	h.expect("POST", "/api/routerusage/unifi/enabled", `{"enabled":false}`, 500)
 	h.expect("DELETE", "/api/routerusage/unifi", "", 500)
+}
+
+// ---- Firewalla --------------------------------------------------------------
+
+// firewallaTransport serves a fake MSP for the portal to connect to and
+// counts the requests it received. The address in the form stays a real
+// firewalla.net one, so validation is exercised as shipped.
+func firewallaTransport(t *testing.T, token string) (http.RoundTripper, *int) {
+	t.Helper()
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if r.URL.Path != "/v2/devices" || r.Header.Get("Authorization") != "Token "+token {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		fmt.Fprint(w, `[{"id":"02:00:5e:00:00:41","name":"TV","totalDownload":10,"totalUpload":2}]`)
+	}))
+	t.Cleanup(srv.Close)
+	target, _ := url.Parse(srv.URL)
+	return fwRoundTrip(func(r *http.Request) (*http.Response, error) {
+		r = r.Clone(r.Context())
+		r.URL.Scheme, r.URL.Host = target.Scheme, target.Host
+		return http.DefaultTransport.RoundTrip(r)
+	}), &hits
+}
+
+type fwRoundTrip func(*http.Request) (*http.Response, error)
+
+func (f fwRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestConnectingFirewallaChecksTheTokenBeforeStoringIt(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	h.srv.RouterUsage = &fakeUsage{}
+	h.srv.FirewallaTransport, _ = firewallaTransport(t, "good-token")
+
+	h.expect("POST", "/api/routerusage/firewalla", `{"base_url":"home.firewalla.net","token":"wrong"}`, 400)
+	if _, ok := h.srv.Secrets.Firewalla(); ok {
+		t.Fatal("a refused token was stored anyway")
+	}
+	// Neither of these may reach the network: someone else's host, and
+	// nothing at all.
+	h.expect("POST", "/api/routerusage/firewalla", `{"base_url":"https://evil.example.com","token":"good-token"}`, 400)
+	h.expect("POST", "/api/routerusage/firewalla", `{"base_url":"home.firewalla.net","token":""}`, 400)
+
+	out := h.ok("POST", "/api/routerusage/firewalla", `{"base_url":"Home.Firewalla.net","token":"good-token","box":"gid-1"}`, 200)
+	if out["source"] != "firewalla" || out["enabled"] != true || out["connected"] != true || out["network"] != "gid-1" {
+		t.Fatalf("after connecting = %v", out)
+	}
+	w, ok := h.srv.Secrets.Firewalla()
+	if !ok || w.Token != "good-token" || w.BaseURL != "https://home.firewalla.net" {
+		t.Fatalf("stored = %+v", w)
+	}
+	for k, v := range out {
+		if s, isStr := v.(string); isStr && s == "good-token" {
+			t.Fatalf("the token leaked through %q", k)
+		}
+	}
+}
+
+func TestFirewallaSwitchesOffAndIsForgotten(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	h.srv.RouterUsage = &fakeUsage{}
+	h.srv.FirewallaTransport, _ = firewallaTransport(t, "tok")
+	h.ok("POST", "/api/routerusage/firewalla", `{"base_url":"home.firewalla.net","token":"tok"}`, 200)
+
+	if out := h.ok("POST", "/api/routerusage/firewalla/enabled", `{"enabled":false}`, 200); out["enabled"] != false {
+		t.Fatalf("after switching off = %v", out)
+	}
+	if w, _ := h.srv.Secrets.Firewalla(); w.Token == "" {
+		t.Fatal("switching off forgot the token")
+	}
+	if out := h.ok("DELETE", "/api/routerusage/firewalla", "", 200); out["connected"] != false {
+		t.Fatalf("after forgetting = %v", out)
+	}
+	h.expect("POST", "/api/routerusage/firewalla/enabled", `{"enabled":true}`, 404)
+	h.expect("POST", "/api/routerusage/firewalla", "{bad", 400)
+}
+
+// A controller beats Firewalla, which beats eero: the screen must show the
+// one actually in effect.
+func TestTheScreenNamesTheRouterThatIsInEffect(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	h.srv.RouterUsage = &fakeUsage{}
+	h.srv.FirewallaTransport, _ = firewallaTransport(t, "tok")
+	if _, err := h.srv.Secrets.SetEero(secrets.Eero{Token: "eero-token-abc", NetworkID: "3001", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if out := h.ok("GET", "/api/routerusage", "", 200); out["source"] != "eero" {
+		t.Fatalf("eero alone = %v", out)
+	}
+	if out := h.ok("POST", "/api/routerusage/firewalla", `{"base_url":"home.firewalla.net","token":"tok"}`, 200); out["source"] != "firewalla" {
+		t.Fatalf("eero and firewalla = %v", out)
+	}
+	srv := unifiController(t, "ro", "pw")
+	if out := h.ok("POST", "/api/routerusage/unifi", fmt.Sprintf(`{"base_url":%q,"username":"ro","password":"pw"}`, srv.URL), 200); out["source"] != "unifi" {
+		t.Fatalf("all three = %v", out)
+	}
+}
+
+func TestWithoutAReaderTheFirewallaEndpointsSaySo(t *testing.T) {
+	h := newHarness(t)
+	h.expect("POST", "/api/routerusage/firewalla", `{"base_url":"home.firewalla.net","token":"t"}`, 404)
+	h.expect("POST", "/api/routerusage/firewalla/enabled", `{"enabled":true}`, 404)
+	h.expect("DELETE", "/api/routerusage/firewalla", "", 404)
+}
+
+func TestFirewallaChangesThatCouldNotBeSavedAreReported(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	h.srv.RouterUsage = &fakeUsage{}
+	h.srv.FirewallaTransport, _ = firewallaTransport(t, "tok")
+	wedgeSecrets(t, h)
+	h.expect("POST", "/api/routerusage/firewalla", `{"base_url":"home.firewalla.net","token":"tok"}`, 500)
+}
+
+func TestFirewallaSwitchAndForgetFailuresAreReported(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	h.srv.RouterUsage = &fakeUsage{}
+	h.srv.FirewallaTransport, _ = firewallaTransport(t, "tok")
+	h.ok("POST", "/api/routerusage/firewalla", `{"base_url":"home.firewalla.net","token":"tok"}`, 200)
+	wedgeSecrets(t, h)
+	h.expect("POST", "/api/routerusage/firewalla/enabled", `{"enabled":false}`, 500)
+	h.expect("DELETE", "/api/routerusage/firewalla", "", 500)
 }

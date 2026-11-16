@@ -118,6 +118,11 @@ type Deps struct {
 	// place the token lives.
 	NewStoredEeroClient func(importers.TokenStore) (*importers.Client, error)
 
+	// FirewallaTransport replaces the HTTP transport used to check a
+	// Firewalla MSP token as it is connected. Nil talks to the real MSP;
+	// tests point it at a fake. The address is still validated as usual.
+	FirewallaTransport http.RoundTripper
+
 	// Alarms is the alarm engine (docs/ALARMS.md). Nil gives an unwired,
 	// in-memory engine that nothing raises alarms through, so the API still
 	// works (and returns no alarms).
@@ -718,6 +723,9 @@ func (s *Server) routes() {
 	h("POST /api/routerusage/unifi", s.connectUniFi)
 	h("POST /api/routerusage/unifi/enabled", s.setUniFiEnabled)
 	h("DELETE /api/routerusage/unifi", s.forgetUniFi)
+	h("POST /api/routerusage/firewalla", s.connectFirewalla)
+	h("POST /api/routerusage/firewalla/enabled", s.setFirewallaEnabled)
+	h("DELETE /api/routerusage/firewalla", s.forgetFirewalla)
 	h("POST /api/import/csv/preview", s.importCSVPreview)
 	h("POST /api/import/csv/apply", s.importCSVApply)
 

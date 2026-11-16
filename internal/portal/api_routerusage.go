@@ -36,6 +36,13 @@ func (s *Server) routerUsageJSON() map[string]any {
 		out["network"] = e.NetworkID
 		out["enabled"] = e.Enabled
 	}
+	// Firewalla MSP reports byte totals, which beat eero's sampled rates.
+	if f, ok := s.Secrets.Firewalla(); ok {
+		out["connected"] = true
+		out["source"] = "firewalla"
+		out["network"] = f.Box
+		out["enabled"] = f.Enabled
+	}
 	// A UniFi controller keeps real byte counters, so when both are
 	// connected it is the one in effect, and the one the screen shows.
 	if u, ok := s.Secrets.UniFi(); ok {
@@ -315,6 +322,91 @@ func (s *Server) forgetUniFi(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.Secrets.ClearUniFi(); err != nil {
 		serverFault(w, "the controller could not be forgotten")
+		return
+	}
+	s.RouterUsage.Reload()
+	writeJSON(w, s.routerUsageJSON())
+}
+
+// ---- Firewalla --------------------------------------------------------------
+
+// A Firewalla MSP account needs no sign-in flow, just a personal access
+// token from the MSP portal. A Read Only token is enough: nothing here
+// writes to the account. The token is checked before it is stored and is
+// never returned by any endpoint.
+
+func (s *Server) connectFirewalla(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		BaseURL string `json:"base_url"`
+		Token   string `json:"token"`
+		Box     string `json:"box"`
+	}
+	if !decode(w, r, &b, smallBody) {
+		return
+	}
+	if s.RouterUsage == nil {
+		notFound(w, "this build cannot read bandwidth from a router")
+		return
+	}
+	src, err := routerusage.NewFirewalla(routerusage.FirewallaConfig{
+		BaseURL: b.BaseURL, Token: b.Token, Box: b.Box, Transport: s.FirewallaTransport,
+	})
+	if err != nil {
+		bad(w, err.Error())
+		return
+	}
+	// Check it before storing it, so a typo is a message here rather than
+	// a collector that never works.
+	if _, err := src.Poll(r.Context()); err != nil {
+		bad(w, err.Error())
+		return
+	}
+	base, _ := routerusage.NormalizeFirewallaURL(b.BaseURL)
+	if _, err := s.Secrets.SetFirewalla(secrets.Firewalla{
+		BaseURL: base, Token: b.Token, Box: b.Box, Enabled: true,
+	}); err != nil {
+		if errors.Is(err, secrets.ErrInvalid) {
+			bad(w, err.Error())
+			return
+		}
+		serverFault(w, "the Firewalla account could not be saved")
+		return
+	}
+	s.RouterUsage.Reload()
+	writeJSON(w, s.routerUsageJSON())
+}
+
+func (s *Server) setFirewallaEnabled(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !decode(w, r, &b, smallBody) {
+		return
+	}
+	if s.RouterUsage == nil {
+		notFound(w, "this build cannot read bandwidth from a router")
+		return
+	}
+	ok, err := s.Secrets.SetFirewallaEnabled(b.Enabled)
+	if err != nil {
+		serverFault(w, "the setting could not be saved")
+		return
+	}
+	if !ok {
+		notFound(w, "no Firewalla account is connected")
+		return
+	}
+	s.RouterUsage.Reload()
+	writeJSON(w, s.routerUsageJSON())
+}
+
+func (s *Server) forgetFirewalla(w http.ResponseWriter, r *http.Request) {
+	if s.RouterUsage == nil {
+		notFound(w, "this build cannot read bandwidth from a router")
+		return
+	}
+	if err := s.Secrets.ClearFirewalla(); err != nil {
+		serverFault(w, "the Firewalla account could not be forgotten")
 		return
 	}
 	s.RouterUsage.Reload()

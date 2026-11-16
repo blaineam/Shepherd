@@ -332,6 +332,51 @@ func (u UniFi) validate() error {
 	return checkField("password", u.Password, false)
 }
 
+// Firewalla is the Firewalla MSP account Shepherd reads per-device byte
+// totals from. The credential is a personal access token the owner made
+// in the MSP portal; a Read Only one is enough and is what the docs ask
+// for.
+type Firewalla struct {
+	// BaseURL is the MSP instance, normalized to its https origin (plus
+	// /api on the shared firewalla.net domain).
+	BaseURL string `json:"base_url"`
+	Token   string `json:"token"`
+	// Box limits the reading to one Firewalla box; empty reads them all.
+	Box     string `json:"box,omitempty"`
+	Enabled bool   `json:"enabled"`
+	Meta
+}
+
+// Configured reports whether an MSP account is actually set.
+func (f Firewalla) Configured() bool { return f.BaseURL != "" }
+
+// String never includes the token.
+func (f Firewalla) String() string {
+	if !f.Configured() {
+		return "firewalla msp (not set)"
+	}
+	return fmt.Sprintf("firewalla msp %s (enabled %v, from %s)", f.BaseURL, f.Enabled, f.Source)
+}
+
+// GoString redacts the same way for %#v.
+func (f Firewalla) GoString() string { return f.String() }
+
+func (f Firewalla) validate() error {
+	if !strings.HasPrefix(f.BaseURL, "https://") {
+		return fmt.Errorf("%w: the MSP address must start with https://", ErrInvalid)
+	}
+	if f.Token == "" {
+		return fmt.Errorf("%w: the MSP token is required", ErrInvalid)
+	}
+	if err := checkField("MSP address", f.BaseURL, true); err != nil {
+		return err
+	}
+	if err := checkField("box", f.Box, true); err != nil {
+		return err
+	}
+	return checkField("MSP token", f.Token, true)
+}
+
 type file struct {
 	Version int `json:"version"`
 	// A nil record means "never owned": shepherd.toml may still seed it.
@@ -339,6 +384,7 @@ type file struct {
 	SMTP        *SMTP        `json:"smtp,omitempty"`
 	Eero        *Eero        `json:"eero,omitempty"`
 	UniFi       *UniFi       `json:"unifi,omitempty"`
+	Firewalla   *Firewalla   `json:"firewalla,omitempty"`
 	Ntfy        *Ntfy        `json:"ntfy,omitempty"`
 }
 
@@ -394,6 +440,11 @@ func Open(path string) (*Store, error) {
 	if u := f.UniFi; u != nil && u.Configured() {
 		if err := u.validate(); err != nil {
 			return nil, fmt.Errorf("%s: unifi: %w", path, err)
+		}
+	}
+	if w := f.Firewalla; w != nil && w.Configured() {
+		if err := w.validate(); err != nil {
+			return nil, fmt.Errorf("%s: firewalla: %w", path, err)
 		}
 	}
 	if n := f.Ntfy; n != nil && n.Configured() {
@@ -771,6 +822,48 @@ func (s *Store) ClearUniFi() error {
 	})
 }
 
+// Firewalla returns the stored MSP account and whether one is actually set.
+func (s *Store) Firewalla() (Firewalla, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.data.Firewalla == nil {
+		return Firewalla{}, false
+	}
+	w := *s.data.Firewalla
+	return w, w.Configured()
+}
+
+// SetFirewalla validates and saves w as the owner's choice from the portal.
+func (s *Store) SetFirewalla(w Firewalla) (Firewalla, error) {
+	w.BaseURL = strings.TrimRight(strings.TrimSpace(w.BaseURL), "/")
+	w.Token = strings.TrimSpace(w.Token)
+	w.Box = strings.TrimSpace(w.Box)
+	if err := w.validate(); err != nil {
+		return Firewalla{}, err
+	}
+	w.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return w, s.mutate(func(f *file) { f.Firewalla = &w })
+}
+
+// SetFirewallaEnabled flips the switch without disturbing the token. It
+// returns false when no account is stored.
+func (s *Store) SetFirewallaEnabled(on bool) (bool, error) {
+	w, ok := s.Firewalla()
+	if !ok {
+		return false, nil
+	}
+	w.Enabled = on
+	w.Meta = Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}
+	return true, s.mutate(func(f *file) { f.Firewalla = &w })
+}
+
+// ClearFirewalla forgets the account and its token.
+func (s *Store) ClearFirewalla() error {
+	return s.mutate(func(f *file) {
+		f.Firewalla = &Firewalla{Meta: Meta{Source: SourcePortal, UpdatedAt: s.now().UTC()}}
+	})
+}
+
 // EeroTokenStore adapts the stored session to the eero client's TokenStore,
 // so a signed-in client can keep or resume its token across restarts. Saving
 // a token keeps the stored network and switch.
@@ -822,6 +915,10 @@ func (s *Store) mutate(fn func(*file), want ...func() bool) error {
 	if next.UniFi != nil {
 		u := *next.UniFi
 		next.UniFi = &u
+	}
+	if next.Firewalla != nil {
+		w := *next.Firewalla
+		next.Firewalla = &w
 	}
 	if next.Ntfy != nil {
 		n := *next.Ntfy

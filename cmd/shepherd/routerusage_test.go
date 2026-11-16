@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"shepherd/internal/devices"
@@ -184,4 +185,66 @@ func TestAControllerAddressThatCannotBeUsedIsReported(t *testing.T) {
 
 func testRegistry() *devices.Registry {
 	return devices.New(devices.Options{NodeID: "test", Vendor: func(string) string { return "" }})
+}
+
+// Firewalla MSP reports byte totals, so it beats eero's sampled rates, and
+// a UniFi controller beats both.
+func TestFirewallaWinsOverEeroAndLosesToAController(t *testing.T) {
+	sec := testSecrets(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := startRouterUsage(ctx, sec, testRegistry(), traffic.NewStore(traffic.Options{}), nil)
+	defer m.Stop()
+
+	if _, err := sec.SetEero(secrets.Eero{Token: "eero-token-abc", NetworkID: "3001", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	m.Reload()
+	if st := m.Status(); st.Source != "eero" {
+		t.Fatalf("with only eero = %+v", st)
+	}
+
+	if _, err := sec.SetFirewalla(secrets.Firewalla{BaseURL: "https://home.firewalla.net", Token: "tok", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	m.Reload()
+	if st := m.Status(); st.Source != "firewalla" || st.Estimated {
+		t.Fatalf("with eero and firewalla = %+v, want firewalla and not estimated", st)
+	}
+
+	if _, err := sec.SetUniFi(secrets.UniFi{BaseURL: "https://192.0.2.10", Username: "ro", Password: "pw", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	m.Reload()
+	if st := m.Status(); st.Source != "unifi" {
+		t.Fatalf("with a controller too = %+v", st)
+	}
+
+	if _, err := sec.SetUniFiEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sec.SetFirewallaEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	m.Reload()
+	if st := m.Status(); st.Source != "eero" {
+		t.Fatalf("with both switched off = %+v", st)
+	}
+}
+
+func TestAFirewallaAddressThatCannotBeUsedIsReported(t *testing.T) {
+	sec := testSecrets(t)
+	// Stored directly, as a hand-edited secrets.json would be: the store
+	// only insists on https, the source insists on firewalla.net.
+	if _, err := sec.SetFirewalla(secrets.Firewalla{BaseURL: "https://evil.example.com", Token: "tok", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := startRouterUsage(ctx, sec, testRegistry(), traffic.NewStore(traffic.Options{}), nil)
+	defer m.Stop()
+	st := m.Status()
+	if st.Source != "" || !strings.Contains(st.LastError, "firewalla.net") {
+		t.Fatalf("a token for a foreign host must not start a collector: %+v", st)
+	}
 }

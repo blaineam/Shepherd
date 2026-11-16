@@ -15,6 +15,15 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Added
 
+- **Firewalla MSP bandwidth** ([docs/TRAFFIC.md](docs/TRAFFIC.md#firewalla-msp)). Connect a Firewalla
+  MSP account under "Read from your router" on the Bandwidth screen with a personal access token
+  (a Read Only one is enough) and Shepherd records the bytes each device has downloaded and
+  uploaded, from the MSP API's device list. The token is checked before it is stored, kept in
+  `secrets.json`, never returned by any endpoint, and sent only to `firewalla.net` over https.
+  When more than one router is connected, a UniFi controller wins, then Firewalla, then eero.
+  Firewalla documents the totals but not the period they cover, so Shepherd reads them as running
+  totals and treats a fall as a reset; it has been tested against a fake MSP, not a live account.
+
 - **Link watch** ([docs/LINKWATCH.md](docs/LINKWATCH.md)). Shepherd now checks, once a second, that
   the address it serves DNS on is still up, and raises a `network-link-lost` alarm when it comes back
   with the interface, the cause (no carrier, interface down, address removed) and how long it was

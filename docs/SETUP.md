@@ -108,7 +108,7 @@ nothing the day its address moves. It mentions DHCP mode ([DHCP.md](DHCP.md)) an
 turning it on means turning the router's DHCP server off, which is not a thing to do from a setup
 page before anything has been proven to work. Setup never writes a `[dhcp]` section, so that mode
 stays off at its default until the owner turns it on in the portal. Shepherd does not change your router for you: the APIs it speaks
-to eero and UniFi are the read-only ones it uses for per-device bandwidth, and those vendors do not
+to eero, UniFi and Firewalla are the read-only ones it uses for per-device bandwidth, and those vendors do not
 publish a supported way to set a network's DNS server. Saying so is better than a button that works
 on one firmware and silently does nothing on the next.
 

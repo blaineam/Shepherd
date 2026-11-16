@@ -325,8 +325,8 @@ cloudflare_api_token_file = ""  # e.g. "/etc/shepherd/cloudflare-api-token"
 
 [watch]
 # DEPRECATED. For per-device bandwidth, connect your router instead: open the
-# Bandwidth screen, "Read from your router", and sign in to eero or a UniFi
-# controller (docs/TRAFFIC.md). That reads what the router already counts, so
+# Bandwidth screen, "Read from your router", and sign in to eero, a UniFi
+# controller or a Firewalla MSP account (docs/TRAFFIC.md). That reads what the router already counts, so
 # it measures BOTH directions, puts nothing in the path of your traffic, and
 # works on networks where steering cannot be made reliable at all. Watch mode
 # is kept for installs already using it and gets no new features.
