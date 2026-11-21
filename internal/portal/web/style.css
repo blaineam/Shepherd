@@ -1247,3 +1247,12 @@ button.tf-trend { cursor: pointer; } button.tf-trend:hover { border-color: var(-
 .bk-body { display: flex; flex-direction: column; gap: 14px; }
 .bk-card .up-item { flex-wrap: wrap; }
 .bk-days { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+
+/* ---- Installed to the Home Screen ----
+   An installed portal runs under the phone's status bar (the clock and battery). The top bar
+   grows by that much and keeps its buttons below it; the panels that hang from the top bar or
+   start at the top of the screen move down with it. In a browser tab the inset is 0. */
+:root { --safe-t: env(safe-area-inset-top, 0px); }
+.topbar { height: calc(var(--top-h) + var(--safe-t)); padding-top: var(--safe-t); }
+.drawer { top: calc(var(--top-h) + var(--safe-t)); }
+@media (max-width: 1023px) { .sidenav { padding-top: var(--safe-t); } }

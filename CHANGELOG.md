@@ -71,6 +71,10 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Fixed
 
+- Installed to an iPhone's Home Screen, the portal's top bar sat under the status bar (the clock and
+  battery), where its menu and lock buttons could not be tapped. The top bar now leaves that room, and
+  the side menu and the detail drawer move down with it.
+
 - A single lost bootstrap packet could take an encrypted upstream out for minutes. Shepherd finds
   a DoT or DoH resolver's address by asking for its IPv4 and IPv6 addresses separately over plain
   UDP, once each. If only the IPv4 question was lost, the answer was kept with just the IPv6
