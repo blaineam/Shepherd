@@ -17,24 +17,25 @@ import { fmtClock } from './js/format.js?v=86b54455';
 import { createDetails } from './js/details.js?v=be05806c';
 import { createTiles, createFeed, createFilters, createLegend, createInspector, createTimeline } from './js/hud.js?v=46a4d6db';
 import { createToaster } from './js/ui.js?v=4d208003';
-import { createMgmt } from './js/mgmt.js?v=c6c70744';
+import { createMgmt } from './js/mgmt.js?v=752cdbb0';
 import { createNameBook } from './js/names.js?v=e79e15ee';
 import { createPolicyStore } from './js/policystore.js?v=3aa33de9';
-import { createDevices } from './js/devices.js?v=dece4373';
-import { createBlocking, createDevicePolicy } from './js/blocking.js?v=40103f14';
-import { createUpstreams } from './js/upstreamsview.js?v=09ba9684';
-import { createAlarms } from './js/alarmsview.js?v=b5959881';
-import { createVulnscan } from './js/vulnscanview.js?v=dd08e634';
-import { createNethealth } from './js/nethealthview.js?v=da2f514a';
-import { createWatch } from './js/watchview.js?v=cfc557bb';
-import { createTraffic } from './js/trafficview.js?v=0b4498a9';
-import { createReverseProxy } from './js/reverseproxyview.js?v=194269a4';
-import { createDhcp } from './js/dhcpview.js?v=d4b62913';
-import { createHistory } from './js/historyview.js?v=fbd1deb7';
-import { createAccountability } from './js/accountability.js?v=8b29f305';
+import { createDevices } from './js/devices.js?v=84bd8db5';
+import { createBlocking, createDevicePolicy } from './js/blocking.js?v=72d04911';
+import { createUpstreams } from './js/upstreamsview.js?v=f0fc8b8f';
+import { createBackend } from './js/backendview.js?v=29e033e5';
+import { createAlarms } from './js/alarmsview.js?v=b0f847f6';
+import { createVulnscan } from './js/vulnscanview.js?v=74e84f06';
+import { createNethealth } from './js/nethealthview.js?v=c6d8b59f';
+import { createWatch } from './js/watchview.js?v=4a5db80a';
+import { createTraffic } from './js/trafficview.js?v=8eb4d18e';
+import { createReverseProxy } from './js/reverseproxyview.js?v=d11d0a72';
+import { createDhcp } from './js/dhcpview.js?v=7f50794f';
+import { createHistory } from './js/historyview.js?v=552ff3d5';
+import { createAccountability } from './js/accountability.js?v=e4ff6b45';
 import { createDemoMgmt } from './js/demomgmt.js?v=9ed52106';
 import { DEVICE_BY_IP } from './js/demodata.js?v=1f5ce92d';
-import { createLocking } from './js/lockingview.js?v=d476cbe8';
+import { createLocking } from './js/lockingview.js?v=f4b510be';
 import { lockedURL, unlockedURL, signInOrder, autoTryPasskey, methodLabel } from './js/locking.js?v=198c7ce4';
 import { requestOptions, assertionJSON, ceremonyError } from './js/passkeys.js?v=0fe3526c';
 
@@ -467,7 +468,7 @@ async function pollStatus() {
 // ---------------------------------------------------------------- management screens
 const mgmt = createMgmt(api);
 const policyStore = createPolicyStore({ mgmt });
-const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'vulnscan', 'network', 'traffic', 'upstreams', 'dhcp', 'proxy', 'history', 'accountability', 'locking', 'details'];
+const VIEWS = ['hud', 'devices', 'blocking', 'alarms', 'vulnscan', 'network', 'traffic', 'firewalla', 'upstreams', 'dhcp', 'proxy', 'history', 'accountability', 'locking', 'details'];
 
 const blocking = createBlocking({
   root: $('#view-blocking'), mgmt, store: policyStore, notify,
@@ -494,6 +495,7 @@ const trafficView = createTraffic({
   onOpenDevice: (id) => { showView('devices'); devicesView.openDevice(id); },
 });
 const upstreamsView = createUpstreams({ root: $('#view-upstreams'), mgmt, notify });
+const backendView = createBackend({ root: $('#view-firewalla'), mgmt, notify });
 const proxyView = createReverseProxy({ root: $('#view-proxy'), mgmt, notify });
 const dhcpView = createDhcp({
   root: $('#view-dhcp'), mgmt, notify,
@@ -530,6 +532,7 @@ function showView(name) {
   try { history.replaceState(null, '', location.pathname + location.search + (hud ? '' : '#' + name)); } catch { /* ignore */ }
   if (name === 'details') details.loadUpdate();
   if (name !== 'upstreams') upstreamsView.hide();
+  if (name !== 'firewalla') backendView.hide();
   if (name !== 'proxy') proxyView.hide();
   if (name !== 'dhcp') dhcpView.hide();
   if (name !== 'alarms') alarmsView.hide();
@@ -544,6 +547,7 @@ function showView(name) {
   else if (name === 'traffic') trafficView.show().catch(() => {});
   else if (name === 'network') networkView.show();
   else if (name === 'upstreams') upstreamsView.show();
+  else if (name === 'firewalla') backendView.show();
   else if (name === 'proxy') proxyView.show();
   else if (name === 'dhcp') dhcpView.show();
   else if (name === 'history') historyView.show();
