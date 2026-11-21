@@ -19,11 +19,11 @@ require (
 
 require (
 	github.com/maxmind/mmdbwriter v1.2.0
-	github.com/oschwald/maxminddb-golang/v2 v2.9.0
+	github.com/oschwald/maxminddb-golang/v2 v2.9.1
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.62.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 )
 
 tool github.com/cilium/ebpf/cmd/bpf2go
