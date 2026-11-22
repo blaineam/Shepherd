@@ -307,6 +307,41 @@ export function tileLabels(status) {
   return { down: word + ' from ' + src, up: word + ' from ' + src, total: 'Since Shepherd started reading' };
 }
 
+// A running total "since Shepherd started" starts again from nothing every
+// time Shepherd restarts, so the same afternoon can read 40 GB or 200 MB.
+// The stored history does not have that problem. These three turn it into a
+// fixed figure: what moved today, since midnight on the viewer's clock.
+
+// startOfToday is local midnight for the day containing nowMs.
+export function startOfToday(nowMs) {
+  const d = new Date(nowMs);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+// todayTotals reads GET /api/traffic/top for today into the network total
+// and each device's own.
+export function todayTotals(top) {
+  const out = { down: 0, up: 0, byDevice: new Map() };
+  for (const d of (top && top.devices) || []) {
+    const down = Number(d.down) || 0;
+    const up = Number(d.up) || 0;
+    out.down += down;
+    out.up += up;
+    if (d.device_id) out.byDevice.set(d.device_id, { down, up });
+  }
+  return out;
+}
+
+// showWatchSection says whether the Watch mode card belongs on the screen.
+// It is a second way to measure, and offering it under figures that
+// already come from the router reads as something still to set up. It
+// stays while it is the one measuring, or when nothing else is.
+export function showWatchSection(status) {
+  const s = status || {};
+  return !!s.measuring || !readingNow(s.router);
+}
+
 // measurementNote is the one sentence under the live tiles saying how the
 // figures were arrived at, so an estimate is never mistaken for a count.
 export function measurementNote(status) {

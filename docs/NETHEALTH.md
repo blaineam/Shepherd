@@ -58,6 +58,11 @@ being silently excluded from the average. `ReachableTargets`/`TotalTargets` give
 `AllUnreachable()` is true when not one target answered (a total outage of the network's own path out,
 not just one resolver).
 
+**The default gateway is a target only when it is the home router.** Its answer says whether the LAN
+side is up. Where Shepherd runs on the router itself, the default gateway is the provider's equipment
+beyond the WAN port, which is not this network's router; it is left out. The test is the address: a
+private or link-local gateway is a home router, a public or carrier-grade-NAT one is the provider's.
+
 A target that has **never** answered since Shepherd started, while others have, is marked
 `unresponsive` and left out of the loss figure and the target count. It is a host that does not accept
 the probe at all (an ISP's resolver that refuses TCP on port 53, for one), which says nothing about the

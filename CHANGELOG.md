@@ -122,6 +122,18 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Fixed
 
+- **Network health no longer stays "degraded" after a restart.** The alarm is closed by the tracker
+  that raised it, and a restart made a new tracker that knew nothing of it, so an alarm open at a
+  restart was never closed however healthy the network. A new tracker now picks up an open alarm and
+  the first healthy sample closes it.
+- **Network health does not probe a gateway on the far side of the WAN port.** Where Shepherd runs on
+  the router itself, the default gateway is the provider's equipment, not the home router. It is no
+  longer a probe target: only a gateway with a private or link-local address is.
+- **Bandwidth totals no longer reset with Shepherd.** With a router supplying the figures, the total
+  tile and each device's line read "since Shepherd started reading", which starts from nothing at
+  every restart. They now show **Today**, since midnight, from the stored history. The Watch mode
+  section is hidden while a router supplies the figures, since it is a second way to measure the
+  same thing.
 - **Shepherd now stops when told to, even with the portal open.** Stopping waited for every portal
   connection to go idle, and the live stream a browser holds never does, so with a portal open
   anywhere the process closed its portal but kept running, holding its other ports. Under Docker it

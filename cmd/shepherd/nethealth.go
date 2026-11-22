@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"time"
@@ -63,11 +64,17 @@ func startNethealth(ctx context.Context, cfg config.Config, eng *alarms.Engine) 
 	}
 
 	targets := nethealth.DefaultTargets(cfg.DNS.Upstreams)
-	if gw, err := nethealthGateway(); err == nil && gw.IsValid() {
+	if gw, err := nethealthGateway(); err == nil && lanGateway(gw) {
 		targets = append(targets, gw.String())
 	}
 
 	tracker := nethealth.NewDegradationTracker(nethealth.DegradationOptions{})
+	// An alarm raised before a restart is still open, and only the tracker
+	// closes it. Without being told, a fresh tracker never would, and the
+	// network would read as degraded for good.
+	if eng != nil && nethealthAlarmOpen(eng) {
+		tracker.Resume()
+	}
 	p.OnSample = func(s nethealth.Sample) {
 		if err := p.Save(path); err != nil {
 			log.Printf("nethealth: saving history: %v", err)
@@ -110,6 +117,28 @@ func startNethealth(ctx context.Context, cfg config.Config, eng *alarms.Engine) 
 	}
 
 	return p, targets, nil
+}
+
+// lanGateway reports whether the default gateway is the home router, which
+// is worth probing: its answer says whether the LAN side is up. On a
+// machine that is itself the router, the default gateway is the provider's
+// equipment on the far side of the WAN port. That often does not answer at
+// all, says nothing about this network when it does, and is not ours to
+// probe. A LAN router has a private or link-local address; a provider's
+// gateway has a public one, or one from the carrier-grade NAT range.
+func lanGateway(gw netip.Addr) bool {
+	return gw.IsValid() && (gw.IsPrivate() || gw.IsLinkLocalUnicast())
+}
+
+// nethealthAlarmOpen reports whether a network-degraded alarm is open.
+func nethealthAlarmOpen(eng *alarms.Engine) bool {
+	page := eng.List(alarms.Query{Filter: alarms.Filter{Types: []string{alarms.TypeNetworkDegraded}}, Limit: 50})
+	for _, a := range page.Alarms {
+		if a.State != alarms.StateResolved {
+			return true
+		}
+	}
+	return false
 }
 
 // reportNethealthSample logs the sample's own headline numbers, feeds it

@@ -181,6 +181,11 @@ the token to another server.
 
 When several routers are connected, a UniFi controller wins, then Firewalla, then eero.
 
+**What the screen shows from a router.** The total tile and each device's line show **today**: what
+moved since midnight on your clock, added up from the stored history. A running total since Shepherd
+started would begin again at every restart. The Watch mode section is hidden while a router supplies
+the figures; it comes back if you disconnect the router or Watch mode is the one measuring.
+
 ### Adding another router
 
 A new source is one type with three methods -- `Name`, `Kind` and `Poll` -- plus a constructor.

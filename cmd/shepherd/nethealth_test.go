@@ -121,7 +121,7 @@ func TestStartNethealthProbesAndPersists(t *testing.T) {
 }
 
 func TestStartNethealthIncludesGatewayWhenAvailable(t *testing.T) {
-	gw := netip.MustParseAddr("203.0.113.1")
+	gw := netip.MustParseAddr("10.1.2.1") // a home router's address. leakcheck:allow
 	var mu sync.Mutex
 	var seen []string
 	dial := func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -396,6 +396,84 @@ func TestStartNethealthIgnoresUnreadableHistory(t *testing.T) {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	time.Sleep(20 * time.Millisecond)
+}
+
+// On a machine that is itself the router, the default gateway is the
+// provider's equipment beyond the WAN port. It is not the home network's
+// router and must not be probed or counted.
+func TestStartNethealthDoesNotProbeAGatewayOnTheWANSide(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"10.1.2.1":    true,  // leakcheck:allow
+		"192.168.7.1": true,  // leakcheck:allow
+		"172.20.0.1":  true,  // leakcheck:allow
+		"169.254.9.1": true,  // link-local
+		"203.0.113.1": false, // a provider's public gateway
+		"100.72.0.1":  false, // carrier-grade NAT: still the provider's
+		"2001:db8::1": false,
+	} {
+		if got := lanGateway(netip.MustParseAddr(addr)); got != want {
+			t.Errorf("lanGateway(%s) = %v, want %v", addr, got, want)
+		}
+	}
+	if lanGateway(netip.Addr{}) {
+		t.Error("no gateway counted as a LAN gateway")
+	}
+
+	withNethealthSeams(t, 0, 0, func(ctx context.Context, network, address string) (net.Conn, error) { return fakeNethealthConn{}, nil },
+		nil, func() (netip.Addr, error) { return netip.MustParseAddr("203.0.113.1"), nil })
+	cfg := config.Default()
+	cfg.DataDir = tempDir(t)
+	cfg.DNS.Upstreams = []string{"9.9.9.10"}
+	_, targets, err := startNethealth(context.Background(), cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range targets {
+		if h == "203.0.113.1" {
+			t.Fatalf("a WAN-side gateway is a target: %v", targets)
+		}
+	}
+}
+
+// An alarm raised before a restart must still be closed by the first
+// healthy sample after it.
+func TestStartNethealthClosesAnAlarmLeftOpenByAnEarlierRun(t *testing.T) {
+	withNethealthSeams(t, 10*time.Millisecond, 0, func(ctx context.Context, network, address string) (net.Conn, error) { return fakeNethealthConn{}, nil }, nil, noGateway)
+	cfg := config.Default()
+	cfg.DataDir = tempDir(t)
+	cfg.DNS.Upstreams = []string{"9.9.9.10"}
+	cfg.Nethealth.Enabled = true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	eng, err := alarms.New(alarms.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	if nethealthAlarmOpen(eng) {
+		t.Fatal("an alarm is open on a fresh engine")
+	}
+	// What the earlier run left behind.
+	eng.Raise(alarms.Event{Type: alarms.TypeNetworkDegraded, Source: "nethealth", Title: "sustained bad", Key: "network-degraded|"})
+	eng.Drain()
+	if !nethealthAlarmOpen(eng) {
+		t.Fatal("the alarm was not raised")
+	}
+
+	if _, _, err := startNethealth(ctx, cfg, eng); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for nethealthAlarmOpen(eng) && time.Now().Before(deadline) {
+		eng.Drain()
+		time.Sleep(10 * time.Millisecond)
+	}
+	if nethealthAlarmOpen(eng) {
+		t.Fatal("a healthy network left the old alarm open")
 	}
 	cancel()
 	time.Sleep(20 * time.Millisecond)

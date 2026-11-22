@@ -8,14 +8,15 @@
 import { el } from './dom.js?v=65858b99';
 import { button, emptyState, unavailableCard, segmented } from './ui.js?v=4d208003';
 import { unavailable } from './mgmt.js?v=5493c5e5';
-import { createRouterUsage } from './routerusageview.js?v=af1cd30e';
+import { createRouterUsage } from './routerusageview.js?v=97311195';
 import {
   RANGE_PRESETS, rangeWindow, scopeOptions, scopeLabel, fillSeries, sumPoints, bucketRate, timeLabels,
-  shareOf, statusHeadline, liveRows, liveRowsNote, DOWNLOAD_CAVEAT, measurementNote, tileLabels, liveChartCaption, fmtBytes, fmtBitsPerSecond,
+  shareOf, statusHeadline, liveRows, liveRowsNote, DOWNLOAD_CAVEAT, measurementNote, tileLabels, liveChartCaption, startOfToday, todayTotals, showWatchSection, readingNow, fmtBytes, fmtBitsPerSecond,
   niceCeil, yTicks, lineArea, nearestIndex, pushSample, shareSlices, arcPath, rateStats,
-} from './traffic.js?v=ad4d3449';
+} from './traffic.js?v=78c1c3df';
 
 const POLL_MS = 2000;
+const TODAY_MS = 30000;
 const LIVE_SAMPLES = 90; // three minutes at the poll rate
 // The live card is for "what is busy right now", not an inventory: a
 // router source lists every device it knows, which is a hundred rows of
@@ -121,6 +122,9 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, onManag
   let trends = [];
   let historyError = null;
   let live = [];
+  // Today's totals from stored history, refreshed every TODAY_MS.
+  let today = null;
+  let todayAt = 0;
 
   root.replaceChildren();
   const head = el('div', 'pg-head stack');
@@ -177,7 +181,13 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, onManag
     const labels = tileLabels(status);
     tile('Download now', fmtBitsPerSecond(lv.down_bytes_per_second), labels.down, 'tile-down');
     tile('Upload now', fmtBitsPerSecond(lv.up_bytes_per_second), labels.up, 'tile-up');
-    tile(labels.total, fmtBytes(Number(lv.bytes_received_est) || 0) + ' down', fmtBytes(Number(lv.bytes_relayed) || 0) + ' up');
+    // From a router, show what moved today out of the stored history: a
+    // total "since Shepherd started" resets with every restart.
+    if (today && !status.measuring && readingNow(status.router)) {
+      tile('Today', fmtBytes(today.down) + ' down', fmtBytes(today.up) + ' up · since midnight');
+    } else {
+      tile(labels.total, fmtBytes(Number(lv.bytes_received_est) || 0) + ' down', fmtBytes(Number(lv.bytes_relayed) || 0) + ' up');
+    }
 
     live = pushSample(live, { time: Date.now(), down: (Number(lv.down_bytes_per_second) || 0) * 8, up: (Number(lv.up_bytes_per_second) || 0) * 8 }, LIVE_SAMPLES);
     liveChartHolder.replaceChildren();
@@ -211,7 +221,10 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, onManag
         bars.append(bar, el('span', 'tf-duo-n mono small', (cls === 'down' ? '↓ ' : '↑ ') + fmtBitsPerSecond(v)));
       }
       main.append(bars);
-      main.append(el('p', 'lr-desc mono muted small', fmtBytes(Number(d.bytes_received_est) || 0) + ' down · ' + fmtBytes(Number(d.bytes_relayed) || 0) + ' up since watched'));
+      const day = today && !status.measuring && readingNow(status.router) ? today.byDevice.get(d.device_id) : null;
+      main.append(el('p', 'lr-desc mono muted small', day
+        ? fmtBytes(day.down) + ' down · ' + fmtBytes(day.up) + ' up today'
+        : fmtBytes(Number(d.bytes_received_est) || 0) + ' down · ' + fmtBytes(Number(d.bytes_relayed) || 0) + (status.measuring ? ' up since watched' : ' up since Shepherd started reading')));
       row.append(main);
       liveRowsHolder.append(row);
     }
@@ -367,6 +380,9 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, onManag
       return;
     }
     if (!status) return;
+    // Watch mode is a second way to measure; under figures the router already
+    // supplies it is only noise.
+    watchCard.hidden = !showWatchSection(status);
     if (!built) {
       body.replaceChildren(liveCard, historyCard, mixCard, trendsCard, routerUsage.root, watchCard);
       built = true;
@@ -384,6 +400,15 @@ export function createTraffic({ root, mgmt, notify, onOpenDevice = null, onManag
       status = await mgmt.traffic();
       loadError = null;
     } catch (e) { loadError = e; }
+    // Today's totals come from stored history and move slowly, so they are
+    // asked for far less often than the live rates. A failure only leaves
+    // the running total in their place.
+    if (!loadError && readingNow(status.router) && Date.now() - todayAt >= TODAY_MS) {
+      todayAt = Date.now();
+      try {
+        today = todayTotals(await mgmt.trafficTop({ from: new Date(startOfToday(todayAt)).toISOString(), to: new Date(todayAt).toISOString() }));
+      } catch { today = null; }
+    }
     busy = false;
     paintAll();
   }

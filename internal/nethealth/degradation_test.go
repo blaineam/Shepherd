@@ -107,3 +107,18 @@ func TestDegradationOptionsDefaults(t *testing.T) {
 		t.Fatalf("got %+v", o)
 	}
 }
+
+func TestAResumedTrackerRecoversOnTheFirstHealthySample(t *testing.T) {
+	tr := NewDegradationTracker(DegradationOptions{})
+	healthy := Sample{TotalTargets: 2, ReachableTargets: 2, LatencyMS: 10}
+	if tr.Update(healthy) != TransitionNone {
+		t.Fatal("a fresh tracker recovered from nothing")
+	}
+	tr.Resume()
+	if !tr.Raised() {
+		t.Fatal("Resume did not mark the alarm open")
+	}
+	if tr.Update(healthy) != TransitionRecovered || tr.Raised() {
+		t.Fatal("a resumed tracker did not recover on a healthy sample")
+	}
+}

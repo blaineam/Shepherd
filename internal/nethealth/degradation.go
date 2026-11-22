@@ -106,6 +106,10 @@ func (t *DegradationTracker) Update(s Sample) Transition {
 	return TransitionNone
 }
 
+// Resume tells a new tracker that an alarm from before a restart is still
+// open, so the next healthy sample closes it.
+func (t *DegradationTracker) Resume() { t.raised = true }
+
 // Raised reports whether the tracker currently considers the network
 // degraded (an alarm is open).
 func (t *DegradationTracker) Raised() bool { return t.raised }

@@ -7,7 +7,7 @@ import { el } from './dom.js?v=65858b99';
 import { button, emptyState, confirmDialog } from './ui.js?v=4d208003';
 import { unavailable } from './mgmt.js?v=5493c5e5';
 import { fmtDateTime } from './format.js?v=86b54455';
-import { createConnections } from './connectionsview.js?v=fab14b7b';
+import { createConnections } from './connectionsview.js?v=db095dbd';
 import { createNameSync } from './namesyncview.js?v=45cb1394';
 import { can, productName, statusLine, blockSpecFromFlow, ruleSummary, requestLine, auditLine, DAY_NAMES, scheduleText, scheduleFor, scheduleBody, scheduleProblem } from './backend.js?v=d55879b3';
 

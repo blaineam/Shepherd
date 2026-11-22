@@ -9,7 +9,7 @@
 // Every string that came from the server is placed with textContent.
 import { el } from './dom.js?v=65858b99';
 import { button } from './ui.js?v=4d208003';
-import { routerConnection } from './traffic.js?v=ad4d3449';
+import { routerConnection } from './traffic.js?v=78c1c3df';
 
 export function createRouterUsage({ onManage = null }) {
   const root = el('section', 'card ru');

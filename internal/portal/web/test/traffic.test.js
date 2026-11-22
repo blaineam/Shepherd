@@ -161,7 +161,7 @@ test('rateStats reports peak and average', () => {
   assert.deepEqual(rateStats([2, 4, 6, 'x']), { peak: 6, avg: 3 });
 });
 
-import { routerConnection, readingNow, measurementNote, tileLabels, liveChartCaption, nameSyncSummary } from '../js/traffic.js';
+import { routerConnection, readingNow, measurementNote, tileLabels, liveChartCaption, nameSyncSummary, startOfToday, todayTotals, showWatchSection } from '../js/traffic.js';
 
 const reading = {
   available: true, connected: true, enabled: true, source: 'eero',
@@ -300,4 +300,31 @@ test('nameSyncSummary says what will change, and what a rename costs', () => {
   const all = nameSyncSummary({ created: 1, named: 2, renamed: 1, groups_created: 1, memberships_added: 4 }, false);
   assert.equal(all, 'This will make these changes: 1 device added, 2 devices named, 1 device renamed, 1 group created and 4 devices put in groups.');
   assert.equal(nameSyncSummary(null, false), 'Nothing to change: your names already match eero.');
+});
+
+test('today starts at local midnight, whatever the time', () => {
+  const noon = new Date(2026, 10, 21, 12, 34, 56, 789).getTime();
+  const start = new Date(startOfToday(noon));
+  assert.deepEqual([start.getFullYear(), start.getMonth(), start.getDate(), start.getHours(), start.getMinutes(), start.getSeconds(), start.getMilliseconds()], [2026, 10, 21, 0, 0, 0, 0]);
+  assert.equal(startOfToday(start.getTime()), start.getTime());
+});
+
+test("today's totals add up the stored history, per device and for the network", () => {
+  const t = todayTotals({ devices: [{ device_id: 'd1', down: 1000, up: 200 }, { device_id: 'd2', down: '50', up: null }, { down: 7, up: 3 }] });
+  assert.equal(t.down, 1057);
+  assert.equal(t.up, 203);
+  assert.deepEqual(t.byDevice.get('d1'), { down: 1000, up: 200 });
+  assert.deepEqual(t.byDevice.get('d2'), { down: 50, up: 0 });
+  assert.equal(t.byDevice.size, 2);
+  assert.deepEqual([todayTotals(null).down, todayTotals({}).up, todayTotals(null).byDevice.size], [0, 0, 0]);
+});
+
+test('the Watch mode card is hidden while a router supplies the figures', () => {
+  assert.equal(showWatchSection({ router: reading }), false);
+  assert.equal(showWatchSection({ enabled: true, router: reading }), false);
+  // It stays when it is the one measuring, and when nothing else is.
+  assert.equal(showWatchSection({ measuring: true, router: reading }), true);
+  assert.equal(showWatchSection({ router: { ...reading, enabled: false } }), true);
+  assert.equal(showWatchSection({ router: { available: true, connected: false } }), true);
+  assert.equal(showWatchSection(null), true);
 });
