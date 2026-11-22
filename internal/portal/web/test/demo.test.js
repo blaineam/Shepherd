@@ -1,8 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DemoGenerator, mulberry32, hash2, DEVICES, SERVICES, TRACKERS, PLACES, DEMO_HOME, diurnal,
-} from '../js/demo.js';
+  DemoGenerator, mulberry32, hash2, DEVICES, SERVICES, TRACKERS, PLACES, DEMO_HOME, diurnal, WAN_ADDR } from '../js/demo.js';
 import { validDest } from '../js/entry.js';
 import { createDemoApi } from '../js/demoapi.js';
 
@@ -52,7 +51,8 @@ test('uses only synthetic identifiers', () => {
   const clientOK = /^(192\.0\.2|198\.51\.100)\.\d+$/;
   for (const e of es) {
     assert.match(e.client, clientOK);
-    assert.match(e.name, /\.example\.(com|net|org)$/);
+    // What arrived from outside is named by where it came from.
+    assert.match(e.name, e.inbound ? /^203\.0\.113\.\d+$/ : /\.example\.(com|net|org)$/);
     assert.ok(e.upstream === '' || e.upstream.startsWith('203.0.113.'));
     for (const d of e.dests || []) { assert.match(d.ip, /^203\.0\.113\.\d+$/); assert.ok(validDest(d)); }
   }
@@ -68,7 +68,11 @@ test('action mix has blocked entries without destinations', () => {
   const es = g.range(T, T + 20 * MIN);
   const by = (a) => es.filter((e) => e.action === a);
   assert.ok(by('blocked').length > 0 && by('cached').length > 0 && by('error').length > 0);
-  assert.ok(by('blocked').every((e) => !e.dests && TRACKERS.includes(e.name)));
+  // A blocked lookup goes nowhere; what the firewall turned away at the
+  // door came from somewhere, and says where.
+  const inbound = by('blocked').filter((e) => e.inbound);
+  assert.ok(inbound.length > 0 && inbound.every((e) => e.type === 'FLOW' && e.dests.length === 1 && e.client === WAN_ADDR && !e.device));
+  assert.ok(by('blocked').filter((e) => !e.inbound).every((e) => !e.dests && TRACKERS.includes(e.name)));
   assert.ok(by('error').every((e) => !e.dests));
   assert.ok(by('allowed').every((e) => e.dests && e.dests.length >= 1));
 });
@@ -88,7 +92,9 @@ test('traffic is heavy tailed: a few device->service pairs dominate', () => {
 test('bytes mode adds heavy-tailed byte counts only to entries with destinations', () => {
   const g = new DemoGenerator({ bytes: true });
   const es = g.range(T, T + 10 * MIN);
-  const withDests = es.filter((e) => e.dests);
+  // Something turned away moved nothing.
+  const withDests = es.filter((e) => e.dests && !e.inbound);
+  assert.ok(es.filter((e) => e.inbound).every((e) => e.bytes_down === undefined));
   assert.ok(withDests.every((e) => e.bytes_down > 0 && e.bytes_up > 0));
   assert.ok(es.filter((e) => !e.dests).every((e) => e.bytes_down === undefined));
   const b = withDests.map((e) => e.bytes_down).sort((x, y) => x - y);

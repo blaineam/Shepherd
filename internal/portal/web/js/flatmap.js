@@ -134,6 +134,9 @@ export class FlatMap {
       dLat: new Float32Array(COMET_CAP), dLon: new Float32Array(COMET_CAP),
       lift: new Float32Array(COMET_CAP), w: new Float32Array(COMET_CAP), size: new Float32Array(COMET_CAP),
       sel: new Uint8Array(COMET_CAP), col: new Float32Array(COMET_CAP * 3),
+      // How far along its path the comet gets (1 is all the way), and
+      // where it bursts when that is short of the end.
+      stop: new Float32Array(COMET_CAP), pLat: new Float32Array(COMET_CAP), pLon: new Float32Array(COMET_CAP),
     };
     this.pulseNext = 0;
     this.pl = {
@@ -223,6 +226,7 @@ export class FlatMap {
     const path = cometLatLon(lane, this.home);
     c.hLat[i] = path.start.lat; c.hLon[i] = path.start.lon;
     c.dLat[i] = path.end.lat; c.dLon[i] = path.end.lon;
+    c.stop[i] = path.stop; c.pLat[i] = path.hit.lat; c.pLon[i] = path.hit.lon;
     c.lift[i] = lane.angle;
     c.w[i] = widthPx(s) * 0.7;
     c.size[i] = 0.035 + 0.06 * s;
@@ -625,9 +629,12 @@ export class FlatMap {
       if (!c.on[i]) continue;
       const age = this.time - c.t0[i];
       const f = age / c.dur[i];
-      if (f >= 1) {
+      // One that was turned away stops against the dome over home and
+      // bursts there as a shield ring; the rest land.
+      const stopped = c.stop[i] < 1;
+      if (f >= c.stop[i]) {
         c.on[i] = 0;
-        this._pulse(c.dLat[i], c.dLon[i], [c.col[i * 3], c.col[i * 3 + 1], c.col[i * 3 + 2]], 0, c.size[i], this.reduced ? 0.9 : 1.3);
+        this._pulse(stopped ? c.pLat[i] : c.dLat[i], stopped ? c.pLon[i] : c.dLon[i], [c.col[i * 3], c.col[i * 3 + 1], c.col[i * 3 + 2]], stopped ? 1 : 0, c.size[i] * (stopped ? 1.6 : 1), this.reduced ? 0.9 : 1.3);
         continue;
       }
       live++;

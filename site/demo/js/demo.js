@@ -100,6 +100,9 @@ export function diurnal(t) {
   return 0.55 + 0.45 * Math.sin(((h - 9) / 24) * 2 * Math.PI);
 }
 
+// The address the demo gives the router's WAN side, a documentation one.
+export const WAN_ADDR = '198.51.100.1';
+
 export class DemoGenerator {
   constructor({ seed = 7, rate = 5, bytes = false, deviceOf = null } = {}) {
     this.seed = seed;
@@ -159,6 +162,17 @@ export class DemoGenerator {
         e.shadow = TRACKER_SHADOWS[h % TRACKER_SHADOWS.length];
       } else if (e.action !== 'error' && h % 9 === 0) e.shadow = APP_SHADOWS[h % APP_SHADOWS.length];
       if (e.shadow) e.reason = 'wandering';
+    }
+    // Now and then, something from outside that the firewall turned away at
+    // the door. It comes from where a service lives, runs towards home, and
+    // stops against the dome over it. Chosen by a hash rather than the
+    // generator's own random stream, so everything else comes out as before.
+    if (!burst && !e.wandering && e.action === 'allowed' && dests && hash2(Math.floor(t), svcIdx * 53 + 11) % 16 === 0) {
+      e.action = 'blocked'; e.inbound = true; e.type = 'FLOW';
+      e.name = dests[0].ip; e.reason = 'firewall: inbound, turned away';
+      e.client = WAN_ADDR; e.dests = [dests[0]]; e.rcode = 0;
+      delete e.device; delete e.device_id;
+      dests = null;
     }
     if (this.bytes && dests) {
       const down = Math.min(3e9, Math.exp(8.5 + gauss(rng) * 2.4) * (burst ? 40 : 1));

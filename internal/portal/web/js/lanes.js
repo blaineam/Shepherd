@@ -156,14 +156,40 @@ export class LaneTable {
 // A comet runs along a lane in the direction the traffic went. Most of it
 // leaves home for somewhere; what arrived from outside, such as a
 // connection the firewall turned away at the door, starts at its source
-// and runs home. These two say which end is which, for the globe (unit
-// vectors) and the flat map (latitude and longitude).
+// and runs home.
+//
+// Something turned away never got in, so its comet does not land at home
+// either. It stops short, against a dome around home that is only ever
+// seen by what breaks on it. DOME_ANGLE is the dome's radius as an angle
+// at the centre of the globe (about 900 km on the ground), big enough to
+// see with the whole planet in view.
+export const DOME_ANGLE = 0.14;
+
+// domeStop is how far along its lane a comet gets, from 0 to 1: all the
+// way, except for traffic from outside that was blocked. A lane shorter
+// than the dome is wide still shows half of its length.
+export function domeStop(lane) {
+  if (!(lane.inbound && lane.action === 'blocked')) return 1;
+  const angle = lane.angle || 0;
+  if (!(angle > 0)) return 1;
+  return 1 - Math.min(0.5, Math.max(0.05, DOME_ANGLE / angle));
+}
+
+// These two say which end is which, and where the comet stops, for the
+// globe (unit vectors) and the flat map (latitude and longitude).
 export function cometVectors(lane) {
-  return lane.inbound ? { start: lane.to, end: lane.from } : { start: lane.from, end: lane.to };
+  const stop = domeStop(lane);
+  return lane.inbound ? { start: lane.to, end: lane.from, stop } : { start: lane.from, end: lane.to, stop };
 }
 
 export function cometLatLon(lane, home) {
   const far = { lat: lane.dest.lat, lon: lane.dest.lon };
   const near = { lat: home.lat, lon: home.lon };
-  return lane.inbound ? { start: far, end: near } : { start: near, end: far };
+  const stop = domeStop(lane);
+  const start = lane.inbound ? far : near;
+  const end = lane.inbound ? near : far;
+  // Where it stops, going the short way round in longitude.
+  const dLon = ((end.lon - start.lon + 540) % 360) - 180;
+  const hit = { lat: start.lat + (end.lat - start.lat) * stop, lon: start.lon + dLon * stop };
+  return { start, end, stop, hit };
 }

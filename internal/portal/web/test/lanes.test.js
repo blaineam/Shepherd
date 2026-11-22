@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LaneTable, cometVectors, cometLatLon } from '../js/lanes.js';
+import { LaneTable, cometVectors, cometLatLon, domeStop, DOME_ANGLE } from '../js/lanes.js';
 import { normalizeEntry } from '../js/entry.js';
 import { weightScale } from '../js/weight.js';
 
@@ -166,7 +166,7 @@ test('clear empties everything and restores slots', () => {
 
 test('traffic from outside gets its own lane and runs from its source to home', () => {
   const table = new LaneTable(8);
-  table.setHome(35, -119);
+  table.setHome({ lat: 35, lon: -119 });
   const dest = [{ lat: 52, lon: 5, city: 'Amsterdam', country: 'NL' }];
   const out = [];
   const E = (o) => ({ t: 1000, client: '192.0.2.10', name: 'x.example', action: 'allowed', dests: dest, ...o });
@@ -179,11 +179,48 @@ test('traffic from outside gets its own lane and runs from its source to home', 
   assert.equal(table.add(E({ action: 'blocked', inbound: true }), out)[0], blockedIn);
 
   // On the globe: from the far end to home for inbound, the reverse otherwise.
-  assert.deepEqual(cometVectors(outbound), { start: outbound.from, end: outbound.to });
-  assert.deepEqual(cometVectors(blockedIn), { start: blockedIn.to, end: blockedIn.from });
+  assert.deepEqual(cometVectors(outbound), { start: outbound.from, end: outbound.to, stop: 1 });
+  const inPath = cometVectors(blockedIn);
+  assert.equal(inPath.start, blockedIn.to);
+  assert.equal(inPath.end, blockedIn.from);
 
   // On the flat map, the same in latitude and longitude.
   const home = { lat: 35, lon: -119 };
-  assert.deepEqual(cometLatLon(outbound, home), { start: { lat: 35, lon: -119 }, end: { lat: 52, lon: 5 } });
-  assert.deepEqual(cometLatLon(blockedIn, home), { start: { lat: 52, lon: 5 }, end: { lat: 35, lon: -119 } });
+  const outFlat = cometLatLon(outbound, home);
+  assert.deepEqual([outFlat.start, outFlat.end, outFlat.stop, outFlat.hit], [{ lat: 35, lon: -119 }, { lat: 52, lon: 5 }, 1, { lat: 52, lon: 5 }]);
+  const inFlat = cometLatLon(blockedIn, home);
+  assert.deepEqual([inFlat.start, inFlat.end], [{ lat: 52, lon: 5 }, { lat: 35, lon: -119 }]);
+});
+
+test('what was turned away stops against a dome over home instead of landing', () => {
+  // Everything that got through, or was blocked on its way out, goes all the way.
+  assert.equal(domeStop({ angle: 1.5, action: 'allowed', inbound: true }), 1);
+  assert.equal(domeStop({ angle: 1.5, action: 'blocked', inbound: false }), 1);
+  assert.equal(domeStop({ angle: 0, action: 'blocked', inbound: true }), 1);
+  assert.equal(domeStop({ action: 'blocked', inbound: true }), 1);
+
+  // Blocked on its way in: it stops the dome's radius short of home.
+  const far = { angle: 1.4, action: 'blocked', inbound: true };
+  assert.ok(Math.abs(domeStop(far) - (1 - DOME_ANGLE / 1.4)) < 1e-12);
+  assert.ok(domeStop(far) > 0.85 && domeStop(far) < 1);
+  // From next door, where the lane is shorter than the dome is wide, it
+  // still travels half of it rather than not moving at all.
+  assert.equal(domeStop({ angle: 0.1, action: 'blocked', inbound: true }), 0.5);
+  // From the far side of the world it never stops closer than a sliver from home.
+  assert.equal(domeStop({ angle: Math.PI, action: 'blocked', inbound: true }), 1 - 0.05);
+
+  const table = new LaneTable(8);
+  table.setHome({ lat: 35, lon: -119 });
+  const lane = table.add({ t: 1000, client: 'wan', name: '203.0.113.9', action: 'blocked', inbound: true, dests: [{ lat: 52, lon: 5 }] }, [])[0];
+  const path = cometVectors(lane);
+  assert.ok(path.stop < 1 && path.stop > 0.8);
+
+  // On the flat map the burst is that far along, the short way round.
+  const flat = cometLatLon(lane, { lat: 35, lon: -119 });
+  assert.equal(flat.stop, path.stop);
+  assert.ok(Math.abs(flat.hit.lat - (52 + (35 - 52) * flat.stop)) < 1e-9);
+  assert.ok(Math.abs(flat.hit.lon - (5 + (-124) * flat.stop)) < 1e-9);
+  // Across the date line it goes the short way, not round the back.
+  const pacific = cometLatLon({ dest: { lat: 35, lon: 139 }, angle: 1.4, action: 'blocked', inbound: true }, { lat: 35, lon: -119 });
+  assert.ok(pacific.hit.lon > 139 && pacific.hit.lon < 241, 'hit at ' + pacific.hit.lon);
 });

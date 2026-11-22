@@ -1,7 +1,7 @@
 // The 3D globe: WebGL scene, controls and picking. All rendering state lives
 // in preallocated typed arrays feeding instanced buffers, so a frame allocates
 // nothing and ~900 ribbons (300 lanes + 600 comets) draw in a handful of calls.
-import { cometVectors } from './lanes.js?v=7e17c9f5';
+import { cometVectors } from './lanes.js?v=a7b17d41';
 import * as THREE from '../vendor/three.module.min.js?v=6bff6b08';
 import {
   DEG, latLonToVec3, vec3ToLatLon, slerp, arcPoint, segmentHitsSphere, dampVelocity, clamp, normalizeLon,
@@ -227,6 +227,8 @@ export class Globe {
     this.cometDest = new Float32Array(COMET_CAP * 3);
     this.cometColor = new Float32Array(COMET_CAP * 3);
     this.cometSize = new Float32Array(COMET_CAP);
+    // 1 for a comet that stops against the dome over home rather than landing.
+    this.cometStopped = new Uint8Array(COMET_CAP);
     // Comet slots with anything left to do this frame (still travelling, or
     // still fading out its arrival ping): render() only ever needs to look
     // at these, never all COMET_CAP of them. Without this, the per-frame
@@ -347,9 +349,12 @@ export class Globe {
     A.iStyle[slot * 4 + 3] = lane.key === this.selectedKey ? 1 : 0;
     A.iColor[slot * 3] = col[0] * boost; A.iColor[slot * 3 + 1] = col[1] * boost; A.iColor[slot * 3 + 2] = col[2] * boost;
     A.iAnim[slot * 2] = this.time; A.iAnim[slot * 2 + 1] = dur;
-    this.cometArrive[i] = this.time + dur;
+    // A comet that was turned away stops where the dome is: it arrives
+    // sooner, and bursts in the air at that point instead of landing.
+    this.cometStopped[i] = path.stop < 1 ? 1 : 0;
+    this.cometArrive[i] = this.time + dur * path.stop;
     this.cometPending[i] = 1;
-    this.cometDest.set(path.end, i * 3);
+    this.cometDest.set(path.stop < 1 ? arcPoint(path.start, path.end, lane.lift, path.stop) : path.end, i * 3);
     this.cometColor.set(col, i * 3);
     this.cometSize[i] = 0.035 + 0.06 * s;
     this.liveComets.add(i);
@@ -609,9 +614,12 @@ export class Globe {
       const slot = LANE_CAP + i;
       if (this.cometPending[i] && this.time >= this.cometArrive[i]) {
         this.cometPending[i] = 0;
-        this._pulse(this.cometDest, i * 3, this.cometColor, i * 3, 0, this.cometSize[i], this.reduced ? 0.9 : 1.3);
+        // Against the dome it is a shield ring, larger than a landing.
+        const stopped = this.cometStopped[i] === 1;
+        this._pulse(this.cometDest, i * 3, this.cometColor, i * 3, stopped ? 1 : 0, this.cometSize[i] * (stopped ? 1.6 : 1), this.reduced ? 0.9 : 1.3);
       }
-      if (this.time < this.cometArrive[i] + this.A.iAnim[slot * 2 + 1] * 0.35 + 0.1) {
+      // A stopped comet goes out where it hit; the rest fade as they land.
+      if (this.time < this.cometArrive[i] + (this.cometStopped[i] ? 0 : this.A.iAnim[slot * 2 + 1] * 0.35 + 0.1)) {
         live++;
       } else {
         if (this.A.iStyle[slot * 4 + 1] !== 0) { this.A.iStyle[slot * 4 + 1] = 0; this.arcDirty = true; }

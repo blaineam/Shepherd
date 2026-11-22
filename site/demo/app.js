@@ -5,12 +5,12 @@ import { $ } from './js/dom.js?v=65858b99';
 import { createApi } from './js/api.js?v=798e1c8c';
 import { startActivityReports } from './js/activity.js?v=bd3000e7';
 import { createDemoApi } from './js/demoapi.js?v=c182fda9';
-import { DemoGenerator, DEMO_HOME } from './js/demo.js?v=e0b32cdd';
+import { DemoGenerator, DEMO_HOME } from './js/demo.js?v=e4e37c65';
 import { normalizeEntry, destKey, placeName } from './js/entry.js?v=de62f770';
 import { LiveSource } from './js/sources.js?v=e6dc9a01';
 import { ReplaySource } from './js/replay.js?v=bb8a7a3f';
 import { ReplayClock } from './js/clock.js?v=8fa6af79';
-import { Model } from './js/model.js?v=8b6e97ae';
+import { Model } from './js/model.js?v=c5d54bc0';
 import { weightScale, entryWeight } from './js/weight.js?v=7b9bc8df';
 import { validLatLon } from './js/geo.js?v=248f9f1a';
 import { fmtClock } from './js/format.js?v=86b54455';
@@ -33,8 +33,8 @@ import { createReverseProxy } from './js/reverseproxyview.js?v=0ea59d8f';
 import { createDhcp } from './js/dhcpview.js?v=7427fa9d';
 import { createHistory } from './js/historyview.js?v=1a23f2a3';
 import { createAccountability } from './js/accountability.js?v=c8e7c24c';
-import { createDemoMgmt } from './js/demomgmt.js?v=8d4adbef';
-import { DEVICE_BY_IP } from './js/demodata.js?v=1f5ce92d';
+import { createDemoMgmt } from './js/demomgmt.js?v=57c4282e';
+import { DEVICE_BY_IP } from './js/demodata.js?v=b89cb40d';
 import { createLocking } from './js/lockingview.js?v=22b45a24';
 import { lockedURL, unlockedURL, signInOrder, autoTryPasskey, methodLabel } from './js/locking.js?v=198c7ce4';
 import { requestOptions, assertionJSON, ceremonyError } from './js/passkeys.js?v=0fe3526c';
@@ -743,7 +743,7 @@ async function initGlobe() {
   let map = null;
   if (params.get('nogl') !== '1') {
     try {
-      const { Globe, webglAvailable } = await import('./js/globe.js?v=fd820fc3');
+      const { Globe, webglAvailable } = await import('./js/globe.js?v=77430ff7');
       if (webglAvailable()) map = new Globe($('#stage'), opts);
     } catch (err) {
       if (DEBUG) console.warn('3d globe unavailable:', err && err.message);
@@ -751,7 +751,7 @@ async function initGlobe() {
   }
   const flat = !map;
   if (flat) {
-    const { FlatMap, canvas2dAvailable } = await import('./js/flatmap.js?v=637a294a');
+    const { FlatMap, canvas2dAvailable } = await import('./js/flatmap.js?v=2f6b93dc');
     if (!canvas2dAvailable()) throw new Error('no canvas');
     map = new FlatMap($('#stage'), opts);
     document.body.classList.add('flatmap');
