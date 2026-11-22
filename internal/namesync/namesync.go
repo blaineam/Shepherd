@@ -22,6 +22,7 @@ import (
 	"errors"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -501,7 +502,7 @@ func (e *Engine) planLocked(reads []read, now time.Time) ([]decision, int) {
 				fresh = true
 				continue
 			}
-			if p, ok := e.st.Pending[id][mac]; ok && en.Name == p.Old && en.Name != seen {
+			if p, ok := e.st.Pending[id][mac]; ok && same(en.Name, p.Old) && !same(en.Name, seen) {
 				// Still the name a write replaced. Inside the window the
 				// answer may only be late, so wait; past it the write did
 				// not stick and is made again. Either way it is not
@@ -511,7 +512,7 @@ func (e *Engine) planLocked(reads []read, now time.Time) ([]decision, int) {
 				}
 				continue
 			}
-			if en.Name != seen && !en.Learned && score(en) > Useless {
+			if !same(en.Name, seen) && !en.Learned && score(en) > Useless {
 				edits = append(edits, cand{id, en})
 			}
 		}
@@ -548,7 +549,7 @@ func (e *Engine) planLocked(reads []read, now time.Time) ([]decision, int) {
 				want := fit(d.name, r.src.MaxLen())
 				// A place still answering with the old name is left alone
 				// only while what it was sent is still what is wanted.
-				if en.Name == want || d.echo[id] && e.st.Seen[id][mac] == want {
+				if same(en.Name, want) || d.echo[id] && same(e.st.Seen[id][mac], want) {
 					continue
 				}
 				w := write{src: r.src, entry: en, name: want}
@@ -614,7 +615,7 @@ func (e *Engine) rememberLocked(reads []read, decisions []decision, wrote map[st
 			continue
 		}
 		for mac, p := range m {
-			if en, ok := r.entries[mac]; ok && en.Name != p.Old {
+			if en, ok := r.entries[mac]; ok && !same(en.Name, p.Old) {
 				delete(m, mac)
 			}
 		}
@@ -627,6 +628,18 @@ func (e *Engine) rememberLocked(reads []read, decisions []decision, wrote map[st
 			delete(e.failed, k)
 		}
 	}
+}
+
+// same reports whether two names are the same to a person: letter case,
+// the style of an apostrophe or quote, and runs of spaces do not count.
+// Without it "p110m" and "P110M", or a typed and a typographic apostrophe,
+// would be rewritten back and forth for no visible gain.
+func same(a, b string) bool { return fold(a) == fold(b) }
+
+var quotes = strings.NewReplacer("’", "'", "‘", "'", "“", `"`, "”", `"`)
+
+func fold(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(quotes.Replace(s)), " "))
 }
 
 // fit cuts name to max characters; 0 is no limit.

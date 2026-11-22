@@ -614,3 +614,24 @@ func TestStartRunsInTheBackgroundOnce(t *testing.T) {
 	lone.Start(context.Background())
 	waitFor(t, "the failure to be logged", func() bool { mu.Lock(); defer mu.Unlock(); return logged == 1 })
 }
+
+func TestNamesThatDifferOnlyInCaseOrPunctuationAlreadyMatch(t *testing.T) {
+	r := newRig(t)
+	r.shep.entries = []Entry{{MAC: macA, Name: "xp200m", Learned: true}, {MAC: macB, Name: "Sam's  Laptop", Typed: true}}
+	r.eer.entries = []Entry{{MAC: macA, Name: "XP200M"}, {MAC: macB, Name: "Sam’s Laptop"}}
+	r.fw.entries = []Entry{{MAC: macA, Name: "Xp200M"}, {MAC: macB, Name: "sam's laptop"}}
+	if rep := r.sync(); rep.Written != 0 || len(rep.Changes) != 0 || rep.InSync != 2 {
+		t.Fatalf("sync = %+v", rep)
+	}
+	// Changing only the case later is not an edit either.
+	r.now = r.now.Add(time.Hour)
+	r.eer.set(macA, "xP200m")
+	if rep := r.sync(); rep.Written != 0 {
+		t.Fatalf("a change of case was written: %+v", rep)
+	}
+	// A real rename still is.
+	r.now = r.now.Add(time.Hour)
+	r.eer.set(macA, "Desk lamp plug")
+	r.sync()
+	r.wantNames(macA, "Desk lamp plug")
+}

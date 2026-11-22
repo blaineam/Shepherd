@@ -90,6 +90,8 @@ last 200), so any of them can be put back by hand.
 
 Things to know:
 
+- **Case and punctuation do not count.** `xp200m` and `XP200M`, or a typed and a typographic
+  apostrophe, are the same name and are left as they are in each place.
 - **A place that cannot be written is still read.** With **Allow changes** off, or a Read Only
   token, a Firewalla's names are read and an edit made there still goes out, but nothing is written
   to it; the screen says how many names are waiting, and they are caught up once it can be written.
