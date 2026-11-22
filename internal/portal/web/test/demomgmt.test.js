@@ -44,7 +44,11 @@ test('demo data is synthetic: documentation ranges, example domains, 02:00:5e MA
 test('traffic entries carry device names and ids', () => {
   const es = gen().range(NOW, NOW + 60000);
   assert.ok(es.length > 20);
-  for (const e of es) { assert.ok(e.device && e.device_id); assert.equal(e.device, DEVICE_BY_IP.get(e.client).name); }
+  // Something turned away on its way in belongs to no device at home.
+  for (const e of es) {
+    if (e.inbound) { assert.equal(e.device, undefined); continue; }
+    assert.ok(e.device && e.device_id); assert.equal(e.device, DEVICE_BY_IP.get(e.client).name);
+  }
 });
 
 test('devices: search, sort and paging', async () => {
