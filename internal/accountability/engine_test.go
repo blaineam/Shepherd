@@ -227,7 +227,7 @@ func TestDigestSendTiming(t *testing.T) {
 
 	clock.Advance(23 * time.Hour) // total elapsed since the first event: 24h
 	e.Tick()
-	if len(sender.Sent()) != 1 {
+	if awaitSent(sender, 1) != 1 {
 		t.Fatalf("sent %d emails, want exactly 1 once the window closed", len(sender.Sent()))
 	}
 	msg := sender.Sent()[0]
@@ -281,7 +281,7 @@ func TestImmediateModeDedupeWindow(t *testing.T) {
 
 	clock.Advance(2 * time.Minute) // minute 6: past the window
 	e.Tick()
-	if len(sender.Sent()) != 1 {
+	if awaitSent(sender, 1) != 1 {
 		t.Fatalf("sent %d, want exactly 1 (a burst is one email)", len(sender.Sent()))
 	}
 	if !strings.Contains(sender.Sent()[0].Body, "5 times") {
@@ -539,7 +539,7 @@ func TestScopeLabelAndItemLabelOverrides(t *testing.T) {
 	e.Record(AccessEvent{GroupIDs: []string{"g1"}, Item: "gaming", Action: "allowed"})
 	clock.Advance(6 * time.Minute) // past the default 5-minute immediate window
 	e.Tick()
-	if len(sender.Sent()) != 1 {
+	if awaitSent(sender, 1) != 1 {
 		t.Fatalf("sent %d, want 1", len(sender.Sent()))
 	}
 	body := sender.Sent()[0].Body
@@ -579,3 +579,16 @@ func TestSendFailureIsLoggedAndWindowCleared(t *testing.T) {
 }
 
 var errExampleConnection = errors.New("dial tcp 127.0.0.1:1234: connection refused (example)")
+
+// awaitSent waits for the sender to have sent at least n messages and
+// returns how many it has. Advancing the fake clock also fires the engine's
+// own ticker, so a digest that falls due may be picked up and delivered on
+// the engine's goroutine rather than by the test's own Tick; the send then
+// lands a moment after Tick returns, and counting at once would miss it.
+func awaitSent(sender *FakeSender, n int) int {
+	deadline := time.Now().Add(2 * time.Second)
+	for len(sender.Sent()) < n && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	return len(sender.Sent())
+}

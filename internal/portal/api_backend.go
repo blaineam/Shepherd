@@ -59,6 +59,7 @@ func (s *Server) backendJSON() map[string]any {
 		out["flows"] = nonNil(snap.Flows)
 		out["audit"] = nonNil(snap.Audit)
 		out["schedules"] = nonNil(snap.Schedules)
+		out["groups"] = nonNil(snap.Groups)
 		out["target_types"] = backends.TargetTypes
 		out["scope_types"] = backends.ScopeTypes
 	}

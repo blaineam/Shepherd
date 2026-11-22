@@ -81,6 +81,9 @@ func (f *fakeHub) DeleteRule(_ context.Context, id string) error { return f.writ
 func (f *fakeHub) RenameDevice(_ context.Context, r backends.DeviceRef, n string) error {
 	return f.write("rename " + r.Box + "/" + r.Native + " " + n)
 }
+func (f *fakeHub) SetDeviceGroup(_ context.Context, r backends.DeviceRef, name string) error {
+	return f.write("group " + r.Box + "/" + r.Native + " " + name)
+}
 func (f *fakeHub) DismissAlarm(_ context.Context, r backends.AlarmRef) error {
 	return f.write("dismiss " + r.Box + "/" + r.ID)
 }

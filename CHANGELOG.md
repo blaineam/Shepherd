@@ -22,6 +22,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   own app on loopback, which is not published and can change with firmware; only calls checked
   against a running box are made, and it refuses any address that is not loopback. Creating rules
   and reading blocked requests still need MSP.
+- **A router API, described by OpenAPI** ([docs/API.md](docs/API.md)). `/api/v1` is one small REST API
+  over whatever router or firewall is connected: devices, groups, rules, alarms and requests, with
+  renaming, moving, blocking, pausing and deleting where the product can. The calls are the same for
+  a Firewalla on the box, a Firewalla through MSP and a UniFi console; `GET /api/v1/router` says
+  which each can serve, and a call a product cannot serve answers `unsupported` rather than failing
+  oddly. Shepherd serves its own OpenAPI 3.1 document at `/api/v1/openapi.json`, generated from the
+  route table so it cannot drift from what is served.
 - **Device groups kept the same in Shepherd and on a Firewalla** ([docs/BACKENDS.md](docs/BACKENDS.md#device-groups)).
   A **Device groups** card on the Router screen, shown when Shepherd reads a Firewalla on the box
   itself, keeps each device in the same group in both places. A group that exists in only one is

@@ -381,6 +381,9 @@ type BackendHub interface {
 	// restores it.
 	BlockClient(ctx context.Context, ref backends.DeviceRef, block bool) error
 	RenameDevice(ctx context.Context, ref backends.DeviceRef, name string) error
+	// SetDeviceGroup moves a device into the group with this name, making
+	// it if needed; an empty name takes it out of its group.
+	SetDeviceGroup(ctx context.Context, ref backends.DeviceRef, name string) error
 	DismissAlarm(ctx context.Context, ref backends.AlarmRef) error
 }
 
@@ -623,6 +626,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// writeJSONBody writes v as JSON after the caller has set the status.
+func writeJSONBody(w http.ResponseWriter, v any) { _ = json.NewEncoder(w).Encode(v) }
+
 func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(v); err != nil {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
@@ -788,6 +794,7 @@ func (s *Server) routes() {
 	h("POST /api/routerusage/unifi", s.connectUniFi)
 	h("POST /api/routerusage/unifi/enabled", s.setUniFiEnabled)
 	h("DELETE /api/routerusage/unifi", s.forgetUniFi)
+	s.routesV1()
 	h("GET /api/connections", s.getConnections)
 	h("GET /api/names", s.getNames)
 	h("POST /api/names/preview", s.previewNames)
