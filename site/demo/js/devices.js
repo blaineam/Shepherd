@@ -8,7 +8,7 @@ import { parseQuery, stringifyQuery, addFilter, removeFilter, formatFilter, hasG
 import { applyBulkLocal, planUndo, describeBulk, parseTags, normTag } from './bulk.js?v=59d2b697';
 import { TYPES, typeLabel, typeIcon, GROUP_COLORS } from './devtypes.js?v=0c35dd83';
 import { icon, iconButton, button, chip, segmented, toggle, emptyState, openPopover, openMenu, confirmDialog, relTime, unavailableCard, debounce } from './ui.js?v=4d208003';
-import { unavailable } from './mgmt.js?v=5495569c';
+import { unavailable } from './mgmt.js?v=5493c5e5';
 import { rangeWindow, fillSeries, sumPoints, areaPaths, axisLabels, timeLabels, fmtBytes } from './traffic.js?v=ad4d3449';
 import { TIMER_CHOICES, MODES, deviceMode, countdown, countdownShort, modePatch, applyModeLocal } from './wander.js?v=b40b3e3f';
 import { reservedLabel } from './dhcp.js?v=769b13a6';

@@ -113,6 +113,7 @@ type Snapshot struct {
 	Flows        []backends.Flow       `json:"flows"`
 	Audit        []AuditEntry          `json:"audit"`
 	Schedules    []Schedule            `json:"schedules"`
+	Groups       []backends.Group      `json:"groups"`
 }
 
 // Hub polls one backend.
@@ -121,6 +122,7 @@ type Hub struct {
 
 	mu       sync.Mutex
 	devices  []backends.Device
+	groups   []backends.Group
 	rules    []backends.Rule
 	alarms   []backends.Alarm
 	flows    []backends.Flow // newest first, capped
@@ -238,6 +240,15 @@ func (h *Hub) Refresh(ctx context.Context) {
 			h.mu.Unlock()
 		}
 		record("devices", err)
+	}
+	if g, is := b.(backends.GroupManager); is {
+		groups, err := g.Groups(ctx)
+		if err == nil {
+			h.mu.Lock()
+			h.groups = groups
+			h.mu.Unlock()
+		}
+		record("groups", err)
 	}
 	if _, is := b.(backends.RuleManager); is {
 		record("rules", h.refreshRules(ctx))
@@ -491,6 +502,7 @@ func (h *Hub) Snapshot() Snapshot {
 		Flows:     append([]backends.Flow(nil), h.flows...),
 		Audit:     append([]AuditEntry(nil), h.audit...),
 		Schedules: append([]Schedule(nil), h.schedules...),
+		Groups:    append([]backends.Group(nil), h.groups...),
 	}
 }
 
@@ -630,6 +642,59 @@ func (h *Hub) RenameDevice(ctx context.Context, ref backends.DeviceRef, name str
 				h.mu.Unlock()
 			}
 		}
+	}
+	return err
+}
+
+// SetDeviceGroup puts a device in the group called name, making the group
+// if the product has none by that name. An empty name takes the device out
+// of its group. Names are matched without regard to letter case.
+func (h *Hub) SetDeviceGroup(ctx context.Context, ref backends.DeviceRef, name string) error {
+	gm, ok := h.o.Backend.(backends.GroupManager)
+	if !ok {
+		return errUnsupported
+	}
+	name = strings.TrimSpace(name)
+	id := ""
+	var err error
+	if name != "" {
+		h.mu.Lock()
+		for _, g := range h.groups {
+			if strings.EqualFold(g.Name, name) {
+				id = g.ID
+				break
+			}
+		}
+		h.mu.Unlock()
+		if id == "" {
+			var g backends.Group
+			g, err = gm.CreateGroup(ctx, name)
+			h.record("create group", name, err)
+			if err == nil {
+				id = g.ID
+				h.mu.Lock()
+				h.groups = append(h.groups, g)
+				h.mu.Unlock()
+			}
+		}
+	}
+	if err == nil {
+		err = gm.SetDeviceGroup(ctx, ref, id)
+		what := ref.Native + " into " + name
+		if name == "" {
+			what = ref.Native + " out of its group"
+		}
+		h.record("move device", what, err)
+	}
+	if err == nil {
+		// Show the move at once rather than at the next poll.
+		h.mu.Lock()
+		for i := range h.devices {
+			if h.devices[i].Ref() == ref {
+				h.devices[i].Group = name
+			}
+		}
+		h.mu.Unlock()
 	}
 	return err
 }

@@ -635,3 +635,87 @@ func TestNamesThatDifferOnlyInCaseOrPunctuationAlreadyMatch(t *testing.T) {
 	r.sync()
 	r.wantNames(macA, "Desk lamp plug")
 }
+
+// groupRank is how a membership sync ranks values: being in a group beats
+// being in none, and no group is better than another.
+func groupRank(e Entry) int {
+	if e.Name == "" {
+		return Useless
+	}
+	return Machine
+}
+
+func newGroupRig(t *testing.T) *rig {
+	r := newRig(t)
+	r.e = New(Options{Sources: r.e.o.Sources, Now: r.e.o.Now, Rank: groupRank, ClearIsEdit: true})
+	return r
+}
+
+func TestWithClearIsEditRemovingAValueRemovesItEverywhere(t *testing.T) {
+	r := newGroupRig(t)
+	// The first sync: a device in a group in one place joins it in the
+	// others; "KP" style readability plays no part.
+	r.shep.entries = []Entry{{MAC: macA, Name: "Smart Home"}, {MAC: macB, Name: ""}}
+	r.eer.entries = []Entry{{MAC: macA, Name: ""}, {MAC: macB, Name: ""}}
+	r.fw.entries = []Entry{{MAC: macA, Name: ""}, {MAC: macB, Name: "Q404"}}
+	rep := r.sync()
+	if rep.Written != 4 {
+		t.Fatalf("first sync = %+v", rep)
+	}
+	r.wantNames(macA, "Smart Home")
+	r.wantNames(macB, "Q404")
+
+	// A run later, the writes are seen to have stuck.
+	r.now = r.now.Add(time.Minute)
+	if rep := r.sync(); rep.Written != 0 || rep.InSync != 2 {
+		t.Fatalf("settling = %+v", rep)
+	}
+
+	// Taking the device out of its group in one place takes it out everywhere.
+	r.now = r.now.Add(time.Hour)
+	r.fw.set(macA, "")
+	rep = r.sync()
+	if rep.Written != 2 || rep.Changes[0].Reason != "edit" || rep.Changes[0].From != "firewalla" || rep.Changes[0].Name != "" {
+		t.Fatalf("after a removal = %+v", rep)
+	}
+	r.wantNames(macA, "")
+
+	// "No group" is then the agreed state: nothing to write, and it counts
+	// as matching.
+	r.now = r.now.Add(time.Hour)
+	if rep := r.sync(); rep.Written != 0 || rep.InSync != 2 {
+		t.Fatalf("settled = %+v", rep)
+	}
+
+	// A removal and a move at once: the move wins, whichever came first.
+	r.now = r.now.Add(time.Hour)
+	r.shep.set(macB, "")
+	r.eer.set(macB, "Blaine")
+	r.sync()
+	r.wantNames(macB, "Blaine")
+}
+
+func TestWithClearIsEditAnAgreedEmptyValueIsCaughtUpLater(t *testing.T) {
+	r := newGroupRig(t)
+	for _, f := range []*fake{r.shep, r.eer, r.fw} {
+		f.entries = []Entry{{MAC: macA, Name: "Smart Home"}}
+	}
+	r.sync()
+	// The removal cannot reach a read-only place yet.
+	r.fw.ro = "Allow changes is off"
+	r.now = r.now.Add(time.Hour)
+	r.shep.set(macA, "")
+	rep := r.sync()
+	if rep.Written != 1 || rep.Held != 1 || r.fw.name(macA) != "Smart Home" {
+		t.Fatalf("held removal = %+v", rep)
+	}
+	r.fw.mu.Lock()
+	r.fw.ro = ""
+	r.fw.mu.Unlock()
+	r.now = r.now.Add(time.Hour)
+	rep = r.sync()
+	if rep.Written != 1 || rep.Changes[0].Reason != "catchup" {
+		t.Fatalf("catch-up = %+v", rep)
+	}
+	r.wantNames(macA, "")
+}

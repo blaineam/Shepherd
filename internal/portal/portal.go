@@ -263,6 +263,10 @@ type Deps struct {
 	// Names keeps one name per device across Shepherd and the connected
 	// routers (internal/namesync). Nil in a build without it.
 	Names NameSync
+	// Groups keeps each device in the same group in Shepherd and on a
+	// router that has device groups. It is the same engine as Names with
+	// different rules (cmd/shepherd/groups.go). Nil in a build without it.
+	Groups NameSync
 
 	// Traffic is the bandwidth history (docs/TRAFFIC.md), fed by Watch
 	// mode. Nil gets an empty, memory-only store so the API still answers.
@@ -789,6 +793,10 @@ func (s *Server) routes() {
 	h("POST /api/names/preview", s.previewNames)
 	h("POST /api/names/sync", s.syncNames)
 	h("POST /api/names/auto", s.setNamesAuto)
+	h("GET /api/groupsync", s.getGroupSync)
+	h("POST /api/groupsync/preview", s.previewGroupSync)
+	h("POST /api/groupsync/sync", s.syncGroupSync)
+	h("POST /api/groupsync/auto", s.setGroupSyncAuto)
 	h("GET /api/backend", s.getBackend)
 	h("POST /api/backend/refresh", s.refreshBackend)
 	h("POST /api/backend/writes", s.setBackendWrites)

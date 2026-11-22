@@ -64,92 +64,133 @@ func (s *Server) getConnections(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.connectionsJSON())
 }
 
-// ---- device names -----------------------------------------------------------
+// ---- device names and device groups ------------------------------------------
 
-const namesPreviewTimeout = 45 * time.Second
+// One engine keeps device names the same everywhere and a second keeps
+// device groups the same (cmd/shepherd/names.go, groups.go). They answer
+// the same four calls, so the handlers are written once over syncKind.
 
-func (s *Server) namesJSON() map[string]any {
-	if s.Names == nil {
+const syncPreviewTimeout = 45 * time.Second
+
+// syncKind is one of the two syncs as the API words it.
+type syncKind struct {
+	engine func(*Server) NameSync
+	// what is the thing synced, in the plural, for messages.
+	what string
+}
+
+var (
+	namesKind  = syncKind{func(s *Server) NameSync { return s.Names }, "device names"}
+	groupsKind = syncKind{func(s *Server) NameSync { return s.Groups }, "device groups"}
+)
+
+func (s *Server) syncJSON(k syncKind) map[string]any {
+	e := k.engine(s)
+	if e == nil {
 		return map[string]any{"available": false}
 	}
-	st := s.Names.Status()
+	st := e.Status()
 	return map[string]any{"available": true, "auto": st.Auto, "running": st.Running, "last": st.Last, "log": st.Log}
 }
 
-func (s *Server) haveNames(w http.ResponseWriter) bool {
-	if s.Names == nil {
-		notFound(w, "this build cannot sync device names")
-		return false
+func (s *Server) haveSync(w http.ResponseWriter, k syncKind) (NameSync, bool) {
+	e := k.engine(s)
+	if e == nil {
+		notFound(w, "this build cannot sync "+k.what)
+		return nil, false
 	}
-	return true
+	return e, true
 }
 
-func (s *Server) getNames(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, s.namesJSON())
-}
-
-// previewNames reads every connected place and says what a sync would
+// previewSync reads every connected place and says what a sync would
 // write. Nothing is changed.
-func (s *Server) previewNames(w http.ResponseWriter, r *http.Request) {
-	if !s.haveNames(w) {
+func (s *Server) previewSync(w http.ResponseWriter, r *http.Request, k syncKind) {
+	e, ok := s.haveSync(w, k)
+	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), namesPreviewTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), syncPreviewTimeout)
 	defer cancel()
-	rep, err := s.Names.Preview(ctx)
+	rep, err := e.Preview(ctx)
 	if err != nil {
-		namesError(w, err)
+		syncError(w, k, err)
 		return
 	}
 	writeJSON(w, rep)
 }
 
-// syncNames starts a sync. Renaming a house full of devices takes longer
+// startSync starts a sync. Changing a house full of devices takes longer
 // than a request should, so it runs in the background and the screen reads
-// the outcome from GET /api/names.
-func (s *Server) syncNames(w http.ResponseWriter, r *http.Request) {
+// the outcome from the status call.
+func (s *Server) startSync(w http.ResponseWriter, r *http.Request, k syncKind) {
 	var b confirmBody
-	if !decode(w, r, &b, smallBody) || !s.haveNames(w) || !confirmed(w, b.Confirm) {
+	if !decode(w, r, &b, smallBody) {
+		return
+	}
+	e, ok := s.haveSync(w, k)
+	if !ok || !confirmed(w, b.Confirm) {
 		return
 	}
 	// The run must outlive this request.
-	if !s.Names.Start(context.WithoutCancel(r.Context())) {
-		http.Error(w, "a name sync is already running", http.StatusConflict)
+	if !e.Start(context.WithoutCancel(r.Context())) {
+		http.Error(w, "a sync of "+k.what+" is already running", http.StatusConflict)
 		return
 	}
-	out := s.namesJSON()
+	out := s.syncJSON(k)
 	out["running"] = true
 	writeJSON(w, out)
 }
 
-// setNamesAuto turns the automatic sync on or off. On, a name edited in
+// setSyncAuto turns the automatic sync on or off. On, a change made in
 // any one place is written to the others without being asked, which is why
 // it needs confirm:true like any other write.
-func (s *Server) setNamesAuto(w http.ResponseWriter, r *http.Request) {
+func (s *Server) setSyncAuto(w http.ResponseWriter, r *http.Request, k syncKind) {
 	var b struct {
 		Enabled bool `json:"enabled"`
 		Confirm bool `json:"confirm"`
 	}
-	if !decode(w, r, &b, smallBody) || !s.haveNames(w) {
+	if !decode(w, r, &b, smallBody) {
+		return
+	}
+	e, ok := s.haveSync(w, k)
+	if !ok {
 		return
 	}
 	if b.Enabled && !confirmed(w, b.Confirm) {
 		return
 	}
-	if err := s.Names.SetAuto(b.Enabled); err != nil {
+	if err := e.SetAuto(b.Enabled); err != nil {
 		serverFault(w, "the setting could not be saved")
 		return
 	}
-	writeJSON(w, s.namesJSON())
+	writeJSON(w, s.syncJSON(k))
 }
 
-func namesError(w http.ResponseWriter, err error) {
+func syncError(w http.ResponseWriter, k syncKind, err error) {
 	switch {
 	case errors.Is(err, namesync.ErrNothingToSync):
-		http.Error(w, "Connect a router or firewall first: there is nothing to sync names with yet.", http.StatusConflict)
+		http.Error(w, "Connect a router or firewall first: there is nothing to sync "+k.what+" with yet.", http.StatusConflict)
 	case errors.Is(err, context.DeadlineExceeded):
-		http.Error(w, "reading the names took too long; try again", http.StatusGatewayTimeout)
+		http.Error(w, "reading the "+k.what+" took too long; try again", http.StatusGatewayTimeout)
 	default:
-		http.Error(w, "the names could not be read: "+err.Error(), http.StatusBadGateway)
+		http.Error(w, "the "+k.what+" could not be read: "+err.Error(), http.StatusBadGateway)
 	}
+}
+
+func (s *Server) getNames(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.syncJSON(namesKind))
+}
+func (s *Server) previewNames(w http.ResponseWriter, r *http.Request) { s.previewSync(w, r, namesKind) }
+func (s *Server) syncNames(w http.ResponseWriter, r *http.Request)    { s.startSync(w, r, namesKind) }
+func (s *Server) setNamesAuto(w http.ResponseWriter, r *http.Request) { s.setSyncAuto(w, r, namesKind) }
+
+func (s *Server) getGroupSync(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.syncJSON(groupsKind))
+}
+func (s *Server) previewGroupSync(w http.ResponseWriter, r *http.Request) {
+	s.previewSync(w, r, groupsKind)
+}
+func (s *Server) syncGroupSync(w http.ResponseWriter, r *http.Request) { s.startSync(w, r, groupsKind) }
+func (s *Server) setGroupSyncAuto(w http.ResponseWriter, r *http.Request) {
+	s.setSyncAuto(w, r, groupsKind)
 }

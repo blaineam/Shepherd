@@ -81,3 +81,28 @@ test('a log entry reads as what became what, and where', () => {
   assert.equal(logLine({ source: 'firewalla', old: '', new: 'Den TV' }), 'firewalla: no name became Den TV');
   assert.equal(logLine(null), ': no name became ');
 });
+
+test('the same helpers word a group sync in its own terms', () => {
+  const report = { sources };
+  const line = changeLine({ name: 'Smart Home', reason: 'first', from: 'shepherd', names: { shepherd: 'Smart Home', firewalla: '' }, writes: ['firewalla'] }, report, 'groups');
+  assert.equal(line.why, 'its group in Shepherd');
+  assert.equal(line.was, 'Firewalla: no group');
+  assert.equal(changeLine({ name: '', reason: 'edit', from: 'firewalla', names: { shepherd: 'Den' } }, report, 'groups').name, 'no group');
+  assert.equal(changeLine({ name: '', reason: 'edit', from: 'firewalla', names: {} }, report, 'groups').why, 'moved on Firewalla');
+  assert.equal(changeLine({ name: 'Den', reason: 'catchup', names: {} }, report, 'groups').why, 'catching up with the agreed group');
+  assert.equal(changeLine(null, null, 'groups').name, '');
+
+  assert.equal(reportSummary({ dry_run: true, written: 3, in_sync: 40 }, 'groups').text, '3 devices would be moved. 40 devices already match.');
+  assert.equal(reportSummary({ written: 1 }, 'groups').text, '1 device moved.');
+  assert.equal(reportSummary({ dry_run: true }, 'groups').text, 'Nothing to change: every device is already in the same group everywhere.');
+
+  assert.match(headline(null, 'groups').text, /cannot sync device groups/);
+  assert.equal(headline({ available: true, running: true }, 'groups').text, 'Syncing groups now.');
+  assert.match(headline({ available: true }, 'groups').text, /Groups are not being synced/);
+  assert.match(headline({ available: true, auto: true, last: { written: 2 } }, 'groups').text, /moved in the other within a couple of minutes\. Last run: 2 devices moved\.$/);
+
+  assert.equal(logLine({ source: 'firewalla', old: '', new: 'Smart Home' }, 'groups'), 'firewalla: moved from no group to Smart Home');
+  assert.equal(logLine({ source: 'shepherd', old: 'Den', new: '' }, 'groups'), 'shepherd: moved from Den to no group');
+  // An unknown kind reads as names rather than failing.
+  assert.equal(logLine({ source: 'eero', old: 'a', new: 'b' }, 'colours'), 'eero: a became b');
+});

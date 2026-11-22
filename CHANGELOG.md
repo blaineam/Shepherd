@@ -22,6 +22,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   own app on loopback, which is not published and can change with firmware; only calls checked
   against a running box are made, and it refuses any address that is not loopback. Creating rules
   and reading blocked requests still need MSP.
+- **Device groups kept the same in Shepherd and on a Firewalla** ([docs/BACKENDS.md](docs/BACKENDS.md#device-groups)).
+  A **Device groups** card on the Router screen, shown when Shepherd reads a Firewalla on the box
+  itself, keeps each device in the same group in both places. A group that exists in only one is
+  made in the other, and taking a device out of its group in one takes it out in the other. It
+  previews first, like the name sync, and records every move. A router keeps a device in one group,
+  so a device in several Shepherd groups is offered in the first; Quarantine and a group called
+  Unassigned are not synced. MSP, UniFi and eero cannot do this: see the guide for why.
 - **An installer for a Firewalla box** ([docs/FIREWALLA.md](docs/FIREWALLA.md)).
   `scripts/firewalla-install`, run on the box, downloads a release, checks it against its checksum,
   installs it under `/data/shepherd` in dashboard mode with everything unsuitable for a router
@@ -97,8 +104,22 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   the names of the well-known public DoH and DoT resolvers. A phone with a private DNS provider set
   in strict mode loses its lookups while it is on.
 
+### Security
+
+- **The reverse proxy no longer passes on a typed Tailscale identity.** Apps written to sit behind
+  `tailscale serve` trust the `Tailscale-User-Login` header it adds. Shepherd's proxy forwarded that
+  header unchanged when a visitor sent it themselves, so such an app let anyone who could reach its
+  proxied name in without signing in. Every `Tailscale-*` header from a client is now dropped before
+  the request reaches the backend. If you proxy an app that trusts those headers, treat anything it
+  served before this as having been open to whoever could reach the name.
+
 ### Fixed
 
+- **Shepherd now stops when told to, even with the portal open.** Stopping waited for every portal
+  connection to go idle, and the live stream a browser holds never does, so with a portal open
+  anywhere the process closed its portal but kept running, holding its other ports. Under Docker it
+  was killed after ten seconds; run directly, it never exited and its replacement could not start.
+  Requests in flight now get five seconds, then whatever is still open is closed.
 - **Network health no longer reports loss that is not there.** A probe target that has never answered,
   such as an ISP resolver that refuses the kind of connection Shepherd probes with, was averaged in as
   100% loss, so a healthy line read "20% packet loss". A target is now counted only once it has

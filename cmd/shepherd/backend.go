@@ -311,6 +311,14 @@ func (m *backendManager) RenameDevice(ctx context.Context, ref backends.DeviceRe
 	return h.RenameDevice(ctx, ref, name)
 }
 
+func (m *backendManager) SetDeviceGroup(ctx context.Context, ref backends.DeviceRef, name string) error {
+	h := m.hub()
+	if h == nil {
+		return errNoBackend
+	}
+	return h.SetDeviceGroup(ctx, ref, name)
+}
+
 func (m *backendManager) BlockClient(ctx context.Context, ref backends.DeviceRef, block bool) error {
 	h := m.hub()
 	if h == nil {

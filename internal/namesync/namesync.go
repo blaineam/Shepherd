@@ -80,6 +80,17 @@ type Options struct {
 	// StatePath keeps what the engine remembers. Empty keeps it in memory.
 	StatePath string
 	Interval  time.Duration
+	// Rank scores a value: the higher, the better it is to keep when two
+	// places disagree and neither was edited. Zero is a value that never
+	// replaces another. Nil ranks device names by how readable they are
+	// (Quality), which is what a name sync wants.
+	Rank func(Entry) int
+	// ClearIsEdit makes removing a value in one place remove it in the
+	// others. Off, an emptied value is put back, which is right for names:
+	// a device should not lose its name everywhere because one place
+	// dropped it. On is right for group membership, where taking a device
+	// out of its group is something a person does on purpose.
+	ClearIsEdit bool
 	// KickDelay is how long Run waits after a Kick, so a burst of edits
 	// becomes one run (default 3s).
 	KickDelay time.Duration
@@ -189,6 +200,9 @@ func New(o Options) *Engine {
 	}
 	if o.Now == nil {
 		o.Now = time.Now
+	}
+	if o.Rank == nil {
+		o.Rank = score
 	}
 	if o.Logf == nil {
 		o.Logf = func(string, ...any) {}
@@ -371,7 +385,7 @@ func (e *Engine) sync(ctx context.Context, dry bool) (Report, error) {
 				continue
 			}
 			// A place that lists a device twice keeps the better name.
-			if old, dup := r.entries[en.MAC]; dup && score(old) >= score(en) {
+			if old, dup := r.entries[en.MAC]; dup && e.o.Rank(old) >= e.o.Rank(en) {
 				continue
 			}
 			r.entries[en.MAC] = en
@@ -450,8 +464,11 @@ type write struct {
 
 type decision struct {
 	mac, name, reason, from string
-	names                   map[string]string
-	writes                  []write
+	// decided is true when name is what the device should carry, which
+	// with ClearIsEdit may be "" for "nothing".
+	decided bool
+	names   map[string]string
+	writes  []write
 	// echo lists the sources still answering with the name a recent write
 	// replaced; what is remembered for them is left alone.
 	echo map[string]bool
@@ -512,7 +529,7 @@ func (e *Engine) planLocked(reads []read, now time.Time) ([]decision, int) {
 				}
 				continue
 			}
-			if !same(en.Name, seen) && !en.Learned && score(en) > Useless {
+			if !same(en.Name, seen) && !en.Learned && (e.o.Rank(en) > Useless || e.o.ClearIsEdit) {
 				edits = append(edits, cand{id, en})
 			}
 		}
@@ -521,7 +538,7 @@ func (e *Engine) planLocked(reads []read, now time.Time) ([]decision, int) {
 			top := Useless
 			for _, c := range list {
 				// Strictly greater, so the earlier source wins a tie.
-				if s := score(c.entry); s > top {
+				if s := e.o.Rank(c.entry); s > top {
 					win, top = c, s
 				}
 			}
@@ -529,17 +546,24 @@ func (e *Engine) planLocked(reads []read, now time.Time) ([]decision, int) {
 		}
 		switch {
 		case len(edits) > 0:
-			w, _ := best(edits)
-			d.name, d.from, d.reason = w.entry.Name, w.id, "edit"
+			w, ok := best(edits)
+			if !ok {
+				// Every edit was a removal: the value is gone.
+				w = edits[0]
+			}
+			d.name, d.from, d.reason, d.decided = w.entry.Name, w.id, "edit", true
 		case fresh:
 			// A maker's name alone is not worth copying anywhere.
-			if w, ok := best(present); ok && score(w.entry) > Generic {
-				d.name, d.from, d.reason = w.entry.Name, w.id, "first"
+			if w, ok := best(present); ok && e.o.Rank(w.entry) > Generic {
+				d.name, d.from, d.reason, d.decided = w.entry.Name, w.id, "first", true
 			}
-		case e.st.Base[mac] != "":
-			d.name, d.reason = e.st.Base[mac], "catchup"
+		default:
+			// An agreed value, which with ClearIsEdit may be "none".
+			if base, known := e.st.Base[mac]; known && (base != "" || e.o.ClearIsEdit) {
+				d.name, d.reason, d.decided = base, "catchup", true
+			}
 		}
-		if d.name != "" {
+		if d.decided {
 			for _, r := range reads {
 				en, ok := r.entries[mac]
 				if r.err != nil || !ok {
@@ -561,7 +585,7 @@ func (e *Engine) planLocked(reads []read, now time.Time) ([]decision, int) {
 				d.writes = append(d.writes, w)
 			}
 		}
-		if len(d.writes) == 0 && len(present) > 1 && d.name != "" {
+		if len(d.writes) == 0 && len(present) > 1 && d.decided {
 			inSync++
 		}
 		out = append(out, d)
@@ -590,7 +614,7 @@ func (e *Engine) noteWriteLocked(w write, d decision, now time.Time) {
 // can tell an edit from a name that has not changed.
 func (e *Engine) rememberLocked(reads []read, decisions []decision, wrote map[string]bool, now time.Time) {
 	for _, d := range decisions {
-		if d.name != "" {
+		if d.decided {
 			e.st.Base[d.mac] = d.name
 		}
 		for _, r := range reads {

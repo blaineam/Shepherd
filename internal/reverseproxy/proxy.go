@@ -14,6 +14,7 @@ import (
 	"net/http/httputil"
 	"net/netip"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -215,6 +216,15 @@ func (p *Proxy) rewrite(pr *httputil.ProxyRequest) {
 	pr.Out.Header.Set("X-Forwarded-Host", pr.In.Host)
 	pr.Out.Header.Set("X-Forwarded-Proto", proto)
 	pr.Out.Header.Set(loopHeader, p.marker)
+	// `tailscale serve` tells an app who is asking with Tailscale-User-*
+	// headers, and apps written for it trust them. This proxy is not
+	// `tailscale serve`, so any such header came from the client, who can
+	// type whatever identity they like. They are dropped.
+	for name := range pr.Out.Header {
+		if strings.HasPrefix(name, "Tailscale-") {
+			pr.Out.Header.Del(name)
+		}
+	}
 }
 
 func (p *Proxy) backendFailed(w http.ResponseWriter, r *http.Request, err error) {

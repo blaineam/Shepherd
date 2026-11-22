@@ -27,6 +27,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -134,6 +135,22 @@ const maxResponse = 32 << 20
 // target is a device's MAC for the calls that are about one device. value
 // is the message's body and out receives the answer's data, when not nil.
 func (c *Client) call(ctx context.Context, command, item, target string, query url.Values, value map[string]string, out any) error {
+	var body map[string]any
+	if value != nil {
+		body = make(map[string]any, len(value))
+		for k, v := range value {
+			body[k] = v
+		}
+	}
+	return c.send(ctx, command, item, target, query, body, out)
+}
+
+// callBody is call for a message whose body is not all strings.
+func (c *Client) callBody(ctx context.Context, command, item, target string, value map[string]any, out any) error {
+	return c.send(ctx, command, item, target, nil, value, out)
+}
+
+func (c *Client) send(ctx context.Context, command, item, target string, query url.Values, value map[string]any, out any) error {
 	q := url.Values{"command": {command}, "item": {item}}
 	if target != "" {
 		q.Set("target", target)
@@ -249,8 +266,10 @@ func (f flex) bytes() uint64 {
 func (f flex) truthy() bool { return f == "1" || f == "true" }
 
 type wireHost struct {
-	MAC         string `json:"mac"`
-	IP          string `json:"ip"`
+	MAC string `json:"mac"`
+	IP  string `json:"ip"`
+	// Tags are the IDs of the device groups the host is in: at most one.
+	Tags        []flex `json:"tags"`
 	Name        string `json:"name"`
 	BName       string `json:"bname"`
 	DHCPName    string `json:"dhcpName"`
@@ -302,6 +321,14 @@ func (c *Client) Devices(ctx context.Context) ([]backends.Device, error) {
 	var raw struct {
 		Hosts []wireHost `json:"hosts"`
 	}
+	// A host names its group by ID, so the groups are read first to name
+	// it. If they cannot be read the devices are still worth having.
+	groupName := map[string]string{}
+	if groups, err := c.Groups(ctx); err == nil {
+		for _, g := range groups {
+			groupName[g.ID] = g.Name
+		}
+	}
 	if err := c.call(ctx, "get", "hosts", "", nil, nil, &raw); err != nil {
 		return nil, err
 	}
@@ -318,6 +345,9 @@ func (c *Client) Devices(ctx context.Context) ([]backends.Device, error) {
 		}
 		if h.Name != "" {
 			d.NameFrom = backends.NameTyped
+		}
+		if len(h.Tags) > 0 {
+			d.Group = groupName[string(h.Tags[0])]
 		}
 		if t := h.LastActive.time(); !t.IsZero() && now.Sub(t) < onlineWithin {
 			d.Online = true
@@ -528,6 +558,68 @@ func (c *Client) RenameDevice(ctx context.Context, d backends.DeviceRef, name st
 // MaxNameLen is the longest device name this sends. The box sets no limit
 // of its own; this keeps a name within what its app shows.
 const MaxNameLen = 64
+
+// Groups implements backends.GroupManager. The box calls a device group a
+// tag.
+func (c *Client) Groups(ctx context.Context) ([]backends.Group, error) {
+	var raw struct {
+		Tags map[string]struct {
+			UID  flex   `json:"uid"`
+			Name string `json:"name"`
+		} `json:"tags"`
+	}
+	if err := c.call(ctx, "get", "tags", "", nil, nil, &raw); err != nil {
+		return nil, err
+	}
+	out := make([]backends.Group, 0, len(raw.Tags))
+	for id, t := range raw.Tags {
+		out = append(out, backends.Group{ID: firstNonEmpty(string(t.UID), id), Name: t.Name})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// MaxGroupNameLen is the longest group name this sends.
+const MaxGroupNameLen = 64
+
+// CreateGroup implements backends.GroupManager. The box returns the
+// existing group when one already has the name.
+func (c *Client) CreateGroup(ctx context.Context, name string) (backends.Group, error) {
+	if err := c.writable(); err != nil {
+		return backends.Group{}, err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || len([]rune(name)) > MaxGroupNameLen {
+		return backends.Group{}, fmt.Errorf("%w: a group name is 1 to %d characters", backends.ErrInvalid, MaxGroupNameLen)
+	}
+	var got struct {
+		UID  flex   `json:"uid"`
+		Name string `json:"name"`
+	}
+	if err := c.call(ctx, "cmd", "tag:create", "", nil, map[string]string{"name": name}, &got); err != nil {
+		return backends.Group{}, err
+	}
+	if got.UID == "" {
+		return backends.Group{}, fmt.Errorf("%w: the box did not say which group it made", backends.ErrRefused)
+	}
+	return backends.Group{ID: string(got.UID), Name: firstNonEmpty(got.Name, name)}, nil
+}
+
+// SetDeviceGroup implements backends.GroupManager.
+func (c *Client) SetDeviceGroup(ctx context.Context, d backends.DeviceRef, groupID string) error {
+	if err := c.writable(); err != nil {
+		return err
+	}
+	mac := macWithColons(d.Native)
+	if routerusage.NormalizeMAC(mac) == "" {
+		return fmt.Errorf("%w: the device is not identified", backends.ErrInvalid)
+	}
+	tags := []string{}
+	if groupID = strings.TrimSpace(groupID); groupID != "" {
+		tags = append(tags, groupID)
+	}
+	return c.callBody(ctx, "set", "policy", mac, map[string]any{"tags": tags}, nil)
+}
 
 // DismissAlarm implements backends.AlarmDismisser.
 func (c *Client) DismissAlarm(ctx context.Context, a backends.AlarmRef) error {

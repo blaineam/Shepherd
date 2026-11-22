@@ -45,6 +45,10 @@ const (
 	CapDeviceBlock  Capability = "devices:block"
 	CapDeviceRename Capability = "devices:rename"
 	CapAlarmDismiss Capability = "alarms:dismiss"
+	// CapGroups lists the product's device groups; CapGroupWrite creates a
+	// group and moves a device into or out of one.
+	CapGroups     Capability = "groups"
+	CapGroupWrite Capability = "groups:write"
 	// CapSchedule is Shepherd's own: it holds a time window for a rule and
 	// pauses and resumes the rule to match (internal/backends/hub).
 	CapSchedule Capability = "rules:schedule"
@@ -111,6 +115,24 @@ type DeviceRenamer interface {
 	RenameDevice(ctx context.Context, d DeviceRef, name string) error
 }
 
+// Group is a device group as a product holds it.
+type Group struct {
+	// ID is the product's own identifier, which moving a device needs.
+	ID   string
+	Name string
+}
+
+// GroupManager lists the product's device groups, creates one, and moves
+// a device into one. A device is in at most one group: that is how the
+// products that have groups model them.
+type GroupManager interface {
+	Groups(ctx context.Context) ([]Group, error)
+	CreateGroup(ctx context.Context, name string) (Group, error)
+	// SetDeviceGroup puts the device in the group with this ID; an empty
+	// ID takes it out of whatever group it is in.
+	SetDeviceGroup(ctx context.Context, d DeviceRef, groupID string) error
+}
+
 // AlarmDismisser removes an alarm on the product.
 type AlarmDismisser interface {
 	DismissAlarm(ctx context.Context, a AlarmRef) error
@@ -148,6 +170,12 @@ func Capabilities(b Backend) []Capability {
 	}
 	if _, ok := b.(AlarmDismisser); ok && writable {
 		out = append(out, CapAlarmDismiss)
+	}
+	if _, ok := b.(GroupManager); ok {
+		out = append(out, CapGroups)
+		if writable {
+			out = append(out, CapGroupWrite)
+		}
 	}
 	return out
 }

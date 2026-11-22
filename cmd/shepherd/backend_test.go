@@ -462,3 +462,50 @@ func TestFlowsFromABackendAreLocatedByTheMapWhenItIsOn(t *testing.T) {
 		t.Fatalf("through startBackend: %+v, %v", d, ok)
 	}
 }
+
+// A portal open in a browser holds a stream that never goes idle. Stopping
+// must not wait for it.
+func TestStoppingAServerDoesNotWaitForAStreamThatNeverEnds(t *testing.T) {
+	started := make(chan struct{})
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.(http.Flusher).Flush()
+		close(started)
+		<-r.Context().Done() // a live stream: ends only when the connection does
+	})}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srv.Serve(ln) }()
+	res, err := http.Get("http://" + ln.Addr().String() + "/stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	<-started
+
+	done := make(chan struct{})
+	begin := time.Now()
+	go func() { stopServer(srv, 50*time.Millisecond); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stopServer waited for the stream")
+	}
+	if took := time.Since(begin); took < 40*time.Millisecond {
+		t.Errorf("stopped after %s, before the grace given to requests in flight", took)
+	}
+	if _, err := http.Get("http://" + ln.Addr().String() + "/"); err == nil {
+		t.Error("the server still answers")
+	}
+
+	// With nothing in flight it stops at once.
+	idle := &http.Server{}
+	ln2, _ := net.Listen("tcp", "127.0.0.1:0")
+	go func() { _ = idle.Serve(ln2) }()
+	begin = time.Now()
+	stopServer(idle, 5*time.Second)
+	if time.Since(begin) > time.Second {
+		t.Error("an idle server took its whole grace to stop")
+	}
+}

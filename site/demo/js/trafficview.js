@@ -7,7 +7,7 @@
 // Every string that came from the server is placed with textContent.
 import { el } from './dom.js?v=65858b99';
 import { button, emptyState, unavailableCard, segmented } from './ui.js?v=4d208003';
-import { unavailable } from './mgmt.js?v=5495569c';
+import { unavailable } from './mgmt.js?v=5493c5e5';
 import { createRouterUsage } from './routerusageview.js?v=af1cd30e';
 import {
   RANGE_PRESETS, rangeWindow, scopeOptions, scopeLabel, fillSeries, sumPoints, bucketRate, timeLabels,

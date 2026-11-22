@@ -5,10 +5,10 @@
 // change is switched on separately, previewed, and confirmed. All text from the server is placed with textContent.
 import { el } from './dom.js?v=65858b99';
 import { button, emptyState, confirmDialog } from './ui.js?v=4d208003';
-import { unavailable } from './mgmt.js?v=5495569c';
+import { unavailable } from './mgmt.js?v=5493c5e5';
 import { fmtDateTime } from './format.js?v=86b54455';
 import { createConnections } from './connectionsview.js?v=fab14b7b';
-import { createNameSync } from './namesyncview.js?v=5abcdaef';
+import { createNameSync } from './namesyncview.js?v=45cb1394';
 import { can, productName, statusLine, blockSpecFromFlow, ruleSummary, requestLine, auditLine, DAY_NAMES, scheduleText, scheduleFor, scheduleBody, scheduleProblem } from './backend.js?v=d55879b3';
 
 export function createBackend({ root, mgmt, notify }) {
@@ -36,8 +36,10 @@ export function createBackend({ root, mgmt, notify }) {
   root.append(head, body);
   // Connecting or disconnecting changes what the dashboard and the name
   // sync have to work with, so both are reloaded.
-  const connections = createConnections({ mgmt, notify, onChanged: () => { names.reset(); load(); } });
+  const connections = createConnections({ mgmt, notify, onChanged: () => { names.reset(); groups.reset(); load(); } });
   const names = createNameSync({ mgmt, notify, onChanged: () => { load(); } });
+  // Groups are offered only where the connected product has them.
+  const groups = createNameSync({ mgmt, notify, onChanged: () => { load(); }, kind: 'groups' });
 
   async function load() {
     try {
@@ -104,7 +106,7 @@ export function createBackend({ root, mgmt, notify }) {
         });
         if (!ok) { box.checked = false; return; }
       }
-      run(async () => { data = await mgmt.backendWrites(box.checked); names.reset(); });
+      run(async () => { data = await mgmt.backendWrites(box.checked); names.reset(); groups.reset(); });
     });
     sw.append(box, el('span', '', 'Allow changes'));
     acts.append(sw);
@@ -375,6 +377,7 @@ export function createBackend({ root, mgmt, notify }) {
       return;
     }
     if (!data) { body.replaceChildren(...parts, el('p', 'muted', 'Loading.')); return; }
+    if (can(data, 'groups')) parts.splice(2, 0, groups.root);
     if (data.connected) parts.push(header());
     if (data.running) {
       const grid = el('div', 'up-grid');
@@ -396,7 +399,7 @@ export function createBackend({ root, mgmt, notify }) {
     root,
     async show() {
       started = true;
-      await Promise.all([load(), connections.load(), names.load()]);
+      await Promise.all([load(), connections.load(), names.load(), groups.load()]);
       clearInterval(timer);
       timer = setInterval(() => {
         if (!started || busy || root.contains(document.activeElement)) return;
@@ -404,6 +407,6 @@ export function createBackend({ root, mgmt, notify }) {
         connections.refresh();
       }, 15000);
     },
-    hide() { started = false; clearInterval(timer); timer = 0; names.hide(); },
+    hide() { started = false; clearInterval(timer); timer = 0; names.hide(); groups.hide(); },
   };
 }

@@ -265,3 +265,44 @@ func TestAFirewallaBoxIsConnectedWithNoCredentialOnlyWhenItAnswers(t *testing.T)
 	h.expect("POST", "/api/backend/firewalla-local", `{}`, 404)
 	h.expect("POST", "/api/backend/firewalla-local", `nope`, 400)
 }
+
+// The group sync answers the same four calls as the name sync, on its own
+// engine: one must never drive the other.
+func TestTheGroupSyncHasItsOwnEngineAndTheSameRules(t *testing.T) {
+	h := newHarness(t)
+	if out := h.ok("GET", "/api/groupsync", "", 200); out["available"] != false {
+		t.Fatalf("view = %v", out)
+	}
+	h.expect("POST", "/api/groupsync/preview", `{}`, 404)
+	h.expect("POST", "/api/groupsync/sync", `{"confirm":true}`, 404)
+	h.expect("POST", "/api/groupsync/auto", `{"enabled":true,"confirm":true}`, 404)
+
+	names := &fakeNames{}
+	groups := &fakeNames{rep: namesync.Report{DryRun: true, Written: 3}}
+	h.srv.Names, h.srv.Groups = names, groups
+	if prev := h.ok("POST", "/api/groupsync/preview", `{}`, 200); prev["written"] != float64(3) {
+		t.Fatalf("preview = %v", prev)
+	}
+	h.expect("POST", "/api/groupsync/sync", `{}`, 400)
+	if out := h.ok("POST", "/api/groupsync/sync", `{"confirm":true}`, 200); out["running"] != true {
+		t.Fatalf("sync = %v", out)
+	}
+	h.expect("POST", "/api/groupsync/auto", `{"enabled":true}`, 400)
+	if out := h.ok("POST", "/api/groupsync/auto", `{"enabled":true,"confirm":true}`, 200); out["auto"] != true {
+		t.Fatalf("auto = %v", out)
+	}
+	if groups.started != 1 || !groups.st.Auto || names.started != 0 || names.st.Auto {
+		t.Fatalf("groups %+v, names %+v", groups, names)
+	}
+	groups.previewErr = namesync.ErrNothingToSync
+	code, body := h.call("POST", "/api/groupsync/preview", `{}`)
+	if code != 409 || !strings.Contains(body, "sync device groups with") {
+		t.Fatalf("nothing to sync = %d %q", code, body)
+	}
+	groups.busy = true
+	code, body = h.call("POST", "/api/groupsync/sync", `{"confirm":true}`)
+	if code != 409 || !strings.Contains(body, "device groups is already running") {
+		t.Fatalf("busy = %d %q", code, body)
+	}
+	h.expect("POST", "/api/groupsync/sync", `nope`, 400)
+}

@@ -26,6 +26,8 @@ func targetResultJSON(r nethealth.TargetResult) map[string]any {
 	return map[string]any{
 		"host": r.Host, "probes": r.Probes, "successes": r.Successes,
 		"avg_latency_ms": r.AvgLatencyMS, "jitter_ms": r.JitterMS, "loss_pct": r.LossPct,
+		// True for a target that has never answered: listed, not counted.
+		"unresponsive": r.Unresponsive,
 	}
 }
 

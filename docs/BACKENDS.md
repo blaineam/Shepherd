@@ -110,6 +110,38 @@ Things to know:
 State is kept in `names-sync.json` in the data directory. `GET /api/names` is the status,
 `POST /api/names/preview` the dry run, `POST /api/names/sync` and `POST /api/names/auto` the writes.
 
+## Device groups
+
+Which group a device is in can be kept the same in Shepherd and on a router that has device groups.
+**Device groups** on the Router screen appears when the connected product can do it, which today is
+a Firewalla read on the box itself. It is the name sync's engine with two rules changed: any group
+beats no group, and **taking a device out of its group in one place takes it out in the other**
+(clearing a name, by contrast, is undone).
+
+- Devices are matched by MAC address. A group that exists in only one place is made in the other,
+  with the same name; names are matched without regard to letter case.
+- **A router keeps a device in one group; Shepherd allows several.** Shepherd offers the first of a
+  device's groups, by ID. Its other groups in Shepherd are left alone.
+- **Quarantine and a group called Unassigned are never synced.** They mean "not sorted yet". A device
+  only in those is in no group as far as the sync goes.
+- When both places have a device in different groups and neither was changed since the last run,
+  Shepherd's stays.
+- It previews first, needs **Allow changes** to write to the router, and records every move under
+  Recent changes. State is in `groups-sync.json`; the API is `/api/groupsync`, `/preview`, `/sync`
+  and `/auto`, the same shape as `/api/names`.
+
+Where it cannot be done, and why:
+
+| Product | Groups |
+|---|---|
+| Firewalla, on the box | read, create, move a device (`get tags`, `cmd tag:create`, `set policy` with `tags`) |
+| Firewalla, through MSP | a device's group is shown; MSP's API documents no way to change it |
+| UniFi (Integration API) | the published API has no client groups |
+| eero | profiles are its groups, but eero drops profiles when it runs bridged behind another router, and the calls that would change them are unpublished and could not be checked against a live account. Its profiles can still be copied into Shepherd once, from the eero row under Connections. |
+
+Shepherd does not guess at an API it cannot check, so those three are left read-only rather than
+half-built.
+
 ## UniFi
 
 Connect a UniFi console under **Connections** on the **Router** screen with an Integration API key (UniFi Network 9 or

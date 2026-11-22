@@ -2,8 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   gradeClass, gradeLabel, fmtMS, fmtMSValue, fmtLoss, reachabilityText, statusHeadline, chartPath, seriesToPoints, RANGE_PRESETS,
-  areaPath, axisMax, statusKind, statusPillLabel, seriesSpan,
-} from '../js/nethealth.js';
+  areaPath, axisMax, statusKind, statusPillLabel, seriesSpan, unresponsiveTargets } from '../js/nethealth.js';
 
 test('gradeClass/gradeLabel cover every grade plus the unknown/error cases', () => {
   assert.equal(gradeClass('A'), 'nh-grade nh-grade-a');
@@ -112,4 +111,11 @@ test('seriesSpan needs two parseable timestamps', () => {
   assert.equal(seriesSpan([]), null);
   assert.equal(seriesSpan([{ time: '2026-01-01T00:00:00Z' }]), null);
   assert.deepEqual(seriesSpan([{ time: '2026-01-01T00:00:00Z' }, { time: '2026-01-01T01:00:00Z' }]), { from: Date.parse('2026-01-01T00:00:00Z'), to: Date.parse('2026-01-01T01:00:00Z') });
+});
+
+test('targets that have never answered are picked out so they can be labelled', () => {
+  const sample = { targets: [{ host: '192.0.2.1', unresponsive: true }, { host: '198.51.100.1', unresponsive: false }, { host: '203.0.113.1' }] };
+  assert.deepEqual([...unresponsiveTargets(sample)], ['192.0.2.1']);
+  assert.equal(unresponsiveTargets(null).size, 0);
+  assert.equal(unresponsiveTargets({}).size, 0);
 });

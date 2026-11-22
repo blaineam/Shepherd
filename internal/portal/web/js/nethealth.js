@@ -144,3 +144,10 @@ export const RANGE_PRESETS = [
   { id: '30d', label: '30d', hours: 24 * 30 },
   { id: '90d', label: '90d', hours: 24 * 90 },
 ];
+
+// unresponsiveTargets is the set of hosts in a sample that have never
+// answered a probe. Shepherd lists them but leaves them out of the loss
+// figure: a host that refuses the probe says nothing about the line.
+export function unresponsiveTargets(sample) {
+  return new Set(((sample && sample.targets) || []).filter((t) => t.unresponsive).map((t) => t.host));
+}

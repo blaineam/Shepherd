@@ -9,12 +9,11 @@
 // attributes.
 import { el } from './dom.js?v=65858b99';
 import { button, segmented, emptyState, unavailableCard } from './ui.js?v=4d208003';
-import { unavailable } from './mgmt.js?v=5495569c';
+import { unavailable } from './mgmt.js?v=5493c5e5';
 import { fmtDateTime } from './format.js?v=86b54455';
 import {
   gradeClass, gradeLabel, fmtMS, fmtMSValue, fmtLoss, reachabilityText, statusHeadline, statusKind, statusPillLabel,
-  areaPath, axisMax, seriesSpan, seriesToPoints, RANGE_PRESETS,
-} from './nethealth.js?v=d5668974';
+  areaPath, axisMax, seriesSpan, seriesToPoints, RANGE_PRESETS, unresponsiveTargets } from './nethealth.js?v=65e7e7b1';
 
 const NS = 'http://www.w3.org/2000/svg';
 function svg(tag, attrs) {
@@ -194,7 +193,12 @@ export function createNethealth({ root, mgmt, notify }) {
 
     const targets = (status && status.targets) || [];
     aboutTargets.replaceChildren();
-    for (const t of targets) aboutTargets.append(el('span', 'nh-target mono', t));
+    // A target that has never answered is listed but not counted, and says so.
+    const silent = unresponsiveTargets(cur);
+    for (const t of targets) {
+      const chip = el('span', 'nh-target mono' + (silent.has(t) ? ' muted' : ''), t + (silent.has(t) ? ' (never answers, not counted)' : ''));
+      aboutTargets.append(chip);
+    }
     if (!targets.length) aboutTargets.append(el('span', 'muted small', 'No targets configured.'));
     aboutP1.textContent = (status && status.enabled
       ? 'Every two minutes Shepherd opens a few short connections to each target below and records the result.'

@@ -691,3 +691,121 @@ func TestFlowsArePlacedOnTheMapWhenTheirAddressIsKnown(t *testing.T) {
 		t.Errorf("asked about %v", asked)
 	}
 }
+
+// groupFake is a fake that also has device groups.
+type groupFake struct {
+	*fake
+	groups    []backends.Group
+	groupErr  error
+	createErr error
+	moveErr   error
+}
+
+func (g *groupFake) Groups(context.Context) ([]backends.Group, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]backends.Group(nil), g.groups...), g.groupErr
+}
+
+func (g *groupFake) CreateGroup(_ context.Context, name string) (backends.Group, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.createErr != nil {
+		return backends.Group{}, g.createErr
+	}
+	ng := backends.Group{ID: "g" + name, Name: name}
+	g.groups = append(g.groups, ng)
+	g.calls = append(g.calls, "create "+name)
+	return ng, nil
+}
+
+func (g *groupFake) SetDeviceGroup(_ context.Context, d backends.DeviceRef, id string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.moveErr != nil {
+		return g.moveErr
+	}
+	g.calls = append(g.calls, "move "+d.Native+" to "+id)
+	return nil
+}
+
+func TestADeviceIsMovedIntoAGroupThatIsMadeWhenMissing(t *testing.T) {
+	now := time.Unix(1000, 0)
+	f := &groupFake{fake: &fake{devices: []backends.Device{{MAC: "02005e000001", Name: "TV", Native: "tv"}}},
+		groups: []backends.Group{{ID: "18", Name: "Smart Home"}}}
+	h := New(Options{Backend: f, Now: func() time.Time { return now }})
+	h.Refresh(ctx)
+	snap := h.Snapshot()
+	if len(snap.Groups) != 1 || snap.Groups[0].Name != "Smart Home" {
+		t.Fatalf("groups = %+v", snap.Groups)
+	}
+	if !has(snap.Capabilities, backends.CapGroups) || !has(snap.Capabilities, backends.CapGroupWrite) {
+		t.Fatalf("capabilities = %v", snap.Capabilities)
+	}
+	ref := backends.DeviceRef{Native: "tv"}
+
+	// An existing group is found whatever its letter case; nothing is made.
+	if err := h.SetDeviceGroup(ctx, ref, " smart home "); err != nil {
+		t.Fatal(err)
+	}
+	// A missing one is made first, then used, and remembered.
+	if err := h.SetDeviceGroup(ctx, ref, "Kids"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.SetDeviceGroup(ctx, ref, "kids"); err != nil {
+		t.Fatal(err)
+	}
+	// No name takes the device out of its group.
+	if err := h.SetDeviceGroup(ctx, ref, ""); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"move tv to 18", "create Kids", "move tv to gKids", "move tv to gKids", "move tv to "}
+	if got := strings.Join(f.calls, "|"); got != strings.Join(want, "|") {
+		t.Fatalf("calls = %v", f.calls)
+	}
+	if d := h.Snapshot().Devices[0]; d.Group != "" {
+		t.Fatalf("device = %+v", d)
+	}
+	if err := h.SetDeviceGroup(ctx, ref, "Den"); err != nil || h.Snapshot().Devices[0].Group != "Den" {
+		t.Fatalf("the move is not shown at once: %v, %+v", err, h.Snapshot().Devices[0])
+	}
+	audit := h.Snapshot().Audit
+	if len(audit) != 7 || audit[0].Action != "move device" || audit[1].Action != "create group" {
+		t.Fatalf("audit = %+v", audit)
+	}
+
+	// Failures are reported and recorded, and a failed create moves nothing.
+	f.createErr = errors.New("no room")
+	if err := h.SetDeviceGroup(ctx, ref, "Office"); err == nil {
+		t.Fatal("a failed create was hidden")
+	}
+	if strings.Contains(strings.Join(f.calls, "|"), "gOffice") {
+		t.Fatal("moved into a group that was not made")
+	}
+	f.moveErr = errors.New("box offline")
+	if err := h.SetDeviceGroup(ctx, ref, "Kids"); err == nil || h.Snapshot().Audit[0].Error == "" {
+		t.Fatalf("a failed move was hidden: %v", err)
+	}
+
+	// Groups that cannot be read are a reported error, not a failed poll.
+	f.groupErr = errors.New("HTTP 500")
+	h.Refresh(ctx)
+	if h.Snapshot().Status.Errors["groups"] != "HTTP 500" {
+		t.Fatalf("status = %+v", h.Snapshot().Status)
+	}
+
+	// A product with no groups says so.
+	plain := New(Options{Backend: &fake{}})
+	if err := plain.SetDeviceGroup(ctx, ref, "Kids"); !errors.Is(err, backends.ErrInvalid) {
+		t.Fatalf("no groups = %v", err)
+	}
+}
+
+func has(caps []backends.Capability, c backends.Capability) bool {
+	for _, x := range caps {
+		if x == c {
+			return true
+		}
+	}
+	return false
+}

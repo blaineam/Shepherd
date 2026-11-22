@@ -263,6 +263,8 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	// (docs/BACKENDS.md, "Device names"). It writes nothing until the owner
 	// asks it to.
 	deps.Names = startNames(ctx, sec, registry, backend, cfg.DataDir)
+	// And one group per device, where the router has device groups.
+	deps.Groups = startGroups(ctx, registry, backend, cfg.DataDir)
 
 	// ---- DHCP mode (docs/DHCP.md) ---------------------------------------
 	// Off by default, and the one feature here that can take a household
@@ -460,7 +462,7 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 			cancel()
 		}
 	}()
-	defer httpSrv.Shutdown(context.Background())
+	defer stopServer(httpSrv, shutdownGrace)
 
 	// TLS (docs/TLS.md) is additive: the plain-HTTP listener above keeps
 	// working exactly as it does today whether or not [tls] is configured.
@@ -484,7 +486,7 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 				cancel()
 			}
 		}()
-		defer httpsSrv.Shutdown(context.Background())
+		defer stopServer(httpsSrv, shutdownGrace)
 		log.Printf("shepherd %s: portal also on https://%s (%s)", version, cfg.TLS.Listen, cfg.TLS.Hostname)
 	}
 
@@ -573,6 +575,24 @@ func openPolicy(cfg config.Config, filter *dnsengine.Filter, existing bool) (*dn
 
 // argonTime and argonMemKiB override the passphrase key's Argon2id cost.
 // Production leaves them zero (the strong defaults); tests lower them.
+// shutdownGrace is how long a portal listener waits for requests in flight
+// before it is closed outright.
+const shutdownGrace = 5 * time.Second
+
+// stopServer stops srv: new connections are refused at once, requests in
+// flight get grace to finish, and whatever is still open then is closed.
+// The last step is the point. Shutdown alone waits for every connection to
+// go idle, and the portal's live stream never does, so with a portal open
+// in any browser the process would refuse to exit while holding its other
+// ports.
+func stopServer(srv *http.Server, grace time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		_ = srv.Close()
+	}
+}
+
 var argonTime, argonMemKiB uint32
 
 // openHistory opens the encrypted history with the configured key source.

@@ -194,6 +194,11 @@ func TestProxyForwardsARealRequestWithTheRightHeaders(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "198.51.100.7") // a client cannot pick the address backends see
 	req.Header.Set("X-Real-IP", "198.51.100.8")
 	req.Header.Set("X-Forwarded-Proto", "gopher")
+	// Nor can a client claim a Tailscale identity: apps written for
+	// `tailscale serve` trust these, and this proxy is not that.
+	req.Header.Set("Tailscale-User-Login", "nobody@example.com")
+	req.Header.Set("tailscale-user-name", "Nobody")
+	req.Header.Set("Tailscale-Headers-Info", "https://example.com")
 	res, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -233,6 +238,11 @@ func TestProxyForwardsARealRequestWithTheRightHeaders(t *testing.T) {
 	for k, want := range checks {
 		if v := got.header.Values(k); len(v) != 1 || v[0] != want {
 			t.Errorf("backend header %s = %q, want exactly %q", k, v, want)
+		}
+	}
+	for k := range got.header {
+		if strings.HasPrefix(k, "Tailscale-") {
+			t.Errorf("a client-supplied identity header reached the backend: %s = %q", k, got.header.Values(k))
 		}
 	}
 }

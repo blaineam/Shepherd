@@ -384,3 +384,93 @@ func TestSmallHelpers(t *testing.T) {
 		t.Error("flex")
 	}
 }
+
+func TestGroupsAreListedCreatedAndAssigned(t *testing.T) {
+	f := &fakeBox{answers: map[string]string{
+		"get tags":       ok(`{"tags":{"18":{"uid":"18","name":"Smart Home"},"16":{"uid":16,"name":"Networking"},"20":{"name":"No uid"}}}`),
+		"get hosts":      ok(`{"hosts":[{"mac":"02:00:5E:00:00:01","name":"Den TV","tags":["18"]},{"mac":"02:00:5E:00:00:02","bname":"tablet","tags":[]},{"mac":"02:00:5E:00:00:03","tags":[99]}]}`),
+		"cmd tag:create": ok(`{"uid":"21","name":"Kids","createTs":1}`),
+	}}
+	c := newClient(t, f, false)
+	ctx := context.Background()
+
+	groups, err := c.Groups(ctx)
+	if err != nil || len(groups) != 3 {
+		t.Fatalf("groups = %+v, %v", groups, err)
+	}
+	want := []backends.Group{{ID: "16", Name: "Networking"}, {ID: "20", Name: "No uid"}, {ID: "18", Name: "Smart Home"}}
+	for i := range want {
+		if groups[i] != want[i] {
+			t.Errorf("groups[%d] = %+v, want %+v", i, groups[i], want[i])
+		}
+	}
+
+	devs, err := c.Devices(ctx)
+	if err != nil || devs[0].Group != "Smart Home" || devs[1].Group != "" || devs[2].Group != "" {
+		t.Fatalf("devices = %+v, %v", devs, err)
+	}
+
+	g, err := c.CreateGroup(ctx, "  Kids ")
+	if err != nil || g != (backends.Group{ID: "21", Name: "Kids"}) {
+		t.Fatalf("CreateGroup = %+v, %v", g, err)
+	}
+	if got := f.last(); got.Method != "POST" || got.Command != "cmd" || got.Item != "tag:create" || got.Body != `{"name":"Kids"}` {
+		t.Errorf("create sent %+v", got)
+	}
+
+	ref := backends.DeviceRef{Native: "02005e000002"}
+	if err := c.SetDeviceGroup(ctx, ref, " 21 "); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.last(); got.Command != "set" || got.Item != "policy" || got.Target != "02:00:5E:00:00:02" || got.Body != `{"tags":["21"]}` {
+		t.Errorf("assign sent %+v", got)
+	}
+	if err := c.SetDeviceGroup(ctx, ref, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.last(); got.Body != `{"tags":[]}` {
+		t.Errorf("removal sent %+v", got)
+	}
+
+	n := f.count()
+	for name, err := range map[string]error{
+		"create empty":  second(c.CreateGroup(ctx, " ")),
+		"create long":   second(c.CreateGroup(ctx, strings.Repeat("x", MaxGroupNameLen+1))),
+		"assign no mac": c.SetDeviceGroup(ctx, backends.DeviceRef{Native: "vpn"}, "21"),
+	} {
+		if !errors.Is(err, backends.ErrInvalid) {
+			t.Errorf("%s = %v", name, err)
+		}
+	}
+	c.SetReadOnly(true)
+	if _, err := c.CreateGroup(ctx, "Kids"); !errors.Is(err, backends.ErrReadOnly) {
+		t.Errorf("create while read-only = %v", err)
+	}
+	if err := c.SetDeviceGroup(ctx, ref, "21"); !errors.Is(err, backends.ErrReadOnly) {
+		t.Errorf("assign while read-only = %v", err)
+	}
+	if f.count() != n {
+		t.Fatal("a refused group change was sent")
+	}
+	c.SetReadOnly(false)
+
+	// A box that does not say which group it made, or refuses, is an error;
+	// groups that cannot be read still leave the devices listed.
+	f.answers["cmd tag:create"] = ok(`{}`)
+	if _, err := c.CreateGroup(ctx, "Kids"); !errors.Is(err, backends.ErrRefused) {
+		t.Errorf("no uid = %v", err)
+	}
+	f.answers["cmd tag:create"] = `{"code":400,"message":"'name' is not specified."}`
+	if _, err := c.CreateGroup(ctx, "Kids"); !errors.Is(err, backends.ErrRefused) {
+		t.Errorf("refused = %v", err)
+	}
+	f.answers["get tags"] = `{"code":500,"message":"boom"}`
+	if _, err := c.Groups(ctx); !errors.Is(err, backends.ErrRefused) {
+		t.Errorf("groups refused = %v", err)
+	}
+	if devs, err := c.Devices(ctx); err != nil || len(devs) != 3 || devs[0].Group != "" {
+		t.Fatalf("devices without groups = %+v, %v", devs, err)
+	}
+}
+
+func second[T any](_ T, err error) error { return err }
