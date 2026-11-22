@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"path/filepath"
 	"sync"
@@ -37,6 +38,9 @@ type backendManager struct {
 	qlog    *dnsengine.QueryLog
 	alarms  *alarms.Engine
 	dataDir string
+	// geo places a flow's remote address on the map; it returns nil when
+	// the map is switched off.
+	geo func() dnsengine.Geo
 	// transport replaces the HTTP transport, for tests.
 	transport http.RoundTripper
 
@@ -52,8 +56,9 @@ type backendManager struct {
 	err    string
 }
 
-func startBackend(ctx context.Context, sec *secrets.Store, reg *devices.Registry, qlog *dnsengine.QueryLog, al *alarms.Engine, dataDir string) *backendManager {
-	m := &backendManager{parent: ctx, sec: sec, reg: reg, qlog: qlog, alarms: al, dataDir: dataDir}
+func startBackend(ctx context.Context, sec *secrets.Store, reg *devices.Registry, engine *dnsengine.Engine, al *alarms.Engine, dataDir string) *backendManager {
+	m := &backendManager{parent: ctx, sec: sec, reg: reg, qlog: engine.Log, alarms: al, dataDir: dataDir,
+		geo: func() dnsengine.Geo { return engine.Geo }}
 	m.Reload()
 	return m
 }
@@ -126,6 +131,7 @@ func (m *backendManager) Reload() {
 	h := hub.New(hub.Options{
 		Backend: conn.backend, FlowSink: m.qlog.Add, AlarmSink: m.raise,
 		Resolve:      m.resolve,
+		Locate:       m.locate,
 		StatePath:    filepath.Join(m.dataDir, "backend-"+conn.name+".json"),
 		SchedulePath: filepath.Join(m.dataDir, "backend-"+conn.name+"-schedules.json"),
 		BlockedPath:  filepath.Join(m.dataDir, "backend-"+conn.name+"-blocked.json"),
@@ -165,6 +171,19 @@ func (m *backendManager) canRename() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.cur != nil && m.rename
+}
+
+// locate places an address on the map, when the map is on and knows it.
+func (m *backendManager) locate(ip string) (dnsengine.Dest, bool) {
+	if m.geo == nil {
+		return dnsengine.Dest{}, false
+	}
+	g := m.geo()
+	parsed := net.ParseIP(ip)
+	if g == nil || parsed == nil {
+		return dnsengine.Dest{}, false
+	}
+	return g.Locate(parsed)
 }
 
 func (m *backendManager) raise(e alarms.Event) bool {

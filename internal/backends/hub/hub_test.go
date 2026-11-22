@@ -656,3 +656,38 @@ func TestABlockedDeviceSeenOnlineAgainWasUnblockedElsewhere(t *testing.T) {
 		t.Fatalf("not forgotten: %+v", d)
 	}
 }
+
+// A request read from a router is placed on the map by where it went, like
+// a lookup Shepherd answered itself.
+func TestFlowsArePlacedOnTheMapWhenTheirAddressIsKnown(t *testing.T) {
+	now := time.Unix(1000, 0)
+	f := &fake{flows: []backends.Flow{flow(990, "a.example", false, 1, 1)}}
+	s := &sinks{}
+	var asked []string
+	h := New(Options{
+		Backend: f, FlowSink: s.flow, Now: func() time.Time { return now },
+		Locate: func(ip string) (dnsengine.Dest, bool) {
+			asked = append(asked, ip)
+			return dnsengine.Dest{IP: ip, Lat: 51.5, Lon: -0.1, City: "London", Country: "GB"}, ip == "198.51.100.7"
+		},
+	})
+	h.Refresh(ctx)
+	if len(s.entries) != 1 || len(s.entries[0].Dests) != 1 || s.entries[0].Dests[0].Country != "GB" {
+		t.Fatalf("entries = %+v", s.entries)
+	}
+	// An address the map does not know, and a flow with none, get no place.
+	unknown := flow(995, "b.example", false, 1, 1)
+	unknown.RemoteIP = "203.0.113.9"
+	local := flow(996, "c.example", false, 1, 1)
+	local.RemoteIP = ""
+	f.flows = []backends.Flow{unknown, local}
+	h.Refresh(ctx)
+	for _, e := range s.entries[1:] {
+		if len(e.Dests) != 0 {
+			t.Errorf("%s was placed: %+v", e.Name, e.Dests)
+		}
+	}
+	if len(asked) != 2 {
+		t.Errorf("asked about %v", asked)
+	}
+}

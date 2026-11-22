@@ -99,6 +99,14 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Fixed
 
+- **Network health no longer reports loss that is not there.** A probe target that has never answered,
+  such as an ISP resolver that refuses the kind of connection Shepherd probes with, was averaged in as
+  100% loss, so a healthy line read "20% packet loss". A target is now counted only once it has
+  answered; until then it is listed as unresponsive and left out. A target that answered and then
+  stops still counts, and a machine that is offline from the start still reads as an outage.
+- **Requests read from a router now appear on the map.** Flows from a connected Firewalla or UniFi
+  carried the address they went to but no place, so the map stayed empty in dashboard mode. They are
+  now located by that address, like the lookups Shepherd answers itself.
 - Installed to an iPhone's Home Screen, the portal's top bar sat under the status bar (the clock and
   battery), where its menu and lock buttons could not be tapped. The top bar now leaves that room, and
   the side menu and the detail drawer move down with it.

@@ -428,3 +428,37 @@ func TestABackendThatCannotBeBuiltIsReported(t *testing.T) {
 		t.Fatalf("hub %v error %q", b.hub(), b.LastError())
 	}
 }
+
+type fixedGeo struct{}
+
+func (fixedGeo) Locate(ip net.IP) (dnsengine.Dest, bool) {
+	return dnsengine.Dest{IP: ip.String(), Country: "GB"}, ip.String() == "198.51.100.7"
+}
+
+func TestFlowsFromABackendAreLocatedByTheMapWhenItIsOn(t *testing.T) {
+	m := &backendManager{}
+	if _, ok := m.locate("198.51.100.7"); ok {
+		t.Fatal("located with no map")
+	}
+	var g dnsengine.Geo
+	m.geo = func() dnsengine.Geo { return g }
+	if _, ok := m.locate("198.51.100.7"); ok {
+		t.Fatal("located with the map switched off")
+	}
+	g = fixedGeo{}
+	if d, ok := m.locate("198.51.100.7"); !ok || d.Country != "GB" {
+		t.Fatalf("locate = %+v, %v", d, ok)
+	}
+	for _, ip := range []string{"not-an-address", "", "203.0.113.9"} {
+		if _, ok := m.locate(ip); ok {
+			t.Errorf("located %q", ip)
+		}
+	}
+	// startBackend takes the map from the engine it is given.
+	engine := &dnsengine.Engine{Log: dnsengine.NewQueryLog(10), Geo: fixedGeo{}}
+	sm := startBackend(context.Background(), testSecrets(t), nil, engine, nil, t.TempDir())
+	defer sm.Stop()
+	if d, ok := sm.locate("198.51.100.7"); !ok || d.IP != "198.51.100.7" {
+		t.Fatalf("through startBackend: %+v, %v", d, ok)
+	}
+}

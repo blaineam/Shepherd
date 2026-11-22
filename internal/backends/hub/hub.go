@@ -60,6 +60,11 @@ type Options struct {
 	// registry's device ID, or "" when it is not known.
 	Resolve func(mac, ip string) string
 
+	// Locate places a flow's remote address on the globe, so requests read
+	// from a router show on the map like the lookups Shepherd answers
+	// itself. Nil leaves them off the map.
+	Locate func(ip string) (dnsengine.Dest, bool)
+
 	// StatePath, when set, keeps the newest flow's time across restarts, so
 	// a restart resumes where it stopped instead of ingesting the last few
 	// minutes a second time. Empty keeps nothing.
@@ -365,6 +370,11 @@ func (h *Hub) flowEntry(f backends.Flow) dnsengine.Entry {
 	}
 	if h.o.Resolve != nil {
 		e.DeviceID = h.o.Resolve(f.DeviceMAC, f.DeviceIP)
+	}
+	if h.o.Locate != nil && f.RemoteIP != "" {
+		if d, ok := h.o.Locate(f.RemoteIP); ok {
+			e.Dests = []dnsengine.Dest{d}
+		}
 	}
 	return e
 }

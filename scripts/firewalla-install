@@ -129,6 +129,13 @@ enabled = false
 
 [update]
 enabled = false
+
+# Keep what the box reports, encrypted on disk, so History and the map's
+# replay have something to show after a restart (docs/HISTORY.md).
+[history]
+mode = "encrypted"
+retention_days = 14
+max_mb = 1024
 TOML
   say "Wrote $DIR/shepherd.toml"
 fi

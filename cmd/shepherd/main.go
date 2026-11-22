@@ -253,7 +253,7 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	// The dashboard hub (docs/BACKENDS.md) reads a connected Firewalla's
 	// devices, flows, alarms and rules. Its flows also feed the bandwidth
 	// reader below, so it is started first.
-	backend := startBackend(ctx, sec, registry, engine.Log, deps.Alarms, cfg.DataDir)
+	backend := startBackend(ctx, sec, registry, engine, deps.Alarms, cfg.DataDir)
 	defer backend.Stop()
 	deps.Backend = backend
 	routerUsage := startRouterUsage(ctx, sec, registry, trafficStore, watchEngine, backend)

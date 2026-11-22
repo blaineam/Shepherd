@@ -52,7 +52,8 @@ wrong on a router turned off:
 | DNS self-test | there is no Shepherd DNS to test |
 | Self-update | the installer is how it is upgraded here |
 
-Devices, requests, alarms, rules and bandwidth all come from the box.
+Devices, requests, alarms, rules and bandwidth all come from the box. History is kept encrypted on disk
+(14 days, at most 1 GB) so the History screen and the map's replay survive a restart.
 
 ## Tailscale and the reverse proxy
 

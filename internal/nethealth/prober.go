@@ -36,14 +36,22 @@ type TargetResult struct {
 	// really just "these targets are not equally far away".
 	JitterMS float64 `json:"jitter_ms,omitempty"`
 	LossPct  float64 `json:"loss_pct"`
+	// Unresponsive marks a target that has never answered a probe since
+	// Shepherd started, while others have. Such a host is one that does
+	// not accept the probe at all (an ISP resolver that refuses TCP, say),
+	// not a lossy path, so it is listed but left out of the Sample's loss
+	// and its count of targets.
+	Unresponsive bool `json:"unresponsive,omitempty"`
 }
 
 // Sample is one completed probe cycle across every target: Shepherd's
 // network-health reading for that moment. LatencyMS and JitterMS are the
 // mean of each reachable target's own AvgLatencyMS/JitterMS (see
-// TargetResult); LossPct is the mean loss percentage across every target,
-// reachable or not, so a target that is completely down pulls the overall
-// number down rather than being silently excluded.
+// TargetResult); LossPct is the mean loss percentage across every target
+// that has ever answered, reachable now or not, so a target that goes
+// completely down pulls the overall number down rather than being silently
+// excluded. A target that has never answered is not counted (see
+// TargetResult.Unresponsive): it says nothing about the network.
 type Sample struct {
 	Time             time.Time      `json:"time"`
 	LatencyMS        float64        `json:"latency_ms,omitempty"`
@@ -123,6 +131,8 @@ type Prober struct {
 
 	mu    sync.Mutex
 	store *Store
+	// answered is every target that has answered at least one probe.
+	answered map[string]bool
 }
 
 // New creates a Prober from opts, with a fresh, empty Store. Load replaces
@@ -137,6 +147,7 @@ func New(opts Options) *Prober {
 		load:                opts.Load,
 		bufferbloatDuration: opts.BufferbloatDuration,
 		store:               NewStore(StoreOptions{Now: opts.Now, Retention: opts.Retention}),
+		answered:            map[string]bool{},
 	}
 	if p.dial == nil {
 		p.dial = defaultDial
@@ -246,9 +257,27 @@ func (p *Prober) Probe(ctx context.Context, targets []string) Sample {
 	}
 	wg.Wait()
 
-	s := Sample{Time: now, TotalTargets: len(targets), Targets: results}
+	// Remember who has ever answered. Until somebody has, every target
+	// counts, so being offline from the start still reads as an outage.
+	p.mu.Lock()
+	for _, r := range results {
+		if r.Successes > 0 {
+			p.answered[r.Host] = true
+		}
+	}
+	anyAnswered := len(p.answered) > 0
+	for i := range results {
+		results[i].Unresponsive = anyAnswered && !p.answered[results[i].Host]
+	}
+	p.mu.Unlock()
+
+	s := Sample{Time: now, Targets: results}
 	var latencies, jitters, losses []float64
 	for _, r := range results {
+		if r.Unresponsive {
+			continue
+		}
+		s.TotalTargets++
 		losses = append(losses, r.LossPct)
 		if r.Successes > 0 {
 			s.ReachableTargets++

@@ -58,6 +58,12 @@ being silently excluded from the average. `ReachableTargets`/`TotalTargets` give
 `AllUnreachable()` is true when not one target answered (a total outage of the network's own path out,
 not just one resolver).
 
+A target that has **never** answered since Shepherd started, while others have, is marked
+`unresponsive` and left out of the loss figure and the target count. It is a host that does not accept
+the probe at all (an ISP's resolver that refuses TCP on port 53, for one), which says nothing about the
+network. Once a target has answered, losing it later counts as loss. Until any target has answered,
+all of them count, so being offline from the start still reads as an outage.
+
 ### Bufferbloat
 
 Bufferbloat is latency added under load: your connection may ping fine at idle and still turn a video call

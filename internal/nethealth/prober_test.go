@@ -89,13 +89,15 @@ func TestProbeTargetAllFail(t *testing.T) {
 func TestProbeAggregatesAcrossTargets(t *testing.T) {
 	f := newFakeDial()
 	f.delayMS["good"] = 10
-	f.fail["bad"] = true
 	p := newTestProber(f)
+	// Both answer once, so both count from then on.
+	p.Probe(context.Background(), []string{"good", "bad"})
+	f.fail["bad"] = true
 	s := p.Probe(context.Background(), []string{"good", "bad"})
 	if s.TotalTargets != 2 || s.ReachableTargets != 1 {
 		t.Fatalf("got %+v", s)
 	}
-	// loss is the mean across all targets: good=0%, bad=100% => 50%.
+	// loss is the mean across the targets that count: good=0%, bad=100% => 50%.
 	if s.LossPct != 50 {
 		t.Errorf("loss = %v, want 50", s.LossPct)
 	}
@@ -256,5 +258,37 @@ func TestOptionsRetentionReachesTheStore(t *testing.T) {
 	}
 	if got := New(Options{}).store.opt.Retention; got != DefaultRetention() {
 		t.Fatalf("zero retention should mean the default, got %+v", got)
+	}
+}
+
+// A host that does not accept the probe at all (an ISP resolver refusing
+// TCP on 53) is not a lossy path. It must not read as packet loss.
+func TestATargetThatHasNeverAnsweredIsNotCountedAsLoss(t *testing.T) {
+	f := newFakeDial()
+	f.delayMS["good"] = 10
+	f.fail["never"] = true
+	p := newTestProber(f)
+	s := p.Probe(context.Background(), []string{"good", "never"})
+	if s.LossPct != 0 || s.TotalTargets != 1 || s.ReachableTargets != 1 {
+		t.Fatalf("got %+v", s)
+	}
+	if len(s.Targets) != 2 || s.Targets[0].Unresponsive || !s.Targets[1].Unresponsive || s.Targets[1].LossPct != 100 {
+		t.Fatalf("targets = %+v", s.Targets)
+	}
+
+	// Once it has answered, losing it later is loss.
+	f.fail["never"] = false
+	p.Probe(context.Background(), []string{"good", "never"})
+	f.fail["never"] = true
+	if s := p.Probe(context.Background(), []string{"good", "never"}); s.LossPct != 50 || s.TotalTargets != 2 || s.Targets[1].Unresponsive {
+		t.Fatalf("after it answered once: %+v", s)
+	}
+
+	// With nothing ever answering, everything counts: offline from the
+	// start is still an outage, not "no targets".
+	fresh := newTestProber(f)
+	f.fail["good"] = true
+	if s := fresh.Probe(context.Background(), []string{"good", "never"}); !s.AllUnreachable() || s.LossPct != 100 || s.TotalTargets != 2 {
+		t.Fatalf("offline from the start: %+v", s)
 	}
 }
