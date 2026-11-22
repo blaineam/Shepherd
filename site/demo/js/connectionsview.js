@@ -9,8 +9,8 @@
 // credential is ever held here longer than the form it was typed into.
 import { el } from './dom.js?v=65858b99';
 import { button, confirmDialog } from './ui.js?v=4d208003';
-import { KINDS, connectionState, bandwidthNote, toggleLabel } from './connections.js?v=3a665d8e';
-import { nameSyncSummary } from './traffic.js?v=b10b7a04';
+import { KINDS, connectionState, bandwidthNote, toggleLabel } from './connections.js?v=1bf85ac9';
+import { nameSyncSummary } from './traffic.js?v=ad4d3449';
 
 export function createConnections({ mgmt, notify, onChanged = () => {} }) {
   const root = el('section', 'card bk-card cn');
@@ -86,8 +86,25 @@ export function createConnections({ mgmt, notify, onChanged = () => {} }) {
         done('Shepherd is now reading your Firewalla');
       });
     });
+    const parts = [];
+    // Running on the box itself, Shepherd can read it with nothing to
+    // type: the box serves its own API on its loopback address.
+    if (conns && conns.local_firewalla) {
+      const use = button('Use this box', 'primary', () => run(async () => {
+        await mgmt.firewallaLocalConnect();
+        done('Shepherd is now reading this Firewalla box directly');
+      }));
+      use.disabled = busy;
+      const acts = el('div', 'ru-acts');
+      acts.append(use);
+      parts.push(
+        el('p', 'muted small ru-note', 'This Shepherd is running on a Firewalla box, so it can read the box directly: no MSP account, no token, and traffic shows as it happens instead of minutes later. It uses the API the box serves to its own app, which is not published and can change with a firmware update.'),
+        acts,
+        el('h4', 'ru-sub', 'Or connect through MSP'),
+      );
+    }
     const note = el('p', 'muted small ru-note', 'Make a personal access token in your MSP portal. A Read Only token is enough to read; renaming devices, rules and syncing names to the Firewalla need one that can write. It is kept on this machine and sent only to firewalla.net.');
-    return [note, form];
+    return [...parts, note, form];
   }
 
   function unifiAPIForm() {

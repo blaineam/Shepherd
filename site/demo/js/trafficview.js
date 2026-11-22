@@ -7,13 +7,13 @@
 // Every string that came from the server is placed with textContent.
 import { el } from './dom.js?v=65858b99';
 import { button, emptyState, unavailableCard, segmented } from './ui.js?v=4d208003';
-import { unavailable } from './mgmt.js?v=e5837a52';
-import { createRouterUsage } from './routerusageview.js?v=a184ac44';
+import { unavailable } from './mgmt.js?v=5495569c';
+import { createRouterUsage } from './routerusageview.js?v=af1cd30e';
 import {
   RANGE_PRESETS, rangeWindow, scopeOptions, scopeLabel, fillSeries, sumPoints, bucketRate, timeLabels,
   shareOf, statusHeadline, liveRows, liveRowsNote, DOWNLOAD_CAVEAT, measurementNote, tileLabels, liveChartCaption, fmtBytes, fmtBitsPerSecond,
   niceCeil, yTicks, lineArea, nearestIndex, pushSample, shareSlices, arcPath, rateStats,
-} from './traffic.js?v=b10b7a04';
+} from './traffic.js?v=ad4d3449';
 
 const POLL_MS = 2000;
 const LIVE_SAMPLES = 90; // three minutes at the poll rate

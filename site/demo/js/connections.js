@@ -7,13 +7,17 @@
 // supplies the dashboard and exact bandwidth while an eero account still
 // supplies the names a household typed into its app.
 export const KINDS = [
-  { id: 'firewalla', title: 'Firewalla', what: 'Requests, alarms, rules, exact bandwidth and device names, through your MSP account.' },
+  { id: 'firewalla', title: 'Firewalla', what: 'Requests, alarms, rules, exact bandwidth and device names, read on the box itself or through your MSP account.' },
   { id: 'unifi_api', title: 'UniFi console', what: 'Clients, firewall policies and client blocking, through an Integration API key.' },
   { id: 'eero', title: 'eero', what: 'Device names, and estimated bandwidth when nothing more exact is connected.' },
   { id: 'unifi', title: 'UniFi controller sign-in', what: 'Exact per-device bandwidth from a controller account. A read-only account is enough.' },
 ];
 
 const title = (id) => (KINDS.find((k) => k.id === id) || { title: id }).title;
+
+// where names what a connection reads: a Firewalla read on the box itself
+// has a loopback address, which says nothing to a person.
+const where = (id, c) => (c.local ? 'this Firewalla box' : (c.address || title(id)));
 
 // connectionState is one connection in a sentence, with a tone.
 export function connectionState(id, conns) {
@@ -25,14 +29,14 @@ export function connectionState(id, conns) {
   const bw = all.bandwidth || {};
   if (id === 'firewalla' || id === 'unifi_api') {
     const name = id === 'firewalla' ? 'firewalla' : 'unifi';
-    if (!c.enabled) return { tone: 'muted', text: 'Connected to ' + (c.address || title(id)) + ', but switched off.' };
+    if (!c.enabled) return { tone: 'muted', text: 'Connected to ' + where(id, c) + ', but switched off.' };
     if (dash && dash.name === name) {
       const st = dash.status || {};
       if (st.needs_token) return { tone: 'bad', text: 'The credential was refused. Disconnect and connect again with a new one.' };
       const errs = Object.entries(st.errors || {});
       if (errs.length) return { tone: 'warn', text: 'Could not read ' + errs.map(([k]) => k).join(', ') + ': ' + errs[0][1] };
-      if (!st.last_poll) return { tone: 'muted', text: 'Connected to ' + (c.address || title(id)) + '. Waiting for the first reading.' };
-      return { tone: 'good', text: 'Reading ' + (c.address || title(id)) + (dash.read_only ? ' (read only).' : ' (changes allowed).') };
+      if (!st.last_poll) return { tone: 'muted', text: 'Connected to ' + where(id, c) + '. Waiting for the first reading.' };
+      return { tone: 'good', text: 'Reading ' + where(id, c) + (c.local ? ' directly' : '') + (dash.read_only ? ' (read only).' : ' (changes allowed).') };
     }
     if (all.dashboard_error) return { tone: 'bad', text: all.dashboard_error };
     if (dash) return { tone: 'muted', text: 'Connected, but the ' + title(dash.name === 'firewalla' ? 'firewalla' : 'unifi_api') + ' is the one in use: one dashboard runs at a time.' };
@@ -58,6 +62,9 @@ export function connectionState(id, conns) {
 export function bandwidthNote(conns) {
   const bw = (conns || {}).bandwidth || {};
   if (!bw.source) return '';
+  if (bw.source === 'firewalla' && ((conns || {}).firewalla || {}).local) {
+    return 'Bandwidth comes from this Firewalla box, as exact byte counts, as the traffic happens.';
+  }
   if (bw.source === 'firewalla') {
     return 'Bandwidth comes from your Firewalla. Its cloud reports traffic in batches several minutes behind, so new figures arrive every few minutes rather than live.';
   }

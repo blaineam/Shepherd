@@ -414,6 +414,11 @@ type Server struct {
 
 	importSessions *eeroSessions
 
+	// localProbeAt and localProbeOK remember whether a Firewalla's local
+	// API answered on this machine (api_backend.go).
+	localProbeAt time.Time
+	localProbeOK bool
+
 	clock     func() time.Time
 	sleep     func(time.Duration)
 	sessions  *sessionStore
@@ -797,6 +802,7 @@ func (s *Server) routes() {
 	h("POST /api/backend/schedules/{id}/delete", s.deleteBackendSchedule)
 	h("POST /api/backend/devices/rename", s.renameBackendDevice)
 	h("POST /api/backend/devices/block", s.blockBackendDevice)
+	h("POST /api/backend/firewalla-local", s.connectFirewallaLocal)
 	h("POST /api/backend/unifi", s.connectUniFiAPI)
 	h("POST /api/backend/unifi/enabled", s.setUniFiAPIEnabled)
 	h("DELETE /api/backend/unifi", s.forgetUniFiAPI)

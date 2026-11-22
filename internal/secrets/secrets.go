@@ -344,6 +344,11 @@ type Firewalla struct {
 	// Box limits the reading to one Firewalla box; empty reads them all.
 	Box     string `json:"box,omitempty"`
 	Enabled bool   `json:"enabled"`
+	// Local means Shepherd runs on the Firewalla box itself and reads the
+	// API the box serves on its own loopback address (docs/BACKENDS.md).
+	// BaseURL is then that address and there is no token: the API has
+	// none, which is why it must be loopback.
+	Local bool `json:"local,omitempty"`
 	// Writes lets the dashboard change things on the account: rules,
 	// device names, alarms. Off unless the owner turns it on, whatever
 	// the token itself allows, so connecting for bandwidth never gives
@@ -360,6 +365,9 @@ func (f Firewalla) String() string {
 	if !f.Configured() {
 		return "firewalla msp (not set)"
 	}
+	if f.Local {
+		return fmt.Sprintf("firewalla on this box %s (enabled %v, from %s)", f.BaseURL, f.Enabled, f.Source)
+	}
 	return fmt.Sprintf("firewalla msp %s (enabled %v, from %s)", f.BaseURL, f.Enabled, f.Source)
 }
 
@@ -367,6 +375,15 @@ func (f Firewalla) String() string {
 func (f Firewalla) GoString() string { return f.String() }
 
 func (f Firewalla) validate() error {
+	if f.Local {
+		if !strings.HasPrefix(f.BaseURL, "http://127.") && !strings.HasPrefix(f.BaseURL, "http://[::1]") {
+			return fmt.Errorf("%w: the box's local API address must be on this machine's loopback address", ErrInvalid)
+		}
+		if f.Token != "" || f.Box != "" {
+			return fmt.Errorf("%w: the box's local API takes no token and no box", ErrInvalid)
+		}
+		return checkField("local API address", f.BaseURL, true)
+	}
 	if !strings.HasPrefix(f.BaseURL, "https://") {
 		return fmt.Errorf("%w: the MSP address must start with https://", ErrInvalid)
 	}

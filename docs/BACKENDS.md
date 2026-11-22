@@ -38,7 +38,8 @@ screen. Each kind has its own row with a connect form, a switch and **Disconnect
 
 | Connection | Credential | What it is read for |
 |---|---|---|
-| Firewalla | MSP personal access token | dashboard, exact bandwidth, device names |
+| Firewalla, on the box | none | dashboard, exact live bandwidth, device names |
+| Firewalla, through MSP | MSP personal access token | dashboard, exact bandwidth, device names |
 | UniFi console | Integration API key | dashboard |
 | eero | account sign-in with an emailed or texted code | device names, estimated bandwidth |
 | UniFi controller sign-in | controller username and password | exact bandwidth |
@@ -132,6 +133,39 @@ What the published API gives Shepherd, and so what the screen offers:
 One backend runs at a time. If a Firewalla and a UniFi console are both connected, the Firewalla
 is used, because it also reports requests; switch it off to use the console.
 
+## Firewalla, on the box
+
+A Firewalla box is an ordinary Linux machine, and Shepherd is one static binary, so Shepherd can
+run on the box itself. There it reads the API the box serves on its own loopback address
+(`http://127.0.0.1:8834`), the one Firewalla's app talks to (`internal/backends/fwlocal`). On the
+Firewalla row under **Connections**, **Use this box** appears when that API answers; there is
+nothing to type.
+
+Compared with MSP:
+
+| | On the box | Through MSP |
+|---|---|---|
+| Account and token | none | MSP account, personal access token |
+| Requests and bandwidth | as the traffic happens | about six minutes late, in batches |
+| Rules listed | all of them | the ones MSP exposes |
+| Device names | knows which a person typed | cannot tell |
+| Blocked requests | not read yet | included |
+| Create a rule | not built | yes |
+| Published API | **no** | yes |
+
+That last row is the cost. The local API is not published: it is read from Firewalla's open source
+(`controllers/netbot.js`, `api/routes/encipher.js` in github.com/firewalla/firewalla) and a firmware
+update can change it. Shepherd makes only the calls that were checked against a running box:
+`get hosts`, `get flows`, `get alarms`, `get policies`, and, behind **Allow changes**,
+`set host` (rename), `cmd policy:enable`, `policy:disable`, `policy:delete` and `alarm:delete`.
+
+The API has no authentication, which is safe only because it listens on loopback. Shepherd
+therefore refuses any address for it that is not this machine's loopback address: it cannot be
+pointed at a box across the network. For a Shepherd running anywhere else, use MSP.
+
+Everything below about what the dashboard reads and changes applies to both, except where the table
+above says otherwise.
+
 ## What it does today (Firewalla)
 
 Connect an account under **Connections** on the **Router** screen: your MSP address, a personal
@@ -219,7 +253,10 @@ Shepherd, is not known to Shepherd and still has to be unblocked there.
 ## Verified against
 
 Reading has been run against a live MSP account and a box in router mode (2026-11-21): devices,
-flows with the `ts:` range query, alarms, rules and boxes all answer as documented. Writes (rules,
+flows with the `ts:` range query, alarms, rules and boxes all answer as documented. The on-box
+backend's reading was run against the same box the same day (`TestLiveBoxReadOnly`, which is
+skipped unless `FWLOCAL_LIVE_URL` points at a box's local API); its writes have been run against a
+fake only. Writes (rules,
 renames, dismissing alarms) were written from Firewalla's published documentation and run against a
 fake MSP; they have not yet been exercised against a real box. The eero rename is in the same state.
 Preview a name sync before applying one.

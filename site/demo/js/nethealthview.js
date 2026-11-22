@@ -9,7 +9,7 @@
 // attributes.
 import { el } from './dom.js?v=65858b99';
 import { button, segmented, emptyState, unavailableCard } from './ui.js?v=4d208003';
-import { unavailable } from './mgmt.js?v=e5837a52';
+import { unavailable } from './mgmt.js?v=5495569c';
 import { fmtDateTime } from './format.js?v=86b54455';
 import {
   gradeClass, gradeLabel, fmtMS, fmtMSValue, fmtLoss, reachabilityText, statusHeadline, statusKind, statusPillLabel,

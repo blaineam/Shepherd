@@ -5,6 +5,10 @@ package portal
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -179,4 +183,85 @@ func TestKeepingNamesInSyncNeedsConfirmingAndSwitchingOffDoesNot(t *testing.T) {
 	fn.autoErr = errors.New("disk full")
 	h.expect("POST", "/api/names/auto", `{"enabled":false}`, 500)
 	h.expect("POST", "/api/names/auto", `not json`, 400)
+}
+
+// localBoxTransport answers like a Firewalla's loopback API, wherever the
+// request was addressed, and counts the requests.
+func localBoxTransport(t *testing.T, up *bool) (http.RoundTripper, *int) {
+	t.Helper()
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if !*up || r.URL.Path != "/v1/encipher/simple" {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		fmt.Fprint(w, `{"code":200,"data":{"hosts":[{"mac":"02:00:5E:00:00:41","name":"TV"}]}}`)
+	}))
+	t.Cleanup(srv.Close)
+	target, _ := url.Parse(srv.URL)
+	return fwRoundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "127.0.0.1:8834" {
+			t.Errorf("the local API was asked for at %s", r.URL.Host)
+		}
+		r = r.Clone(r.Context())
+		r.URL.Scheme, r.URL.Host = target.Scheme, target.Host
+		return http.DefaultTransport.RoundTrip(r)
+	}), &hits
+}
+
+func TestAFirewallaBoxIsConnectedWithNoCredentialOnlyWhenItAnswers(t *testing.T) {
+	h := newHarnessWith(t, onDisk(t))
+	fh := &fakeHub{}
+	usage := &fakeUsage{}
+	h.srv.Backend, h.srv.RouterUsage = fh, usage
+	up := false
+	var hits *int
+	h.srv.BackendTransport, hits = localBoxTransport(t, &up)
+
+	// Not on a box: the screen is told so, and connecting is refused.
+	if out := h.ok("GET", "/api/connections", "", 200); out["local_firewalla"] != false {
+		t.Fatalf("view = %v", out)
+	}
+	code, body := h.call("POST", "/api/backend/firewalla-local", `{}`)
+	if code != 400 || !strings.Contains(body, "not running on a Firewalla box") {
+		t.Fatalf("connect off a box = %d %q", code, body)
+	}
+	if _, ok := h.srv.Secrets.Firewalla(); ok || fh.reloads != 0 {
+		t.Fatal("a failed connect was stored")
+	}
+	// The probe is remembered, so a screen refreshing does not hammer it.
+	before := *hits
+	h.ok("GET", "/api/connections", "", 200)
+	if *hits != before {
+		t.Fatalf("the probe ran again: %d then %d", before, *hits)
+	}
+
+	up = true
+	out := h.ok("POST", "/api/backend/firewalla-local", `{}`, 200)
+	if out["connected"] != true || out["local"] != true || out["address"] != "http://127.0.0.1:8834" || out["writes"] != false {
+		t.Fatalf("connected = %v", out)
+	}
+	w, ok := h.srv.Secrets.Firewalla()
+	if !ok || !w.Local || !w.Enabled || w.Token != "" || fh.reloads != 1 || usage.reloads != 1 {
+		t.Fatalf("stored = %+v, %v, reloads %d/%d", w, ok, fh.reloads, usage.reloads)
+	}
+	conns := h.ok("GET", "/api/connections", "", 200)
+	if fw, _ := conns["firewalla"].(map[string]any); conns["local_firewalla"] != true || fw["local"] != true {
+		t.Fatalf("connections = %v", conns)
+	}
+	if ru := h.ok("GET", "/api/routerusage", "", 200); ru["source"] != "firewalla" || ru["local"] != true {
+		t.Fatalf("routerusage = %v", ru)
+	}
+
+	// The same switches work on it, and connecting needs the dashboard.
+	h.ok("POST", "/api/backend/writes", `{"enabled":true}`, 200)
+	if w, _ := h.srv.Secrets.Firewalla(); !w.Writes || !w.Local {
+		t.Fatalf("after allowing changes = %+v", w)
+	}
+	h.srv.RouterUsage = nil
+	h.ok("POST", "/api/backend/firewalla-local", `{}`, 200)
+	h.srv.Backend = nil
+	h.expect("POST", "/api/backend/firewalla-local", `{}`, 404)
+	h.expect("POST", "/api/backend/firewalla-local", `nope`, 400)
 }

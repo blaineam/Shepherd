@@ -274,7 +274,7 @@ export function routerConnection(router) {
   // A Firewalla's cloud hands over traffic in batches several minutes
   // late. Until the first batch lands there is nothing to show, and saying
   // "0 devices" reads as broken when it is only early.
-  if (r.source === 'firewalla' && !st.devices_seen) {
+  if (r.source === 'firewalla' && !r.local && !st.devices_seen) {
     return { tone: 'muted', text: 'Connected to your Firewalla. It reports traffic in batches several minutes behind, so the first figures take up to ten minutes to appear.' };
   }
   return {

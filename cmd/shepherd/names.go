@@ -108,7 +108,7 @@ func newBackendNames(m *backendManager) (*backendNames, bool) {
 	if !ok || !hasCap(snap.Capabilities, backends.CapDevices) {
 		return nil, false
 	}
-	b := &backendNames{m: m, name: snap.Name}
+	b := &backendNames{m: m, name: snap.Name, limit: m.nameLimit()}
 	label := b.Label()
 	switch {
 	case hasCap(snap.Capabilities, backends.CapDeviceRename):
@@ -116,9 +116,6 @@ func newBackendNames(m *backendManager) (*backendNames, bool) {
 		b.ro = "Allow changes is off for your " + label + ", so names are read from it but not written to it"
 	default:
 		b.ro = label + " has no way to rename a device from outside, so names are read from it but not written to it"
-	}
-	if snap.Name == "firewalla" {
-		b.limit = 32 // MSP's limit
 	}
 	return b, true
 }
@@ -155,7 +152,12 @@ func (b *backendNames) Entries(context.Context) ([]namesync.Entry, error) {
 		if d.MAC == "" {
 			continue
 		}
-		out = append(out, namesync.Entry{MAC: d.MAC, Name: d.Name, Vendor: d.Vendor, Handle: d.Ref()})
+		// Most products cannot say whether a person typed a name; one that
+		// can lets a typed name outrank a hostname.
+		out = append(out, namesync.Entry{
+			MAC: d.MAC, Name: d.Name, Vendor: d.Vendor, Handle: d.Ref(),
+			Typed: d.NameFrom == backends.NameTyped, Learned: d.NameFrom == backends.NameLearned,
+		})
 	}
 	return out, nil
 }

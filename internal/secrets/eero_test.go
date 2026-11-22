@@ -402,3 +402,33 @@ func TestUniFiAPIRefusesWhatItCouldNotUseAndNeverFormatsItsKey(t *testing.T) {
 		t.Fatal("Open accepted an unusable console")
 	}
 }
+
+func TestAFirewallaOnTheBoxNeedsALoopbackAddressAndNoToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	s := openAt(t, path)
+	got, err := s.SetFirewalla(Firewalla{BaseURL: "http://127.0.0.1:8834/", Local: true, Enabled: true})
+	if err != nil || got.BaseURL != "http://127.0.0.1:8834" || !got.Local {
+		t.Fatalf("SetFirewalla = %+v, %v", got, err)
+	}
+	if again, ok := openAt(t, path).Firewalla(); !ok || !again.Local || again.Token != "" {
+		t.Fatalf("reloaded = %+v, %v", again, ok)
+	}
+	if !strings.Contains(got.String(), "on this box") || strings.Contains(got.String(), "msp") {
+		t.Errorf("String = %q", got.String())
+	}
+	if _, err := s.SetFirewalla(Firewalla{BaseURL: "http://[::1]:8834", Local: true}); err != nil {
+		t.Errorf("IPv6 loopback refused: %v", err)
+	}
+	for name, w := range map[string]Firewalla{
+		"another machine": {BaseURL: "http://192.0.2.1:8834", Local: true},
+		"https":           {BaseURL: "https://127.0.0.1:8834", Local: true},
+		"a token":         {BaseURL: "http://127.0.0.1:8834", Local: true, Token: "tok"},
+		"a box":           {BaseURL: "http://127.0.0.1:8834", Local: true, Box: "gid"},
+		"control chars":   {BaseURL: "http://127.0.0.1:8834\x00", Local: true},
+		"msp over http":   {BaseURL: "http://127.0.0.1:8834", Token: "tok"},
+	} {
+		if _, err := s.SetFirewalla(w); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}

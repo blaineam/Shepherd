@@ -253,13 +253,13 @@ func TestStartNamesSyncsTheRegistryWithWhatIsConnected(t *testing.T) {
 	m, msp, _ := connected(t, true)
 	awaitBackend(t, "the first poll", func() bool { s, _ := m.Snapshot(); return len(s.Devices) == 1 })
 	reg := namesRegistry(t)
-	id := reg.Observe(devices.Observation{MAC: "02:00:5e:00:00:01", IP: "192.0.2.5", Hostname: "tv"})
+	id := reg.Observe(devices.Observation{MAC: "02:00:5e:00:00:01", IP: "192.0.2.5", Hostname: "living-room"})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	e := startNames(ctx, m.sec, reg, m, t.TempDir())
 
-	// Firewalla's "TV" and the hostname "tv" are equally plain, so
-	// Shepherd's, the earlier source, stays and is written to the Firewalla.
+	// The hostname "living-room" says more than the Firewalla's "TV", so
+	// it is written to the Firewalla.
 	rep, err := e.Preview(ctx)
 	if err != nil || len(rep.Sources) != 2 || rep.Sources[1].ID != "firewalla" || rep.Written != 1 {
 		t.Fatalf("preview = %+v, %v", rep, err)
@@ -279,5 +279,89 @@ func TestStartNamesSyncsTheRegistryWithWhatIsConnected(t *testing.T) {
 	defer msp.mu.Unlock()
 	if len(msp.writes) != 2 {
 		t.Fatalf("writes = %v", msp.writes)
+	}
+}
+
+// boxAPI answers like a Firewalla's loopback API: one host a person named
+// and one known only by its hostname.
+func boxAPI(t *testing.T, writes *[]string) http.RoundTripper {
+	t.Helper()
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("command") != "get" {
+			body, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			*writes = append(*writes, q.Get("command")+" "+q.Get("item")+" "+q.Get("target")+" "+string(body))
+			mu.Unlock()
+			fmt.Fprint(w, `{"code":200,"data":{}}`)
+			return
+		}
+		switch q.Get("item") {
+		case "hosts":
+			fmt.Fprint(w, `{"code":200,"data":{"hosts":[
+			 {"mac":"02:00:5E:00:00:01","name":"Den TV","bname":"tv"},
+			 {"mac":"02:00:5E:00:00:02","bname":"tablet-1"}]}}`)
+		default:
+			fmt.Fprint(w, `{"code":200,"data":{}}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	target := strings.TrimPrefix(srv.URL, "http://")
+	return rtFunc(func(r *http.Request) (*http.Response, error) {
+		r = r.Clone(r.Context())
+		r.URL.Host = target
+		return http.DefaultTransport.RoundTrip(r)
+	})
+}
+
+func TestAFirewallaBoxIsReadDirectlyAndKnowsWhichNamesWereTyped(t *testing.T) {
+	sec := testSecrets(t)
+	if _, err := sec.SetFirewalla(secrets.Firewalla{BaseURL: "http://127.0.0.1:8834", Local: true, Enabled: true, Writes: true}); err != nil {
+		t.Fatal(err)
+	}
+	var writes []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := &backendManager{parent: ctx, sec: sec, reg: namesRegistry(t), dataDir: t.TempDir(), transport: boxAPI(t, &writes)}
+	t.Cleanup(m.Stop)
+	m.Reload()
+	awaitBackend(t, "the first poll", func() bool { s, _ := m.Snapshot(); return len(s.Devices) == 2 })
+	if m.active() != "firewalla" || m.nameLimit() != 64 || !m.canRename() {
+		t.Fatalf("active %q, limit %d, rename %v", m.active(), m.nameLimit(), m.canRename())
+	}
+
+	src, ok := newBackendNames(m)
+	if !ok || src.ReadOnly() != "" || src.MaxLen() != 64 {
+		t.Fatalf("source = %+v, %v", src, ok)
+	}
+	list, err := src.Entries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := entryFor(t, list, "02005e000001"); e.Name != "Den TV" || !e.Typed || e.Learned {
+		t.Errorf("typed = %+v", e)
+	}
+	e := entryFor(t, list, "02005e000002")
+	if e.Name != "tablet-1" || e.Typed || !e.Learned {
+		t.Errorf("learned = %+v", e)
+	}
+	if err := src.Rename(ctx, e, "Kids tablet"); err != nil {
+		t.Fatal(err)
+	}
+	if len(writes) != 1 || writes[0] != `set host 02:00:5E:00:00:02 {"name":"Kids tablet"}` {
+		t.Fatalf("writes = %v", writes)
+	}
+
+	// An address that is not this machine is refused before anything runs.
+	m.Stop()
+	sec2 := testSecrets(t)
+	if _, err := sec2.SetFirewalla(secrets.Firewalla{BaseURL: "http://127.0.0.1:8834", Local: true, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	bad := &backendManager{parent: ctx, sec: sec2, dataDir: t.TempDir()}
+	conn, err := bad.wanted()
+	if err != nil || conn == nil || conn.key != "firewalla-local|http://127.0.0.1:8834" {
+		t.Fatalf("wanted = %+v, %v", conn, err)
 	}
 }

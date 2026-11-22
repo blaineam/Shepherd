@@ -190,6 +190,8 @@ test('routerConnection words every state the reader can be in', () => {
   assert.equal(early.tone, 'muted');
   assert.match(early.text, /several minutes behind/);
   assert.match(routerConnection({ ...reading, source: 'firewalla' }).text, /Reading 9 of 12 devices from your firewalla/);
+  // Read on the box itself there is no delay to explain.
+  assert.match(routerConnection({ ...reading, source: 'firewalla', local: true, status: { last_poll: '2026-11-03T12:00:00Z', devices_seen: 0 } }).text, /Reading 0 of 0 devices/);
 
   const ok = routerConnection(reading);
   assert.equal(ok.tone, 'good');

@@ -35,9 +35,14 @@ func (s *Server) connectionsJSON() map[string]any {
 	out := map[string]any{
 		"available": s.RouterUsage != nil && s.Backend != nil,
 		"eero":      conn(eok, map[string]any{"enabled": e.Enabled, "network": e.NetworkID}),
-		"firewalla": conn(fok, map[string]any{"enabled": f.Enabled, "address": f.BaseURL, "box": f.Box, "writes": f.Writes}),
+		"firewalla": conn(fok, map[string]any{"enabled": f.Enabled, "address": f.BaseURL, "box": f.Box, "writes": f.Writes, "local": f.Local}),
 		"unifi":     conn(uok, map[string]any{"enabled": u.Enabled, "address": u.BaseURL, "site": u.Site}),
 		"unifi_api": conn(aok, map[string]any{"enabled": a.Enabled, "address": a.BaseURL, "site": a.Site, "writes": a.Writes}),
+	}
+	// Whether this Shepherd is running on a Firewalla box, in which case
+	// the box can be read directly, with no MSP account.
+	if s.Backend != nil {
+		out["local_firewalla"] = s.onFirewalla()
 	}
 	// What each reader is doing right now, which is not always what is
 	// stored: with two connected, one of them supplies the bandwidth.

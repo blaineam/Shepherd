@@ -35,7 +35,7 @@ const (
 	// firstFlowWindow is how far back the very first poll reaches.
 	firstFlowWindow = 10 * time.Minute
 	flowPageSize    = 500
-	maxFlowPages    = 10
+	maxFlowPages    = 40
 	recentFlows     = 200
 	maxAudit        = 200
 	// firstAlarmWindow limits which existing alarms are raised when the

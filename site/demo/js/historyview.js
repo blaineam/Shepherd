@@ -4,7 +4,7 @@
 import { el } from './dom.js?v=65858b99';
 import { icon, button, segmented, emptyState, unavailableCard, debounce, relTime } from './ui.js?v=4d208003';
 import { RANGES, rangeFor, buildQuery, normalizeResponse, mergeOlder, retainedSpan, fmtSpan, placeOf, toLocalInput } from './history.js?v=938df46e';
-import { unavailable } from './mgmt.js?v=e5837a52';
+import { unavailable } from './mgmt.js?v=5495569c';
 import { fmtClock } from './format.js?v=86b54455';
 import { shadowNote } from './wander.js?v=b40b3e3f';
 import { isIP } from './upstreams.js?v=f59ab5b8';

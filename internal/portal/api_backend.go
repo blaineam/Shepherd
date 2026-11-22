@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"shepherd/internal/backends"
+	"shepherd/internal/backends/fwlocal"
 	"shepherd/internal/backends/hub"
 	"shepherd/internal/backends/unifi"
 	"shepherd/internal/secrets"
@@ -37,6 +38,7 @@ func (s *Server) backendJSON() map[string]any {
 		out["name"] = c.name
 		out["address"] = c.address
 		out["box"] = c.scope
+		out["local"] = c.local
 		out["enabled"] = c.enabled
 		out["writes"] = c.writes
 	}
@@ -75,6 +77,8 @@ func nonNil[T any](v []T) []T {
 type backendConnection struct {
 	name, address, scope string
 	enabled, writes      bool
+	// local is a Firewalla read on the box itself rather than through MSP.
+	local bool
 }
 
 // backendConn is the connection that is, or would be, in effect: a
@@ -82,10 +86,10 @@ type backendConnection struct {
 // console.
 func (s *Server) backendConn() (backendConnection, bool) {
 	if w, ok := s.Secrets.Firewalla(); ok {
-		return backendConnection{"firewalla", w.BaseURL, w.Box, w.Enabled, w.Writes}, true
+		return backendConnection{"firewalla", w.BaseURL, w.Box, w.Enabled, w.Writes, w.Local}, true
 	}
 	if u, ok := s.Secrets.UniFiAPI(); ok {
-		return backendConnection{"unifi", u.BaseURL, u.Site, u.Enabled, u.Writes}, true
+		return backendConnection{"unifi", u.BaseURL, u.Site, u.Enabled, u.Writes, false}, true
 	}
 	return backendConnection{}, false
 }
@@ -356,6 +360,62 @@ func (s *Server) blockBackendDevice(w http.ResponseWriter, r *http.Request) {
 	if err := s.Backend.BlockClient(ctx, backends.DeviceRef{Box: b.Box, Native: b.Native}, b.Block); err != nil {
 		backendError(w, err)
 		return
+	}
+	writeJSON(w, s.backendJSON())
+}
+
+// ---- a Firewalla box that Shepherd runs on ----------------------------------
+
+// A Firewalla serves an API on its own loopback address, the one its app
+// uses. When Shepherd runs on the box it can read that directly: no MSP
+// account, no token, and traffic as it happens. There is nothing to type,
+// so connecting is one request, and it is refused unless the box answers.
+
+const localProbeEvery = time.Minute
+
+// onFirewalla reports whether a Firewalla's local API answers on this
+// machine. The answer is remembered for a minute, because the screen asks
+// on every refresh.
+func (s *Server) onFirewalla() bool {
+	s.mu.Lock()
+	if time.Since(s.localProbeAt) < localProbeEvery {
+		defer s.mu.Unlock()
+		return s.localProbeOK
+	}
+	s.mu.Unlock()
+	ok := s.probeFirewalla(context.Background()) == nil
+	s.mu.Lock()
+	s.localProbeAt, s.localProbeOK = time.Now(), ok
+	s.mu.Unlock()
+	return ok
+}
+
+func (s *Server) probeFirewalla(ctx context.Context) error {
+	// The default address is always usable, so New cannot fail here.
+	c, _ := fwlocal.New(fwlocal.Config{ReadOnly: true, Transport: s.BackendTransport, Timeout: 3 * time.Second})
+	_, err := c.Devices(ctx)
+	return err
+}
+
+func (s *Server) connectFirewallaLocal(w http.ResponseWriter, r *http.Request) {
+	var b struct{}
+	if !decode(w, r, &b, smallBody) || !s.haveBackend(w) {
+		return
+	}
+	if err := s.probeFirewalla(r.Context()); err != nil {
+		bad(w, "This Shepherd is not running on a Firewalla box, or the box's local API did not answer: "+err.Error())
+		return
+	}
+	if _, err := s.Secrets.SetFirewalla(secrets.Firewalla{BaseURL: fwlocal.DefaultURL, Local: true, Enabled: true}); err != nil {
+		serverFault(w, "the connection could not be saved")
+		return
+	}
+	s.mu.Lock()
+	s.localProbeAt, s.localProbeOK = time.Now(), true
+	s.mu.Unlock()
+	s.Backend.Reload()
+	if s.RouterUsage != nil {
+		s.RouterUsage.Reload()
 	}
 	writeJSON(w, s.backendJSON())
 }

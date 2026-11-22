@@ -14,6 +14,7 @@ import (
 	"shepherd/internal/alarms"
 	"shepherd/internal/backends"
 	"shepherd/internal/backends/firewalla"
+	"shepherd/internal/backends/fwlocal"
 	"shepherd/internal/backends/hub"
 	"shepherd/internal/backends/unifi"
 	"shepherd/internal/devices"
@@ -43,6 +44,7 @@ type backendManager struct {
 	cur    *hub.Hub
 	name   string // which backend cur runs
 	rename bool   // cur's product can rename a device at all
+	limit  int    // the longest device name cur's product takes, 0 for none
 	setRO  func(bool)
 	key    string // what cur was built from, minus the write switch
 	cancel context.CancelFunc
@@ -62,19 +64,29 @@ type connection struct {
 	key     string
 	writes  bool
 	backend backends.Backend
-	setRO   func(bool)
+	// nameLimit is the longest device name the product accepts.
+	nameLimit int
+	setRO     func(bool)
 }
 
 // wanted builds the backend the owner has connected and switched on, or
 // nil when there is none. One backend runs at a time: a Firewalla wins over
 // a UniFi console when both are connected, since it also reports requests.
 func (m *backendManager) wanted() (*connection, error) {
+	// Shepherd on the Firewalla box itself: the box's own API, no account.
+	if w, ok := m.sec.Firewalla(); ok && w.Enabled && w.Local {
+		c, err := fwlocal.New(fwlocal.Config{BaseURL: w.BaseURL, ReadOnly: !w.Writes, Transport: m.transport})
+		if err != nil {
+			return nil, err
+		}
+		return &connection{name: "firewalla", key: "firewalla-local|" + w.BaseURL, writes: w.Writes, backend: c, setRO: c.SetReadOnly, nameLimit: fwlocal.MaxNameLen}, nil
+	}
 	if w, ok := m.sec.Firewalla(); ok && w.Enabled {
 		c, err := firewalla.New(firewalla.Config{BaseURL: w.BaseURL, Token: w.Token, Box: w.Box, ReadOnly: !w.Writes, Transport: m.transport})
 		if err != nil {
 			return nil, err
 		}
-		return &connection{name: "firewalla", key: "firewalla|" + w.BaseURL + "|" + w.Token + "|" + w.Box, writes: w.Writes, backend: c, setRO: c.SetReadOnly}, nil
+		return &connection{name: "firewalla", key: "firewalla|" + w.BaseURL + "|" + w.Token + "|" + w.Box, writes: w.Writes, backend: c, setRO: c.SetReadOnly, nameLimit: 32}, nil
 	}
 	if u, ok := m.sec.UniFiAPI(); ok && u.Enabled {
 		c, err := unifi.New(unifi.Config{BaseURL: u.BaseURL, APIKey: u.APIKey, Site: u.Site, AllowSelfSigned: u.AllowSelfSigned, ReadOnly: !u.Writes, Transport: m.transport})
@@ -124,6 +136,7 @@ func (m *backendManager) Reload() {
 	m.mu.Lock()
 	m.cur, m.name, m.setRO, m.key, m.cancel, m.done = h, conn.name, conn.setRO, conn.key, cancel, done
 	_, m.rename = conn.backend.(backends.DeviceRenamer)
+	m.limit = conn.nameLimit
 	m.mu.Unlock()
 	go func() { defer close(done); h.Run(ctx) }()
 	log.Printf("backend: reading %s every %s (writes %s)", conn.name, hub.DefaultInterval, map[bool]string{true: "on", false: "off"}[conn.writes])
@@ -137,6 +150,13 @@ func (m *backendManager) active() string {
 		return ""
 	}
 	return m.name
+}
+
+// nameLimit is the longest device name the running backend accepts.
+func (m *backendManager) nameLimit() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.limit
 }
 
 // canRename reports whether the running backend's product can rename a

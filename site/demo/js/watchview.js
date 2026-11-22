@@ -6,7 +6,7 @@
 // Every string that came from the server is placed with textContent.
 import { el } from './dom.js?v=65858b99';
 import { button, emptyState, unavailableCard, confirmDialog, relTime } from './ui.js?v=4d208003';
-import { unavailable } from './mgmt.js?v=e5837a52';
+import { unavailable } from './mgmt.js?v=5495569c';
 import {
   statusHeadline, relayLabel, relayExplanation, ipv6Line, fmtBitsPerSecond, fmtPacketsPerSecond, fmtTotalBytes,
   summarize, sortByTraffic, watchedDevices, historyLine, canKill,

@@ -5,11 +5,11 @@
 // change is switched on separately, previewed, and confirmed. All text from the server is placed with textContent.
 import { el } from './dom.js?v=65858b99';
 import { button, emptyState, confirmDialog } from './ui.js?v=4d208003';
-import { unavailable } from './mgmt.js?v=e5837a52';
+import { unavailable } from './mgmt.js?v=5495569c';
 import { fmtDateTime } from './format.js?v=86b54455';
-import { createConnections } from './connectionsview.js?v=1bc9571d';
+import { createConnections } from './connectionsview.js?v=fab14b7b';
 import { createNameSync } from './namesyncview.js?v=5abcdaef';
-import { can, productName, statusLine, blockSpecFromFlow, ruleSummary, requestLine, auditLine, DAY_NAMES, scheduleText, scheduleFor, scheduleBody, scheduleProblem } from './backend.js?v=c7831f78';
+import { can, productName, statusLine, blockSpecFromFlow, ruleSummary, requestLine, auditLine, DAY_NAMES, scheduleText, scheduleFor, scheduleBody, scheduleProblem } from './backend.js?v=d55879b3';
 
 export function createBackend({ root, mgmt, notify }) {
   let data = null;

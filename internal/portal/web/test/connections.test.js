@@ -30,6 +30,15 @@ test('a dashboard connection reports what the hub is doing with it', () => {
   assert.match(connectionState('firewalla', dash({ last_poll: poll }, false)).text, /changes allowed/);
 });
 
+test('a Firewalla read on the box itself is named as the box, not by a loopback address', () => {
+  const fw = { connected: true, enabled: true, local: true, address: 'http://127.0.0.1:8834' };
+  const dash = { name: 'firewalla', status: { last_poll: poll }, read_only: true };
+  assert.equal(connectionState('firewalla', { firewalla: fw, dashboard: dash }).text, 'Reading this Firewalla box directly (read only).');
+  assert.match(connectionState('firewalla', { firewalla: { ...fw, enabled: false } }).text, /this Firewalla box, but switched off/);
+  assert.match(connectionState('firewalla', { firewalla: fw, dashboard: { name: 'firewalla', status: {} } }).text, /Connected to this Firewalla box\. Waiting/);
+  assert.match(bandwidthNote({ firewalla: fw, bandwidth: { source: 'firewalla' } }), /as the traffic happens/);
+});
+
 test('only one dashboard runs, and the other connection says which', () => {
   const conns = {
     unifi_api: { connected: true, enabled: true, address: 'https://192.0.2.1' },

@@ -23,7 +23,8 @@ export function statusLine(data) {
   if (!d.connected) {
     return { tone: 'muted', text: 'Nothing is connected. Connect a Firewalla or a UniFi console under Connections.' };
   }
-  if (!d.enabled) return { tone: 'muted', text: 'Connected to ' + (d.address || productName(d)) + ', but switched off.' };
+  const where = d.local ? 'this Firewalla box' : (d.address || productName(d));
+  if (!d.enabled) return { tone: 'muted', text: 'Connected to ' + where + ', but switched off.' };
   if (d.error) return { tone: 'bad', text: d.error };
   if (!d.running) return { tone: 'muted', text: 'Starting.' };
   const st = d.status || {};
@@ -31,7 +32,7 @@ export function statusLine(data) {
   const errs = Object.entries(st.errors || {});
   if (errs.length) return { tone: 'warn', text: 'Could not read ' + errs.map(([k]) => k).join(', ') + ': ' + errs[0][1] };
   if (!st.last_poll) return { tone: 'muted', text: 'Connected. Waiting for the first reading.' };
-  return { tone: 'good', text: 'Reading ' + (d.address || productName(d)) + (d.read_only ? ' (read only).' : ' (changes allowed).') };
+  return { tone: 'good', text: 'Reading ' + where + (d.read_only ? ' (read only).' : ' (changes allowed).') };
 }
 
 // targetOf picks what a flow is about: the name when there is one,

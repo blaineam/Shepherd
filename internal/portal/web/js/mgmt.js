@@ -92,6 +92,7 @@ export function createMgmt(api) {
     unifiEnabled: (enabled) => post('/api/routerusage/unifi/enabled', { enabled }),
     unifiForget: () => api('/api/routerusage/unifi', { method: 'DELETE' }),
     firewallaConnect: (body) => post('/api/routerusage/firewalla', body),
+    firewallaLocalConnect: () => post('/api/backend/firewalla-local', {}),
     firewallaEnabled: (enabled) => post('/api/routerusage/firewalla/enabled', { enabled }),
     firewallaForget: () => api('/api/routerusage/firewalla', { method: 'DELETE' }),
     routerUsageSyncNames: (overwriteNames, dryRun) => post('/api/routerusage/names', { overwrite_names: overwriteNames, dry_run: dryRun }),

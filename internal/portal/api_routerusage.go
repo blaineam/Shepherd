@@ -43,6 +43,9 @@ func (s *Server) routerUsageJSON() map[string]any {
 		out["source"] = "firewalla"
 		out["network"] = f.Box
 		out["enabled"] = f.Enabled
+		// On the box itself traffic is read as it happens; through MSP it
+		// arrives minutes late, and the screen says so.
+		out["local"] = f.Local
 	}
 	// A UniFi controller keeps real byte counters, so when both are
 	// connected it is the one in effect, and the one the screen shows.

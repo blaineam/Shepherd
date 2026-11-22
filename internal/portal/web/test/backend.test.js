@@ -16,6 +16,8 @@ test('the status line says what is wrong in order of what to fix first', () => {
   assert.match(statusLine({ available: true, connected: true, enabled: false, address: 'https://a.firewalla.net' }).text, /switched off/);
   assert.deepEqual(statusLine({ available: true, connected: true, enabled: true, error: 'bad address' }), { tone: 'bad', text: 'bad address' });
   assert.equal(statusLine({ available: true, connected: true, enabled: true, running: false }).text, 'Starting.');
+  assert.match(statusLine({ available: true, connected: true, enabled: false, local: true, address: 'http://127.0.0.1:8834' }).text, /this Firewalla box, but switched off/);
+  assert.equal(statusLine({ available: true, connected: true, enabled: true, running: true, local: true, read_only: true, status: { last_poll: 'x' } }).text, 'Reading this Firewalla box (read only).');
   assert.equal(statusLine({ available: true, connected: true, enabled: true, running: true, status: { needs_token: true } }).tone, 'bad');
   const warn = statusLine({ available: true, connected: true, enabled: true, running: true, status: { errors: { flows: 'HTTP 500' } } });
   assert.equal(warn.tone, 'warn');

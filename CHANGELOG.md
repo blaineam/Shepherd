@@ -15,6 +15,13 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Added
 
+- **Shepherd on a Firewalla box reads the box directly** ([docs/BACKENDS.md](docs/BACKENDS.md#firewalla-on-the-box)).
+  Run on the box itself, Shepherd offers **Use this box** under Connections: no MSP account and no
+  token, requests and bandwidth as the traffic happens rather than six minutes late, every rule
+  listed, and it knows which device names a person typed. It reads the API the box serves to its
+  own app on loopback, which is not published and can change with firmware; only calls checked
+  against a running box are made, and it refuses any address that is not loopback. Creating rules
+  and reading blocked requests still need MSP.
 - **Device names kept the same everywhere** ([docs/BACKENDS.md](docs/BACKENDS.md#device-names)). A new
   **Device names** card on the Router screen matches devices by MAC address across Shepherd, a
   connected Firewalla and an eero account. The first sync keeps the most readable name for each

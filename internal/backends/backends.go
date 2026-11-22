@@ -185,11 +185,21 @@ type Device struct {
 	Box string
 	// Native is the product's own identifier, which a rename needs.
 	Native string
+	// NameFrom says where Name came from when the product can tell:
+	// NameTyped for one a person set, NameLearned for one the device
+	// reported. Empty when it cannot, which is most products.
+	NameFrom string
 	// Blocked is true for a device Shepherd cut off. The product stops
 	// listing a blocked client, so the hub remembers it and keeps it on
 	// the list until it is unblocked.
 	Blocked bool
 }
+
+// Where a device's name came from; see Device.NameFrom.
+const (
+	NameTyped   = "typed"
+	NameLearned = "learned"
+)
 
 // DeviceRef identifies a device for a write.
 type DeviceRef struct {
