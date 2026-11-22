@@ -22,6 +22,12 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   own app on loopback, which is not published and can change with firmware; only calls checked
   against a running box are made, and it refuses any address that is not loopback. Creating rules
   and reading blocked requests still need MSP.
+- **Blocked traffic on the map, and arcs sized by bytes** ([docs/BACKENDS.md](docs/BACKENDS.md#firewalla-on-the-box)).
+  Read on the box, a Firewalla's blocked-traffic log is now read beside its flows, so what it turned
+  away shows in Activity, History and on the map: both what a device inside tried and what arrived at
+  the WAN port from outside. A blocked connection is drawn in red to where it was going or came from,
+  on an arc of its own. Requests read from a router carry the bytes they moved, and the map sizes its
+  arcs by them. History gains a 30 days range.
 - **A router API, described by OpenAPI** ([docs/API.md](docs/API.md)). `/api/v1` is one small REST API
   over whatever router or firewall is connected: devices, groups, rules, alarms and requests, with
   renaming, moving, blocking, pausing and deleting where the product can. The calls are the same for
@@ -122,6 +128,9 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Fixed
 
+- **"Queries" no longer reads zero over a network full of traffic.** Requests read from a router went
+  into the log but not into the running counters, so in dashboard mode the tiles showed nothing.
+  They are counted now, blocked ones included.
 - **Network health no longer stays "degraded" after a restart.** The alarm is closed by the tracker
   that raised it, and a restart made a new tracker that knew nothing of it, so an alarm open at a
   restart was never closed however healthy the network. A new tracker now picks up an open alarm and

@@ -5,6 +5,7 @@ export const RANGES = [
   { id: '1h', label: 'Last hour', ms: 3600000 },
   { id: '24h', label: '24 hours', ms: 86400000 },
   { id: '7d', label: '7 days', ms: 7 * 86400000 },
+  { id: '30d', label: '30 days', ms: 30 * 86400000 },
   { id: 'custom', label: 'Custom', ms: 0 },
 ];
 

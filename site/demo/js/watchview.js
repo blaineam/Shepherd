@@ -10,7 +10,7 @@ import { unavailable } from './mgmt.js?v=5493c5e5';
 import {
   statusHeadline, relayLabel, relayExplanation, ipv6Line, fmtBitsPerSecond, fmtPacketsPerSecond, fmtTotalBytes,
   summarize, sortByTraffic, watchedDevices, historyLine, canKill,
-} from './watch.js?v=79562f0e';
+} from './watch.js?v=51704dfa';
 
 const POLL_MS = 2000;
 

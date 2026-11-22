@@ -1,7 +1,7 @@
 // HUD state: lanes, filters, counters and recent events. Pure logic, no DOM.
 import { ACTIONS } from './entry.js?v=de62f770';
-import { LaneTable } from './lanes.js?v=f5cde51a';
-import { hasBytes } from './weight.js?v=8da15ceb';
+import { LaneTable } from './lanes.js?v=2f283257';
+import { hasBytes } from './weight.js?v=7b9bc8df';
 
 export class Model {
   constructor({ laneCap = 300, recentCap = 400, halfLifeMs = 40000 } = {}) {
@@ -77,7 +77,10 @@ export class Model {
     this.touched.length = 0;
     if (e.dests) this.withDests++; else this.withoutDests++;
     if (!this.matches(e)) return 'filtered';
-    if (e.action === 'blocked') return 'blocked';
+    // A blocked lookup has nowhere to draw to, so it pulses at home. A
+    // blocked connection does: the firewall knows where it was going, or
+    // where it came from, and it is drawn there in the blocked colour.
+    if (e.action === 'blocked' && !e.dests) return 'blocked';
     if (!e.dests) return 'nodest';
     if (hasBytes(e) && this.lanes.mode !== 'bytes') this.lanes.setMode('bytes');
     this.lanes.add(e, this.touched);

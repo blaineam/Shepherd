@@ -53,7 +53,9 @@ wrong on a router turned off:
 | Self-update | the installer is how it is upgraded here |
 
 Devices, requests, alarms, rules and bandwidth all come from the box. History is kept encrypted on disk
-(14 days, at most 1 GB) so the History screen and the map's replay survive a restart.
+(14 days, at most 1 GB) so the History screen and the map's replay survive a restart. To keep more,
+raise `retention_days` and `max_mb` under `[history]` in `/data/shepherd/shepherd.toml` and restart;
+a busy household's traffic, blocked attempts included, runs to a few tens of megabytes a day.
 
 ## Tailscale and the reverse proxy
 

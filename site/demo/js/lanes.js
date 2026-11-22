@@ -3,7 +3,7 @@
 // look visibly thicker than one-off lookups. Lanes live in fixed slots so the
 // renderer can map them onto instanced GPU buffers without reallocation.
 import { destKey } from './entry.js?v=de62f770';
-import { entryWeight, MODES } from './weight.js?v=8da15ceb';
+import { entryWeight, MODES } from './weight.js?v=7b9bc8df';
 import { latLonToVec3, greatCircleAngle, arcLift } from './geo.js?v=248f9f1a';
 
 const MAX_DOMAINS = 8;
@@ -81,7 +81,10 @@ export class LaneTable {
     const now = entry.t;
     for (let i = 0; i < n; i++) {
       const d = entry.dests[i];
-      const key = entry.client + '|' + destKey(d);
+      // Blocked traffic gets a lane of its own, so one place can show both
+      // what got through and what was turned away rather than flickering
+      // between the two colours.
+      const key = entry.client + '|' + destKey(d) + (entry.action === 'blocked' ? '|blocked' : '');
       let lane = this.byKey.get(key);
       if (!lane) {
         if (!this.free.length) this._evictOldest();

@@ -363,27 +363,28 @@ func (c *Client) Devices(ctx context.Context) ([]backends.Device, error) {
 	return out, nil
 }
 
-// flowPage is how many flows the box returns per call.
+// flowPage is how many records the box returns per call.
 const flowPage = 100
 
-// Flows implements backends.FlowReader. The box pages by time: a page's
-// Next is the time to read up to on the following call. Blocked flows are
-// not included; the box keeps them in a separate log this does not read.
+// The box keeps two logs: flows, which are the connections it let
+// through, and an audit log, which are the ones it turned away, including
+// those that arrived at the WAN port from outside. Flows reads both and
+// returns them as one list, newest first.
+//
+// Each log pages by time: a page's last record tells where the next call
+// reads up to. The cursor carries both positions as "flows,audit"; a
+// position of "-" means that log has nothing older in the range.
+const logDone = "-"
+
+// Flows implements backends.FlowReader.
 func (c *Client) Flows(ctx context.Context, fq backends.FlowQuery) (backends.FlowPage, error) {
-	q := url.Values{}
-	if !fq.From.IsZero() {
-		q.Set("start", strconv.FormatInt(fq.From.Unix(), 10))
-	}
-	end := fq.To
+	ends := [2]string{"", ""}
 	if fq.Cursor != "" {
-		sec, err := strconv.ParseFloat(fq.Cursor, 64)
-		if err != nil || sec <= 0 {
+		a, b, ok := strings.Cut(fq.Cursor, ",")
+		if !ok || !validLogPos(a) || !validLogPos(b) {
 			return backends.FlowPage{}, fmt.Errorf("%w: that is not a page of requests", backends.ErrInvalid)
 		}
-		end = time.Unix(int64(sec), 0)
-	}
-	if !end.IsZero() {
-		q.Set("end", strconv.FormatInt(end.Unix(), 10))
+		ends = [2]string{a, b}
 	}
 	target := ""
 	if fq.DeviceMAC != "" {
@@ -392,37 +393,82 @@ func (c *Client) Flows(ctx context.Context, fq backends.FlowQuery) (backends.Flo
 			return backends.FlowPage{}, fmt.Errorf("%w: that is not a device address", backends.ErrInvalid)
 		}
 	}
-	var raw struct {
-		Flows  []wireFlow `json:"flows"`
-		NextTS flex       `json:"nextTs"`
-	}
-	if err := c.call(ctx, "get", "flows", target, q, nil, &raw); err != nil {
-		return backends.FlowPage{}, err
-	}
 	c.mu.Lock()
 	names := c.names
 	c.mu.Unlock()
-	out := backends.FlowPage{Flows: make([]backends.Flow, 0, len(raw.Flows))}
-	for _, f := range raw.Flows {
-		mac := routerusage.NormalizeMAC(f.Device)
-		fl := backends.Flow{
-			Time: f.TS.time(), DeviceMAC: mac, Device: names[mac], DeviceIP: f.DeviceIP,
-			RemoteIP: f.IP, Protocol: f.Protocol,
-			// "in" is a connection a device inside opened, which is outbound.
-			Outbound: f.FD != "out",
-			Download: f.Download.bytes(), Upload: f.Upload.bytes(),
-			Category: f.Category, Country: f.Country, Count: int(f.Count.float()),
+
+	var out backends.FlowPage
+	next := [2]string{logDone, logDone}
+	for i, item := range []string{"flows", "auditLogs"} {
+		if ends[i] == logDone {
+			continue
 		}
-		if f.Host != "" && f.Host != f.IP {
-			fl.Domain = strings.ToLower(strings.TrimSuffix(f.Host, "."))
+		q := url.Values{}
+		if !fq.From.IsZero() {
+			q.Set("start", strconv.FormatInt(fq.From.Unix(), 10))
 		}
-		out.Flows = append(out.Flows, fl)
+		end := fq.To
+		if ends[i] != "" {
+			sec, _ := strconv.ParseFloat(ends[i], 64)
+			end = time.Unix(int64(sec), 0)
+		}
+		if !end.IsZero() {
+			q.Set("end", strconv.FormatInt(end.Unix(), 10))
+		}
+		var raw struct {
+			Flows  []wireFlow `json:"flows"`
+			Logs   []wireFlow `json:"logs"`
+			NextTS flex       `json:"nextTs"`
+		}
+		if err := c.call(ctx, "get", item, target, q, nil, &raw); err != nil {
+			// The audit log is worth having, not worth losing the flows over.
+			if item == "auditLogs" {
+				continue
+			}
+			return backends.FlowPage{}, err
+		}
+		records := append(raw.Flows, raw.Logs...)
+		for _, f := range records {
+			out.Flows = append(out.Flows, toFlow(f, names, item == "auditLogs"))
+		}
+		// A full page means there may be older records still in the range.
+		if n := raw.NextTS.float(); len(records) >= flowPage && n > 0 && (fq.From.IsZero() || n > float64(fq.From.Unix())) {
+			next[i] = strconv.FormatFloat(n, 'f', 3, 64)
+		}
 	}
-	// A full page means there may be older flows still inside the range.
-	if next := raw.NextTS.float(); len(raw.Flows) >= flowPage && next > 0 && (fq.From.IsZero() || next > float64(fq.From.Unix())) {
-		out.Next = strconv.FormatFloat(next, 'f', 3, 64)
+	sort.SliceStable(out.Flows, func(i, j int) bool { return out.Flows[i].Time.After(out.Flows[j].Time) })
+	if next != [2]string{logDone, logDone} {
+		out.Next = next[0] + "," + next[1]
 	}
 	return out, nil
+}
+
+func validLogPos(s string) bool {
+	if s == logDone {
+		return true
+	}
+	sec, err := strconv.ParseFloat(s, 64)
+	return err == nil && sec > 0
+}
+
+// toFlow turns one record of either log into a Flow. A record the box
+// turned away at the WAN port names the WAN interface where a device would
+// be; it has no device.
+func toFlow(f wireFlow, names map[string]string, blocked bool) backends.Flow {
+	mac := routerusage.NormalizeMAC(f.Device)
+	fl := backends.Flow{
+		Time: f.TS.time(), DeviceMAC: mac, Device: names[mac], DeviceIP: f.DeviceIP,
+		RemoteIP: f.IP, Protocol: f.Protocol,
+		// "in" is a connection a device inside opened, which is outbound;
+		// "out" is one that came from outside.
+		Outbound: f.FD != "out", Blocked: blocked,
+		Download: f.Download.bytes(), Upload: f.Upload.bytes(),
+		Category: f.Category, Country: f.Country, Count: int(f.Count.float()),
+	}
+	if f.Host != "" && f.Host != f.IP {
+		fl.Domain = strings.ToLower(strings.TrimSuffix(f.Host, "."))
+	}
+	return fl
 }
 
 // Alarms implements backends.AlarmReader. The box returns its active

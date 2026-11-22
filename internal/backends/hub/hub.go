@@ -375,9 +375,13 @@ func (h *Hub) flowEntry(f backends.Flow) dnsengine.Entry {
 	e := dnsengine.Entry{
 		Time: f.Time, Client: f.DeviceIP, Device: f.Device, Name: name,
 		Type: "FLOW", Action: "allowed", Upstream: h.o.Backend.Name(),
+		BytesUp: f.Upload, BytesDown: f.Download, Inbound: !f.Outbound,
 	}
 	if f.Blocked {
 		e.Action, e.Reason = "blocked", h.o.Backend.Name()
+		if !f.Outbound {
+			e.Reason += ": inbound, turned away"
+		}
 	}
 	if h.o.Resolve != nil {
 		e.DeviceID = h.o.Resolve(f.DeviceMAC, f.DeviceIP)

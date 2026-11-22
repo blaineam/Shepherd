@@ -5,7 +5,7 @@ import { $, el } from './dom.js?v=65858b99';
 import { fmtNum, fmtPct, fmtClock, fmtDateTime, fmtAgo } from './format.js?v=86b54455';
 import { placeName, deviceLabel } from './entry.js?v=de62f770';
 import { shadowNote } from './wander.js?v=b40b3e3f';
-import { weightScale, weightFromScale, widthPx, legendText, fmtWeight, fmtBytes } from './weight.js?v=8da15ceb';
+import { weightScale, weightFromScale, widthPx, legendText, fmtWeight, fmtBytes } from './weight.js?v=7b9bc8df';
 
 const FEED_MAX = 60;
 

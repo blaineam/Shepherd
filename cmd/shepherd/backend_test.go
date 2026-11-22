@@ -509,3 +509,26 @@ func TestStoppingAServerDoesNotWaitForAStreamThatNeverEnds(t *testing.T) {
 		t.Error("an idle server took its whole grace to stop")
 	}
 }
+
+// Requests read from the router count in the totals the portal's tiles
+// read, not only in the log.
+func TestRequestsFromTheRouterAreCounted(t *testing.T) {
+	engine := &dnsengine.Engine{Log: dnsengine.NewQueryLog(10), Stats: dnsengine.NewStats()}
+	m := startBackend(context.Background(), testSecrets(t), nil, engine, nil, t.TempDir())
+	defer m.Stop()
+	m.ingest(dnsengine.Entry{Client: "192.0.2.5", Name: "a.example", Type: "FLOW", Action: "allowed", BytesDown: 4000})
+	m.ingest(dnsengine.Entry{Client: "192.0.2.5", Name: "b.example", Type: "FLOW", Action: "blocked", Reason: "firewalla"})
+	snap := engine.Stats.Snapshot()
+	if snap.Total != 2 || snap.Blocked != 1 {
+		t.Fatalf("stats = %+v", snap)
+	}
+	if got, _ := engine.Log.After(0, 10); len(got) != 2 || got[0].BytesDown != 4000 {
+		t.Fatalf("log = %+v", got)
+	}
+	// A manager built without counters still logs.
+	bare := &backendManager{qlog: dnsengine.NewQueryLog(5)}
+	bare.ingest(dnsengine.Entry{Name: "c.example"})
+	if got, _ := bare.qlog.After(0, 5); len(got) != 1 {
+		t.Fatalf("log = %+v", got)
+	}
+}

@@ -75,3 +75,21 @@ test('byte and weight formatting', () => {
   assert.equal(fmtWeight(49.6, 'lookups'), '50');
   assert.equal(fmtWeight(2048, 'bytes'), '2.0 KB');
 });
+
+test('a blocked request weighs just enough to be drawn when arcs are sized by bytes', async () => {
+  const { BLOCKED_BYTES } = await import('../js/weight.js');
+  assert.equal(entryWeight({ action: 'blocked' }, 'bytes'), BLOCKED_BYTES);
+  assert.equal(entryWeight({ action: 'blocked', bytes_up: 0, bytes_down: 0 }, 'bytes'), BLOCKED_BYTES);
+  // One that did move something keeps its own weight, and an allowed one
+  // that moved nothing stays undrawn.
+  assert.equal(entryWeight({ action: 'blocked', bytes_up: 9000 }, 'bytes'), 9000);
+  assert.equal(entryWeight({ action: 'allowed' }, 'bytes'), 0);
+  assert.ok(weightScale(BLOCKED_BYTES, 'bytes') > 0);
+  assert.ok(weightScale(BLOCKED_BYTES, 'bytes') < weightScale(1e6, 'bytes'));
+});
+
+test('a request read from a router is sized by bytes even when it moved none', () => {
+  assert.equal(hasBytes({ type: 'FLOW' }), true);
+  assert.equal(hasBytes({ type: 'A' }), false);
+  assert.equal(detectMode({ type: 'FLOW' }), 'bytes');
+});

@@ -53,6 +53,14 @@ type Entry struct {
 	// Shadow names what would have blocked it, when something would have.
 	Wandering bool   `json:"wandering,omitempty"`
 	Shadow    string `json:"shadow,omitempty"`
+	// BytesUp and BytesDown are what a request moved, when it is one read
+	// from a router (Type "FLOW") rather than a lookup Shepherd answered.
+	// The map sizes its arcs by them.
+	BytesUp   uint64 `json:"bytes_up,omitempty"`
+	BytesDown uint64 `json:"bytes_down,omitempty"`
+	// Inbound marks a request that came from outside towards this network,
+	// such as one the firewall turned away at the WAN port.
+	Inbound bool `json:"inbound,omitempty"`
 }
 
 // QueryLog is a fixed-size in-memory ring. It never writes to disk itself; a

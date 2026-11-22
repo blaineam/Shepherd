@@ -88,3 +88,27 @@ test('reset clears state', () => {
   assert.equal(m.clients.size, 0);
   assert.equal(m.blockedPct, 0);
 });
+
+test('a blocked connection that has a place is drawn there; a blocked lookup pulses at home', () => {
+  const m = new Model();
+  // A lookup the filter refused: nowhere to draw to.
+  assert.equal(m.ingest(E({ action: 'blocked', dests: undefined })), 'blocked');
+  // A connection the firewall turned away, with the far end known.
+  const dest = [{ lat: 52, lon: 5, city: 'Amsterdam', country: 'NL' }];
+  assert.equal(m.ingest(E({ action: 'blocked', type: 'FLOW', inbound: true, dests: dest })), 'lane');
+  assert.equal(m.touched.length, 1);
+  assert.equal(m.touched[0].action, 'blocked');
+  assert.equal(m.counters.blocked, 2);
+
+  // Allowed traffic to the same place keeps its own lane, so the two
+  // colours do not fight over one arc.
+  assert.equal(m.ingest(E({ type: 'FLOW', bytes_down: 50000, dests: dest })), 'lane');
+  const allowed = m.touched[0];
+  assert.equal(allowed.action, 'allowed');
+  assert.equal(m.lanes.byKey.size, 2);
+  m.ingest(E({ action: 'blocked', type: 'FLOW', dests: dest }));
+  assert.equal(m.touched[0].action, 'blocked');
+  assert.equal(allowed.action, 'allowed');
+  assert.equal(m.lanes.byKey.size, 2);
+  assert.equal(m.lanes.mode, 'bytes');
+});

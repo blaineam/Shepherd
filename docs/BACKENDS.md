@@ -181,14 +181,15 @@ Compared with MSP:
 | Requests and bandwidth | as the traffic happens | about six minutes late, in batches |
 | Rules listed | all of them | the ones MSP exposes |
 | Device names | knows which a person typed | cannot tell |
-| Blocked requests | not read yet | included |
+| Blocked requests | read, including those turned away at the WAN port | included |
 | Create a rule | not built | yes |
 | Published API | **no** | yes |
 
 That last row is the cost. The local API is not published: it is read from Firewalla's open source
 (`controllers/netbot.js`, `api/routes/encipher.js` in github.com/firewalla/firewalla) and a firmware
 update can change it. Shepherd makes only the calls that were checked against a running box:
-`get hosts`, `get flows`, `get alarms`, `get policies`, and, behind **Allow changes**,
+`get hosts`, `get flows`, `get auditLogs` (what the box blocked), `get alarms`, `get policies`,
+`get tags`, and, behind **Allow changes**,
 `set host` (rename), `cmd policy:enable`, `policy:disable`, `policy:delete` and `alarm:delete`.
 
 The API has no authentication, which is safe only because it listens on loopback. Shepherd

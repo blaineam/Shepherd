@@ -2,7 +2,7 @@
 // policy, upstreams, history). Used only in demo mode so every screen works
 // with no backend. All data is synthetic; state lives in memory.
 import { ApiError } from './api.js?v=798e1c8c';
-import { parseQuery, matchDevice, sortDevices } from './search.js?v=6d6c330f';
+import { parseQuery, matchDevice, sortDevices } from './search.js?v=981c415a';
 import { applyBulkLocal, normTag } from './bulk.js?v=59d2b697';
 import { applyModeLocal } from './wander.js?v=b40b3e3f';
 import { buildDevices, fallbackName, DEMO_GROUPS, DEMO_CATALOG, DEMO_SWITCHES, DEMO_PRESETS } from './demodata.js?v=1f5ce92d';

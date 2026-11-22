@@ -32,10 +32,13 @@ var errNoBackend = errors.New("no router or firewall is connected")
 // Shepherd whose owner never connected one does no work and holds no
 // credentials.
 type backendManager struct {
-	parent  context.Context
-	sec     *secrets.Store
-	reg     *devices.Registry
-	qlog    *dnsengine.QueryLog
+	parent context.Context
+	sec    *secrets.Store
+	reg    *devices.Registry
+	qlog   *dnsengine.QueryLog
+	// stats are the running counters the portal's tiles read. A request
+	// read from the router counts there like a lookup Shepherd answered.
+	stats   *dnsengine.Stats
 	alarms  *alarms.Engine
 	dataDir string
 	// geo places a flow's remote address on the map; it returns nil when
@@ -57,7 +60,7 @@ type backendManager struct {
 }
 
 func startBackend(ctx context.Context, sec *secrets.Store, reg *devices.Registry, engine *dnsengine.Engine, al *alarms.Engine, dataDir string) *backendManager {
-	m := &backendManager{parent: ctx, sec: sec, reg: reg, qlog: engine.Log, alarms: al, dataDir: dataDir,
+	m := &backendManager{parent: ctx, sec: sec, reg: reg, qlog: engine.Log, stats: engine.Stats, alarms: al, dataDir: dataDir,
 		geo: func() dnsengine.Geo { return engine.Geo }}
 	m.Reload()
 	return m
@@ -129,7 +132,7 @@ func (m *backendManager) Reload() {
 		return
 	}
 	h := hub.New(hub.Options{
-		Backend: conn.backend, FlowSink: m.qlog.Add, AlarmSink: m.raise,
+		Backend: conn.backend, FlowSink: m.ingest, AlarmSink: m.raise,
 		Resolve:      m.resolve,
 		Locate:       m.locate,
 		StatePath:    filepath.Join(m.dataDir, "backend-"+conn.name+".json"),
@@ -171,6 +174,17 @@ func (m *backendManager) canRename() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.cur != nil && m.rename
+}
+
+// ingest records one request read from the router: in the log, which feeds
+// the live view and the history, and in the counters, which feed the
+// tiles. Leaving the counters out is what made "Queries" read zero over a
+// network full of traffic.
+func (m *backendManager) ingest(e dnsengine.Entry) {
+	m.qlog.Add(e)
+	if m.stats != nil {
+		m.stats.Record(e)
+	}
 }
 
 // locate places an address on the map, when the map is on and knows it.

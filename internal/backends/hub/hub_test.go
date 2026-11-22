@@ -198,6 +198,18 @@ func TestFlowsBecomeHistoryEntriesOldestFirstWithTheDeviceResolved(t *testing.T)
 	if b.Name != "b.example" || b.Action != "blocked" || b.Reason != "fakewall" {
 		t.Fatalf("b = %+v", b)
 	}
+	// The bytes travel with the entry, for the map to size its arcs by.
+	if a.BytesDown != 100 || a.BytesUp != 10 || a.Inbound || b.Inbound {
+		t.Fatalf("a = %+v", a)
+	}
+	// One turned away on its way in says so.
+	in := flow(996, "", true, 0, 0)
+	in.Outbound = false
+	f.flows = []backends.Flow{in}
+	h.Refresh(ctx)
+	if e := s.entries[len(s.entries)-1]; !e.Inbound || e.Action != "blocked" || e.Reason != "fakewall: inbound, turned away" {
+		t.Fatalf("inbound = %+v", e)
+	}
 	// A flow with no domain is shown by address.
 	f.flows = []backends.Flow{flow(995, "", false, 1, 1)}
 	h.Refresh(ctx)

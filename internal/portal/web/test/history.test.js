@@ -14,7 +14,8 @@ test('rangeFor presets and custom', () => {
   assert.equal(c.to - c.from, 6 * 3600000);
   assert.deepEqual(rangeFor('custom', NOW, { from: '', to: 'x' }), { from: NOW - 86400000, to: NOW });
   assert.deepEqual(rangeFor('custom', NOW), { from: NOW - 86400000, to: NOW });
-  assert.equal(RANGES.length, 4);
+  assert.deepEqual(rangeFor('30d', NOW), { from: NOW - 30 * 86400000, to: NOW });
+  assert.equal(RANGES.length, 5);
 });
 
 test('buildQuery includes only the filters that are set', () => {

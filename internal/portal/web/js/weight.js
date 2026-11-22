@@ -24,7 +24,7 @@ export function weightFromScale(s, mode = 'lookups') {
 }
 
 export function hasBytes(e) {
-  return Number.isFinite(e.bytes_up) || Number.isFinite(e.bytes_down);
+  return Number.isFinite(e.bytes_up) || Number.isFinite(e.bytes_down) || e.type === 'FLOW';
 }
 
 export function detectMode(e) {
@@ -33,9 +33,18 @@ export function detectMode(e) {
 
 // Weight one entry contributes in the given mode.
 export function entryWeight(e, mode) {
-  if (mode === 'bytes') return Math.max(0, (e.bytes_up || 0) + (e.bytes_down || 0));
+  if (mode === 'bytes') {
+    const bytes = Math.max(0, (e.bytes_up || 0) + (e.bytes_down || 0));
+    // Something turned away moved nothing, and a weight of nothing is not
+    // drawn. It still happened, so it gets the thinnest line there is.
+    return bytes > 0 || e.action !== 'blocked' ? bytes : BLOCKED_BYTES;
+  }
   return 1;
 }
+
+// BLOCKED_BYTES is what a blocked request weighs when arcs are sized by
+// bytes: enough to draw a hairline, too little to compete with real traffic.
+export const BLOCKED_BYTES = 2048;
 
 // Pixel widths: a lone lookup is a hairline, the heaviest lane is chunky.
 export const MIN_WIDTH = 1.1;

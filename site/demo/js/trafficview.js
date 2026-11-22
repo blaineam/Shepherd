@@ -8,12 +8,12 @@
 import { el } from './dom.js?v=65858b99';
 import { button, emptyState, unavailableCard, segmented } from './ui.js?v=4d208003';
 import { unavailable } from './mgmt.js?v=5493c5e5';
-import { createRouterUsage } from './routerusageview.js?v=97311195';
+import { createRouterUsage } from './routerusageview.js?v=e13407a3';
 import {
   RANGE_PRESETS, rangeWindow, scopeOptions, scopeLabel, fillSeries, sumPoints, bucketRate, timeLabels,
   shareOf, statusHeadline, liveRows, liveRowsNote, DOWNLOAD_CAVEAT, measurementNote, tileLabels, liveChartCaption, startOfToday, todayTotals, showWatchSection, readingNow, fmtBytes, fmtBitsPerSecond,
   niceCeil, yTicks, lineArea, nearestIndex, pushSample, shareSlices, arcPath, rateStats,
-} from './traffic.js?v=78c1c3df';
+} from './traffic.js?v=02b19a80';
 
 const POLL_MS = 2000;
 const TODAY_MS = 30000;

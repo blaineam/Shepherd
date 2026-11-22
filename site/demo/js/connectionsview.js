@@ -10,7 +10,7 @@
 import { el } from './dom.js?v=65858b99';
 import { button, confirmDialog } from './ui.js?v=4d208003';
 import { KINDS, connectionState, bandwidthNote, toggleLabel } from './connections.js?v=1bf85ac9';
-import { nameSyncSummary } from './traffic.js?v=78c1c3df';
+import { nameSyncSummary } from './traffic.js?v=02b19a80';
 
 export function createConnections({ mgmt, notify, onChanged = () => {} }) {
   const root = el('section', 'card bk-card cn');

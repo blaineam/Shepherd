@@ -132,7 +132,7 @@ func TestDevicesKnowATypedNameFromALearnedOne(t *testing.T) {
 	}
 }
 
-func TestFlowsArePagedByTimeAndNamedFromTheDeviceList(t *testing.T) {
+func TestFlowsAndBlockedTrafficAreReadTogetherAndPagedByTime(t *testing.T) {
 	var many []string
 	for i := 0; i < flowPage; i++ {
 		many = append(many, fmt.Sprintf(`{"ts":%d.25,"fd":"in","count":2,"protocol":"tcp","ip":"198.51.100.7","deviceIP":"192.0.2.5",
@@ -141,6 +141,11 @@ func TestFlowsArePagedByTimeAndNamedFromTheDeviceList(t *testing.T) {
 	f := &fakeBox{answers: map[string]string{
 		"get hosts": ok(`{"hosts":[{"mac":"02:00:5E:00:00:01","name":"Den TV"}]}`),
 		"get flows": ok(`{"flows":[` + strings.Join(many, ",") + `],"count":100,"nextTs":1795299891.25}`),
+		// What the box turned away: one from outside at the WAN port, one
+		// a device inside tried.
+		"get auditLogs": ok(`{"logs":[
+		 {"ltype":"audit","ts":1795299995.5,"fd":"out","protocol":"udp","ip":"203.0.113.9","deviceIP":"198.51.100.200","device":"if:wan-uuid","country":"NL","count":3},
+		 {"ltype":"audit","ts":1795299900,"fd":"in","protocol":"tcp","ip":"203.0.113.10","device":"02:00:5E:00:00:01","host":"ads.example"}],"nextTs":1795299900}`),
 	}}
 	c := newClient(t, f, true)
 	ctx := context.Background()
@@ -149,36 +154,63 @@ func TestFlowsArePagedByTimeAndNamedFromTheDeviceList(t *testing.T) {
 	}
 	from, to := testNow.Add(-10*time.Minute), testNow
 	page, err := c.Flows(ctx, backends.FlowQuery{From: from, To: to})
-	if err != nil || len(page.Flows) != flowPage || page.Next != "1795299891.250" {
-		t.Fatalf("page = %d flows, next %q, %v", len(page.Flows), page.Next, err)
+	if err != nil || len(page.Flows) != flowPage+2 {
+		t.Fatalf("page = %d flows, %v", len(page.Flows), err)
 	}
-	fl := page.Flows[0]
-	if fl.DeviceMAC != "02005e000001" || fl.Device != "Den TV" || fl.Domain != "example.org" || fl.RemoteIP != "198.51.100.7" ||
-		!fl.Outbound || fl.Blocked || fl.Download != 4000 || fl.Upload != 100 || fl.Count != 2 || fl.Country != "US" ||
+	// The flows log has more; the audit log, a short page, does not.
+	if page.Next != "1795299891.250,-" {
+		t.Fatalf("next = %q", page.Next)
+	}
+	// Newest first across both logs: the inbound block came last in time.
+	in := page.Flows[0]
+	if !in.Blocked || in.Outbound || in.DeviceMAC != "" || in.Device != "" || in.RemoteIP != "203.0.113.9" || in.Country != "NL" || in.Count != 3 || in.Time.Unix() != 1795299995 {
+		t.Errorf("inbound block = %+v", in)
+	}
+	fl := page.Flows[1]
+	if fl.Blocked || fl.DeviceMAC != "02005e000001" || fl.Device != "Den TV" || fl.Domain != "example.org" || fl.RemoteIP != "198.51.100.7" ||
+		!fl.Outbound || fl.Download != 4000 || fl.Upload != 100 || fl.Count != 2 || fl.Country != "US" ||
 		fl.Category != "av" || fl.Protocol != "tcp" || fl.Time.Unix() != 1795299990 || fl.Time.Nanosecond() == 0 {
 		t.Errorf("flow = %+v", fl)
+	}
+	var out backends.Flow
+	for _, x := range page.Flows {
+		if x.Domain == "ads.example" {
+			out = x
+		}
+	}
+	if !out.Blocked || !out.Outbound || out.Device != "Den TV" {
+		t.Errorf("outbound block = %+v", out)
+	}
+	if got := f.last(); got.Item != "auditLogs" {
+		t.Fatalf("last call = %+v", got)
 	}
 	q, _ := url.ParseQuery(f.last().Query)
 	if q.Get("start") != fmt.Sprint(from.Unix()) || q.Get("end") != fmt.Sprint(to.Unix()) || f.last().Target != "" {
 		t.Errorf("query = %v", q)
 	}
 
-	// The next page reads up to where this one stopped, for one device.
+	// The next page reads the flows up to where they stopped, for one
+	// device, and does not ask the audit log again.
+	n := f.count()
 	if _, err := c.Flows(ctx, backends.FlowQuery{From: from, To: to, Cursor: page.Next, DeviceMAC: "02005e000001"}); err != nil {
 		t.Fatal(err)
+	}
+	if f.count() != n+1 || f.last().Item != "flows" {
+		t.Fatalf("second page made %d calls, last %+v", f.count()-n, f.last())
 	}
 	q, _ = url.ParseQuery(f.last().Query)
 	if q.Get("end") != "1795299891" || f.last().Target != "02:00:5E:00:00:01" {
 		t.Errorf("second page query = %v, target %q", q, f.last().Target)
 	}
 
-	// A short page, or one that has reached the start, is the last.
+	// Short pages, or one that has reached the start, are the last.
 	f.answers["get flows"] = ok(`{"flows":[{"ts":1795299990,"fd":"out","ip":"198.51.100.7","host":"198.51.100.7","device":"02:00:5E:00:00:09","upload":-5,"download":"x"}],"nextTs":1795299980}`)
+	f.answers["get auditLogs"] = ok(`{"logs":[]}`)
 	last, err := c.Flows(ctx, backends.FlowQuery{})
 	if err != nil || last.Next != "" || len(last.Flows) != 1 {
 		t.Fatalf("last page = %+v, %v", last, err)
 	}
-	if g := last.Flows[0]; g.Outbound || g.Domain != "" || g.Device != "" || g.Upload != 0 || g.Download != 0 {
+	if g := last.Flows[0]; g.Outbound || g.Blocked || g.Domain != "" || g.Device != "" || g.Upload != 0 || g.Download != 0 {
 		t.Errorf("inbound flow = %+v", g)
 	}
 	if q, _ := url.ParseQuery(f.last().Query); q.Has("start") || q.Has("end") {
@@ -189,8 +221,32 @@ func TestFlowsArePagedByTimeAndNamedFromTheDeviceList(t *testing.T) {
 		t.Errorf("paged past the start of the range: %q", p.Next)
 	}
 
-	n := f.count()
-	for _, bad := range []backends.FlowQuery{{Cursor: "soon"}, {Cursor: "-1"}, {DeviceMAC: "nope"}} {
+	// The audit log paging on while the flows are done.
+	f.answers["get flows"] = ok(`{"flows":[]}`)
+	f.answers["get auditLogs"] = ok(`{"logs":[` + strings.Join(many, ",") + `],"nextTs":1795299800}`)
+	p, err := c.Flows(ctx, backends.FlowQuery{From: from, To: to})
+	if err != nil || p.Next != "-,1795299800.000" || !p.Flows[0].Blocked {
+		t.Fatalf("audit paging = next %q, %v", p.Next, err)
+	}
+
+	// A box whose audit log cannot be read still gives its flows; one whose
+	// flows cannot be read is an error.
+	f.answers["get flows"] = ok(`{"flows":[{"ts":1795299990,"fd":"in","device":"02:00:5E:00:00:01"}]}`)
+	f.answers["get auditLogs"] = `{"code":500,"message":"no audit log"}`
+	if p, err := c.Flows(ctx, backends.FlowQuery{}); err != nil || len(p.Flows) != 1 {
+		t.Fatalf("flows without the audit log = %+v, %v", p, err)
+	}
+	f.answers["get flows"] = ok(`{"flows":[]}`)
+	if p, err := c.Flows(ctx, backends.FlowQuery{}); err != nil || len(p.Flows) != 0 {
+		t.Fatalf("a quiet moment with a failing audit log = %+v, %v", p, err)
+	}
+	f.answers["get flows"] = `{"code":500,"message":"no flows"}`
+	if _, err := c.Flows(ctx, backends.FlowQuery{}); !errors.Is(err, backends.ErrRefused) {
+		t.Fatalf("failing flows = %v", err)
+	}
+
+	n = f.count()
+	for _, bad := range []backends.FlowQuery{{Cursor: "soon"}, {Cursor: "5,soon"}, {Cursor: "-1,-"}, {Cursor: "5"}, {DeviceMAC: "nope"}} {
 		if _, err := c.Flows(ctx, bad); !errors.Is(err, backends.ErrInvalid) {
 			t.Errorf("Flows(%+v) = %v", bad, err)
 		}

@@ -81,7 +81,10 @@ export class LaneTable {
     const now = entry.t;
     for (let i = 0; i < n; i++) {
       const d = entry.dests[i];
-      const key = entry.client + '|' + destKey(d);
+      // Blocked traffic gets a lane of its own, so one place can show both
+      // what got through and what was turned away rather than flickering
+      // between the two colours.
+      const key = entry.client + '|' + destKey(d) + (entry.action === 'blocked' ? '|blocked' : '');
       let lane = this.byKey.get(key);
       if (!lane) {
         if (!this.free.length) this._evictOldest();

@@ -3,8 +3,8 @@
 // (internal/traffic, internal/portal/api_traffic.go) owns the numbers;
 // nothing here estimates anything. Kept apart from trafficview.js so all
 // of it is unit-tested (test/traffic.test.js) with no DOM.
-import { fmtBytes } from './weight.js?v=8da15ceb';
-import { fmtBitsPerSecond } from './watch.js?v=79562f0e';
+import { fmtBytes } from './weight.js?v=7b9bc8df';
+import { fmtBitsPerSecond } from './watch.js?v=51704dfa';
 
 export { fmtBytes, fmtBitsPerSecond };
 

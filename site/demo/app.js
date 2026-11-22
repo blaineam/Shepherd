@@ -10,30 +10,30 @@ import { normalizeEntry, destKey, placeName } from './js/entry.js?v=de62f770';
 import { LiveSource } from './js/sources.js?v=e6dc9a01';
 import { ReplaySource } from './js/replay.js?v=bb8a7a3f';
 import { ReplayClock } from './js/clock.js?v=8fa6af79';
-import { Model } from './js/model.js?v=dffd8884';
-import { weightScale, entryWeight } from './js/weight.js?v=8da15ceb';
+import { Model } from './js/model.js?v=2526bb93';
+import { weightScale, entryWeight } from './js/weight.js?v=7b9bc8df';
 import { validLatLon } from './js/geo.js?v=248f9f1a';
 import { fmtClock } from './js/format.js?v=86b54455';
-import { createDetails } from './js/details.js?v=be05806c';
-import { createTiles, createFeed, createFilters, createLegend, createInspector, createTimeline } from './js/hud.js?v=46a4d6db';
+import { createDetails } from './js/details.js?v=b1866f92';
+import { createTiles, createFeed, createFilters, createLegend, createInspector, createTimeline } from './js/hud.js?v=d20dec95';
 import { createToaster } from './js/ui.js?v=4d208003';
 import { createMgmt } from './js/mgmt.js?v=5493c5e5';
 import { createNameBook } from './js/names.js?v=e79e15ee';
 import { createPolicyStore } from './js/policystore.js?v=3aa33de9';
-import { createDevices } from './js/devices.js?v=7158ff70';
+import { createDevices } from './js/devices.js?v=66e29c26';
 import { createBlocking, createDevicePolicy } from './js/blocking.js?v=9406fc24';
 import { createUpstreams } from './js/upstreamsview.js?v=17add3a0';
-import { createBackend } from './js/backendview.js?v=98ddec21';
+import { createBackend } from './js/backendview.js?v=e3172fd6';
 import { createAlarms } from './js/alarmsview.js?v=47501170';
 import { createVulnscan } from './js/vulnscanview.js?v=b108fe97';
 import { createNethealth } from './js/nethealthview.js?v=928c11f7';
-import { createWatch } from './js/watchview.js?v=3c8a1e6a';
-import { createTraffic } from './js/trafficview.js?v=b1641144';
+import { createWatch } from './js/watchview.js?v=377b9966';
+import { createTraffic } from './js/trafficview.js?v=42102add';
 import { createReverseProxy } from './js/reverseproxyview.js?v=0ea59d8f';
 import { createDhcp } from './js/dhcpview.js?v=7427fa9d';
-import { createHistory } from './js/historyview.js?v=d7bab8f4';
+import { createHistory } from './js/historyview.js?v=1a23f2a3';
 import { createAccountability } from './js/accountability.js?v=c8e7c24c';
-import { createDemoMgmt } from './js/demomgmt.js?v=42e68043';
+import { createDemoMgmt } from './js/demomgmt.js?v=8d4adbef';
 import { DEVICE_BY_IP } from './js/demodata.js?v=1f5ce92d';
 import { createLocking } from './js/lockingview.js?v=22b45a24';
 import { lockedURL, unlockedURL, signInOrder, autoTryPasskey, methodLabel } from './js/locking.js?v=198c7ce4';
@@ -743,7 +743,7 @@ async function initGlobe() {
   let map = null;
   if (params.get('nogl') !== '1') {
     try {
-      const { Globe, webglAvailable } = await import('./js/globe.js?v=155edfa1');
+      const { Globe, webglAvailable } = await import('./js/globe.js?v=7b0e6b01');
       if (webglAvailable()) map = new Globe($('#stage'), opts);
     } catch (err) {
       if (DEBUG) console.warn('3d globe unavailable:', err && err.message);
@@ -751,7 +751,7 @@ async function initGlobe() {
   }
   const flat = !map;
   if (flat) {
-    const { FlatMap, canvas2dAvailable } = await import('./js/flatmap.js?v=1f55b3c4');
+    const { FlatMap, canvas2dAvailable } = await import('./js/flatmap.js?v=e52a46c9');
     if (!canvas2dAvailable()) throw new Error('no canvas');
     map = new FlatMap($('#stage'), opts);
     document.body.classList.add('flatmap');

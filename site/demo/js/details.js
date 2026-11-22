@@ -5,7 +5,7 @@
 // so every value is placed with textContent, never innerHTML.
 import { $, el } from './dom.js?v=65858b99';
 import { fmtNum, fmtUptime } from './format.js?v=86b54455';
-import { updateLine, rollbackLine, dataDirLine, overBudget } from './update.js?v=cc2fe6cd';
+import { updateLine, rollbackLine, dataDirLine, overBudget } from './update.js?v=6cfa994b';
 
 export function createDetails({ api, notify, onRulesChanged = () => {} }) {
   function fillList(id, items, build) {
