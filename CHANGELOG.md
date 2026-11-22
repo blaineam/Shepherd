@@ -13,6 +13,8 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-22
+
 ### Fixed
 
 - **Shepherd on a Firewalla did not come back after a reboot.** Firewalla runs its boot hook from
