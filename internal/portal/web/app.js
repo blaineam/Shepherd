@@ -493,6 +493,7 @@ const watchView = createWatch({
 const trafficView = createTraffic({
   root: $('#view-traffic'), mgmt, notify, watch: watchView,
   onOpenDevice: (id) => { showView('devices'); devicesView.openDevice(id); },
+  onManageRouter: () => showView('firewalla'),
 });
 const upstreamsView = createUpstreams({ root: $('#view-upstreams'), mgmt, notify });
 const backendView = createBackend({ root: $('#view-firewalla'), mgmt, notify });

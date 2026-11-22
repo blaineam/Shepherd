@@ -1,11 +1,14 @@
-// The Firewalla dashboard: what the box sees (requests, alarms, devices)
-// and the controls over what it enforces (rules, names). Reading is always
-// available; every change is switched on separately, previewed, and
-// confirmed. All text from the server is placed with textContent.
+// The Router screen: the connections to the owner's router or firewall,
+// the device-name sync across them, and the dashboard over whichever one
+// is running: what it sees (requests, alarms, devices) and the controls
+// over what it enforces (rules, names). Reading is always available; every
+// change is switched on separately, previewed, and confirmed. All text from the server is placed with textContent.
 import { el } from './dom.js';
-import { button, emptyState, unavailableCard, confirmDialog } from './ui.js';
+import { button, emptyState, confirmDialog } from './ui.js';
 import { unavailable } from './mgmt.js';
 import { fmtDateTime } from './format.js';
+import { createConnections } from './connectionsview.js';
+import { createNameSync } from './namesyncview.js';
 import { can, productName, statusLine, blockSpecFromFlow, ruleSummary, requestLine, auditLine, DAY_NAMES, scheduleText, scheduleFor, scheduleBody, scheduleProblem } from './backend.js';
 
 export function createBackend({ root, mgmt, notify }) {
@@ -31,6 +34,10 @@ export function createBackend({ root, mgmt, notify }) {
   head.append(title, el('p', 'pg-sub muted', 'What your router or firewall sees, and the controls over what it enforces. Reading is always on; changes are off until you allow them.'));
   const body = el('div', 'bk-body');
   root.append(head, body);
+  // Connecting or disconnecting changes what the dashboard and the name
+  // sync have to work with, so both are reloaded.
+  const connections = createConnections({ mgmt, notify, onChanged: () => { names.reset(); load(); } });
+  const names = createNameSync({ mgmt, notify, onChanged: () => { load(); } });
 
   async function load() {
     try {
@@ -72,43 +79,8 @@ export function createBackend({ root, mgmt, notify }) {
     return c;
   };
 
-  // A UniFi console is connected here, with an Integration API key. (A
-  // Firewalla is connected on the Bandwidth screen, with the same token
-  // its bandwidth reading uses.)
-  const udraft = { url: '', key: '', site: '', self: false };
-  function unifiCard() {
-    const c = card('Connect a UniFi console', 'Integration API');
-    c.append(el('p', 'muted small', 'Make an API key under Settings, Control Plane, Integrations in UniFi Network (version 9 or newer). Shepherd lists your clients and firewall policies, and can pause, resume or delete a policy and block a client once you allow changes. It cannot create policies, and UniFi reports no request log, so use Shepherd\'s own DNS for that.'));
-    const form = el('form', 'ru-form ru-grid');
-    const mk = (key, attrs) => {
-      const i = el('input'); Object.assign(i, attrs); i.value = udraft[key];
-      i.addEventListener('input', () => { udraft[key] = i.value; });
-      return i;
-    };
-    const url = mk('url', { type: 'text', placeholder: 'https://192.0.2.10', required: true, autocomplete: 'off' });
-    const key = mk('key', { type: 'password', placeholder: 'API key', required: true, autocomplete: 'off' });
-    const site = mk('site', { type: 'text', placeholder: 'site (default)', autocomplete: 'off' });
-    const over = el('label', 'switch');
-    const cb = el('input'); cb.type = 'checkbox'; cb.checked = udraft.self;
-    cb.addEventListener('change', () => { udraft.self = cb.checked; });
-    over.append(cb, el('span', '', 'Accept its self-signed certificate'));
-    const go = el('button', '', 'Connect');
-    go.disabled = busy;
-    form.append(url, key, site, over, go);
-    form.addEventListener('submit', (ev) => {
-      ev.preventDefault();
-      run(async () => {
-        data = await mgmt.backendUniFiConnect({ base_url: url.value.trim(), api_key: key.value, site: site.value.trim(), allow_self_signed: udraft.self });
-        udraft.url = ''; udraft.key = ''; udraft.site = '';
-        notify('Shepherd is now reading your UniFi console');
-      });
-    });
-    c.append(form);
-    return c;
-  }
-
   function header() {
-    const c = el('section', 'card bk-card');
+    const c = card(productName(data) + ' dashboard');
     const line = statusLine(data);
     const p = el('p', 'ru-line ' + line.tone, line.text);
     p.setAttribute('role', 'status');
@@ -118,14 +90,6 @@ export function createBackend({ root, mgmt, notify }) {
     const refresh = button('Refresh', 'ghost', () => run(async () => { data = await mgmt.backendRefresh(); }));
     refresh.disabled = busy;
     acts.append(refresh);
-    if (data.name === 'unifi') {
-      const off = button('Disconnect', 'ghost', () => act({
-        title: 'Disconnect this console?', text: 'Shepherd forgets the API key. Nothing changes on your console.', confirm: 'Disconnect',
-        send: () => mgmt.backendUniFiForget(), done: 'The console has been forgotten',
-      }));
-      off.disabled = busy;
-      acts.append(off);
-    }
     const sw = el('label', 'switch');
     const box = el('input');
     box.type = 'checkbox';
@@ -140,7 +104,7 @@ export function createBackend({ root, mgmt, notify }) {
         });
         if (!ok) { box.checked = false; return; }
       }
-      run(async () => { data = await mgmt.backendWrites(box.checked); });
+      run(async () => { data = await mgmt.backendWrites(box.checked); names.reset(); });
     });
     sw.append(box, el('span', '', 'Allow changes'));
     acts.append(sw);
@@ -151,7 +115,7 @@ export function createBackend({ root, mgmt, notify }) {
   // ----------------------------------------------------------------- rules
   function rulesCard() {
     const rules = data.rules || [];
-    const c = card('Rules', rules.length + ' on your Firewalla');
+    const c = card('Rules', rules.length + ' on your ' + productName(data));
     if (!rules.length) c.append(el('p', 'muted small', 'No rules.'));
     const ul = el('ul', 'up-list');
     for (const r of rules) {
@@ -372,7 +336,7 @@ export function createBackend({ root, mgmt, notify }) {
           const name = window.prompt('New name (up to 32 characters)', d.Name || '');
           if (name === null || !name.trim()) return;
           await act({
-            title: 'Rename this device?', text: (d.Name || d.Native) + ' becomes ' + name.trim() + ' on your Firewalla.', confirm: 'Rename',
+            title: 'Rename this device?', text: (d.Name || d.Native) + ' becomes ' + name.trim() + ' on your ' + productName(data) + '.', confirm: 'Rename',
             send: () => mgmt.backendRename(d.Box, d.Native, name.trim()), done: 'Device renamed',
           });
         });
@@ -400,14 +364,18 @@ export function createBackend({ root, mgmt, notify }) {
   }
 
   function paint() {
-    titleText.textContent = productName(data);
+    // Connections first: it is what everything below depends on, and where
+    // someone with nothing connected has to start.
+    const parts = [connections.root, names.root];
     if (loadError) {
-      body.replaceChildren(unavailable(loadError) ? unavailableCard('The router dashboard') : emptyState('Could not load', loadError.message));
+      // A server with no dashboard has nothing more to show than the
+      // connections; that is not an error worth a card.
+      if (!unavailable(loadError)) parts.push(emptyState('Could not load the dashboard', loadError.message));
+      body.replaceChildren(...parts);
       return;
     }
-    if (!data) { body.replaceChildren(el('p', 'muted', 'Loading.')); return; }
-    const parts = [header()];
-    if (data.available && !data.connected) parts.push(unifiCard());
+    if (!data) { body.replaceChildren(...parts, el('p', 'muted', 'Loading.')); return; }
+    if (data.connected) parts.push(header());
     if (data.running) {
       const grid = el('div', 'up-grid');
       const a = el('div', 'up-col');
@@ -428,10 +396,14 @@ export function createBackend({ root, mgmt, notify }) {
     root,
     async show() {
       started = true;
-      await load();
+      await Promise.all([load(), connections.load(), names.load()]);
       clearInterval(timer);
-      timer = setInterval(() => { if (started && !busy && !root.contains(document.activeElement)) load(); }, 15000);
+      timer = setInterval(() => {
+        if (!started || busy || root.contains(document.activeElement)) return;
+        load();
+        connections.refresh();
+      }, 15000);
     },
-    hide() { started = false; clearInterval(timer); timer = 0; },
+    hide() { started = false; clearInterval(timer); timer = 0; names.hide(); },
   };
 }

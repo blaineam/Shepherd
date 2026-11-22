@@ -31,9 +31,85 @@ UniFi's documented API manages the network (devices, clients, firewall and DNS p
 report requests or raise alarms. That is the case for pairing: with a UniFi network, Shepherd's DNS
 history supplies the requests, and the backend supplies the controls.
 
+## Connections
+
+Every router and firewall is connected in one place: **Connections**, at the top of the **Router**
+screen. Each kind has its own row with a connect form, a switch and **Disconnect**:
+
+| Connection | Credential | What it is read for |
+|---|---|---|
+| Firewalla | MSP personal access token | dashboard, exact bandwidth, device names |
+| UniFi console | Integration API key | dashboard |
+| eero | account sign-in with an emailed or texted code | device names, estimated bandwidth |
+| UniFi controller sign-in | controller username and password | exact bandwidth |
+
+More than one can be connected at once, and that is the point: a Firewalla supplies the dashboard
+and the bandwidth while an eero account, whose mesh still knows every device by the name someone
+typed into its app, supplies names. When two could supply the same thing, one is used: for bandwidth
+a UniFi controller, then Firewalla, then eero ([TRAFFIC.md](TRAFFIC.md)); for the dashboard a
+Firewalla, then a UniFi console. Each row says what it is being used for. `GET /api/connections`
+returns all of them and no credential.
+
+Connections used to be split between this screen and Bandwidth, where only one could be set up at a
+time. The Bandwidth screen now shows what the reader is doing and links here.
+
+## Device names
+
+One device, one name, everywhere. **Device names** on the Router screen matches devices by MAC
+address across Shepherd's own registry and every connected place that has names (a Firewalla, an
+eero account) and keeps them the same (`internal/namesync`).
+
+**The first sync keeps the most readable name.** For each device the names are scored, and the best
+one is written to the others:
+
+| Name | Example | Rank |
+|---|---|---|
+| Words a person would say | `Kitchen speaker` | best |
+| Words joined like a hostname | `Kitchen-Speaker` | |
+| One plain word, or words with a serial among them | `iPhone`, `Hue Bridge 41D7` | |
+| A model or serial | `XP200M`, `PS5-1B3C5D` | |
+| Only the maker's name | `ExampleCo Networks` | never copied |
+| A MAC or IP address, `Unknown`, empty | `02005E00A1B2` | never replaces anything |
+
+A name the place knows somebody typed (an alias in Shepherd, a nickname in eero) ranks above the
+same kind of name a device reported for itself. When two names rank the same, Shepherd's wins, then
+eero's, then the router's.
+
+**After that, an edit anywhere goes everywhere.** Shepherd remembers the name it last saw for each
+device in each place, so it can tell a rename from a name that was different all along. Rename a
+device in the Firewalla app, the eero app or Shepherd and the other two follow. If two places are
+edited between runs, the more readable name wins. Clearing a name is not an edit: the agreed name is
+written back.
+
+**Nothing is written until you have seen it.** *Check what would change* reads every place and lists
+each device: the name it would get, why, what it is called now in each place, and where the name
+would be written. *Sync now* does it once. *Keep in sync* repeats it every two minutes, and within
+seconds of a rename made in Shepherd. Both ask first, and the API refuses either without
+`confirm: true`. Every name written is kept, with the name it replaced, under **Recent changes** (the
+last 200), so any of them can be put back by hand.
+
+Things to know:
+
+- **A place that cannot be written is still read.** With **Allow changes** off, or a Read Only
+  token, a Firewalla's names are read and an edit made there still goes out, but nothing is written
+  to it; the screen says how many names are waiting, and they are caught up once it can be written.
+  UniFi's API cannot rename a device, so a UniFi console is only ever read.
+- **Firewalla names are at most 32 characters**, so a longer name is cut there and kept whole
+  elsewhere.
+- **A name that fails to write** is reported, left alone for 30 minutes, then tried again.
+- **Slow services.** After writing a name, a place may answer with the old one for a while. For ten
+  minutes that is taken as a late answer rather than someone renaming it back.
+- **With sync on, a name cannot be removed from one place only**: it comes back. Rename it instead.
+- **The eero rename is unofficial**, like the rest of the eero client: it uses the call eero's own
+  app makes (`PUT /2.2/networks/<id>/devices/<mac>` with a `nickname`). It was written from public
+  open-source clients and tested against a fake, not yet against a live account.
+
+State is kept in `names-sync.json` in the data directory. `GET /api/names` is the status,
+`POST /api/names/preview` the dry run, `POST /api/names/sync` and `POST /api/names/auto` the writes.
+
 ## UniFi
 
-Connect a UniFi console on the **Router** screen with an Integration API key (UniFi Network 9 or
+Connect a UniFi console under **Connections** on the **Router** screen with an Integration API key (UniFi Network 9 or
 newer: *Settings, Control Plane, Integrations, API Keys*). The address is your console's, such as
 `https://192.0.2.10`; a console's certificate is usually self-signed, so there is a switch to accept
 it, off unless you turn it on. The key is checked by reading the console once before it is stored,
@@ -56,8 +132,13 @@ is used, because it also reports requests; switch it off to use the console.
 
 ## What it does today (Firewalla)
 
-Connect an account under **Read from your router** on the Bandwidth screen, then open **Router**
-in the sidebar.
+Connect an account under **Connections** on the **Router** screen: your MSP address, a personal
+access token, and optionally one box's ID.
+
+**Expect a delay.** A Firewalla box hands its flows to MSP in batches, and MSP's API shows them
+several minutes after the traffic (about six minutes on the box this was checked against). So
+requests and bandwidth appear some minutes after connecting, then arrive in steps. The screens say
+so while they wait. Devices, rules and alarms are read straight away.
 
 **Reading** (always on once connected, every 30 seconds):
 
@@ -135,7 +216,8 @@ Shepherd, is not known to Shepherd and still has to be unblocked there.
 
 ## Verified against
 
-Everything here was written from Firewalla's published documentation and examples and run against a
-fake MSP, not a live account. The query syntax (`ts:`, `box:`, `status:`) and the data models were
-checked against docs.firewalla.net; the request and response shapes of writes were not exercised
-against a real box. Run it read-only first.
+Reading has been run against a live MSP account and a box in router mode (2026-11-21): devices,
+flows with the `ts:` range query, alarms, rules and boxes all answer as documented. Writes (rules,
+renames, dismissing alarms) were written from Firewalla's published documentation and run against a
+fake MSP; they have not yet been exercised against a real box. The eero rename is in the same state.
+Preview a name sync before applying one.

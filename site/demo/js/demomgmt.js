@@ -244,6 +244,24 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
     { time: new Date(now() - 3 * 3600000).toISOString(), mac: '02:00:5e:00:00:0c', device_id: 'dev-0012', name: 'Kids Laptop', reason: 'address changed to 192.0.2.118' },
   ];
 
+  // The device-name sync, between the demo's devices and a pretend eero
+  // account that knows a few of them by a hostname or by nothing at all.
+  const names = { auto: false, last: null, log: [], synced: false };
+  const namesStatus = () => ({ available: true, auto: names.auto, running: false, last: names.last, log: names.log });
+  function namesReport(dry) {
+    const stale = ['ESP_4F21C0', 'Unknown', 'android-7c1d9e02'];
+    const picked = names.synced ? [] : devices.filter((d) => d.macs && d.macs.length).slice(0, stale.length);
+    const changes = picked.map((d, i) => ({
+      mac: d.macs[0].replace(/:/g, ''), name: d.name, reason: 'first', from: 'shepherd',
+      names: { shepherd: d.name, eero: stale[i] }, writes: ['eero'],
+    }));
+    return {
+      time: new Date(now()).toISOString(), dry_run: dry,
+      sources: [{ id: 'shepherd', label: 'Shepherd', devices: devices.length }, { id: 'eero', label: 'eero', devices: devices.length }],
+      changes, written: changes.length, held: 0, failed: 0, in_sync: devices.length - changes.length,
+    };
+  }
+
   const gname = (id) => (groups.find((g) => g.id === id) || {}).name || id;
   const withCount = (g) => ({ ...g, count: devices.filter((d) => d.groups.includes(g.id)).length });
   const dev = (id) => { const d = devices.find((x) => x.id === id); if (!d) throw err(404, 'device not found'); return d; };
@@ -430,6 +448,25 @@ export function createDemoMgmt({ count = 38, gen = null, history = 'encrypted', 
       }
     }
     // ---- watch
+    // ---- router connections and the device-name sync
+    if (path === '/api/connections' && method === 'GET') {
+      return {
+        available: true,
+        eero: { connected: true, enabled: true, network: 'demo-net' },
+        firewalla: { connected: false }, unifi: { connected: false }, unifi_api: { connected: false },
+        bandwidth: trafficStatus().router.status,
+      };
+    }
+    if (path === '/api/names' && method === 'GET') return namesStatus();
+    if (path === '/api/names/preview' && method === 'POST') { await delay(300); return namesReport(true); }
+    if (path === '/api/names/sync' && method === 'POST') {
+      const rep = namesReport(false);
+      names.last = rep;
+      names.log = rep.changes.flatMap((c) => c.writes.map((src) => ({ time: rep.time, mac: c.mac, source: src, old: c.names[src], new: c.name, reason: c.reason, from: c.from }))).concat(names.log);
+      names.synced = true;
+      return namesStatus();
+    }
+    if (path === '/api/names/auto' && method === 'POST') { names.auto = !!(body && body.enabled); return namesStatus(); }
     if (path === '/api/routerusage' && method === 'GET') return trafficStatus().router;
     if (path === '/api/routerusage/names' && method === 'POST') {
       const dry = !!(body && body.dry_run);

@@ -104,10 +104,10 @@ function sparkline(points, bucket) {
   return s;
 }
 
-export function createTraffic({ root, mgmt, notify, onOpenDevice = null, watch = null }) {
+export function createTraffic({ root, mgmt, notify, onOpenDevice = null, onManageRouter = null, watch = null }) {
   // Reading bandwidth from the owner's own router, for a network where
   // Watch mode cannot run. It repaints from each poll's status.
-  const routerUsage = createRouterUsage({ mgmt, notify, onChanged: () => { load().catch(() => {}); } });
+  const routerUsage = createRouterUsage({ onManage: onManageRouter });
   let status = null;
   let loadError = null;
   let timer = 0;

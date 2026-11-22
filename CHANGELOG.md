@@ -15,6 +15,21 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Added
 
+- **Device names kept the same everywhere** ([docs/BACKENDS.md](docs/BACKENDS.md#device-names)). A new
+  **Device names** card on the Router screen matches devices by MAC address across Shepherd, a
+  connected Firewalla and an eero account. The first sync keeps the most readable name for each
+  device: one somebody typed beats a hostname, which beats a model number, and a MAC address or
+  "Unknown" never replaces anything. After that a rename made in any one place is written to the
+  others. *Check what would change* lists every device before anything is written, *Sync now* does it
+  once, and *Keep in sync* repeats it every two minutes. Every name written is recorded with the name
+  it replaced. A Firewalla with **Allow changes** off is read but not written, and caught up later.
+  Renaming on eero uses the unofficial call its app makes and is not yet verified against a live
+  account.
+- **Connections, in one place, more than one at a time** ([docs/BACKENDS.md](docs/BACKENDS.md#connections)).
+  Firewalla, UniFi console, eero and the UniFi controller sign-in are all connected from a
+  **Connections** card at the top of the Router screen, each with its own switch and Disconnect, and
+  each saying what it is being used for. `GET /api/connections` lists them.
+
 - **Blocked devices stay on the list.** A client Shepherd blocks no longer disappears: it stays on
   the Devices list marked blocked, survives a restart, and has an **Unblock** button.
 - **UniFi backend** ([docs/BACKENDS.md](docs/BACKENDS.md#unifi)). Connect a UniFi console with an
@@ -74,7 +89,10 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 - Installed to an iPhone's Home Screen, the portal's top bar sat under the status bar (the clock and
   battery), where its menu and lock buttons could not be tapped. The top bar now leaves that room, and
   the side menu and the detail drawer move down with it.
-
+- **A newly connected Firewalla no longer looks broken.** MSP shows a box's traffic about six minutes
+  late, in batches, so the Bandwidth screen sat at "Reading 0 of 0 devices" with nothing to explain
+  it. It now says the first figures take several minutes, and the Router screen says where bandwidth
+  is coming from and that it arrives in steps.
 - A single lost bootstrap packet could take an encrypted upstream out for minutes. Shepherd finds
   a DoT or DoH resolver's address by asking for its IPv4 and IPv6 addresses separately over plain
   UDP, once each. If only the IPv4 question was lost, the answer was kept with just the IPv6
@@ -95,6 +113,12 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   `mask.icloud.com` and `mask-h2.icloud.com`. It also blocked `mask-api.icloud.com`, which Apple does
   not list and which an iPhone looks up on every Siri request; with it blocked, Siri answered every
   request with a network error.
+
+### Changed
+
+- **A Firewalla is connected on the Router screen, not under Bandwidth**, and no longer requires
+  disconnecting eero first. The Bandwidth screen's "Read from your router" card now shows what the
+  reader is doing and links to the Router screen. The connect endpoints are unchanged.
 
 ## [1.1.2] - 2026-11-09
 

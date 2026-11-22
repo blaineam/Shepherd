@@ -21,7 +21,7 @@ export function statusLine(data) {
   const d = data || {};
   if (!d.available) return { tone: 'muted', text: 'This build has no router dashboard.' };
   if (!d.connected) {
-    return { tone: 'muted', text: 'Nothing is connected. Connect a UniFi console below, or a Firewalla under "Read from your router" on the Bandwidth screen.' };
+    return { tone: 'muted', text: 'Nothing is connected. Connect a Firewalla or a UniFi console under Connections.' };
   }
   if (!d.enabled) return { tone: 'muted', text: 'Connected to ' + (d.address || productName(d)) + ', but switched off.' };
   if (d.error) return { tone: 'bad', text: d.error };

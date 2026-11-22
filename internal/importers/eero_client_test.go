@@ -682,3 +682,49 @@ func TestNetworkIDIsEscaped(t *testing.T) {
 		}
 	}
 }
+
+func TestRenameDeviceSetsTheNickname(t *testing.T) {
+	f := newFakeEero(t)
+	c, _ := testClient(t, f, nil)
+	ctx := context.Background()
+	if err := c.RenameDevice(ctx, "1001", "02:00:5E:00:00:11", "Den TV"); !errors.Is(err, ErrEeroNoSession) {
+		t.Fatalf("signed out: %v", err)
+	}
+	login(t, c)
+	f.override = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != http.MethodPut {
+			return false
+		}
+		_, _ = io.WriteString(w, envelopeOf(`{}`))
+		return true
+	}
+	if err := c.RenameDevice(ctx, "1001", "02:00:5E:00:00:11", "  Den\tTV "); err != nil {
+		t.Fatal(err)
+	}
+	reqs := f.requests()
+	last := reqs[len(reqs)-1]
+	if last.Method != "PUT" || last.Path != "/2.2/networks/1001/devices/02005e000011" || last.Body != `{"nickname":"Den TV"}` || last.Cookie != testPending {
+		t.Fatalf("request = %+v", last)
+	}
+	n := len(reqs)
+	for _, bad := range [][2]string{{"not-a-mac", "Den TV"}, {"02:00:5e:00:00:11", "  "}} {
+		if err := c.RenameDevice(ctx, "1001", bad[0], bad[1]); !errors.Is(err, ErrEeroBadResponse) {
+			t.Errorf("RenameDevice(%q, %q) = %v", bad[0], bad[1], err)
+		}
+	}
+	if len(f.requests()) != n {
+		t.Fatal("an unusable rename was sent")
+	}
+	// A refusal is an error, and a write is not retried on a server fault.
+	f.override = func(w http.ResponseWriter, r *http.Request) bool {
+		w.WriteHeader(503)
+		_, _ = io.WriteString(w, errBody(503, "unavailable"))
+		return true
+	}
+	if err := c.RenameDevice(ctx, "1001", "02:00:5e:00:00:11", "Den TV"); err == nil {
+		t.Fatal("a refused rename reported success")
+	}
+	if len(f.requests()) != n+1 {
+		t.Fatalf("a refused write was retried: %d requests", len(f.requests())-n)
+	}
+}

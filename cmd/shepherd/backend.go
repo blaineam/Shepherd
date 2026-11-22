@@ -42,6 +42,7 @@ type backendManager struct {
 	mu     sync.Mutex
 	cur    *hub.Hub
 	name   string // which backend cur runs
+	rename bool   // cur's product can rename a device at all
 	setRO  func(bool)
 	key    string // what cur was built from, minus the write switch
 	cancel context.CancelFunc
@@ -122,6 +123,7 @@ func (m *backendManager) Reload() {
 	done := make(chan struct{})
 	m.mu.Lock()
 	m.cur, m.name, m.setRO, m.key, m.cancel, m.done = h, conn.name, conn.setRO, conn.key, cancel, done
+	_, m.rename = conn.backend.(backends.DeviceRenamer)
 	m.mu.Unlock()
 	go func() { defer close(done); h.Run(ctx) }()
 	log.Printf("backend: reading %s every %s (writes %s)", conn.name, hub.DefaultInterval, map[bool]string{true: "on", false: "off"}[conn.writes])
@@ -135,6 +137,14 @@ func (m *backendManager) active() string {
 		return ""
 	}
 	return m.name
+}
+
+// canRename reports whether the running backend's product can rename a
+// device, whether or not writes are switched on.
+func (m *backendManager) canRename() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.cur != nil && m.rename
 }
 
 func (m *backendManager) raise(e alarms.Event) bool {

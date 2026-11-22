@@ -12,7 +12,7 @@ test('a capability is only present when the server lists it', () => {
 test('the status line says what is wrong in order of what to fix first', () => {
   assert.equal(statusLine(null).tone, 'muted');
   assert.match(statusLine({ available: false }).text, /no router dashboard/);
-  assert.match(statusLine({ available: true, connected: false }).text, /Bandwidth screen/);
+  assert.match(statusLine({ available: true, connected: false }).text, /under Connections/);
   assert.match(statusLine({ available: true, connected: true, enabled: false, address: 'https://a.firewalla.net' }).text, /switched off/);
   assert.deepEqual(statusLine({ available: true, connected: true, enabled: true, error: 'bad address' }), { tone: 'bad', text: 'bad address' });
   assert.equal(statusLine({ available: true, connected: true, enabled: true, running: false }).text, 'Starting.');

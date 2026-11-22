@@ -7,13 +7,13 @@
 // Every string that came from the server is placed with textContent.
 import { el } from './dom.js?v=65858b99';
 import { button, emptyState, unavailableCard, segmented } from './ui.js?v=4d208003';
-import { unavailable } from './mgmt.js?v=752cdbb0';
-import { createRouterUsage } from './routerusageview.js?v=2155aaf4';
+import { unavailable } from './mgmt.js?v=e5837a52';
+import { createRouterUsage } from './routerusageview.js?v=a184ac44';
 import {
   RANGE_PRESETS, rangeWindow, scopeOptions, scopeLabel, fillSeries, sumPoints, bucketRate, timeLabels,
   shareOf, statusHeadline, liveRows, liveRowsNote, DOWNLOAD_CAVEAT, measurementNote, tileLabels, liveChartCaption, fmtBytes, fmtBitsPerSecond,
   niceCeil, yTicks, lineArea, nearestIndex, pushSample, shareSlices, arcPath, rateStats,
-} from './traffic.js?v=cd821019';
+} from './traffic.js?v=b10b7a04';
 
 const POLL_MS = 2000;
 const LIVE_SAMPLES = 90; // three minutes at the poll rate
@@ -104,10 +104,10 @@ function sparkline(points, bucket) {
   return s;
 }
 
-export function createTraffic({ root, mgmt, notify, onOpenDevice = null, watch = null }) {
+export function createTraffic({ root, mgmt, notify, onOpenDevice = null, onManageRouter = null, watch = null }) {
   // Reading bandwidth from the owner's own router, for a network where
   // Watch mode cannot run. It repaints from each poll's status.
-  const routerUsage = createRouterUsage({ mgmt, notify, onChanged: () => { load().catch(() => {}); } });
+  const routerUsage = createRouterUsage({ onManage: onManageRouter });
   let status = null;
   let loadError = null;
   let timer = 0;

@@ -431,6 +431,25 @@ func (c *Client) Devices(ctx context.Context, networkID string) ([]EeroDevice, e
 	return out, nil
 }
 
+// RenameDevice sets the nickname eero shows for a device, which is what
+// its app calls the device's name. mac may use any separators. Like the
+// rest of this client it uses the API eero's own app uses, which is
+// unofficial.
+func (c *Client) RenameDevice(ctx context.Context, networkID, mac, nickname string) error {
+	tok := c.tokenValue()
+	if tok == "" {
+		return ErrEeroNoSession
+	}
+	id := strings.ToLower(strings.NewReplacer(":", "", "-", "", ".", "").Replace(strings.TrimSpace(mac)))
+	nickname = cleanText(nickname, 100)
+	if len(id) != 12 || nickname == "" {
+		return fmt.Errorf("%w: a device and a name are required", ErrEeroBadResponse)
+	}
+	body, _ := json.Marshal(map[string]string{"nickname": nickname})
+	_, err := c.do(ctx, http.MethodPut, c.netPath(networkID, "devices/"+id), body, tok, false)
+	return err
+}
+
 // Profiles lists a network's profiles with their devices.
 func (c *Client) Profiles(ctx context.Context, networkID string) ([]EeroProfile, error) {
 	items, err := c.getList(ctx, c.netPath(networkID, "profiles"))

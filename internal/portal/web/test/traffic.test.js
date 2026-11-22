@@ -184,6 +184,13 @@ test('routerConnection words every state the reader can be in', () => {
 
   assert.match(routerConnection({ ...reading, status: {} }).text, /Waiting for the first reading/);
 
+  // A Firewalla hands traffic over minutes late: before the first batch,
+  // say so rather than "0 devices", which reads as broken.
+  const early = routerConnection({ ...reading, source: 'firewalla', status: { last_poll: '2026-11-03T12:00:00Z', devices_seen: 0 } });
+  assert.equal(early.tone, 'muted');
+  assert.match(early.text, /several minutes behind/);
+  assert.match(routerConnection({ ...reading, source: 'firewalla' }).text, /Reading 9 of 12 devices from your firewalla/);
+
   const ok = routerConnection(reading);
   assert.equal(ok.tone, 'good');
   assert.match(ok.text, /Reading 9 of 12 devices from your eero every 30s/);

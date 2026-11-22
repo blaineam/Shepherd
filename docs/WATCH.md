@@ -1,8 +1,8 @@
 # Watch mode
 
 > **Status, 2026-11-03: DEPRECATED. Off by default, no new features.** Per-device bandwidth now
-> comes from the router over its own API — eero and UniFi today, under "Read from your router" on
-> the Bandwidth screen ([TRAFFIC.md](TRAFFIC.md), `internal/routerusage`). That reads what the
+> comes from the router over its own API — eero and UniFi today, connected under Connections on
+> the Router screen ([TRAFFIC.md](TRAFFIC.md), `internal/routerusage`). That reads what the
 > router already counts, so it measures **both** directions instead of estimating downloads, it
 > puts nothing in the path of your traffic, and it works on networks where one-sided steering
 > cannot be made to work at all. Watch mode stays in the tree for the installs already using it,

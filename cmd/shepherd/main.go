@@ -259,6 +259,10 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	routerUsage := startRouterUsage(ctx, sec, registry, trafficStore, watchEngine, backend)
 	defer routerUsage.Stop()
 	deps.RouterUsage = routerUsage
+	// One name per device across Shepherd and whatever is connected
+	// (docs/BACKENDS.md, "Device names"). It writes nothing until the owner
+	// asks it to.
+	deps.Names = startNames(ctx, sec, registry, backend, cfg.DataDir)
 
 	// ---- DHCP mode (docs/DHCP.md) ---------------------------------------
 	// Off by default, and the one feature here that can take a household

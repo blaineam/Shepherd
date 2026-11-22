@@ -37,3 +37,5 @@ import './traffic.test.js';
 import './push.test.js';
 import './update.test.js';
 import './backend.test.js';
+import './connections.test.js';
+import './namesync.test.js';

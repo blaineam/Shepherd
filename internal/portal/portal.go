@@ -34,6 +34,7 @@ import (
 	"shepherd/internal/dnsengine"
 	"shepherd/internal/geo"
 	"shepherd/internal/importers"
+	"shepherd/internal/namesync"
 	"shepherd/internal/nethealth"
 	"shepherd/internal/passkeys"
 	"shepherd/internal/portscan"
@@ -259,6 +260,10 @@ type Deps struct {
 	// without it; the endpoints then say so.
 	Backend BackendHub
 
+	// Names keeps one name per device across Shepherd and the connected
+	// routers (internal/namesync). Nil in a build without it.
+	Names NameSync
+
 	// Traffic is the bandwidth history (docs/TRAFFIC.md), fed by Watch
 	// mode. Nil gets an empty, memory-only store so the API still answers.
 	Traffic *traffic.Store
@@ -330,6 +335,17 @@ type UsageReader interface {
 	// Reload re-reads the stored connection and starts, stops or restarts
 	// the collector to match.
 	Reload()
+}
+
+// NameSync is what the portal needs from the device-name sync
+// (*namesync.Engine).
+type NameSync interface {
+	Status() namesync.Status
+	// Preview reports what a sync would write, and writes nothing.
+	Preview(ctx context.Context) (namesync.Report, error)
+	// Start runs a sync in the background; false when one is running.
+	Start(ctx context.Context) bool
+	SetAuto(on bool) error
 }
 
 // BackendHub is what the portal needs from the dashboard hub: its latest
@@ -763,6 +779,11 @@ func (s *Server) routes() {
 	h("POST /api/routerusage/unifi", s.connectUniFi)
 	h("POST /api/routerusage/unifi/enabled", s.setUniFiEnabled)
 	h("DELETE /api/routerusage/unifi", s.forgetUniFi)
+	h("GET /api/connections", s.getConnections)
+	h("GET /api/names", s.getNames)
+	h("POST /api/names/preview", s.previewNames)
+	h("POST /api/names/sync", s.syncNames)
+	h("POST /api/names/auto", s.setNamesAuto)
 	h("GET /api/backend", s.getBackend)
 	h("POST /api/backend/refresh", s.refreshBackend)
 	h("POST /api/backend/writes", s.setBackendWrites)

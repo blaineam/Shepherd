@@ -105,8 +105,8 @@ in what proportion", and poor for "how much has this device used this month". A 
 narrows the gap at the cost of more requests to eero. A `KindCounters` source does not have this
 problem at all, which is the argument for one.
 
-**Connecting one.** On the Bandwidth screen, under "Read from your router", enter the eero
-account's email or phone, type the code eero sends, and pick the network. The session token is
+**Connecting one.** On the Router screen, under **Connections**
+([BACKENDS.md](BACKENDS.md#connections)), enter the eero account's email or phone, type the code eero sends, and pick the network. The session token is
 kept in `secrets.json` (`internal/secrets`, mode 0600, the same protection as every other stored
 credential) and never leaves the server: it goes from the eero client straight into the store, and
 no API call returns it. Switching the reader off keeps the sign-in, so turning it back on needs no
@@ -115,20 +115,17 @@ new code; **Disconnect** forgets it entirely.
 **When the session expires**, the reader says so and the screen offers a sign-in rather than
 showing a stuck collector. The network already chosen is kept.
 
-### Device names
+### Device names and profiles
 
 The kept sign-in is good for more than bandwidth. eero already knows what the household calls each
-device, and `internal/importers` already maps those names to Shepherd aliases and eero's profiles
-to groups -- that was the one-time import. With a session kept, the same thing can be run whenever
-the owner adds a device, with no new verification code, from **Device names** in the same section.
+device. Names are kept the same across Shepherd, eero and a connected firewall by the name sync
+([BACKENDS.md](BACKENDS.md#device-names)), in every direction.
 
-It always previews first, and says exactly what would change before anything is written.
-**The owner's own names win:** a device they have named in Shepherd is left alone unless they tick
-"Also replace names I have set myself", which is asked for per sync and is never the default and
-never automatic. Running it twice changes nothing the second time.
-
-`POST /api/routerusage/names` takes `dry_run` and `overwrite_names` and returns the same report the
-import does.
+eero's profiles (a person's or a room's devices) map onto Shepherd's groups. **Copy profiles into
+groups**, on the eero row under Connections, runs the importer's mapping on the kept sign-in with
+no new verification code. It previews first and says what would change, and names you have set in
+Shepherd are kept. `POST /api/routerusage/names` takes `dry_run` and `overwrite_names` and returns
+the same report the import does.
 
 ### UniFi
 
@@ -168,9 +165,12 @@ for the flows MSP reports.
 
 Two things follow. Only traffic since Shepherd started counts, so the first reading is a baseline
 and the older flows it backfills for the request list are not mistaken for a burst. And the figures
-are as complete as MSP's flow records, which can arrive a little after the traffic they describe.
+are as complete as MSP's flow records, which arrive well after the traffic they describe: a box
+uploads flows in batches and MSP's API shows them about six minutes late. Nothing appears for the
+first several minutes after connecting, and after that the figures arrive in steps rather than
+live. The Bandwidth screen says so instead of showing an empty reading.
 
-Connecting is the same form as everything else here: your MSP address (`mydomain.firewalla.net`, or
+Connecting is done under **Connections** on the Router screen: your MSP address (`mydomain.firewalla.net`, or
 `firewalla.net` on the shared domain), a **personal access token**, and optionally one box's ID. The
 token is checked against MSP before it is stored and is kept in `secrets.json`, never returned by
 any endpoint. A Read Only token is enough for bandwidth and the dashboard's reading.

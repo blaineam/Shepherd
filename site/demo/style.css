@@ -1256,3 +1256,25 @@ button.tf-trend { cursor: pointer; } button.tf-trend:hover { border-color: var(-
 .topbar { height: calc(var(--top-h) + var(--safe-t)); padding-top: var(--safe-t); }
 .drawer { top: calc(var(--top-h) + var(--safe-t)); }
 @media (max-width: 1023px) { .sidenav { padding-top: var(--safe-t); } }
+
+/* ---- Router screen: connections and device names ---- */
+.cn-list { list-style: none; margin: 0; padding: 0; }
+.cn-row { padding: 14px 0; border-top: 1px solid var(--line); }
+.cn-row:first-child { border-top: 0; padding-top: 4px; }
+.cn-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.cn-text { display: flex; flex-direction: column; gap: 2px; min-width: min(260px, 100%); flex: 1 1 260px; }
+.cn-title { font: 600 15px var(--sans); }
+.cn-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.cn-state { margin: 8px 0 0; font-size: 13.5px; }
+.cn-form { margin-top: 12px; }
+.ns-src { margin: 0 0 4px; }
+.ns-src.warn { color: var(--amber); }
+.ns-report { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.ns-list { margin-top: 10px; max-height: 420px; overflow: auto; }
+.ns-item { flex-direction: column; gap: 3px; }
+.ns-main { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.ns-to { color: var(--teal); }
+.ns-held { color: var(--amber); }
+.ns-failed { color: var(--red); }
+.ns-log { margin-top: 14px; }
+.ns-log summary { cursor: pointer; color: var(--text-2); }

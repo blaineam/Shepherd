@@ -271,6 +271,12 @@ export function routerConnection(router) {
   if (st.needs_sign_in) return { tone: 'bad', text: 'Your ' + (r.source || 'router') + ' sign-in has expired. Sign in again to carry on reading bandwidth.' };
   if (st.last_error) return { tone: 'warn', text: 'Could not read ' + (r.source || 'the router') + ': ' + st.last_error };
   if (!st.last_poll) return { tone: 'muted', text: 'Connected to ' + (r.source || 'your router') + '. Waiting for the first reading.' };
+  // A Firewalla's cloud hands over traffic in batches several minutes
+  // late. Until the first batch lands there is nothing to show, and saying
+  // "0 devices" reads as broken when it is only early.
+  if (r.source === 'firewalla' && !st.devices_seen) {
+    return { tone: 'muted', text: 'Connected to your Firewalla. It reports traffic in batches several minutes behind, so the first figures take up to ten minutes to appear.' };
+  }
   return {
     tone: 'good',
     text: 'Reading ' + (st.matched || 0) + ' of ' + (st.devices_seen || 0) + ' devices from your ' + (r.source || 'router')
