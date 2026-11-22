@@ -22,6 +22,12 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   own app on loopback, which is not published and can change with firmware; only calls checked
   against a running box are made, and it refuses any address that is not loopback. Creating rules
   and reading blocked requests still need MSP.
+- **An installer for a Firewalla box** ([docs/FIREWALLA.md](docs/FIREWALLA.md)).
+  `scripts/firewalla-install`, run on the box, downloads a release, checks it against its checksum,
+  installs it under `/data/shepherd` in dashboard mode with everything unsuitable for a router
+  switched off, and starts it at boot through Firewalla's own hook. `--tailscale` adds Tailscale in
+  userspace mode, which changes no route or firewall rule, so the reverse proxy on the box can serve
+  your tailnet; `--remove` takes it all off.
 - **Device names kept the same everywhere** ([docs/BACKENDS.md](docs/BACKENDS.md#device-names)). A new
   **Device names** card on the Router screen matches devices by MAC address across Shepherd, a
   connected Firewalla and an eero account. The first sync keeps the most readable name for each

@@ -1,0 +1,186 @@
+#!/bin/bash
+# firewalla-install: put Shepherd on a Firewalla box (docs/FIREWALLA.md).
+#
+# Run it on the box, as the pi user:
+#
+#   curl -fsSL https://raw.githubusercontent.com/blaineam/shepherd/main/scripts/firewalla-install -o firewalla-install
+#   less firewalla-install          # read it first; it runs with sudo
+#   bash firewalla-install          # newest release, betas included
+#   bash firewalla-install v1.3.0   # a release you name
+#   bash firewalla-install --tailscale   # also install Tailscale beside it
+#   bash firewalla-install --remove      # take it all off again
+#
+# What it does, and nothing else:
+#   /data/shepherd/            the binary, shepherd.toml, the data directory
+#   /data/tailscale/           only with --tailscale
+#   ~/.firewalla/config/post_main.d/start_shepherd.sh
+#                              Firewalla's own hook for starting things at boot
+# /data survives firmware updates. No package is installed, no Firewalla
+# file is changed, and Shepherd runs as pi, not root. Running it again
+# upgrades the binary and keeps your settings and data.
+set -euo pipefail
+
+REPO=blaineam/shepherd
+DIR=/data/shepherd
+TS_DIR=/data/tailscale
+TS_SOCK=$TS_DIR/tailscaled.sock
+HOOK=$HOME/.firewalla/config/post_main.d/start_shepherd.sh
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'firewalla-install: %s\n' "$*" >&2; exit 1; }
+
+want_ts=0; remove=0; tag=""
+for a in "$@"; do
+  case "$a" in
+    --tailscale) want_ts=1 ;;
+    --remove) remove=1 ;;
+    v*) tag=$a ;;
+    *) die "unknown argument: $a" ;;
+  esac
+done
+
+# Where every Firewalla keeps its own software. leakcheck:allow
+[ -d /home/pi/firewalla ] || die "this does not look like a Firewalla box" # leakcheck:allow
+[ "$(id -un)" = pi ] || die "run this as the pi user, not $(id -un)"
+
+if [ "$remove" = 1 ]; then
+  pkill -x shepherd 2>/dev/null || true
+  pkill -x tailscaled 2>/dev/null || true
+  rm -f "$HOOK"
+  sudo rm -rf "$DIR" "$TS_DIR"
+  say "Shepherd and its Tailscale were removed. Nothing else on the box was changed."
+  exit 0
+fi
+
+case "$(uname -m)" in
+  x86_64) arch=amd64 ;;
+  aarch64) arch=arm64 ;;
+  *) die "unsupported processor: $(uname -m)" ;;
+esac
+
+# The LAN address the portal is reached at: the first bridge's.
+lan=$(ip -o -4 addr show | awk '$2 ~ /^br[0-9]/ {split($4, a, "/"); print a[1]; exit}')
+[ -n "$lan" ] || die "could not find the box's LAN address"
+
+if [ -z "$tag" ]; then
+  # The release feed rather than the API: the API refuses anonymous callers
+  # once an address has asked too often, and a household shares one address.
+  tag=$(curl -fsSL "https://github.com/$REPO/releases.atom" |
+    python3 -c 'import re,sys; m=re.search(r"/releases/tag/([^\"<]+)", sys.stdin.read()); print(m.group(1) if m else "")')
+  [ -n "$tag" ] || die "could not find the newest release"
+fi
+ver=${tag#v}
+name="shepherd_${ver}_linux_${arch}"
+base="https://github.com/$REPO/releases/download/$tag"
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+say "Downloading Shepherd $ver"
+curl -fsSL -o "$tmp/$name.tar.gz" "$base/$name.tar.gz"
+curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS"
+(cd "$tmp" && grep " $name.tar.gz\$" SHA256SUMS | sha256sum -c - >/dev/null) || die "the download does not match its checksum"
+tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
+
+sudo mkdir -p "$DIR"
+sudo chown pi:pi "$DIR"
+mkdir -p "$DIR/data"
+
+# Stop the old one and wait for it: it writes its data as it exits.
+if pgrep -x shepherd >/dev/null; then
+  pkill -x shepherd
+  for _ in $(seq 1 30); do pgrep -x shepherd >/dev/null || break; sleep 1; done
+  pgrep -x shepherd >/dev/null && die "the running Shepherd did not stop"
+fi
+install -m 755 "$tmp/$name/shepherd" "$DIR/shepherd"
+
+if [ ! -e "$DIR/shepherd.toml" ]; then
+  cat > "$DIR/shepherd.toml" <<TOML
+# Shepherd on a Firewalla box: a dashboard over the box (docs/FIREWALLA.md).
+# The box keeps doing DNS, DHCP and filtering. Nothing here listens on
+# port 53, scans the network, or opens a decoy port on your router.
+data_dir = "$DIR/data"
+
+[dns]
+enabled = false
+
+[portal]
+listen = "$lan:8787"
+
+[devices]
+dns = false
+mdns = false
+reverse_dns_server = "$lan"
+
+[arp]
+enabled = false
+
+[detect]
+enabled = false
+decoy_ports = []
+
+[portscan]
+enabled = false
+
+[vulnscan]
+enabled = false
+
+[selftest]
+enabled = false
+
+[update]
+enabled = false
+TOML
+  say "Wrote $DIR/shepherd.toml"
+fi
+
+if [ "$want_ts" = 1 ] && [ ! -x "$TS_DIR/tailscaled" ]; then
+  ts_ver=$(curl -fsSL "https://pkgs.tailscale.com/stable/?mode=json" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["TarballsVersion"])') || die "could not find the current Tailscale"
+  ts_name="tailscale_${ts_ver}_${arch}"
+  say "Downloading Tailscale $ts_ver"
+  curl -fsSL -o "$tmp/ts.tgz" "https://pkgs.tailscale.com/stable/$ts_name.tgz"
+  sum=$(curl -fsSL "https://pkgs.tailscale.com/stable/$ts_name.tgz.sha256")
+  echo "$sum  $tmp/ts.tgz" | sha256sum -c - >/dev/null || die "the Tailscale download does not match its checksum"
+  sudo mkdir -p "$TS_DIR"
+  sudo chown pi:pi "$TS_DIR"
+  mkdir -p "$TS_DIR/state"
+  tar -xzf "$tmp/ts.tgz" -C "$TS_DIR" --strip-components=1 "$ts_name/tailscale" "$ts_name/tailscaled"
+fi
+
+mkdir -p "$(dirname "$HOOK")"
+cat > "$HOOK" <<'HOOKEOF'
+#!/bin/bash
+# Starts Shepherd, and Tailscale if it was installed with it, once the
+# Firewalla has started. Safe to run again: each starts only if it is not
+# running. Written by Shepherd's scripts/firewalla-install; remove with
+# `firewalla-install --remove`.
+
+if [ -x /data/tailscale/tailscaled ] && ! pgrep -x tailscaled >/dev/null; then
+  # Userspace networking: Tailscale adds no route and no firewall rule to
+  # the router. Connections to the box's tailnet address arrive on loopback.
+  cd /data/tailscale && (setsid nohup sudo -u pi ./tailscaled --tun=userspace-networking \
+    --statedir=/data/tailscale/state --socket=/data/tailscale/tailscaled.sock \
+    >> /data/tailscale/tailscaled.log 2>&1 < /dev/null &)
+fi
+
+if [ -x /data/shepherd/shepherd ] && ! pgrep -x shepherd >/dev/null; then
+  # Lets Shepherd, running as pi, listen on 443 for the reverse proxy.
+  sudo setcap cap_net_bind_service=+ep /data/shepherd/shepherd
+  cd /data/shepherd && (setsid nohup sudo -u pi ./shepherd -config shepherd.toml \
+    >> /data/shepherd/shepherd.log 2>&1 < /dev/null &)
+fi
+HOOKEOF
+chmod 755 "$HOOK"
+bash "$HOOK"
+
+sleep 5
+pgrep -x shepherd >/dev/null || die "Shepherd did not start; see $DIR/shepherd.log"
+say ""
+say "Shepherd $ver is running: http://$lan:8787"
+say "Sign in with the token in $DIR/data/portal-token, then open Router and"
+say "choose \"Use this box\" under Connections."
+if [ "$want_ts" = 1 ] && ! "$TS_DIR/tailscale" --socket="$TS_SOCK" ip -4 >/dev/null 2>&1; then
+  say ""
+  say "To join your tailnet, run this and open the link it prints:"
+  say "  $TS_DIR/tailscale --socket=$TS_SOCK up --accept-dns=false --accept-routes=false"
+fi

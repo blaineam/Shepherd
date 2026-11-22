@@ -136,7 +136,7 @@ is used, because it also reports requests; switch it off to use the console.
 ## Firewalla, on the box
 
 A Firewalla box is an ordinary Linux machine, and Shepherd is one static binary, so Shepherd can
-run on the box itself. There it reads the API the box serves on its own loopback address
+run on the box itself ([FIREWALLA.md](FIREWALLA.md) installs it). There it reads the API the box serves on its own loopback address
 (`http://127.0.0.1:8834`), the one Firewalla's app talks to (`internal/backends/fwlocal`). On the
 Firewalla row under **Connections**, **Use this box** appears when that API answers; there is
 nothing to type.
