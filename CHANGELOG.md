@@ -13,6 +13,8 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-21
+
 ### Added
 
 - **Shepherd on a Firewalla box reads the box directly** ([docs/BACKENDS.md](docs/BACKENDS.md#firewalla-on-the-box)).
@@ -31,8 +33,8 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   Read on the box, a Firewalla's blocked-traffic log is now read beside its flows, so what it turned
   away shows in Activity, History and on the map: both what a device inside tried and what arrived at
   the WAN port from outside. A blocked connection is drawn in red to where it was going or came from,
-  on an arc of its own, and one that arrived from outside is animated from its source to home, not
-  the other way. Requests read from a router carry the bytes they moved, and the map sizes its arcs by
+  on an arc of its own, and one that arrived from outside is animated from its source towards home,
+  where it stops short and breaks against an unseen dome: it never got in. Requests read from a router carry the bytes they moved, and the map sizes its arcs by
   them. History gains a 30 days range.
 - **A router API, described by OpenAPI** ([docs/API.md](docs/API.md)). `/api/v1` is one small REST API
   over whatever router or firewall is connected: devices, groups, rules, alarms and requests, with
@@ -84,7 +86,7 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   create its own. Firewalla's native time-limit rules are shown with their usage. The request list can
   be narrowed to one device, asked of Firewalla itself.
 - **Firewalla dashboard** ([docs/BACKENDS.md](docs/BACKENDS.md)). Connect a Firewalla MSP account under
-  "Read from your router" and a new **Firewalla** screen shows what your boxes see and lets you change
+  Connections on the **Router** screen and it shows what your boxes see and lets you change
   what they enforce. Reading: each flow becomes a history entry beside Shepherd's own lookups (with the
   device resolved), MSP's active alarms are raised as `backend-alarm` alarms, and devices and rules are
   listed. Changing is a separate switch, **Allow changes**, off by default: block a request in one
@@ -94,7 +96,7 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   per-ability backend contract (`internal/backends`) means other products can plug in; UniFi's
   documented API has no request log, so it would supply controls and Shepherd's DNS history the
   requests. The token is kept in `secrets.json`, never returned, and sent only to `firewalla.net` over
-  https. Tested against a fake MSP, not a live account.
+  https. Reading was checked against a live account; changing was tested against a fake MSP only.
 - **Link watch** ([docs/LINKWATCH.md](docs/LINKWATCH.md)). Shepherd now checks, once a second, that
   the address it serves DNS on is still up, and raises a `network-link-lost` alarm when it comes back
   with the interface, the cause (no carrier, interface down, address removed) and how long it was
@@ -123,17 +125,18 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   the names of the well-known public DoH and DoT resolvers. A phone with a private DNS provider set
   in strict mode loses its lookups while it is on.
 
-### Security
+### Changed
 
-- **The reverse proxy no longer passes on a typed Tailscale identity.** Apps written to sit behind
-  `tailscale serve` trust the `Tailscale-User-Login` header it adds. Shepherd's proxy forwarded that
-  header unchanged when a visitor sent it themselves, so such an app let anyone who could reach its
-  proxied name in without signing in. Every `Tailscale-*` header from a client is now dropped before
-  the request reaches the backend. If you proxy an app that trusts those headers, treat anything it
-  served before this as having been open to whoever could reach the name.
+- **A Firewalla is connected on the Router screen, not under Bandwidth**, and no longer requires
+  disconnecting eero first. The Bandwidth screen's "Read from your router" card now shows what the
+  reader is doing and links to the Router screen. The connect endpoints are unchanged.
 
 ### Fixed
 
+- **Devices found at startup are no longer missed by reverse DNS.** A device gets its reverse-DNS
+  name when it is first seen, and the part that does the looking up started listening after the
+  parts that find devices had been started. A device found in that gap was never looked up. It now
+  listens first.
 - **"Queries" no longer reads zero over a network full of traffic.** Requests read from a router went
   into the log but not into the running counters, so in dashboard mode the tiles showed nothing.
   They are counted now, blocked ones included.
@@ -192,11 +195,14 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   not list and which an iPhone looks up on every Siri request; with it blocked, Siri answered every
   request with a network error.
 
-### Changed
+### Security
 
-- **A Firewalla is connected on the Router screen, not under Bandwidth**, and no longer requires
-  disconnecting eero first. The Bandwidth screen's "Read from your router" card now shows what the
-  reader is doing and links to the Router screen. The connect endpoints are unchanged.
+- **The reverse proxy no longer passes on a typed Tailscale identity.** Apps written to sit behind
+  `tailscale serve` trust the `Tailscale-User-Login` header it adds. Shepherd's proxy forwarded that
+  header unchanged when a visitor sent it themselves, so such an app let anyone who could reach its
+  proxied name in without signing in. Every `Tailscale-*` header from a client is now dropped before
+  the request reaches the backend. If you proxy an app that trusts those headers, treat anything it
+  served before this as having been open to whoever could reach the name.
 
 ## [1.1.2] - 2026-11-09
 
