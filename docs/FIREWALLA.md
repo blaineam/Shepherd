@@ -130,8 +130,8 @@ last. Leave `secrets.json`, the DNS history and the blocklists behind: the box d
 - **A reboot** runs the hook through Firewalla's `post_main.d`. Firewalla runs it from a unit that
   ends when startup is done, and systemd then stops whatever that unit left running, so up to
   1.2.0 Shepherd started at boot and was stopped a second later. The hook now starts Shepherd and
-  Tailscale as units of their own; run the installer again to get it. That was checked by running
-  the hook from a unit that ends, as a boot does. It has not been watched through a firmware
-  update.
+  Tailscale as units of their own; run the installer again to get it. That was watched through a
+  real reboot of a Gold Pro: both came back on their own. It has not been watched through a
+  firmware update.
 
 `bash firewalla-install --remove` takes all of it off.
