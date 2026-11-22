@@ -171,10 +171,21 @@ func (s *Server) fillFromRouter(out map[string]any) {
 			"bytes_relayed": d.UpBytes, "bytes_received_est": d.DownBytes,
 		})
 	}
-	out["live"] = map[string]any{
+	live := map[string]any{
 		"up_bytes_per_second": up / 8, "down_bytes_per_second": down / 8,
 		"bytes_relayed": upTotal, "bytes_received_est": downTotal,
 	}
+	// The devices' rates come from the router's log, which is read every
+	// few seconds and written as connections end. For the network as a
+	// whole there can be something better: the WAN port's own counters,
+	// to the second. Where they are available they are the live figure.
+	if s.WANRate != nil {
+		if wanDown, wanUp, ok := s.WANRate(); ok {
+			live["down_bytes_per_second"], live["up_bytes_per_second"] = wanDown, wanUp
+			out["live_source"] = "wan"
+		}
+	}
+	out["live"] = live
 	out["devices"] = devs
 }
 

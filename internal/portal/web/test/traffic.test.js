@@ -328,3 +328,15 @@ test('the Watch mode card is hidden while a router supplies the figures', () => 
   assert.equal(showWatchSection({ router: { available: true, connected: false } }), true);
   assert.equal(showWatchSection(null), true);
 });
+
+test('figures measured at the WAN port say so, and the chart is not described as stepping', () => {
+  const status = { router: reading, live_source: 'wan' };
+  assert.deepEqual(tileLabels(status), { down: 'measured at the WAN port', up: 'measured at the WAN port', total: 'Since Shepherd started reading' });
+  const caption = liveChartCaption(status, 60, 2000);
+  assert.match(caption, /measured at the WAN port, one sample every 2 seconds\.$/);
+  assert.doesNotMatch(caption, /steps rather than curves/);
+  // Without it, a router read every 30 seconds still says the line steps.
+  assert.match(liveChartCaption({ router: reading }, 60, 2000), /read every 30 seconds, so the line steps/);
+  // Watch mode's own labels win while it is the one measuring.
+  assert.equal(tileLabels({ measuring: true, live_source: 'wan', router: reading }).up, 'measured');
+});

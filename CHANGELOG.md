@@ -22,6 +22,11 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   own app on loopback, which is not published and can change with firmware; only calls checked
   against a running box are made, and it refuses any address that is not loopback. Creating rules
   and reading blocked requests still need MSP.
+- **Live bandwidth to the second on a Firewalla box** ([docs/TRAFFIC.md](docs/TRAFFIC.md#firewalla-msp)).
+  Where Shepherd runs on the router, the network's live download and upload are read from the WAN
+  port's own byte counters every second, so the live tiles and chart follow the traffic instead of
+  stepping every 30 seconds. Per-device figures still come from the box's traffic log, now read
+  every 10 seconds rather than 30.
 - **Blocked traffic on the map, and arcs sized by bytes** ([docs/BACKENDS.md](docs/BACKENDS.md#firewalla-on-the-box)).
   Read on the box, a Firewalla's blocked-traffic log is now read beside its flows, so what it turned
   away shows in Activity, History and on the map: both what a device inside tried and what arrived at

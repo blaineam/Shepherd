@@ -268,6 +268,12 @@ type Deps struct {
 	// different rules (cmd/shepherd/groups.go). Nil in a build without it.
 	Groups NameSync
 
+	// WANRate is the whole network's throughput right now, in bytes per
+	// second, where Shepherd can measure it at the WAN port (it runs on
+	// the router itself; internal/wanrate). ok is false everywhere else.
+	// Nil in a build without it.
+	WANRate func() (down, up float64, ok bool)
+
 	// Traffic is the bandwidth history (docs/TRAFFIC.md), fed by Watch
 	// mode. Nil gets an empty, memory-only store so the API still answers.
 	Traffic *traffic.Store

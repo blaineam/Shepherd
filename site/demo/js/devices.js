@@ -9,7 +9,7 @@ import { applyBulkLocal, planUndo, describeBulk, parseTags, normTag } from './bu
 import { TYPES, typeLabel, typeIcon, GROUP_COLORS } from './devtypes.js?v=0c35dd83';
 import { icon, iconButton, button, chip, segmented, toggle, emptyState, openPopover, openMenu, confirmDialog, relTime, unavailableCard, debounce } from './ui.js?v=4d208003';
 import { unavailable } from './mgmt.js?v=5493c5e5';
-import { rangeWindow, fillSeries, sumPoints, areaPaths, axisLabels, timeLabels, fmtBytes } from './traffic.js?v=02b19a80';
+import { rangeWindow, fillSeries, sumPoints, areaPaths, axisLabels, timeLabels, fmtBytes } from './traffic.js?v=f5163a4b';
 import { TIMER_CHOICES, MODES, deviceMode, countdown, countdownShort, modePatch, applyModeLocal } from './wander.js?v=b40b3e3f';
 import { reservedLabel } from './dhcp.js?v=769b13a6';
 import { createImportModal } from './importview.js?v=b346adcf';

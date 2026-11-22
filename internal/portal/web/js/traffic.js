@@ -304,6 +304,8 @@ export function tileLabels(status) {
   if (!readingNow(s.router)) return { down: '', up: '', total: 'Total so far' };
   const src = s.router.source || 'your router';
   const word = (s.router.status || {}).estimated ? 'sampled' : 'measured';
+  // On the router itself the whole network's rate is read off the WAN port.
+  if (s.live_source === 'wan') return { down: 'measured at the WAN port', up: 'measured at the WAN port', total: 'Since Shepherd started reading' };
   return { down: word + ' from ' + src, up: word + ' from ' + src, total: 'Since Shepherd started reading' };
 }
 
@@ -363,6 +365,11 @@ export function liveChartCaption(status, samples, pollMs) {
   const mins = Math.max(0.1, Math.round((samples * pollMs) / 6000) / 10);
   const span = 'The last ' + mins + ' minutes';
   if (!readingNow((status || {}).router)) return span + ', one sample every ' + Math.round(pollMs / 1000) + ' seconds.';
+  // Measured at the WAN port, the line is the network's real throughput,
+  // sampled as often as the screen asks.
+  if (status.live_source === 'wan') {
+    return span + ', measured at the WAN port, one sample every ' + Math.round(pollMs / 1000) + ' seconds.';
+  }
   const every = ((status.router.status || {}).interval_seconds) || 0;
   return span + '. Your ' + (status.router.source || 'router') + ' is read every ' + every
     + ' seconds, so the line steps rather than curves.';

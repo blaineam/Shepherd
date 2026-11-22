@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"reflect"
+	"time"
 
 	"shepherd/internal/devices"
 	"shepherd/internal/importers"
@@ -36,7 +37,8 @@ func startRouterUsage(ctx context.Context, sec *secrets.Store, reg *devices.Regi
 		// which is why this needs it.
 		if backend != nil && backend.active() == "firewalla" {
 			src := routerusage.NewFeed("firewalla", backend.samples)
-			return newCollector(src, routerusage.FirewallaNeedsSignIn, reg, store, watchEngine), true, nil
+			c := newCollector(src, routerusage.FirewallaNeedsSignIn, reg, store, watchEngine, backend.interval())
+			return c, true, nil
 		}
 		e, ok := sec.Eero()
 		if !ok || !e.Enabled || e.NetworkID == "" {
@@ -82,8 +84,15 @@ func unifiSource(sec *secrets.Store) (routerusage.Source, bool, error) {
 	return src, true, nil
 }
 
-func newCollector(src routerusage.Source, needsSignIn func(error) bool, reg *devices.Registry, store *traffic.Store, watchEngine *watch.Engine) *routerusage.Collector {
+// newCollector builds the reader. every, when given, replaces the default
+// interval between readings.
+func newCollector(src routerusage.Source, needsSignIn func(error) bool, reg *devices.Registry, store *traffic.Store, watchEngine *watch.Engine, every ...time.Duration) *routerusage.Collector {
+	var interval time.Duration
+	if len(every) > 0 {
+		interval = every[0]
+	}
 	return routerusage.New(routerusage.Options{
+		Interval:    interval,
 		Source:      src,
 		Recorder:    store,
 		Resolve:     resolveByMAC(reg),

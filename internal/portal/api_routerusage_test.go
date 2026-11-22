@@ -697,3 +697,37 @@ func TestFirewallaSwitchAndForgetFailuresAreReported(t *testing.T) {
 	h.expect("POST", "/api/routerusage/firewalla/enabled", `{"enabled":false}`, 500)
 	h.expect("DELETE", "/api/routerusage/firewalla", "", 500)
 }
+
+// Where the WAN port can be measured, its rate is the network's live
+// figure; the devices keep the router's own.
+func TestTheLiveFigureComesFromTheWANPortWhereItIsMeasured(t *testing.T) {
+	h := newHarness(t)
+	when := time.Now()
+	h.srv.RouterUsage = &fakeUsage{
+		st:   routerusage.Status{Source: "firewalla", Enabled: true, LastPoll: &when},
+		live: []routerusage.LiveDevice{{DeviceID: "d1", Name: "TV", DownBitsPerSecond: 8000, UpBitsPerSecond: 800, DownBytes: 5000, UpBytes: 600}},
+	}
+	out := h.ok("GET", "/api/traffic", "", 200)
+	live := out["live"].(map[string]any)
+	if live["down_bytes_per_second"] != float64(1000) || out["live_source"] != nil {
+		t.Fatalf("without a meter: %v, source %v", live, out["live_source"])
+	}
+
+	ok := true
+	h.srv.WANRate = func() (float64, float64, bool) { return 250000, 12000, ok }
+	out = h.ok("GET", "/api/traffic", "", 200)
+	live = out["live"].(map[string]any)
+	if live["down_bytes_per_second"] != float64(250000) || live["up_bytes_per_second"] != float64(12000) || out["live_source"] != "wan" {
+		t.Fatalf("with a meter: %v, source %v", live, out["live_source"])
+	}
+	// The totals and the devices are still the router's.
+	if live["bytes_received_est"] != float64(5000) || out["devices"].([]any)[0].(map[string]any)["down_bytes_per_second"] != float64(1000) {
+		t.Fatalf("totals or devices changed: %v", out)
+	}
+	// A meter with nothing to offer changes nothing.
+	ok = false
+	out = h.ok("GET", "/api/traffic", "", 200)
+	if out["live"].(map[string]any)["down_bytes_per_second"] != float64(1000) || out["live_source"] != nil {
+		t.Fatalf("a stale meter was used: %v", out["live"])
+	}
+}

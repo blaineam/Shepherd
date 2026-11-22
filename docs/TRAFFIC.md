@@ -181,6 +181,15 @@ the token to another server.
 
 When several routers are connected, a UniFi controller wins, then Firewalla, then eero.
 
+**Live figures on the box itself.** A Firewalla read through its own loopback API is on the machine
+that is the router, so two things are better there. The network's live download and upload come from
+the WAN interface's byte counters (`/sys/class/net/<iface>/statistics`), read every second: the live
+tiles and chart are the real throughput, not a sum of log entries. And the box's traffic log is read
+every 10 seconds instead of 30, which is how often each device's figure moves. A device's figure is
+still made from connections as the box logs them, so a long download shows in the network's line at
+once and in that device's line as the box reports it. Anywhere but on the router, the interface's
+counters are only that machine's own traffic, and are not used.
+
 **What the screen shows from a router.** The total tile and each device's line show **today**: what
 moved since midnight on your clock, added up from the stored history. A running total since Shepherd
 started would begin again at every restart. The Watch mode section is hidden while a router supplies

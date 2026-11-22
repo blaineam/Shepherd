@@ -263,6 +263,9 @@ func run(ctx context.Context, cfgPath string, printToken bool, stdout io.Writer)
 	// (docs/BACKENDS.md, "Device names"). It writes nothing until the owner
 	// asks it to.
 	deps.Names = startNames(ctx, sec, registry, backend, cfg.DataDir)
+	// On the router itself the WAN port's counters are the whole network's
+	// throughput, to the second (internal/wanrate).
+	deps.WANRate = startWANRate(ctx, backend)
 	// And one group per device, where the router has device groups.
 	deps.Groups = startGroups(ctx, registry, backend, cfg.DataDir)
 

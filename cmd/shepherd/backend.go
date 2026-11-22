@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"shepherd/internal/alarms"
 	"shepherd/internal/backends"
@@ -49,9 +50,10 @@ type backendManager struct {
 
 	mu     sync.Mutex
 	cur    *hub.Hub
-	name   string // which backend cur runs
-	rename bool   // cur's product can rename a device at all
-	limit  int    // the longest device name cur's product takes, 0 for none
+	name   string        // which backend cur runs
+	rename bool          // cur's product can rename a device at all
+	limit  int           // the longest device name cur's product takes, 0 for none
+	every  time.Duration // how often cur is read
 	setRO  func(bool)
 	key    string // what cur was built from, minus the write switch
 	cancel context.CancelFunc
@@ -74,7 +76,9 @@ type connection struct {
 	backend backends.Backend
 	// nameLimit is the longest device name the product accepts.
 	nameLimit int
-	setRO     func(bool)
+	// every is how often to read it; zero is the hub's default.
+	every time.Duration
+	setRO func(bool)
 }
 
 // wanted builds the backend the owner has connected and switched on, or
@@ -87,7 +91,7 @@ func (m *backendManager) wanted() (*connection, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &connection{name: "firewalla", key: "firewalla-local|" + w.BaseURL, writes: w.Writes, backend: c, setRO: c.SetReadOnly, nameLimit: fwlocal.MaxNameLen}, nil
+		return &connection{name: "firewalla", key: "firewalla-local|" + w.BaseURL, writes: w.Writes, backend: c, setRO: c.SetReadOnly, nameLimit: fwlocal.MaxNameLen, every: localInterval}, nil
 	}
 	if w, ok := m.sec.Firewalla(); ok && w.Enabled {
 		c, err := firewalla.New(firewalla.Config{BaseURL: w.BaseURL, Token: w.Token, Box: w.Box, ReadOnly: !w.Writes, Transport: m.transport})
@@ -132,7 +136,7 @@ func (m *backendManager) Reload() {
 		return
 	}
 	h := hub.New(hub.Options{
-		Backend: conn.backend, FlowSink: m.ingest, AlarmSink: m.raise,
+		Backend: conn.backend, FlowSink: m.ingest, AlarmSink: m.raise, Interval: conn.every,
 		Resolve:      m.resolve,
 		Locate:       m.locate,
 		StatePath:    filepath.Join(m.dataDir, "backend-"+conn.name+".json"),
@@ -146,9 +150,13 @@ func (m *backendManager) Reload() {
 	m.cur, m.name, m.setRO, m.key, m.cancel, m.done = h, conn.name, conn.setRO, conn.key, cancel, done
 	_, m.rename = conn.backend.(backends.DeviceRenamer)
 	m.limit = conn.nameLimit
+	m.every = conn.every
+	if m.every <= 0 {
+		m.every = hub.DefaultInterval
+	}
 	m.mu.Unlock()
 	go func() { defer close(done); h.Run(ctx) }()
-	log.Printf("backend: reading %s every %s (writes %s)", conn.name, hub.DefaultInterval, map[bool]string{true: "on", false: "off"}[conn.writes])
+	log.Printf("backend: reading %s every %s (writes %s)", conn.name, m.interval(), map[bool]string{true: "on", false: "off"}[conn.writes])
 }
 
 // active reports the name of the backend that is running, "" for none.
@@ -159,6 +167,29 @@ func (m *backendManager) active() string {
 		return ""
 	}
 	return m.name
+}
+
+// localInterval is how often a Firewalla is read on the box itself. Asking
+// its own loopback API costs next to nothing, so it is read three times as
+// often as a service across the internet, and per-device figures follow
+// the traffic that much more closely.
+const localInterval = 10 * time.Second
+
+// interval is how often the running backend is read.
+func (m *backendManager) interval() time.Duration {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.every <= 0 {
+		return hub.DefaultInterval
+	}
+	return m.every
+}
+
+// onBox reports whether Shepherd is reading a Firewalla it runs on, which
+// is to say whether this machine is the router.
+func (m *backendManager) onBox() bool {
+	w, ok := m.sec.Firewalla()
+	return ok && w.Enabled && w.Local && m.active() == "firewalla"
 }
 
 // nameLimit is the longest device name the running backend accepts.
@@ -181,7 +212,9 @@ func (m *backendManager) canRename() bool {
 // tiles. Leaving the counters out is what made "Queries" read zero over a
 // network full of traffic.
 func (m *backendManager) ingest(e dnsengine.Entry) {
-	m.qlog.Add(e)
+	if m.qlog != nil {
+		m.qlog.Add(e)
+	}
 	if m.stats != nil {
 		m.stats.Record(e)
 	}
