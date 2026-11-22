@@ -4,6 +4,7 @@
 // -- so the two are interchangeable. The projection is equirectangular with
 // horizontal wrap, and arcs are drawn as curves bowing toward the top of the
 // screen. Nothing here needs WebGL or the vendored three.js.
+import { cometLatLon } from './lanes.js';
 import { DEG, clamp, normalizeLon, dampVelocity } from './geo.js';
 import { weightScale, widthPx, baseAlpha } from './weight.js';
 import { landPolygons, polygonContains, coastSegments } from './topo.js';
@@ -217,8 +218,11 @@ export class FlatMap {
     const boost = 0.75 + 0.6 * s;
     c.t0[i] = this.time;
     c.dur[i] = 1.0 + 1.5 * (lane.angle / Math.PI) + (this.reduced ? 0.4 : 0);
-    c.hLat[i] = this.home.lat; c.hLon[i] = this.home.lon;
-    c.dLat[i] = lane.dest.lat; c.dLon[i] = lane.dest.lon;
+    // h is where the comet starts and d where it lands: home and the far
+    // end, or the other way round for traffic that came from outside.
+    const path = cometLatLon(lane, this.home);
+    c.hLat[i] = path.start.lat; c.hLon[i] = path.start.lon;
+    c.dLat[i] = path.end.lat; c.dLon[i] = path.end.lon;
     c.lift[i] = lane.angle;
     c.w[i] = widthPx(s) * 0.7;
     c.size[i] = 0.035 + 0.06 * s;

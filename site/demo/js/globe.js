@@ -1,6 +1,7 @@
 // The 3D globe: WebGL scene, controls and picking. All rendering state lives
 // in preallocated typed arrays feeding instanced buffers, so a frame allocates
 // nothing and ~900 ribbons (300 lanes + 600 comets) draw in a handful of calls.
+import { cometVectors } from './lanes.js?v=7e17c9f5';
 import * as THREE from '../vendor/three.module.min.js?v=6bff6b08';
 import {
   DEG, latLonToVec3, vec3ToLatLon, slerp, arcPoint, segmentHitsSphere, dampVelocity, clamp, normalizeLon,
@@ -338,7 +339,9 @@ export class Globe {
     const dur = 1.0 + 1.5 * (lane.angle / Math.PI) + (this.reduced ? 0.4 : 0);
     const col = COLORS[lane.action] || COLORS.allowed;
     const boost = 0.75 + 0.6 * s;
-    A.iA.set(lane.from, slot * 3); A.iB.set(lane.to, slot * 3);
+    // Inbound traffic runs from its source to home; the rest, the other way.
+    const path = cometVectors(lane);
+    A.iA.set(path.start, slot * 3); A.iB.set(path.end, slot * 3);
     A.iGeo[slot * 2] = lane.angle; A.iGeo[slot * 2 + 1] = lane.lift;
     A.iStyle[slot * 4] = widthPx(s) * 0.95; A.iStyle[slot * 4 + 1] = 1; A.iStyle[slot * 4 + 2] = 1;
     A.iStyle[slot * 4 + 3] = lane.key === this.selectedKey ? 1 : 0;
@@ -346,7 +349,7 @@ export class Globe {
     A.iAnim[slot * 2] = this.time; A.iAnim[slot * 2 + 1] = dur;
     this.cometArrive[i] = this.time + dur;
     this.cometPending[i] = 1;
-    this.cometDest.set(lane.to, i * 3);
+    this.cometDest.set(path.end, i * 3);
     this.cometColor.set(col, i * 3);
     this.cometSize[i] = 0.035 + 0.06 * s;
     this.liveComets.add(i);

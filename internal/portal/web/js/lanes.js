@@ -84,7 +84,9 @@ export class LaneTable {
       // Blocked traffic gets a lane of its own, so one place can show both
       // what got through and what was turned away rather than flickering
       // between the two colours.
-      const key = entry.client + '|' + destKey(d) + (entry.action === 'blocked' ? '|blocked' : '');
+      // Traffic that came from outside is its own lane too: it travels the
+      // other way.
+      const key = entry.client + '|' + destKey(d) + (entry.action === 'blocked' ? '|blocked' : '') + (entry.inbound ? '|in' : '');
       let lane = this.byKey.get(key);
       if (!lane) {
         if (!this.free.length) this._evictOldest();
@@ -93,7 +95,7 @@ export class LaneTable {
           dest: { lat: d.lat, lon: d.lon, ip: d.ip, city: d.city, country: d.country },
           to: latLonToVec3(d.lat, d.lon),
           from: null, angle: 0, lift: 0,
-          action: entry.action, wandering: false, shadow: false, w: 0, wt: now, count: 0, bytes: 0,
+          action: entry.action, inbound: !!entry.inbound, wandering: false, shadow: false, w: 0, wt: now, count: 0, bytes: 0,
           first: now, last: now, lastName: entry.name, lastComet: -Infinity,
           domains: new Map(), created: true,
         };
@@ -149,4 +151,19 @@ export class LaneTable {
     for (const lane of this.removed) this._remove(lane);
     return this.removed;
   }
+}
+
+// A comet runs along a lane in the direction the traffic went. Most of it
+// leaves home for somewhere; what arrived from outside, such as a
+// connection the firewall turned away at the door, starts at its source
+// and runs home. These two say which end is which, for the globe (unit
+// vectors) and the flat map (latitude and longitude).
+export function cometVectors(lane) {
+  return lane.inbound ? { start: lane.to, end: lane.from } : { start: lane.from, end: lane.to };
+}
+
+export function cometLatLon(lane, home) {
+  const far = { lat: lane.dest.lat, lon: lane.dest.lon };
+  const near = { lat: home.lat, lon: home.lon };
+  return lane.inbound ? { start: far, end: near } : { start: near, end: far };
 }

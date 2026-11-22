@@ -31,8 +31,9 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   Read on the box, a Firewalla's blocked-traffic log is now read beside its flows, so what it turned
   away shows in Activity, History and on the map: both what a device inside tried and what arrived at
   the WAN port from outside. A blocked connection is drawn in red to where it was going or came from,
-  on an arc of its own. Requests read from a router carry the bytes they moved, and the map sizes its
-  arcs by them. History gains a 30 days range.
+  on an arc of its own, and one that arrived from outside is animated from its source to home, not
+  the other way. Requests read from a router carry the bytes they moved, and the map sizes its arcs by
+  them. History gains a 30 days range.
 - **A router API, described by OpenAPI** ([docs/API.md](docs/API.md)). `/api/v1` is one small REST API
   over whatever router or firewall is connected: devices, groups, rules, alarms and requests, with
   renaming, moving, blocking, pausing and deleting where the product can. The calls are the same for

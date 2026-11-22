@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LaneTable } from '../js/lanes.js';
+import { LaneTable, cometVectors, cometLatLon } from '../js/lanes.js';
 import { normalizeEntry } from '../js/entry.js';
 import { weightScale } from '../js/weight.js';
 
@@ -162,4 +162,28 @@ test('clear empties everything and restores slots', () => {
   assert.equal(t.size, 0);
   assert.equal(t.free.length, 4);
   assert.equal(t.floor(), 0.2);
+});
+
+test('traffic from outside gets its own lane and runs from its source to home', () => {
+  const table = new LaneTable(8);
+  table.setHome(35, -119);
+  const dest = [{ lat: 52, lon: 5, city: 'Amsterdam', country: 'NL' }];
+  const out = [];
+  const E = (o) => ({ t: 1000, client: '192.0.2.10', name: 'x.example', action: 'allowed', dests: dest, ...o });
+  const outbound = table.add(E({}), out)[0];
+  const blockedOut = table.add(E({ action: 'blocked' }), out)[0];
+  const blockedIn = table.add(E({ action: 'blocked', inbound: true }), out)[0];
+  assert.equal(table.byKey.size, 3);
+  assert.deepEqual([outbound.inbound, blockedOut.inbound, blockedIn.inbound], [false, false, true]);
+  // The same lane again keeps its direction.
+  assert.equal(table.add(E({ action: 'blocked', inbound: true }), out)[0], blockedIn);
+
+  // On the globe: from the far end to home for inbound, the reverse otherwise.
+  assert.deepEqual(cometVectors(outbound), { start: outbound.from, end: outbound.to });
+  assert.deepEqual(cometVectors(blockedIn), { start: blockedIn.to, end: blockedIn.from });
+
+  // On the flat map, the same in latitude and longitude.
+  const home = { lat: 35, lon: -119 };
+  assert.deepEqual(cometLatLon(outbound, home), { start: { lat: 35, lon: -119 }, end: { lat: 52, lon: 5 } });
+  assert.deepEqual(cometLatLon(blockedIn, home), { start: { lat: 52, lon: 5 }, end: { lat: 35, lon: -119 } });
 });

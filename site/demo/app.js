@@ -10,12 +10,12 @@ import { normalizeEntry, destKey, placeName } from './js/entry.js?v=de62f770';
 import { LiveSource } from './js/sources.js?v=e6dc9a01';
 import { ReplaySource } from './js/replay.js?v=bb8a7a3f';
 import { ReplayClock } from './js/clock.js?v=8fa6af79';
-import { Model } from './js/model.js?v=2526bb93';
+import { Model } from './js/model.js?v=8b6e97ae';
 import { weightScale, entryWeight } from './js/weight.js?v=7b9bc8df';
 import { validLatLon } from './js/geo.js?v=248f9f1a';
 import { fmtClock } from './js/format.js?v=86b54455';
 import { createDetails } from './js/details.js?v=b1866f92';
-import { createTiles, createFeed, createFilters, createLegend, createInspector, createTimeline } from './js/hud.js?v=d20dec95';
+import { createTiles, createFeed, createFilters, createLegend, createInspector, createTimeline } from './js/hud.js?v=c68992a3';
 import { createToaster } from './js/ui.js?v=4d208003';
 import { createMgmt } from './js/mgmt.js?v=5493c5e5';
 import { createNameBook } from './js/names.js?v=e79e15ee';
@@ -743,7 +743,7 @@ async function initGlobe() {
   let map = null;
   if (params.get('nogl') !== '1') {
     try {
-      const { Globe, webglAvailable } = await import('./js/globe.js?v=7b0e6b01');
+      const { Globe, webglAvailable } = await import('./js/globe.js?v=fd820fc3');
       if (webglAvailable()) map = new Globe($('#stage'), opts);
     } catch (err) {
       if (DEBUG) console.warn('3d globe unavailable:', err && err.message);
@@ -751,7 +751,7 @@ async function initGlobe() {
   }
   const flat = !map;
   if (flat) {
-    const { FlatMap, canvas2dAvailable } = await import('./js/flatmap.js?v=e52a46c9');
+    const { FlatMap, canvas2dAvailable } = await import('./js/flatmap.js?v=637a294a');
     if (!canvas2dAvailable()) throw new Error('no canvas');
     map = new FlatMap($('#stage'), opts);
     document.body.classList.add('flatmap');

@@ -161,7 +161,9 @@ export function createInspector({ api, notify, onRule, names = null }) {
     R.action.className = 'act ' + action;
     R.action.textContent = action;
     const dest = lane ? lane.dest : e && e.dests && e.dests[0];
-    R.place.textContent = dest ? placeName(dest) : action === 'blocked' ? 'Blocked at home' : 'No destination';
+    // Traffic that came from outside is described by where it came from.
+    const inbound = lane ? lane.inbound : !!(e && e.inbound);
+    R.place.textContent = dest ? (inbound ? 'From ' : '') + placeName(dest) : action === 'blocked' ? 'Blocked at home' : 'No destination';
     const cl = lane ? lane.client : e.client;
     const nm = (e && e.device) || (names ? names.label(cl) : cl);
     R.device.textContent = nm && nm !== cl ? nm + '  ' + cl : cl;

@@ -106,8 +106,9 @@ test('a blocked connection that has a place is drawn there; a blocked lookup pul
   const allowed = m.touched[0];
   assert.equal(allowed.action, 'allowed');
   assert.equal(m.lanes.byKey.size, 2);
-  m.ingest(E({ action: 'blocked', type: 'FLOW', dests: dest }));
+  m.ingest(E({ action: 'blocked', type: 'FLOW', inbound: true, dests: dest }));
   assert.equal(m.touched[0].action, 'blocked');
+  assert.equal(m.touched[0].inbound, true);
   assert.equal(allowed.action, 'allowed');
   assert.equal(m.lanes.byKey.size, 2);
   assert.equal(m.lanes.mode, 'bytes');
