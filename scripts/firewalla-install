@@ -44,6 +44,7 @@ done
 [ "$(id -un)" = pi ] || die "run this as the pi user, not $(id -un)"
 
 if [ "$remove" = 1 ]; then
+  sudo systemctl stop shepherd shepherd-tailscale 2>/dev/null || true
   pkill -x shepherd 2>/dev/null || true
   pkill -x tailscaled 2>/dev/null || true
   rm -f "$HOOK"
@@ -86,6 +87,7 @@ sudo chown pi:pi "$DIR"
 mkdir -p "$DIR/data"
 
 # Stop the old one and wait for it: it writes its data as it exits.
+sudo systemctl stop shepherd 2>/dev/null || true
 if pgrep -x shepherd >/dev/null; then
   pkill -x shepherd
   for _ in $(seq 1 30); do pgrep -x shepherd >/dev/null || break; sleep 1; done
@@ -161,20 +163,39 @@ cat > "$HOOK" <<'HOOKEOF'
 # Firewalla has started. Safe to run again: each starts only if it is not
 # running. Written by Shepherd's scripts/firewalla-install; remove with
 # `firewalla-install --remove`.
+#
+# Each runs as a systemd unit of its own, made on the spot and written
+# nowhere. Firewalla runs this hook from a unit that ends when startup is
+# done, and systemd then stops everything that unit left running, so a
+# plain background process started here lasts about a second after a reboot.
 
-if [ -x /data/tailscale/tailscaled ] && ! pgrep -x tailscaled >/dev/null; then
+# run UNIT DIR LOG COMMAND...: start COMMAND as pi, unless it is running.
+run() {
+  local unit=$1 dir=$2 log=$3
+  shift 3
+  systemctl is-active --quiet "$unit" && return 0
+  pgrep -x "$(basename "$1")" >/dev/null && return 0
+  sudo systemctl reset-failed "$unit" 2>/dev/null
+  sudo systemd-run --quiet --collect --unit="$unit" --uid=pi --gid=pi \
+    --working-directory="$dir" \
+    -p Restart=on-failure -p RestartSec=5 \
+    -p StandardOutput="append:$log" -p StandardError="append:$log" \
+    "$@"
+}
+
+if [ -x /data/tailscale/tailscaled ]; then
   # Userspace networking: Tailscale adds no route and no firewall rule to
   # the router. Connections to the box's tailnet address arrive on loopback.
-  cd /data/tailscale && (setsid nohup sudo -u pi ./tailscaled --tun=userspace-networking \
-    --statedir=/data/tailscale/state --socket=/data/tailscale/tailscaled.sock \
-    >> /data/tailscale/tailscaled.log 2>&1 < /dev/null &)
+  run shepherd-tailscale /data/tailscale /data/tailscale/tailscaled.log \
+    /data/tailscale/tailscaled --tun=userspace-networking \
+    --statedir=/data/tailscale/state --socket=/data/tailscale/tailscaled.sock
 fi
 
-if [ -x /data/shepherd/shepherd ] && ! pgrep -x shepherd >/dev/null; then
+if [ -x /data/shepherd/shepherd ]; then
   # Lets Shepherd, running as pi, listen on 443 for the reverse proxy.
   sudo setcap cap_net_bind_service=+ep /data/shepherd/shepherd
-  cd /data/shepherd && (setsid nohup sudo -u pi ./shepherd -config shepherd.toml \
-    >> /data/shepherd/shepherd.log 2>&1 < /dev/null &)
+  run shepherd /data/shepherd /data/shepherd/shepherd.log \
+    /data/shepherd/shepherd -config shepherd.toml
 fi
 HOOKEOF
 chmod 755 "$HOOK"

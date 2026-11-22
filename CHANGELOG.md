@@ -13,6 +13,14 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Shepherd on a Firewalla did not come back after a reboot.** Firewalla runs its boot hook from
+  a unit that ends when startup is done, and systemd then stops everything that unit left
+  running, so Shepherd and its Tailscale started and were stopped a second later. The hook now
+  starts each as a systemd unit of its own, made on the spot and written nowhere, and starts it
+  again if it fails. Run `scripts/firewalla-install` again on the box to get the new hook.
+
 ## [1.2.0] - 2026-11-21
 
 ### Added

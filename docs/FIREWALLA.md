@@ -33,7 +33,9 @@ What it puts on the box, and nothing else:
 - `/data/shepherd/`: the binary, `shepherd.toml`, the data directory and the log. `/data` is the
   partition Firewalla keeps across firmware updates.
 - `~/.firewalla/config/post_main.d/start_shepherd.sh`: Firewalla's own hook for starting things
-  after boot. It starts Shepherd only if it is not already running.
+  after boot. It starts Shepherd only if it is not already running, as a systemd unit named
+  `shepherd` that is made on the spot and written nowhere (`sudo systemctl stop shepherd` stops
+  it; Tailscale's is `shepherd-tailscale`).
 - With `--tailscale`, `/data/tailscale/`.
 
 No package is installed and no Firewalla file is changed. Shepherd runs as `pi`, not root; the one
@@ -125,8 +127,11 @@ last. Leave `secrets.json`, the DNS history and the blocklists behind: the box d
   Gold Pro with 80 devices. On a smaller box, watch the box's own health.
 - **Replacing the binary by hand** loses its permission to bind port 443. The boot hook grants it
   again; run the hook (or the installer) rather than copying a binary over.
-- **A reboot** runs the hook through Firewalla's `post_main.d`. That path was installed and run by
-  hand here, and is what Firewalla documents for this, but it has not been watched through a real
-  reboot or a firmware update.
+- **A reboot** runs the hook through Firewalla's `post_main.d`. Firewalla runs it from a unit that
+  ends when startup is done, and systemd then stops whatever that unit left running, so up to
+  1.2.0 Shepherd started at boot and was stopped a second later. The hook now starts Shepherd and
+  Tailscale as units of their own; run the installer again to get it. That was checked by running
+  the hook from a unit that ends, as a boot does. It has not been watched through a firmware
+  update.
 
 `bash firewalla-install --remove` takes all of it off.
