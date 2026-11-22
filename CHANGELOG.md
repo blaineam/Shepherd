@@ -128,7 +128,9 @@ file. See [docs/RELEASING.md](docs/RELEASING.md).
   the first healthy sample closes it.
 - **Network health does not probe a gateway on the far side of the WAN port.** Where Shepherd runs on
   the router itself, the default gateway is the provider's equipment, not the home router. It is no
-  longer a probe target: only a gateway with a private or link-local address is.
+  longer a probe target: only a gateway with a private or link-local address is. A manual check
+  also uses the targets worked out at startup rather than those of the last saved sample, which kept
+  a dropped target alive across upgrades.
 - **Bandwidth totals no longer reset with Shepherd.** With a router supplying the figures, the total
   tile and each device's line read "since Shepherd started reading", which starts from nothing at
   every restart. They now show **Today**, since midnight, from the stored history. The Watch mode

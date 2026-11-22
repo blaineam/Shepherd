@@ -193,3 +193,26 @@ func TestNethealthBufferbloatRunRequiresPriorTargets(t *testing.T) {
 	h := newHarness(t)
 	h.expect("POST", "/api/nethealth/bufferbloat/run", "{}", 400)
 }
+
+// The last sample is kept on disk across restarts. If its targets came
+// first, a target a newer Shepherd dropped would be probed and saved again
+// on every manual check, for ever.
+func TestAManualProbeUsesTodaysTargetsNotTheLastSamples(t *testing.T) {
+	h := newHarness(t)
+	h.srv.Nethealth = nethealth.New(nethealth.Options{Dial: fakeNethealthDialAll, Burst: 1, Timeout: time.Second})
+	// What an older run probed, including a target since dropped.
+	h.srv.Nethealth.ProbeNow(context.Background(), []string{"198.51.100.1", "203.0.113.9"})
+	h.srv.NethealthTargets = []string{"198.51.100.1"}
+
+	out := h.ok("POST", "/api/nethealth/probe", `{}`, 200)
+	targets, _ := out["targets"].([]any)
+	if len(targets) != 1 || targets[0].(map[string]any)["host"] != "198.51.100.1" {
+		t.Fatalf("probed %v", out["targets"])
+	}
+	// With none passed in, the last sample's are still better than nothing.
+	h.srv.NethealthTargets = nil
+	out = h.ok("POST", "/api/nethealth/probe", `{}`, 200)
+	if targets, _ := out["targets"].([]any); len(targets) != 1 {
+		t.Fatalf("fallback probed %v", out["targets"])
+	}
+}

@@ -176,21 +176,24 @@ func (s *Server) nethealthProbeNow(w http.ResponseWriter, r *http.Request) {
 }
 
 // currentNethealthTargets is the target list a manual probe or bufferbloat
-// run uses: the most recent scheduled probe's own targets when one has
-// run, falling back to s.NethealthTargets (what cmd/shepherd computed at
-// startup — see docs/NETHEALTH.md) so manual checks work even when the
-// scheduled probe is disabled, which is the default. Only truly empty
-// (ok=false) when cmd/shepherd never wired Nethealth in at all.
+// run uses: what cmd/shepherd worked out at startup (s.NethealthTargets,
+// see docs/NETHEALTH.md), so manual checks work even when the scheduled
+// probe is disabled, which is the default. The last sample's own targets
+// are only a fallback for a build that passed none. They must not come
+// first: the last sample is kept on disk across restarts, so a target
+// that a newer Shepherd no longer probes would be probed, saved and read
+// back for ever. Only truly empty (ok=false) when cmd/shepherd never wired
+// Nethealth in at all.
 func (s *Server) currentNethealthTargets() ([]string, bool) {
+	if len(s.NethealthTargets) > 0 {
+		return append([]string(nil), s.NethealthTargets...), true
+	}
 	if cur, ok := s.Nethealth.Latest(); ok && len(cur.Targets) > 0 {
 		out := make([]string, len(cur.Targets))
 		for i, t := range cur.Targets {
 			out[i] = t.Host
 		}
 		return out, true
-	}
-	if len(s.NethealthTargets) > 0 {
-		return append([]string(nil), s.NethealthTargets...), true
 	}
 	return nil, false
 }
