@@ -72,7 +72,16 @@ home sends its traffic out through your home connection:
 /data/tailscale/tailscale --socket=/data/tailscale/tailscaled.sock set --advertise-exit-node=true
 ```
 
-Then approve it for the machine in Tailscale's admin console. In userspace mode this still adds
+**Subnet router.** To reach the devices on your LAN by their own addresses from anywhere on your
+tailnet, advertise the LAN's range as well (yours may differ):
+
+```sh
+/data/tailscale/tailscale --socket=/data/tailscale/tailscaled.sock set --advertise-routes=192.0.2.0/24 --advertise-exit-node=true
+```
+
+Then approve both for the machine in Tailscale's admin console. If another machine already
+advertises the same range, Tailscale keeps using that one until it goes offline or you switch its
+route off there. In userspace mode this still adds
 nothing to the router's firewall or routes. Two things follow from that: it is slower than a
 kernel VPN, and the traffic leaves as the box's own, so Firewalla's per-device rules and its device
 list do not see the remote device behind it.
