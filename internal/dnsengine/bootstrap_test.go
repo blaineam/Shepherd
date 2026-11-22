@@ -335,7 +335,7 @@ func TestDoTViaBootstrapAndIPLiteral(t *testing.T) {
 
 func TestDoTSecondAddressAndBootstrapFailure(t *testing.T) {
 	certSrc := newDoHTest(t, func(http.ResponseWriter, *http.Request, *dns.Msg) {})
-	ln := ipv6Loopback(t)
+	ln := ipv6OnlyLoopback(t)
 	startDoT(t, ln, certSrc.cert())
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
 	fb := newFakeBoot(t, "example.com", "127.0.0.1", "::1")

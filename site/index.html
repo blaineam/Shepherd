@@ -277,13 +277,20 @@
 
     <div class="watch-callout">
       <h3>Where the Bandwidth screen gets its numbers</h3>
-      <p><strong>From the router you already own.</strong> Sign in to eero or a UniFi controller and
-        Shepherd records what the router already counts, per device, in both directions. Nothing is put
+      <p><strong>From the router you already own.</strong> Connect eero, a UniFi controller or a
+        Firewalla and Shepherd records what the router already counts, per device, in both directions. Nothing is put
         in the path of your traffic and no setting on your router is changed. A UniFi controller keeps
         real byte counters, so its figures are measurements; eero reports only the rate at each moment,
         so Shepherd samples it and the screen says plainly that those totals are a floor rather than a
         measurement. Measured against a known transfer, eero's sampling recorded about a sixth of it —
         the kind of thing worth telling you rather than quietly rounding over.</p>
+      <p><strong>Or run it on the router.</strong> On a Firewalla box, Shepherd installs beside the
+        firewall with one script and reads the box directly: requests as they happen, what was turned
+        away at the door drawn on the map from where it came, and the network's throughput to the
+        second. Device names and groups are kept the same in Shepherd, on the Firewalla and in eero,
+        whichever one you edit, and a small REST API with its own OpenAPI document sits over whatever
+        router is connected. Firewalla does not support this and its local API is unpublished; the
+        guide says exactly what is touched and how to take it off again.</p>
       <p><strong>"Watch mode" is deprecated.</strong> It steered each device's outbound traffic through
         Shepherd by one-sided ARP, which is how bandwidth used to be measured. It is off by default,
         gets no new features, and is kept only for installs already running it. On the eero mesh it was

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -211,6 +212,31 @@ func ipv6Loopback(t *testing.T) net.Listener {
 		t.Skip("IPv6 loopback unavailable")
 	}
 	return ln
+}
+
+// ipv6OnlyLoopback is ipv6Loopback with the same port guaranteed refused
+// on IPv4 loopback, for tests of falling through a dead address to a
+// working one.
+//
+// Listening on [::1] alone leaves 127.0.0.1 on that port to chance: the two
+// families hand out ports independently, so another process, or another
+// test, may be listening there, and then the "dead" address answers. This
+// takes the IPv4 port as well, bound but never listening, so a connection
+// to it is refused and nothing else can have it (refusePort).
+func ipv6OnlyLoopback(t *testing.T) net.Listener {
+	t.Helper()
+	for try := 0; try < 20; try++ {
+		ln := ipv6Loopback(t)
+		_, port, _ := net.SplitHostPort(ln.Addr().String())
+		n, _ := strconv.Atoi(port)
+		if refusePort(t, n) {
+			return ln
+		}
+		// Somebody else has that port on IPv4: try another.
+		ln.Close()
+	}
+	t.Fatal("no port free on both loopback addresses")
+	return nil
 }
 
 // startServfail runs a plain upstream that always answers SERVFAIL.

@@ -163,9 +163,9 @@ func TestDoHIPv6LiteralURL(t *testing.T) {
 }
 
 func TestDoHFallsThroughDeadAddressToWorkingOne(t *testing.T) {
-	ln := ipv6Loopback(t)
+	ln := ipv6OnlyLoopback(t)
 	d := newDoHTestOn(t, ln, func(w http.ResponseWriter, r *http.Request, q *dns.Msg) { answerA(w, q, nil) })
-	// IPv4 is tried first and refused; the IPv6 address then answers.
+	// IPv4 is tried first and is dead; the IPv6 address then answers.
 	fb := newFakeBoot(t, "example.com", "127.0.0.1", "::1")
 	p := testPool(t, fb, d.roots, d.url("example.com"))
 	if _, _, _, err := p.Exchange(context.Background(), aQuery("f.example.org.")); err != nil {
