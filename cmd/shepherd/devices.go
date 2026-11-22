@@ -123,16 +123,10 @@ func startDevices(ctx context.Context, cfg config.Config, engine *dnsengine.Engi
 		}()
 	}
 	var logs onceLogger
-	if dc.Enabled && dc.Neighbors {
-		p := &devices.Poller{Sources: neighborSources(), Sink: reg, Interval: time.Duration(dc.NeighborIntervalSeconds) * time.Second,
-			OnError: func(err error) { logs.log("devices: neighbor table", err) }}
-		run("neighbor poller", p.Run)
-	}
-	if dc.Enabled && dc.MDNS {
-		l := devices.NewMDNSListener(reg)
-		l.OnError = func(err error) { logs.log("devices: mdns", err) }
-		run("mdns listener", func(ctx context.Context) error { return runMDNS(ctx, l) })
-	}
+	// Reverse DNS names a device when the registry announces it as new, and
+	// it is told only once. So it subscribes before anything that can
+	// discover a device is started: a source that got in first would
+	// announce devices to nobody, and they would never be looked up.
 	if dc.Enabled && dc.ReverseDNS {
 		server := dc.ReverseDNSServer
 		if server == "" {
@@ -147,6 +141,16 @@ func startDevices(ctx context.Context, cfg config.Config, engine *dnsengine.Engi
 		}
 	}
 
+	if dc.Enabled && dc.Neighbors {
+		p := &devices.Poller{Sources: neighborSources(), Sink: reg, Interval: time.Duration(dc.NeighborIntervalSeconds) * time.Second,
+			OnError: func(err error) { logs.log("devices: neighbor table", err) }}
+		run("neighbor poller", p.Run)
+	}
+	if dc.Enabled && dc.MDNS {
+		l := devices.NewMDNSListener(reg)
+		l.OnError = func(err error) { logs.log("devices: mdns", err) }
+		run("mdns listener", func(ctx context.Context) error { return runMDNS(ctx, l) })
+	}
 	if dc.Enabled && dc.Tailscale {
 		ts := &devices.TailscaleSource{Sink: reg, Socket: dc.TailscaleSocket,
 			OnError: func(err error) {

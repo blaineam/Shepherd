@@ -54,6 +54,10 @@ Reverse DNS asks the **default gateway** (Linux: from `/proc/net/route`) unless 
 set it or the names from PTR records are skipped. Lookups are rate limited, cached for hours, and go to that one server only, never to the
 internet.
 
+A device is looked up once, when it is first seen, and a failed or empty answer is not asked again for
+30 minutes. The lookup starts listening for new devices before any source that can find one is started,
+so a device found in the first moments after startup is looked up like any other.
+
 The device **type** (phone, tablet, laptop, tv, speaker, camera, printer, game console, smart-home hub, router) is a guess from the
 vendor, name and announced services, with the reason shown. Set it yourself to keep it.
 
